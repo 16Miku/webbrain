@@ -15705,6 +15705,15 @@ function isMastodonUrl(url) {
 const ADAPTERS = [
   // ─── Code & Dev Tools ─────────────────────────────────────────────────
   {
+    name: 'chrome-web-store-developer',
+    category: 'general',
+    matches: (url) => /^https:\/\/chrome\.google\.com\/webstore\/devconsole(?:[/?#]|$)/i.test(url),
+    notes: `
+- This dashboard is a Chrome-protected page. Extension DOM, accessibility-tree, script-injection, and debugger tools cannot access it. Never retry those tools here.
+- Continue manually in the dashboard; no packaged release skill is available.
+- A screenshot may provide read-only visual context once, but it cannot make dashboard controls interactive or verify an API mutation.`,
+  },
+  {
     name: 'github',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?github\.com\//.test(url),
@@ -15737,7 +15746,9 @@ const ADAPTERS = [
 - For an existing add-on, use its "Upload New Version" flow. Do not start from "Submit a New Add-on"; the existing manifest ID will fail validation as a duplicate add-on ID.
 - On the "Describe Version" step, both "Release Notes" (changelog) and "Notes to Reviewer" are optional. Leave both empty unless the user explicitly asks to provide text; do not generate or paste content merely because the fields are present.
 - If those textareas must be inspected, trust their DOM field names over visual order or a possibly misleading label: \`release_notes...\` is the public release-notes field and \`approval_notes\` is the reviewer-notes field. Call \`verify_form\` before final submission.
-- On AMO compatibility checkboxes, use the tree's native \`checked=true|false\` state and \`set_checked({ref_id, checked:true})\`; never toggle with repeated \`click_ax\`. After a validation-rejected submit, call \`verify_form\` exactly once. If the intended checkbox is still unchecked, go directly to \`set_checked\` and submit only after \`checkedAfter:true\`.
+- AMO compatibility checkboxes are optional platform choices, not validation acknowledgements. Preserve their current state unless the user asked to change platform support. Use the tree's native \`checked=true|false\` state and \`set_checked\`; never toggle with repeated \`click_ax\`.
+- Selecting Firefox for Android opens a confirmation dialog and the checkbox remains unchecked until "Yes, I’ve tested my extension with Firefox for Android" is submitted. Never make that attestation without user-provided evidence. If the user has not said it was tested, choose "No, I have not tested" or leave Android unchecked, then continue. If \`set_checked\` returns \`confirmationRequired:true\`, handle the visible dialog once instead of retrying the checkbox.
+- After a validation-rejected submit, call \`verify_form\` exactly once. Change only the checkbox that the validation result actually requires, and submit only after its verified state matches the intended choice.
 - On a URL matching \`/addon/<addon-slug>/versions/submit/<id>/source\`, answer "No" to "Do You Need to Submit Source Code?" Select the radio labeled "No", then verify the page says "You do not need to submit Source Code" before continuing.
 - After navigation or scrolling, re-read the accessibility tree and use the current ref_id. Never reuse or guess a ref_id from an earlier page state.
 - Continue past package validation only when it reports no errors. Read any rejection-related warnings, then use the existing version-submission flow rather than restarting as a new add-on.`,
@@ -15844,6 +15855,9 @@ const ADAPTERS = [
     fullPageCapture: { infiniteScroll: isTwitterInfiniteScrollUrl },
     notes: `
 - The composer is a contenteditable, not a textarea. Character count is enforced client-side at 280 (or higher for Premium).
+- On /compose/post, call wait_for_stable before filling the composer. After typing, re-read the visible accessibility tree and require the Post control to be enabled (no disabled=true) before clicking it.
+- If the exact text is visible but Post remains disabled, keep the composer open and refill the editor with type_text({selector:"[data-testid=\\\"tweetTextarea_0\\\"]", text:"<exact complete post>", clear:true}); this uses the trusted Chrome typing path. Do not dismiss the composer to recover.
+- A click_ax result with verified:false or no observable posting evidence is not proof that the post was published. Keep the composer open and verify a new status URL or matching feed item before reporting success.
 - The timeline is virtualized — tweets scroll out of the DOM. To find a specific tweet, use search, don't scroll.
 - "Reply", "Retweet", "Like" icons are below each tweet; the share menu has "Copy link" for permalinks.
 - Quote tweets vs reposts: the retweet icon opens a menu with both options.`,
@@ -15855,6 +15869,7 @@ const ADAPTERS = [
     fullPageCapture: { infiniteScroll: isLinkedInInfiniteScrollUrl },
     notes: `
 - LinkedIn aggressively lazy-loads everything; scroll to populate the feed/profile, but most content lives in modal-style detail panes.
+- The post composer ("Start a post") opens a dialog rendered inside an open shadow root (#interop-outlet). If it is missing from get_accessibility_tree / click({text}) results even though the screenshot shows it open, do NOT coordinate-click inside it — clicks often hit the dialog backdrop and CLOSE it (the next screenshot shows the regular feed again). Reliable path: click({text: "Start a post"}) to open it, then type_text({selector: '[contenteditable]:not([contenteditable="false"])', text: "...", clear: true}) — this focuses the editor directly without a click. Then click the Post button (find it via get_interactive_elements or shadow_dom_query({selector: "button", shadowPath: "div#interop-outlet"}) if a plain text click matches "Post impressions" instead).
 - "Connect" button on profiles often has a "Send without a note" prompt — read it before clicking.
 - Messages are at /messaging — the message composer is a contenteditable with image/file upload icons.
 - In Messaging, after filling the composer, the reliable send path is usually Enter. If the composer footer says "Press Enter to Send" or the send-options popover shows "Press Enter to Send", call press_keys({key:"Enter"}) from the composer. Do NOT keep scrolling to find a Send button that is already visible/implicit.

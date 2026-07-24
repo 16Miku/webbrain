@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 25.4.2 · Manifest V3 · Service Worker background
+> Version 25.8.5 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -38,6 +38,7 @@ src/chrome/
 ├── manifest.json              # Manifest V3 config
 ├── src/
 │   ├── background.js           # Service worker — message router
+│   ├── run-ui-journal.js       # Detached-run replay + streamed-text snapshots
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── tools.js            # Tool schemas + system prompts
@@ -60,6 +61,8 @@ src/chrome/
 │   │   ├── base.js             # Provider interface
 │   │   ├── manager.js          # Provider lifecycle
 │   │   ├── openai.js           # OpenAI-compatible
+│   │   ├── azure-openai.js     # Azure OpenAI deployments
+│   │   ├── aws-bedrock.js      # AWS Bedrock Converse
 │   │   ├── anthropic.js        # Anthropic Claude
 │   │   ├── llamacpp.js         # Local llama.cpp server
 │   │   └── fetch-with-fallback.js  # Uses offscreen proxy on direct-fetch failure
@@ -105,14 +108,17 @@ src/chrome/
 
 ## Plan-before-Act Gate (v18.0.0)
 
-When `planBeforeAct` is enabled, action-mode runs (Act or Dev) call `agent/planner.js`
-before the first tool loop. The planner returns a bounded JSON plan with steps,
-memory strategy, scheduling hints, and risks. The side panel renders that plan
+Manual action-mode runs (Act or Dev) always call `agent/planner.js` before the
+first tool loop. Off uses the compact structured intent schema; Try and Strict
+use the full bounded JSON plan with steps, memory strategy, scheduling hints,
+and risks. The side panel renders a full plan
 as an editable approval card; approving it pins the plan to the scratchpad so it
-survives context compaction. Rejecting, timing out, invalid JSON after retry, or
-pressing Stop cancels before browser tools execute. Scheduled runs can set
+survives context compaction. Rejecting, timing out, or pressing Stop cancels
+before browser tools execute. In the default Try mode, invalid JSON after one
+repair degrades only that turn to the Ask prompt and read-only tool catalog;
+Strict mode still stops before tools. Scheduled runs can set
 `autoApprovePlanReview` so the plan is pinned without blocking on the UI.
-The feature is off by default.
+The feature defaults to Try; an explicit Off setting remains off.
 
 Planner LLM requests are recorded in traces with `phase: "planner"` and use the
 same cost allowance and abort checks as the main loop.
@@ -350,8 +356,10 @@ _enrichFirstUserMessage()
     • Build multimodal content [text, image_url]
     │
     ▼
-Main loop (max steps from Settings, default 60)
-    1. provider.chat(messages, {tools, temp, maxTokens})
+Main loop (max steps from Settings, default 130)
+    1. chatMainTurn(messages, {tools, temp, maxTokens})
+       • provider.chat() by default
+       • official OpenAI Responses streaming only for interactive Ask runs
     2. If response has tool_calls:
        a. _executeToolBatch() — run each tool
        b. Push tool results into messages
@@ -366,11 +374,31 @@ Main loop (max steps from Settings, default 60)
 
 ### Execution modes
 
-| | `processMessage()` | `processMessageStream()` |
+| | Production `processMessage()` lifecycle | Legacy explicit `processMessageStream()` lifecycle |
 |---|---|---|
-| LLM call | `provider.chat()` | `provider.chatStream()` (SSE) |
-| UI updates | `onUpdate('text', ...)` at end | `onUpdate('text_delta', ...)` live |
-| Tool calls | Parsed from `result.toolCalls` | Accumulated from stream deltas |
+| LLM call | `provider.chat()` by default; terminal-gated `provider.chatStream()` for eligible OpenAI Ask turns | `provider.chatStream()` (SSE) |
+| UI updates | Terminal `text`; eligible Ask turns also emit live `text_delta` | Live `text_delta` |
+| Tool calls | Returned only after a complete provider result | Accumulated by the separate streaming loop |
+
+The Ask integration does not route through the legacy full streaming loop.
+Normal side-panel sends still use detached `chat_start`, background-owned run
+journaling/reconnect, attachment enrichment, and `processMessage()`. The stream
+branch is eligible only for interactive Ask mode using the official OpenAI
+Responses route and when the default-on Advanced kill switch is enabled. Act,
+Dev, scheduled, cloud, and Continue runs stay on `provider.chat()`.
+
+During an eligible call, output text is forwarded live, but function calls,
+usage, reasoning, and Responses output Items are buffered until
+`response.completed`. Transport/protocol interruptions clear any partial
+visible text, disable streaming for the remainder of that run, and retry the
+generation via `provider.chat()`; terminal HTTP/API and `response.incomplete`
+errors propagate without a duplicate fallback request. Incomplete tool calls
+and partial assistant text are never executed or persisted. Live deltas remain
+immediate, while reconnect snapshots coalesce on a 200 ms trailing interval;
+terminal updates and pre-tool durability checkpoints flush immediately. The
+journal also keeps separately bounded accumulated streamed text, allowing a
+reopened panel to rebuild the in-progress Markdown even when early delta events
+have already been acknowledged or trimmed from the replay window.
 
 ### done() blocking (v3.6.4+)
 
@@ -489,9 +517,16 @@ class BaseProvider {
 | Provider | Endpoint | Vision detection |
 |---|---|---|
 | `OpenAIProvider` | `/v1/chat/completions` | Model-name regex |
+| `AzureOpenAIProvider` | Azure deployment chat completions | Manual/configured |
+| `AwsBedrockProvider` | Bedrock Converse API | Disabled by default |
 | `AnthropicProvider` | `/v1/messages` | `claude-(3\|sonnet-4\|opus-4)` patterns |
-| `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Explicit opt-in |
-| Ollama (via OpenAI provider) | `localhost:11434/v1/*` | Explicit opt-in |
+| `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Enabled by default, configurable |
+| OpenAI-compatible configs | Provider-specific `/v1` endpoint | Model-name regex or explicit config |
+
+`ProviderManager` seeds WebBrain Cloud, seven local backends, Azure OpenAI, AWS
+Bedrock, direct cloud providers, and router providers. The canonical current ID
+and default-model table is maintained in
+[`docs/providers-and-models.md`](../../docs/providers-and-models.md).
 
 ### Anthropic conversion
 
@@ -545,15 +580,24 @@ Three independent detectors, strongest action wins:
 
 ---
 
-## Conversation Persistence
+## Conversation and Detached-Run Persistence
 
-MV3 service workers die; conversations mustn't:
+MV3 service workers and side panels can disappear while a run is active, so
+Chrome keeps three per-tab session records:
 
 ```
-chrome.storage.session['agentConv:<tabId>'] = JSON.stringify(messages)
+chrome.storage.session['agentConv:<tabId>'] // provider-facing conversation
+chrome.storage.session['tabChat:<tabId>']   // rendered chat HTML
+chrome.storage.session['runUi:<tabId>']     // detached-run status and replay
 ```
 
-Persisted debounced 300 ms after any change; lazily hydrated on first message to a tab; per-tab isolated.
+Agent history is debounced after changes and lazily hydrated before the next
+message. The UI journal owns request/run identity, status, a 256-event replay
+window, plan/tool state, terminal content, and separately bounded accumulated
+streamed text. `text_delta` snapshots coalesce for 200 ms; non-delta, terminal,
+and pre-tool checkpoints persist immediately. Reconnect replay is acknowledged
+by sequence number, while the accumulated stream lets the panel reconstruct
+in-progress Markdown after older delta events have been acknowledged.
 
 ---
 
@@ -580,7 +624,7 @@ The Traces page (`ui/traces.html`) lists runs and renders their event timelines.
 | Auto-screenshot | `off` / `navigation` / `state_change` (default) / `every_step`. |
 | Record traces | Enable the trace recorder (see above). |
 | Completion sound | Play a chime in the side panel when the agent finishes. |
-| Max Agent Steps | Step cap, default 60. |
+| Max Agent Steps | 5–195 finite steps or unlimited, default 130. |
 
 ---
 
@@ -619,6 +663,16 @@ Finance adapters carry a `[FINANCE / HIGH-STAKES]` banner and extra confirmation
 - **Verbose ON** — full JSON args + truncated results.
 - **Deep verbose** (Shift+click verbose button) — dump the full LLM request/response ring buffer (200 entries) to DevTools console with color-coded groups.
 
+### Reading-first long replies
+- A new question remains anchored while its answer grows.
+- The floating control offers **Follow response**, **Jump to latest**, or
+  **Back to question** based on the viewport position.
+- Auto-follow resumes only after the reader reaches the bottom deliberately or
+  explicitly jumps to the live edge. Blocking cards and slash-command output
+  still force the relevant content into view.
+- Restoring a panel or switching tabs re-establishes the latest turn's reading
+  position and reconnects to any active background-owned run.
+
 ---
 
 ## Message Flow — Complete Walkthrough
@@ -626,9 +680,12 @@ Finance adapters carry a `[FINANCE / HIGH-STAKES]` banner and extra confirmation
 ```
 1. User types "create a product 'namaz' priced 500 CNY, recurring every 2 months"
 
-2. sidepanel.js → chrome.runtime.sendMessage({action:'chat', text, mode:'act', tabId:42})
+2. sidepanel.js → sendRunWithReconnect('chat_start', {
+     text, mode:'act', tabId:42, requestId
+   })
 
-3. background.js → agent.processMessage(42, text, onUpdate, 'act')
+3. background.js → begin/persist runUi:42 → detached `chat` lifecycle
+   → agent.processMessage(42, text, onUpdate, 'act')
 
 4. _enrichFirstUserMessage: attach URL/title + site adapter + viewport screenshot
 

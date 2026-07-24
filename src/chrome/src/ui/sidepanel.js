@@ -34,6 +34,8 @@ import {
 } from './store-review-prompt.js';
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
+import { TAB_CHAT_PREFIX, persistTabChatToSession } from './tab-chat-persistence.js';
+import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -489,6 +491,11 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 })();
 
 const messagesEl = document.getElementById('messages');
+const chatContainerEl = document.getElementById('chat-container');
+const chatNavigationEl = document.getElementById('chat-navigation');
+const chatNavigationActionEl = document.getElementById('chat-navigation-action');
+const chatNavigationDismissEl = document.getElementById('chat-navigation-dismiss');
+const chatNavigationLabelEl = document.getElementById('chat-navigation-label');
 const inputEl = document.getElementById('user-input');
 const inputHighlightEl = document.getElementById('input-highlight');
 const sendBtn = document.getElementById('btn-send');
@@ -501,10 +508,17 @@ const providerSelect = document.getElementById('provider-select');
 const providerPickerBtn = document.getElementById('provider-picker-btn');
 const providerPickerMenu = document.getElementById('provider-picker-menu');
 const providerPickerLabel = document.getElementById('provider-picker-label');
+const languageSelect = document.getElementById('language-select');
+const languagePickerBtn = document.getElementById('language-picker-btn');
+const languagePickerMenu = document.getElementById('language-picker-menu');
+const languagePickerFlag = document.getElementById('language-picker-flag');
+const languagePickerCode = document.getElementById('language-picker-code');
 const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
 // Short labels for the closed picker button (menu rows keep the longer status text).
 const providerPickerLabelById = new Map();
+let languagePickerTypeahead = '';
+let languagePickerTypeaheadTimer = null;
 const agentActivity = document.getElementById('agent-activity');
 const activityText = document.getElementById('activity-text');
 const modeAskBtn = document.getElementById('btn-mode-ask');
@@ -577,6 +591,21 @@ const SLASH_COMMANDS = [
     options: [
       { value: '--add', valueLabel: '<text>', descriptionKey: 'sp.slash.remember', action: 'add', takesRemainder: true, outOfBand: false, exclusiveGroup: 'memory-action' },
       { value: '--forget', valueLabel: '<id>', descriptionKey: 'sp.slash.forget_memory', action: 'forget', takesRemainder: true, outOfBand: false, exclusiveGroup: 'memory-action' },
+    ],
+  },
+  {
+    value: '/workflow',
+    usage: '/workflow [--save <name> | --run <id> | --delete <id> | --export <id> | --import --file]',
+    descriptionKey: 'sp.slash.workflows',
+    action: 'list',
+    outOfBand: true,
+    options: [
+      { value: '--save', valueLabel: '<name>', descriptionKey: 'sp.slash.save_workflow', action: 'save', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--run', valueLabel: '<id>', descriptionKey: 'sp.slash.run_workflow', action: 'run', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--delete', valueLabel: '<id>', descriptionKey: 'sp.slash.delete_workflow', action: 'delete', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--export', valueLabel: '<id>', descriptionKey: 'sp.slash.workflows', action: 'export', takesRemainder: true, outOfBand: true, exclusiveGroup: 'workflow-action' },
+      { value: '--import', descriptionKey: 'sp.slash.workflows', action: 'import', outOfBand: true, exclusiveGroup: 'workflow-action', requires: '--file' },
+      { value: '--file', descriptionKey: 'sp.slash.import_config_file', disallowPayload: true, requires: '--import' },
     ],
   },
   { value: '/allow-api', usage: '/allow-api [prompt]', descriptionKey: 'sp.slash.allow_api', action: 'enable', acceptsPayload: true },
@@ -735,6 +764,9 @@ function parseSlashInvocation(value) {
     return { error: 'invalid-usage', command, commandToken };
   }
   if (payload && selectedOptions.some((option) => option.disallowPayload)) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (selectedOptions.some((option) => option.requires && !selectedValues.has(option.requires))) {
     return { error: 'invalid-usage', command, commandToken };
   }
 
@@ -916,7 +948,6 @@ const recordingStopBtn = document.getElementById('btn-recording-stop');
 
 let currentTabId = null;
 let renderedTabId = null;
-let pendingTabSwitch = null; // tab the user switched to while isProcessing was true
 let tabSwitchTransitionId = null;
 let tabSwitchGeneration = 0;
 let queuedTabSwitchMessages = [];
@@ -931,9 +962,12 @@ let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
+const clearingConversationTabs = new Set();
 const localRunRequestIds = new Map();
+const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
 const adoptedRunRecoveryRequestIds = new Set();
+const clearedConversationRunRequestIds = new Set();
 let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
@@ -960,6 +994,19 @@ function setTabProcessing(tabId, processing) {
 function isTabProcessing(tabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) && processingTabs.has(numericTabId);
+}
+
+function setConversationClearInProgress(tabId, clearing) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  if (clearing) clearingConversationTabs.add(numericTabId);
+  else clearingConversationTabs.delete(numericTabId);
+  if (sameTabId(currentTabId, numericTabId)) syncSendButtonState();
+}
+
+function isConversationClearInProgress(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && clearingConversationTabs.has(numericTabId);
 }
 
 function setTabAbortRequested(tabId, requested) {
@@ -991,7 +1038,7 @@ const {
   clearQueuedForTab,
 } = createContextMenuPromptHandler({
   getCurrentTabId: () => currentTabId,
-  getIsProcessing: () => isProcessing,
+  getIsProcessing: () => isProcessing || isConversationClearInProgress(),
   getAgentMode: () => agentMode,
   setMode,
   getInputEl: () => inputEl,
@@ -1250,7 +1297,7 @@ function showStoreReviewStep(step) {
     document.getElementById(`store-review-step-${id}`)?.classList.toggle('hidden', id !== step);
   }
   storeReviewEl?.classList.remove('hidden');
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 function setStoreReviewStarPreview(rating) {
@@ -1385,14 +1432,13 @@ function isSuccessfulAskCompletion(mode, response) {
   if (!response || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
   const content = typeof response.content === 'string' ? response.content.trim() : '';
-  return !!content && !parseSubscribeError(content);
+  return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
 }
 
 // Per-tab chat history (stores innerHTML of messages container).
 // Also mirrored to chrome.storage.session keyed `tabChat:<tabId>` so the
 // conversation survives the side panel being closed and reopened.
 const tabChats = new Map();
-const TAB_CHAT_PREFIX = 'tabChat:';
 const tabChatOperations = new Map();
 const tabInputDrafts = new Map();
 const permissionSkipCommandContextsByTab = new Map();
@@ -1435,12 +1481,11 @@ async function loadTabChat(tabId) {
 function persistTabChat(tabId, html) {
   if (tabId == null) return;
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
+    // Keep the live transcript lossless. persistTabChatToSession may compact
+    // only the storage.session copy when the shared quota requires it.
     tabChats.set(numericTabId, html);
     const key = TAB_CHAT_PREFIX + numericTabId;
-    try {
-      await chrome.storage.session.set({ [key]: html }).catch(() => {});
-    } catch (e) { /* ignore */ }
-    return { ok: true };
+    return persistTabChatToSession(chrome.storage.session, key, html);
   });
 }
 
@@ -1452,6 +1497,7 @@ async function flushRenderedTabChat() {
     persistTimer = null;
     persistTimerTabId = null;
   }
+  flushPendingStreamedAssistantMarkdownRenders();
   await persistTabChat(tabId, messagesEl.innerHTML);
 }
 
@@ -1559,10 +1605,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -1906,6 +1952,7 @@ async function renderClearedConversationForTab(tabId) {
   setApiMutationsAllowedForTab(tabId, false);
   await resetChatHistoryStateForTab(tabId);
   if (currentTabId !== tabId) return;
+  resetChatNavigation();
   renderedTabId = tabId;
   messagesEl.innerHTML = '';
   inputEl.value = '';
@@ -2253,7 +2300,6 @@ function scheduledJobActions(job) {
 
 const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'running', 'needs_user_input', 'failed', 'completed']);
 const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
-const crossPanelScheduledJobIds = new Set();
 const pinnedCompletedScheduledJobIds = new Set();
 let scheduledJobAutoHideTimer = null;
 
@@ -2337,6 +2383,7 @@ function ensureScheduledTerminalMessage(job) {
   if (!jobId || !isUrlTargetScheduledJob(job)) return null;
   const existing = findScheduledAssistantMessageForJob(jobId);
   if (existing) return existing;
+  resetChatNavigation();
   const msgEl = addMessage('assistant', '');
   msgEl.dataset.scheduledJobId = jobId;
   return msgEl;
@@ -2350,8 +2397,6 @@ function ensureScheduledClarifyCards(jobs = []) {
     const jobTabId = scheduledJobTabId(job);
     if (!isUrlTargetScheduledJob(job) && jobTabId != null && currentTabId != null && String(jobTabId) !== String(currentTabId)) continue;
     if (findScheduledClarifyCard(job.id, pending.clarifyId)) continue;
-    const isCrossPanel = isUrlTargetScheduledJob(job) && jobTabId != null && currentTabId != null && String(jobTabId) !== String(currentTabId);
-    if (isCrossPanel) crossPanelScheduledJobIds.add(String(job.id));
     renderClarifyCard({
       ...pending,
       scheduledJobId: job.id,
@@ -2441,20 +2486,7 @@ async function scheduledJobAction(action, jobId) {
   }
 }
 
-async function drainQueuedContextMenuPromptsAfterPendingTabSwitch() {
-  if (drainQueuedComposerMessageForCurrentTab()) return;
-  if (pendingTabSwitch == null) {
-    drainQueuedContextMenuPrompts();
-    return;
-  }
-  const pending = pendingTabSwitch;
-  pendingTabSwitch = null;
-  try {
-    await switchToTab(pending);
-  } catch {
-    // Still drain any queued prompt for the current tab; tab activation can fail
-    // when the underlying browser tab disappears during run settlement.
-  }
+async function drainQueuedPromptsAfterRunSettles() {
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }
@@ -2483,7 +2515,6 @@ function drainQueuedAgentUpdatesForTab(tabId) {
 
 async function settleScheduledRun(event, job, tabId = currentTabId) {
   const runTabId = normalizePlanReviewTabId(tabId);
-  if (job?.id) crossPanelScheduledJobIds.delete(String(job.id));
   const assistantEl = job?.id ? findScheduledAssistantMessageForJob(job.id) : currentAssistantEl;
   if (assistantEl) {
     finalizeSteps(assistantEl);
@@ -2506,7 +2537,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     hideActivity();
     if (currentAssistantEl === assistantEl) currentAssistantEl = null;
     if (renderedTabId != null) await flushRenderedTabChat();
-    await drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+    await drainQueuedPromptsAfterRunSettles();
   }
   if (event === 'completed' && job?.source !== 'watch') {
     notifyCompletion({ success: job?.lastOutcome === 'success' });
@@ -2540,6 +2571,7 @@ async function handleScheduledJobEvent(data, tabId) {
     setTabAbortRequested(runTabId, false);
     syncSendButtonState();
     hideRecommendedActions();
+    resetChatNavigation();
     currentAssistantEl = addMessage('assistant', '');
     if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
     showActivity(t('sp.scheduled.running', { title }));
@@ -2568,7 +2600,7 @@ async function handleScheduledJobEvent(data, tabId) {
       setTabProcessing(runTabId, false);
       syncSendButtonState();
       addMessage('system', systemHtml(tSystemHtml('sp.scheduled.needs_user_input', { title })));
-      drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+      drainQueuedPromptsAfterRunSettles();
     }
   }
 }
@@ -2999,6 +3031,283 @@ async function forgetUserMemory(id, tabId = currentTabId) {
   }
 }
 
+const SAVED_WORKFLOW_FAILURE_REASON_KEYS = {
+  conversation_required: 'sp.workflows.reason.no_trace',
+  no_successful_trace: 'sp.workflows.reason.no_trace',
+  successful_run_required: 'sp.workflows.reason.no_trace',
+  no_replayable_steps: 'sp.workflows.reason.no_steps',
+  not_found: 'sp.workflows.reason.not_found',
+  name_required: 'sp.workflows.reason.name_required',
+  http_start_url_required: 'sp.workflows.reason.http_start_url',
+  normalization_failed: 'sp.workflows.reason.normalization_failed',
+  invalid_workflow: 'sp.workflows.reason.normalization_failed',
+};
+
+const MAX_PORTABLE_WORKFLOW_FILE_BYTES = 1024 * 1024;
+
+function savedWorkflowFailureMessage(res) {
+  if (res?.reason === 'workflow_too_large') {
+    return t('sp.workflows.error', { msg: 'portable workflow files must not exceed 1 MiB' });
+  }
+  if (res?.reason === 'workflow_limit') {
+    return t('sp.workflows.error', { msg: 'the saved workflow limit of 100 has been reached' });
+  }
+  const reasonKey = SAVED_WORKFLOW_FAILURE_REASON_KEYS[res?.reason];
+  return reasonKey
+    ? t(reasonKey)
+    : t('sp.workflows.error', { msg: res?.reason || res?.error || 'unknown error' });
+}
+
+async function showSavedWorkflows(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('list_saved_workflows');
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) throw new Error(res?.error || 'unknown error');
+    const workflows = Array.isArray(res.workflows) ? res.workflows : [];
+    if (!workflows.length) {
+      addPersistentSlashMessage(t('sp.workflows.empty'));
+      return;
+    }
+    const body = workflows.map((workflow) => t('sp.workflows.item', {
+      id: workflow.id,
+      name: workflow.name,
+      steps: workflow.steps?.length || 0,
+      parameters: workflow.parameters?.length || 0,
+    })).join('\n');
+    const msgEl = addPersistentSlashMessage(systemHtml(`${t('sp.workflows.title_html')}<pre class="scratchpad-dump">${escapeHtml(body)}</pre>`));
+    addScratchpadCopyButton(msgEl);
+  } catch (error) {
+    if (currentTabId === tabId) addPersistentSlashMessage(t('sp.workflows.error', { msg: error.message }));
+  }
+}
+
+async function saveLatestWorkflow(name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('save_latest_workflow', { tabId, name });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const savedMessage = t('sp.workflows.saved', { name: res.workflow?.name || name });
+    const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+    showComposerToast(warnings.length ? `${savedMessage} ${warnings.join(' ')}` : savedMessage, {
+      duration: warnings.length ? 10000 : 3500,
+    });
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function deleteSavedWorkflow(id, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('delete_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return;
+    }
+    showComposerToast(t('sp.workflows.deleted', { name: res.workflow?.name || id }));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+  }
+}
+
+function savedWorkflowDownloadFilename(name) {
+  const stem = String(name || 'workflow')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 120) || 'workflow';
+  return `${stem}.webbrain-workflow.json`;
+}
+
+async function exportSavedWorkflow(id, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('export_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const json = JSON.stringify(res.workflow);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = savedWorkflowDownloadFilename(res.workflow.name);
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 7000);
+    }
+    showComposerToast(savedWorkflowDownloadFilename(res.workflow.name));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function importSavedWorkflowDefinition(definition, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('import_saved_workflow', { definition });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    showComposerToast(t('sp.workflows.saved', { name: res.workflow.name }), { duration: 5000 });
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+function requestSavedWorkflowFile(tabId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.webbrain-workflow.json,application/json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_PORTABLE_WORKFLOW_FILE_BYTES) {
+      showComposerToast(savedWorkflowFailureMessage({ reason: 'workflow_too_large' }), { duration: 7000 });
+      return;
+    }
+    file.text()
+      .then((json) => {
+        if (new TextEncoder().encode(json).byteLength > MAX_PORTABLE_WORKFLOW_FILE_BYTES) {
+          throw Object.assign(new Error('workflow_too_large'), { workflowReason: 'workflow_too_large' });
+        }
+        return JSON.parse(json);
+      })
+      .then((definition) => importSavedWorkflowDefinition(definition, tabId))
+      .catch((error) => {
+        if (currentTabId !== tabId) return;
+        const reason = error?.workflowReason || 'invalid_workflow';
+        showComposerToast(savedWorkflowFailureMessage({ reason }), { duration: 7000 });
+      });
+  }, { once: true });
+  input.click();
+}
+
+const boundWorkflowParameterForms = new WeakSet();
+
+async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
+  if (!workflow?.id || currentTabId !== tabId) return false;
+  await ensureActMode();
+  inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
+  autoResizeInput();
+  return sendMessage({
+    __mode: 'act',
+    workflowId: workflow.id,
+    workflowParameters: parameters,
+  });
+}
+
+async function submitSavedWorkflowParameters(event, form) {
+  event.preventDefault();
+  const tabId = Number(form?.dataset?.tabId);
+  const workflowId = String(form?.dataset?.workflowId || '');
+  const errorEl = form?.querySelector('.schedule-error');
+  const submit = form?.querySelector('.schedule-submit');
+  if (!Number.isFinite(tabId) || !workflowId || !errorEl || !submit) return;
+  errorEl.textContent = '';
+  submit.disabled = true;
+  try {
+    const res = await sendToBackground('get_saved_workflow', { id: workflowId });
+    if (!res?.ok || !res.workflow) throw new Error(savedWorkflowFailureMessage(res));
+    const inputs = new Map(Array.from(form.querySelectorAll('[data-workflow-parameter-id]'))
+      .map((input) => [input.dataset.workflowParameterId, input]));
+    const parameters = {};
+    for (const descriptor of res.workflow.parameters || []) {
+      const input = inputs.get(descriptor.id);
+      if (!input) throw new Error(t('sp.workflows.error', { msg: 'parameter form is incomplete' }));
+      if (descriptor.required !== false && input.value === '') {
+        throw new Error(t('sp.workflows.parameter_required', { name: descriptor.label || descriptor.id }));
+      }
+      parameters[descriptor.id] = input.value;
+    }
+    inputs.forEach((input) => { input.value = ''; });
+    form.closest('.message')?.remove();
+    setTimeout(() => {
+      startSavedWorkflowRun(res.workflow, parameters, tabId)
+        .catch((error) => showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 }));
+    }, 0);
+  } catch (error) {
+    submit.disabled = false;
+    errorEl.textContent = error.message;
+  }
+}
+
+function bindSavedWorkflowParameterForm(form) {
+  if (!form || boundWorkflowParameterForms.has(form)) return;
+  boundWorkflowParameterForms.add(form);
+  form.querySelector('.schedule-cancel')?.addEventListener('click', () => form.closest('.message')?.remove());
+  form.addEventListener('submit', (event) => submitSavedWorkflowParameters(event, form));
+}
+
+function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
+  if (!workflow?.id || currentTabId !== tabId) return;
+  const parameterMessage = t('sp.workflows.parameters_for', { name: workflow.name });
+  const msgEl = addMessage('system', parameterMessage);
+  const content = msgEl.querySelector('.message-content');
+  const form = document.createElement('form');
+  form.className = 'schedule-composer workflow-parameter-form';
+  form.dataset.tabId = String(tabId);
+  form.dataset.workflowId = workflow.id;
+  for (const parameter of workflow.parameters || []) {
+    const input = document.createElement('input');
+    input.type = parameter.sensitive ? 'password' : 'text';
+    input.autocomplete = 'off';
+    input.maxLength = 10000;
+    input.required = parameter.required !== false;
+    input.dataset.workflowParameterId = parameter.id;
+    addScheduleField(form, parameter.label || parameter.id, input);
+  }
+  const errorEl = document.createElement('div');
+  errorEl.className = 'schedule-error';
+  form.appendChild(errorEl);
+  const actions = document.createElement('div');
+  actions.className = 'schedule-form-actions';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'schedule-submit';
+  submit.textContent = t('sp.scheduled.run_now');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'schedule-cancel';
+  cancel.textContent = t('sp.schedule_form.cancel');
+  actions.append(submit, cancel);
+  form.appendChild(actions);
+  bindSavedWorkflowParameterForm(form);
+  content.appendChild(form);
+  form.querySelector('input')?.focus();
+  scrollToBottom();
+}
+
+async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_saved_workflow', { id: String(id || '').trim() });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok || !res.workflow) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return;
+    }
+    if (res.workflow.parameters?.length) {
+      renderSavedWorkflowParameterForm(res.workflow, tabId);
+      return;
+    }
+    setTimeout(() => {
+      startSavedWorkflowRun(res.workflow, {}, tabId)
+        .catch((error) => showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 }));
+    }, 0);
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
 async function showProgress(tabId = currentTabId) {
   try {
     const res = await sendToBackground('get_progress', { tabId });
@@ -3072,21 +3381,41 @@ function clearScratchpad(tabId = currentTabId) {
 // --- Initialization ---
 
 async function init() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const initialWindow = await chrome.windows.getCurrent().catch(() => null);
+  const initialWindowId = initialWindow?.id ?? null;
+  const [tab] = await chrome.tabs.query(initialWindowId != null
+    ? { active: true, windowId: initialWindowId }
+    : { active: true, currentWindow: true });
   currentTabId = tab?.id;
   renderedTabId = currentTabId;
 
+  // Tab-activation and window-focus events are extension-wide — every
+  // browser window fires them, and each window has its own side panel
+  // instance. Without scoping, activity in window B would silently
+  // retarget window A's panel to B's tab.
+  const windowScope = createSidePanelWindowScope({
+    browserApi: chrome,
+    initialWindowId: initialWindowId ?? tab?.windowId ?? null,
+    getCurrentTabId: () => currentTabId,
+    getRenderedTabId: () => renderedTabId,
+    switchToTab,
+  });
+
   chrome.tabs.onActivated.addListener(async (info) => {
-    switchToTab(info.tabId);
+    await windowScope.handleActivated(info);
+  });
+
+  chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+    windowScope.handleDetached(tabId, detachInfo);
+  });
+
+  chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+    await windowScope.handleAttached(tabId, attachInfo);
   });
 
   // Also handle window focus changes
   chrome.windows.onFocusChanged.addListener(async (windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-    const [tab] = await chrome.tabs.query({ active: true, windowId });
-    if (tab?.id && tab.id !== currentTabId) {
-      switchToTab(tab.id);
-    }
+    await windowScope.handleFocusChanged(windowId, chrome.windows.WINDOW_ID_NONE);
   });
 
   chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
@@ -3110,7 +3439,6 @@ async function init() {
         messagesEl.innerHTML = html;
         messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
         rebindRestoredMessageControls();
-        scrollToBottom();
       }
     }
   }
@@ -3118,13 +3446,11 @@ async function init() {
   // Start observing the messages container for changes to persist.
   persistObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
   await restoreActiveRunState(restoreTabId);
+  restoreLatestChatTurnPosition();
 
   await loadProviders();
   await testConnection({ skipWebBrainCloud: true });
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (activeTab?.id && activeTab.id !== currentTabId) {
-    await switchToTab(activeTab.id);
-  }
+  await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
@@ -3193,9 +3519,8 @@ if (verboseBtn) {
 }
 
 async function switchToTab(newTabId) {
-  if (newTabId === currentTabId && renderedTabId === newTabId) { pendingTabSwitch = null; return; }
+  if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
   const switchGeneration = ++tabSwitchGeneration;
-  pendingTabSwitch = null;
   tabSwitchTransitionId = newTabId;
   queuedTabSwitchMessages = [];
   // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
@@ -3218,6 +3543,7 @@ async function switchToTab(newTabId) {
 
     currentTabId = newTabId;
     currentAssistantEl = null;
+    resetChatNavigation();
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
 
@@ -3240,9 +3566,9 @@ async function switchToTab(newTabId) {
     restoreInputDraftForTab(newTabId);
     renderAttachmentPreviews();
     renderQueuedComposerMessages(newTabId);
-    scrollToBottom();
     await restoreActiveRunState(newTabId);
     if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+    restoreLatestChatTurnPosition();
     refreshScheduledJobs({ tabId: newTabId });
     refreshRecommendedActions();
   } finally {
@@ -3303,7 +3629,9 @@ async function adoptRestoredRunState(tabId, state) {
       ? res.updates.find(update => update?.type === 'error')
       : null;
     if (returnedErrorUpdate && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
-      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId);
+      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
+        submittedTurnDurable: res.submittedTurnDurable,
+      });
     }
   } catch (error) {
     if (sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
@@ -3340,11 +3668,50 @@ async function applyActiveRunState(numericTabId, state) {
     runAssistantEl.dataset.runRequestId = String(runUi.requestId);
     if (runUi.runId) runAssistantEl.dataset.runId = String(runUi.runId);
     const lastRenderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
+    const replayEvents = Array.isArray(runUi.events) ? runUi.events : [];
+    const snapshotStreamedText = runUi.streamedTextTruncated === true
+      ? ''
+      : String(runUi.streamedText || '');
+    const streamedTextStartSeq = Number(runUi.streamedTextStartSeq || 0);
+    const streamedTextSeq = Number(runUi.streamedTextSeq || 0);
+    const shouldRestoreStreamedText = !!snapshotStreamedText
+      && Number(runUi.seq || 0) >= lastRenderedSeq
+      && (
+        !isTerminalRunUiStatus(runUi.status)
+        || lastRenderedSeq < Number(runUi.seq || 0)
+      );
+    const hasReplayableStreamStart = shouldRestoreStreamedText
+      && streamedTextStartSeq > lastRenderedSeq
+      && replayEvents.some((event) => (
+        event?.type === 'text_delta'
+        && Number(event.seq || 0) === streamedTextStartSeq
+      ));
+    let restoredSnapshotStream = false;
+    const restoreSnapshotStream = () => {
+      if (!shouldRestoreStreamedText || restoredSnapshotStream) return;
+      const textEl = runAssistantEl.querySelector('.message-text');
+      if (!textEl) return;
+      streamedAssistantTextByEl.set(textEl, snapshotStreamedText);
+      textEl.dataset.streamedAssistantActive = 'true';
+      renderStreamedAssistantMarkdownNow(textEl);
+      restoredSnapshotStream = true;
+    };
+    if (!hasReplayableStreamStart) restoreSnapshotStream();
     if (runUi.truncatedBeforeSeq > lastRenderedSeq) {
       addContextCompactedNote({ message: 'Some hidden-tab progress was compacted.' });
     }
-    for (const event of Array.isArray(runUi.events) ? runUi.events : []) {
+    for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
+      const eventSeq = Number(event.seq || 0);
+      const representedBySnapshotStream = shouldRestoreStreamedText
+        && event.type === 'text_delta'
+        && eventSeq >= streamedTextStartSeq
+        && eventSeq <= streamedTextSeq;
+      if (representedBySnapshotStream) {
+        restoreSnapshotStream();
+        runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
+        continue;
+      }
       handleAgentUpdateMessage({
         target: 'sidepanel',
         action: 'agent_update',
@@ -3353,7 +3720,12 @@ async function applyActiveRunState(numericTabId, state) {
         runId: runUi.runId,
         seq: event.seq,
         type: event.type,
-        data: event.data,
+        data: event.type === 'run_complete'
+          ? {
+              ...event.data,
+              submittedTurnDurable: state?.submittedTurnDurable === true,
+            }
+          : event.data,
       });
       runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
     }
@@ -3395,15 +3767,22 @@ async function applyActiveRunState(numericTabId, state) {
     setPlanReviewAwaiting(numericTabId, false);
     setTabProcessing(numericTabId, false);
     setTabAbortRequested(numericTabId, false);
+    const restoredAllowanceCardMissing = !!parseCostAllowanceError(runUi?.finalContent)
+      && !currentAssistantEl?.querySelector('.cost-allowance-error');
     if (runUi && ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(runUi.status)
-        && Number(currentAssistantEl?.dataset.lastRenderedSeq || 0) < Number(runUi.seq || 0)) {
+        && (Number(currentAssistantEl?.dataset.lastRenderedSeq || 0) < Number(runUi.seq || 0)
+          || restoredAllowanceCardMissing)) {
       handleAgentUpdateMessage({
         tabId: numericTabId,
         requestId: runUi.requestId,
         runId: runUi.runId,
-        seq: runUi.seq,
+        ...(restoredAllowanceCardMissing ? {} : { seq: runUi.seq }),
         type: 'run_complete',
-        data: { status: runUi.status, finalContent: runUi.finalContent },
+        data: {
+          status: runUi.status,
+          finalContent: runUi.finalContent,
+          submittedTurnDurable: state?.submittedTurnDurable === true,
+        },
       });
     }
     // Terminal snapshots may already be fully acknowledged, so no replayed
@@ -3661,6 +4040,775 @@ function rebindClarifyCards() {
   });
 }
 
+function planReviewDisplayFields(plan, fallbackMarkdown = '') {
+  const localized = plan?.localized && typeof plan.localized === 'object' ? plan.localized : null;
+  const summary = String(localized?.summary || plan?.summary || '').trim();
+  const stepsSource = Array.isArray(localized?.steps) && localized.steps.length
+    ? localized.steps
+    : (Array.isArray(plan?.steps) ? plan.steps : []);
+  const steps = stepsSource
+    .map((step, index) => ({
+      id: String(step?.id || index + 1).replace(/\.$/, '') || String(index + 1),
+      action: String(step?.action || '').trim(),
+    }))
+    .filter((step) => step.action);
+  const risksSource = Array.isArray(localized?.risks) && localized.risks.length
+    ? localized.risks
+    : (Array.isArray(plan?.risks) ? plan.risks : []);
+  const risks = risksSource.map((risk) => String(risk || '').trim()).filter(Boolean);
+  if (!steps.length && !summary && fallbackMarkdown) {
+    return parsePlanMarkdownToDraft(fallbackMarkdown);
+  }
+  return { summary, steps, risks };
+}
+
+function serializePlanDraftToMarkdown(draft) {
+  const lines = [];
+  const summary = String(draft?.summary || '').trim();
+  if (summary) lines.push(`**${summary}**`, '');
+  const steps = Array.isArray(draft?.steps) ? draft.steps : [];
+  let stepNum = 0;
+  for (const step of steps) {
+    const action = String(step?.action || '').trim();
+    if (!action) continue;
+    stepNum += 1;
+    lines.push(`${stepNum}. ${action}`);
+  }
+  const risks = Array.isArray(draft?.risks)
+    ? draft.risks.map((risk) => String(risk || '').trim()).filter(Boolean)
+    : [];
+  if (risks.length) {
+    if (stepNum) lines.push('');
+    for (const risk of risks) lines.push(`- ⚠️ ${risk}`);
+  }
+  return lines.join('\n').trim();
+}
+
+// Tool names that may appear in verbose step suffixes like "Click Save (click, type)".
+const PLAN_STEP_TOOL_SUFFIX_RE = /^(?:click|type|press|scroll|navigate|find|wait|select|hover|drag|upload|download|screenshot|extract|read|write|fill|submit|focus|blur|tab|enter|escape|key|keys|js|eval|api|fetch|http|network|clipboard|permission|schedule|resume|tool|get|set|new|go|execute|inspect|inject|remove|patch|revert|list|progress|research|shadow|iframe|highlight|scratchpad|done)(?:_[a-z0-9]+)*$/i;
+
+function stripVerbosePlanStepToolSuffix(action) {
+  const text = String(action || '').trim();
+  const match = text.match(/^([\s\S]*?)\s+\(([^()]*)\)\s*$/);
+  if (!match) return text;
+  const suffix = match[2].trim();
+  // Only strip parentheticals that look like planner tool lists, not user text
+  // like "Open invoice (March)" or "Choose plan (annual)".
+  const toolNames = suffix.split(',').map((name) => name.trim()).filter(Boolean);
+  if (!toolNames.length || !toolNames.every((name) => PLAN_STEP_TOOL_SUFFIX_RE.test(name))) return text;
+  return match[1].trim();
+}
+
+function looksLikeVerbosePlanMarkdown(text) {
+  const raw = String(text || '');
+  return /(?:^|\n)\s*Confidence:\s*\d/i.test(raw)
+    || /(?:^|\n)\s*###\s+Completion requirements\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Skills to activate\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Memory strategy\b/i.test(raw)
+    || /(?:^|\n)\s*###\s+Scheduling\b/i.test(raw);
+}
+
+function parsePlanMarkdownToDraft(text) {
+  const lines = String(text || '').split('\n');
+  let summary = '';
+  const steps = [];
+  const risks = [];
+  // Ignore planner execution-metadata sections so "Done" from verbose raw mode
+  // does not ingest skill IDs / memory bullets as risks.
+  let section = 'body'; // body | steps | risks | meta
+  let activeStep = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (section === 'steps' && activeStep) activeStep.action += '\n';
+      continue;
+    }
+
+    const heading = trimmed.match(/^###\s+(.+)$/i);
+    if (heading) {
+      const title = heading[1].trim().toLowerCase();
+      if (/^steps\b/.test(title)) section = 'steps';
+      else if (/^risks?\b/.test(title) || /notes\b/.test(title)) section = 'risks';
+      else if (
+        /completion requirements|skills to activate|memory strategy|scheduling|planner execution metadata/
+          .test(title)
+      ) {
+        section = 'meta';
+      } else {
+        section = 'meta';
+      }
+      activeStep = null;
+      continue;
+    }
+
+    if (section === 'meta') {
+      activeStep = null;
+      continue;
+    }
+    if (/^confidence:\s*/i.test(trimmed)) continue;
+    if (/^(submission required|scratchpad|progress ledger)\b/i.test(trimmed)) continue;
+
+    const bold = trimmed.match(/^\*\*(.+)\*\*$/);
+    if (bold && !summary) {
+      summary = bold[1].trim();
+      activeStep = null;
+      continue;
+    }
+
+    const stepMatch = trimmed.match(/^(\d+)[\.)]\s+(.+)$/);
+    if (stepMatch) {
+      activeStep = {
+        id: stepMatch[1],
+        action: stepMatch[2].trim(),
+      };
+      steps.push(activeStep);
+      section = 'steps';
+      continue;
+    }
+
+    const riskMatch = trimmed.match(/^[-*]\s+(?:⚠️\s*)?(.+)$/);
+    if (riskMatch) {
+      const riskText = riskMatch[1].replace(/^⚠️\s*/, '').trim();
+      if (!riskText) continue;
+      // Only accept risk bullets that are explicitly marked, or that appear
+      // under a Risks heading. Plain metadata bullets never qualify.
+      const explicitRisk = /⚠️/.test(trimmed) || section === 'risks';
+      if (section === 'steps' && activeStep && !explicitRisk) {
+        activeStep.action += `\n${line.trimEnd()}`;
+        continue;
+      }
+      activeStep = null;
+      if (!explicitRisk) continue;
+      if (/^skills?\s+to\s+activate/i.test(riskText)) continue;
+      if (/^(submission required|scratchpad|progress ledger)\b/i.test(riskText)) continue;
+      risks.push(riskText);
+      continue;
+    }
+
+    if (section === 'steps' && activeStep) {
+      activeStep.action += `\n${line.trimEnd()}`;
+      continue;
+    }
+
+    if (!summary && section === 'body' && !/^(confidence|submission required|scratchpad|progress ledger)/i.test(trimmed)) {
+      summary = trimmed.replace(/^#+\s*/, '');
+    }
+  }
+  return {
+    summary,
+    steps: steps
+      .map((step) => ({ ...step, action: stripVerbosePlanStepToolSuffix(step.action) }))
+      .filter((step) => step.action),
+    risks: risks.filter(Boolean),
+  };
+}
+
+function resolveSavedPlanReviewEdit(card) {
+  if (card?.dataset?.planDirty !== 'true' || card.dataset.planEditSource !== 'raw') return null;
+  const editedText = String(card.dataset.editedText || '').trim();
+  if (!editedText) return null;
+  return {
+    editedText,
+    markdownMode: looksLikeVerbosePlanMarkdown(editedText) ? 'verbose' : 'compact',
+  };
+}
+
+function setPlanReviewStructuredControlsDisabled(card, disabled) {
+  const controls = card?.querySelectorAll?.(
+    '.plan-review-summary-input, .plan-review-step-input, .plan-review-add-step, .plan-review-step-number, .plan-review-step-remove',
+  ) || [];
+  for (const control of controls) control.disabled = Boolean(disabled);
+}
+
+const planReviewScrollRestoreFrames = new WeakMap();
+const planReviewScrollSnapshots = new WeakMap();
+
+function restorePlanReviewScrollTop(container, scrollTop) {
+  const previousScrollBehavior = container.style.scrollBehavior;
+  container.style.scrollBehavior = 'auto';
+  container.scrollTop = scrollTop;
+  container.style.scrollBehavior = previousScrollBehavior;
+}
+
+function currentPlanReviewScrollSnapshot(el) {
+  const container = el?.closest?.('#chat-container') || null;
+  if (!container || document.activeElement !== el) return null;
+  if (container.scrollHeight - container.scrollTop - container.clientHeight <= 2) return null;
+  return { container, scrollTop: container.scrollTop };
+}
+
+function capturePlanReviewScrollSnapshot(el) {
+  const snapshot = currentPlanReviewScrollSnapshot(el);
+  if (snapshot) planReviewScrollSnapshots.set(el, snapshot);
+  else planReviewScrollSnapshots.delete(el);
+}
+
+function takePlanReviewScrollSnapshot(el) {
+  const snapshot = planReviewScrollSnapshots.get(el) || null;
+  planReviewScrollSnapshots.delete(el);
+  if (snapshot?.container?.isConnected && document.activeElement === el) return snapshot;
+  return currentPlanReviewScrollSnapshot(el);
+}
+
+function autosizePlanReviewField(el) {
+  if (!el || el.tagName !== 'TEXTAREA') return;
+  const snapshot = takePlanReviewScrollSnapshot(el);
+
+  el.style.height = 'auto';
+  el.style.height = `${Math.max(el.scrollHeight, 28)}px`;
+
+  if (!snapshot) return;
+  const { container, scrollTop } = snapshot;
+  restorePlanReviewScrollTop(container, scrollTop);
+  const pendingFrame = planReviewScrollRestoreFrames.get(el);
+  if (pendingFrame != null) cancelAnimationFrame(pendingFrame);
+  const frame = requestAnimationFrame(() => {
+    planReviewScrollRestoreFrames.delete(el);
+    if (container.isConnected && document.activeElement === el) {
+      restorePlanReviewScrollTop(container, scrollTop);
+    }
+  });
+  planReviewScrollRestoreFrames.set(el, frame);
+}
+
+function getPlanReviewDraftFromDom(card) {
+  const summary = String(card?.querySelector?.('.plan-review-summary-input')?.value || '').trim();
+  const steps = [...(card?.querySelectorAll?.('.plan-review-step-input') || [])]
+    .map((input, index) => ({
+      id: String(index + 1),
+      action: String(input.value || '').trim(),
+    }))
+    .filter((step) => step.action);
+  let risks = [];
+  try {
+    risks = JSON.parse(card?.dataset?.planRisks || '[]');
+  } catch {
+    risks = [];
+  }
+  if (!Array.isArray(risks)) risks = [];
+  risks = risks.map((risk) => String(risk || '').trim()).filter(Boolean);
+  return { summary, steps, risks };
+}
+
+function planReviewOriginalMarkdown(card) {
+  return String(card?.dataset?.originalMarkdown || card?.querySelector?.('.plan-review-edit')?.defaultValue || '').trim();
+}
+
+function syncPlanReviewDraft(card, { fromRaw = false } = {}) {
+  if (!card) return getPlanReviewDraftFromDom(card);
+  const rawTextarea = card.querySelector('.plan-review-edit');
+  let draft;
+  if (fromRaw && rawTextarea) {
+    draft = parsePlanMarkdownToDraft(rawTextarea.value);
+    applyPlanDraftToEditor(card, draft, { preserveFocus: false });
+  } else {
+    draft = getPlanReviewDraftFromDom(card);
+  }
+  const serialized = serializePlanDraftToMarkdown(draft);
+  const original = planReviewOriginalMarkdown(card);
+  const originalCompact = String(card.dataset.originalCompactMarkdown || '').trim();
+  const rawMode = card.dataset.editing === 'true';
+  const currentText = rawMode && rawTextarea
+    ? String(rawTextarea.value || '').trim()
+    : serialized;
+  // Dirty relative to the text the user was shown, or to the compact baseline
+  // for structured edits (so verbose display without changes stays clean).
+  const dirty = rawMode
+    ? currentText !== original
+    : serialized !== originalCompact;
+  card.dataset.planDirty = dirty ? 'true' : 'false';
+  if (dirty) {
+    card.dataset.editedText = currentText;
+    if (!fromRaw) card.dataset.planEditSource = 'structured';
+  } else {
+    delete card.dataset.editedText;
+    delete card.dataset.planEditSource;
+  }
+  if (!rawMode && rawTextarea && document.activeElement !== rawTextarea) {
+    // Keep the hidden raw buffer aligned with structured state when dirty;
+    // otherwise leave the original display text (important for verbose).
+    rawTextarea.value = dirty ? (serialized || original) : original;
+  }
+  const emptyNote = card.querySelector('.plan-review-empty-steps');
+  if (emptyNote) {
+    emptyNote.hidden = draft.steps.length > 0;
+  }
+  schedulePersist();
+  return draft;
+}
+
+function renumberPlanReviewSteps(card) {
+  const list = card?.querySelector?.('.plan-review-steps');
+  if (!list) return;
+  [...list.querySelectorAll('.plan-review-step')].forEach((item, index) => {
+    const number = item.querySelector('.plan-review-step-number');
+    if (number) {
+      const stepNumber = String(index + 1);
+      const reorderLabel = typeof t === 'function'
+        ? t('sp.plan.reorder_step', { step: stepNumber })
+        : `Drag to reorder step ${stepNumber}`;
+      number.textContent = stepNumber;
+      number.setAttribute('aria-label', reorderLabel);
+      number.title = reorderLabel;
+    }
+  });
+}
+
+const planReviewDraggedSteps = new WeakMap();
+
+function clearPlanReviewDropTargets(card) {
+  card?.querySelectorAll?.('.plan-review-step-drop-before, .plan-review-step-drop-after')
+    .forEach((item) => item.classList.remove('plan-review-step-drop-before', 'plan-review-step-drop-after'));
+}
+
+function finishPlanReviewStepDrag(card) {
+  const dragged = planReviewDraggedSteps.get(card);
+  dragged?.classList?.remove('plan-review-step-dragging');
+  planReviewDraggedSteps.delete(card);
+  clearPlanReviewDropTargets(card);
+}
+
+function movePlanReviewStep(card, item, target, placeAfter = false) {
+  const list = card?.querySelector?.('.plan-review-steps');
+  if (!list || !item || !target || item === target) return false;
+  const items = [...list.querySelectorAll('.plan-review-step')];
+  const fromIndex = items.indexOf(item);
+  const targetIndex = items.indexOf(target);
+  if (fromIndex < 0 || targetIndex < 0) return false;
+  const insertionIndex = targetIndex + (placeAfter ? 1 : 0) - (targetIndex > fromIndex ? 1 : 0);
+  if (insertionIndex === fromIndex) return false;
+  const reference = placeAfter ? target.nextElementSibling : target;
+  list.insertBefore(item, reference || null);
+  renumberPlanReviewSteps(card);
+  syncPlanReviewDraft(card);
+  return true;
+}
+
+function bindPlanReviewStepRow(card, item) {
+  if (!card || !item) return;
+  let number = item.querySelector('.plan-review-step-number');
+  const action = item.querySelector('.plan-review-step-input');
+  const removeBtn = item.querySelector('.plan-review-step-remove');
+
+  // Upgrade persisted cards created before step numbers became buttons.
+  if (number && number.tagName !== 'BUTTON') {
+    const handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'plan-review-step-number';
+    handle.textContent = number.textContent;
+    number.replaceWith(handle);
+    number = handle;
+  }
+
+  if (removeBtn && !removeBtn.dataset.bound) {
+    removeBtn.dataset.bound = 'true';
+    removeBtn.addEventListener('click', () => {
+      item.remove();
+      renumberPlanReviewSteps(card);
+      syncPlanReviewDraft(card);
+      const remaining = card.querySelector('.plan-review-step-input');
+      if (remaining) {
+        try { remaining.focus(); } catch {}
+      }
+    });
+  }
+
+  if (action && !action.dataset.bound) {
+    action.dataset.bound = 'true';
+    action.addEventListener('beforeinput', () => capturePlanReviewScrollSnapshot(action));
+    action.addEventListener('input', () => {
+      autosizePlanReviewField(action);
+      syncPlanReviewDraft(card);
+    });
+    autosizePlanReviewField(action);
+  }
+
+  if (number && !number.dataset.bound) {
+    number.dataset.bound = 'true';
+    number.draggable = true;
+    number.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    number.addEventListener('dragstart', (event) => {
+      planReviewDraggedSteps.set(card, item);
+      item.classList.add('plan-review-step-dragging');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', number.textContent || '');
+      }
+    });
+    number.addEventListener('dragend', () => finishPlanReviewStepDrag(card));
+    number.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      const target = event.key === 'ArrowUp' ? item.previousElementSibling : item.nextElementSibling;
+      if (!target?.classList?.contains('plan-review-step')) return;
+      event.preventDefault();
+      if (movePlanReviewStep(card, item, target, event.key === 'ArrowDown')) {
+        try { number.focus(); } catch {}
+      }
+    });
+  }
+
+  if (!item.dataset.bound) {
+    item.dataset.bound = 'true';
+    item.addEventListener('dragover', (event) => {
+      const dragged = planReviewDraggedSteps.get(card);
+      if (!dragged || dragged === item) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const bounds = item.getBoundingClientRect();
+      const placeAfter = event.clientY >= bounds.top + (bounds.height / 2);
+      clearPlanReviewDropTargets(card);
+      item.classList.add(placeAfter ? 'plan-review-step-drop-after' : 'plan-review-step-drop-before');
+    });
+    item.addEventListener('drop', (event) => {
+      const dragged = planReviewDraggedSteps.get(card);
+      if (!dragged || dragged === item) return;
+      event.preventDefault();
+      const bounds = item.getBoundingClientRect();
+      const placeAfter = event.clientY >= bounds.top + (bounds.height / 2);
+      const movedHandle = dragged.querySelector('.plan-review-step-number');
+      movePlanReviewStep(card, dragged, item, placeAfter);
+      finishPlanReviewStepDrag(card);
+      try { movedHandle?.focus(); } catch {}
+    });
+  }
+}
+
+function createPlanReviewStepRow(card, step, index) {
+  const item = document.createElement('div');
+  item.className = 'plan-review-step';
+  item.setAttribute('role', 'listitem');
+
+  const number = document.createElement('button');
+  number.type = 'button';
+  number.className = 'plan-review-step-number';
+  number.textContent = String(step?.id || index + 1).replace(/\.$/, '') || String(index + 1);
+
+  const action = document.createElement('textarea');
+  action.className = 'plan-review-step-input plan-review-step-action';
+  action.rows = 1;
+  action.value = String(step?.action || '');
+  action.placeholder = typeof t === 'function' ? t('sp.plan.step_placeholder') : 'Step action';
+  action.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.step_placeholder') : 'Step action');
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'plan-review-step-remove';
+  removeBtn.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.remove_step') : 'Remove step');
+  removeBtn.title = typeof t === 'function' ? t('sp.plan.remove_step') : 'Remove step';
+  removeBtn.textContent = '×';
+
+  item.appendChild(number);
+  item.appendChild(action);
+  item.appendChild(removeBtn);
+  bindPlanReviewStepRow(card, item);
+  queueMicrotask(() => autosizePlanReviewField(action));
+  return item;
+}
+
+function renderPlanReviewRisks(view, risks) {
+  if (!view) return;
+  const list = Array.isArray(risks)
+    ? risks.map((risk) => String(risk || '').trim()).filter(Boolean)
+    : [];
+  let risksEl = view.querySelector('.plan-review-risks');
+  if (!list.length) {
+    risksEl?.remove();
+    return;
+  }
+  if (!risksEl) {
+    risksEl = document.createElement('div');
+    risksEl.className = 'plan-review-risks';
+    // Keep risks above skills when present.
+    const skills = view.querySelector('.plan-review-skills');
+    if (skills) view.insertBefore(risksEl, skills);
+    else view.appendChild(risksEl);
+  }
+  risksEl.replaceChildren();
+  for (const risk of list) {
+    const riskItem = document.createElement('div');
+    riskItem.className = 'plan-review-risk';
+    riskItem.textContent = `⚠️ ${risk}`;
+    risksEl.appendChild(riskItem);
+  }
+}
+
+function applyPlanDraftToEditor(card, draft, { preserveFocus = true } = {}) {
+  const view = card?.querySelector?.('.plan-review-view');
+  if (!view) return;
+  const summaryInput = view.querySelector('.plan-review-summary-input');
+  if (summaryInput && (!preserveFocus || document.activeElement !== summaryInput)) {
+    summaryInput.value = String(draft?.summary || '');
+    autosizePlanReviewField(summaryInput);
+  }
+  const list = view.querySelector('.plan-review-steps');
+  if (!list) return;
+  const active = document.activeElement;
+  const activeIndex = preserveFocus && active?.classList?.contains('plan-review-step-input')
+    ? [...list.querySelectorAll('.plan-review-step-input')].indexOf(active)
+    : -1;
+  const selectionStart = activeIndex >= 0 ? active.selectionStart : null;
+  const selectionEnd = activeIndex >= 0 ? active.selectionEnd : null;
+  list.replaceChildren();
+  const steps = Array.isArray(draft?.steps) && draft.steps.length
+    ? draft.steps
+    : [{ id: '1', action: '' }];
+  steps.forEach((step, index) => {
+    list.appendChild(createPlanReviewStepRow(card, step, index));
+  });
+  renumberPlanReviewSteps(card);
+  const risks = Array.isArray(draft?.risks) ? draft.risks : [];
+  card.dataset.planRisks = JSON.stringify(risks);
+  renderPlanReviewRisks(view, risks);
+  if (activeIndex >= 0) {
+    const next = list.querySelectorAll('.plan-review-step-input')[activeIndex];
+    if (next) {
+      try {
+        next.focus();
+        if (selectionStart != null) next.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
+      } catch {}
+    }
+  }
+}
+
+function renderPlanReviewSkills(skillIds) {
+  const skills = document.createElement('div');
+  skills.className = 'plan-review-skills';
+  const label = document.createElement('div');
+  label.className = 'plan-review-skills-label';
+  label.textContent = typeof t === 'function' ? t('sp.plan.skills') : 'Skills to activate';
+  skills.appendChild(label);
+  const values = document.createElement('div');
+  values.className = 'plan-review-skill-list';
+  for (const skillId of skillIds) {
+    const value = document.createElement('code');
+    value.className = 'plan-review-skill';
+    value.textContent = skillId;
+    values.appendChild(value);
+  }
+  skills.appendChild(values);
+  return skills;
+}
+
+function renderPlanReviewView(plan, fallbackMarkdown = '') {
+  const view = document.createElement('div');
+  view.className = 'plan-review-view';
+  const draft = planReviewDisplayFields(plan, fallbackMarkdown);
+  const skillIds = Array.isArray(plan?.skill_ids)
+    ? plan.skill_ids.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+
+  const summaryInput = document.createElement('textarea');
+  summaryInput.className = 'plan-review-summary-input plan-review-summary';
+  summaryInput.rows = 1;
+  summaryInput.value = draft.summary;
+  summaryInput.placeholder = typeof t === 'function' ? t('sp.plan.summary_placeholder') : 'Plan summary';
+  summaryInput.setAttribute('aria-label', typeof t === 'function' ? t('sp.plan.summary_placeholder') : 'Plan summary');
+  view.appendChild(summaryInput);
+
+  const list = document.createElement('div');
+  list.className = 'plan-review-steps';
+  list.setAttribute('role', 'list');
+  view.appendChild(list);
+
+  const reorderHint = document.createElement('div');
+  reorderHint.className = 'plan-review-reorder-hint';
+  const reorderIcon = document.createElement('span');
+  reorderIcon.className = 'plan-review-reorder-icon';
+  reorderIcon.setAttribute('aria-hidden', 'true');
+  reorderIcon.textContent = '↕';
+  const reorderText = document.createElement('span');
+  reorderText.textContent = typeof t === 'function'
+    ? t('sp.plan.reorder_hint')
+    : 'Drag step numbers to reorder';
+  reorderHint.append(reorderIcon, reorderText);
+  view.appendChild(reorderHint);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'plan-review-add-step';
+  addBtn.textContent = typeof t === 'function' ? t('sp.plan.add_step') : 'Add step';
+  view.appendChild(addBtn);
+
+  const emptyNote = document.createElement('div');
+  emptyNote.className = 'plan-review-empty-steps';
+  emptyNote.hidden = true;
+  emptyNote.textContent = typeof t === 'function'
+    ? t('sp.plan.empty_steps')
+    : 'Add at least one step before approving.';
+  view.appendChild(emptyNote);
+
+  if (skillIds.length) {
+    view.appendChild(renderPlanReviewSkills(skillIds));
+  }
+  // Risks render after skills placeholder so renderPlanReviewRisks can insert
+  // above skills once the view is mounted with the full draft.
+  renderPlanReviewRisks(view, draft.risks);
+
+  // Steps are filled after the view is attached to the card so remove handlers
+  // can reach the card root via apply/create helpers called from bind.
+  view._initialPlanDraft = draft;
+  return view;
+}
+
+function mountPlanReviewEditor(card, view) {
+  if (!card || !view) return;
+  if (view.dataset.mounted === 'true') {
+    // Rebind path: only re-wire controls if the restored markup already has them.
+    bindPlanReviewEditorControls(card, view);
+    return;
+  }
+  view.dataset.mounted = 'true';
+  const draft = view._initialPlanDraft || getPlanReviewDraftFromDom(card);
+  delete view._initialPlanDraft;
+  card.dataset.planRisks = JSON.stringify(Array.isArray(draft.risks) ? draft.risks : []);
+  applyPlanDraftToEditor(card, draft, { preserveFocus: false });
+  bindPlanReviewEditorControls(card, view);
+}
+
+function bindPlanReviewEditorControls(card, view) {
+  view.querySelectorAll('.plan-review-step').forEach((item) => bindPlanReviewStepRow(card, item));
+
+  const summaryInput = view.querySelector('.plan-review-summary-input');
+  if (summaryInput && !summaryInput.dataset.bound) {
+    summaryInput.dataset.bound = 'true';
+    summaryInput.addEventListener('beforeinput', () => capturePlanReviewScrollSnapshot(summaryInput));
+    summaryInput.addEventListener('input', () => {
+      autosizePlanReviewField(summaryInput);
+      syncPlanReviewDraft(card);
+    });
+    autosizePlanReviewField(summaryInput);
+  }
+
+  const addBtn = view.querySelector('.plan-review-add-step');
+  if (addBtn && !addBtn.dataset.bound) {
+    addBtn.dataset.bound = 'true';
+    addBtn.addEventListener('click', () => {
+      const list = view.querySelector('.plan-review-steps');
+      if (!list) return;
+      const index = list.querySelectorAll('.plan-review-step').length;
+      const row = createPlanReviewStepRow(card, { id: String(index + 1), action: '' }, index);
+      list.appendChild(row);
+      renumberPlanReviewSteps(card);
+      syncPlanReviewDraft(card);
+      const input = row.querySelector('.plan-review-step-input');
+      try { input?.focus(); } catch {}
+    });
+  }
+}
+
+function setPlanReviewRawEditing(card, enabled, { focus = false } = {}) {
+  const textarea = card?.querySelector?.('.plan-review-edit');
+  const changeBtn = card?.querySelector?.('.plan-review-change');
+  if (!textarea) return;
+  if (enabled) {
+    // Prefer original display text when clean (especially verbose). Only push
+    // structured serialization when the user already dirtied the draft.
+    const original = planReviewOriginalMarkdown(card);
+    if (card.dataset.planDirty === 'true') {
+      const draft = getPlanReviewDraftFromDom(card);
+      const serialized = serializePlanDraftToMarkdown(draft);
+      textarea.value = card.dataset.editedText || serialized || original;
+    } else {
+      textarea.value = original;
+    }
+    card.dataset.editing = 'true';
+    if (changeBtn) {
+      changeBtn.textContent = typeof t === 'function' ? t('sp.plan.done_editing_text') : 'Done';
+    }
+    if (focus) {
+      try {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      } catch {}
+    }
+  } else {
+    // Collapse raw mode. If the buffer still matches the original display
+    // text, skip re-parse so verbose metadata is never ingested as risks.
+    const original = planReviewOriginalMarkdown(card);
+    const current = String(textarea.value || '').trim();
+    if (current && current !== original) {
+      syncPlanReviewDraft(card, { fromRaw: true });
+    } else {
+      // Restore clean structured state from the compact baseline.
+      const compact = String(card.dataset.originalCompactMarkdown || original).trim();
+      if (compact) {
+        applyPlanDraftToEditor(card, parsePlanMarkdownToDraft(compact), { preserveFocus: false });
+      }
+      card.dataset.planDirty = 'false';
+      delete card.dataset.editedText;
+      delete card.dataset.planEditSource;
+      textarea.value = original;
+    }
+    card.dataset.editing = 'false';
+    if (changeBtn) {
+      changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
+    }
+  }
+  // The raw buffer is authoritative while visible. Disable the parallel
+  // structured controls so they cannot collect edits that raw approval/Done
+  // would discard. Re-enable them as soon as raw mode collapses.
+  setPlanReviewStructuredControlsDisabled(card, enabled);
+  schedulePersist();
+}
+
+function revealPlanReviewEditor(card, focus = false) {
+  setPlanReviewRawEditing(card, true, { focus });
+}
+
+function resolvePlanReviewApprovalText(card) {
+  const original = planReviewOriginalMarkdown(card);
+  const rawTextarea = card.querySelector('.plan-review-edit');
+  const rawMode = card.dataset.editing === 'true';
+  const displayMode = String(card.dataset.planMarkdownMode || 'compact');
+
+  if (rawMode) {
+    const current = String(rawTextarea?.value || '').trim();
+    if (!current || current === original) {
+      // Unchanged raw buffer — pin original plan object (skills intact).
+      return { editedText: '', markdownMode: displayMode };
+    }
+    // Compact-shaped buffers (or structured serialization after step edits)
+    // must approve as compact so the agent re-appends execution metadata and
+    // does not fail-close skill_ids via verbosePlanEdited.
+    // Verbose-looking buffers keep verbose mode so the agent parses metadata
+    // from the approved text.
+    const markdownMode = looksLikeVerbosePlanMarkdown(current) ? 'verbose' : 'compact';
+    return { editedText: current, markdownMode };
+  }
+
+  // "Done" collapses raw mode after syncing its parsed fields into the
+  // structured editor. Keep the exact dirty buffer as the approval source so
+  // edits to verbose-only metadata (skills, scheduling, submission, etc.) are
+  // not replaced by the lossy structured serialization. A later structured
+  // edit overwrites dataset.editedText with compact markdown via syncPlanReviewDraft.
+  const savedEdit = resolveSavedPlanReviewEdit(card);
+  if (savedEdit) return savedEdit;
+  const draft = getPlanReviewDraftFromDom(card);
+  if (!draft.steps.length) {
+    return { editedText: '', markdownMode: displayMode, emptySteps: true };
+  }
+  const serialized = serializePlanDraftToMarkdown(draft);
+  // Structured edits always approve as compact so the agent re-appends
+  // execution metadata and keeps skill activation from the planner object.
+  // Tradeoff: removing skill-related steps in the structured UI does not
+  // clear planner skill_ids; only verbose raw edits fail-close that path.
+  if (serialized && serialized !== String(card.dataset.originalCompactMarkdown || '').trim()) {
+    return { editedText: serialized, markdownMode: 'compact' };
+  }
+  // Verbose display with no structured changes: leave empty so the agent pins
+  // the original plan object (skills/metadata intact).
+  return { editedText: '', markdownMode: displayMode };
+}
+
+function planReviewViewNeedsHydration(view, savedText = '') {
+  const stepInputs = [...(view?.querySelectorAll?.('.plan-review-step-input') || [])];
+  const hasLiveBindings = view?.querySelector?.('.plan-review-summary-input')?.dataset?.bound === 'true';
+  if (hasLiveBindings) return false;
+  return stepInputs.length === 0
+    || !stepInputs.some((el) => String(el.value || '').trim())
+    || String(savedText || '') !== '';
+}
+
 function bindPlanReviewCard(card) {
   if (!card || card.classList.contains('plan-reviewed')) return;
   const planId = String(card.dataset.planId || '');
@@ -3669,9 +4817,32 @@ function bindPlanReviewCard(card) {
   const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
   if (tabId == null || Number.isNaN(tabId)) return;
 
+  const view = card.querySelector('.plan-review-view');
+  if (view) {
+    // Restored cards lose live textarea values (only defaultValue survives
+    // innerHTML). Prefer dataset.editedText, else rebuild from the original
+    // compact plan so empty restored inputs do not wipe the draft.
+    const saved = card.dataset.editedText;
+    const needsHydrate = planReviewViewNeedsHydration(view, saved);
+    if (needsHydrate) {
+      const sourceText = (saved != null && saved !== '')
+        ? saved
+        : String(card.dataset.originalCompactMarkdown || planReviewOriginalMarkdown(card) || '').trim();
+      if (sourceText) {
+        applyPlanDraftToEditor(card, parsePlanMarkdownToDraft(sourceText), { preserveFocus: false });
+      } else if (view._initialPlanDraft) {
+        applyPlanDraftToEditor(card, view._initialPlanDraft, { preserveFocus: false });
+        delete view._initialPlanDraft;
+      }
+      if (saved != null && saved !== '') card.dataset.planDirty = 'true';
+      view.dataset.mounted = 'true';
+    } else if (view.dataset.mounted !== 'true') {
+      mountPlanReviewEditor(card, view);
+    }
+    bindPlanReviewEditorControls(card, view);
+  }
+
   const textarea = card.querySelector('.plan-review-edit');
-  const originalMarkdown = String(textarea?.defaultValue || textarea?.value || '').trim();
-  const markdownMode = String(card.dataset.planMarkdownMode || 'compact');
   const changeBtn = card.querySelector('.plan-review-change');
 
   // A <textarea>'s live `.value` is NOT captured when the conversation is
@@ -3682,11 +4853,15 @@ function bindPlanReviewCard(card) {
   // textarea from it on rebind. (#3)
   if (textarea) {
     const saved = card.dataset.editedText;
-    if (saved != null && saved !== '') textarea.value = saved;
+    if (saved != null && saved !== '' && card.dataset.editing === 'true') {
+      textarea.value = saved;
+    }
     if (!textarea.dataset.bound) {
       textarea.dataset.bound = 'true';
       textarea.addEventListener('input', () => {
         card.dataset.editedText = textarea.value;
+        card.dataset.planDirty = 'true';
+        card.dataset.planEditSource = 'raw';
         // The persist observer only watches childList/characterData, not
         // attributes, so the data attribute above won't trigger a save on its
         // own — schedule one so the edit reaches storage before a panel reload.
@@ -3695,21 +4870,34 @@ function bindPlanReviewCard(card) {
     }
   }
 
-  if (card.dataset.editing === 'true') revealPlanReviewEditor(card, false);
+  if (card.dataset.editing === 'true') {
+    setPlanReviewRawEditing(card, true, { focus: false });
+  } else if (changeBtn) {
+    changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
+  }
 
   if (changeBtn && !changeBtn.dataset.bound) {
     changeBtn.dataset.bound = 'true';
-    changeBtn.addEventListener('click', () => revealPlanReviewEditor(card, true));
+    changeBtn.addEventListener('click', () => {
+      const enableRaw = card.dataset.editing !== 'true';
+      setPlanReviewRawEditing(card, enableRaw, { focus: enableRaw });
+    });
   }
 
   const approveBtn = card.querySelector('.plan-review-approve');
   if (approveBtn && !approveBtn.dataset.bound) {
     approveBtn.dataset.bound = 'true';
     approveBtn.addEventListener('click', () => {
-      const current = String(textarea?.value || '').trim();
-      const isEditing = card.dataset.editing === 'true';
-      const editedText = isEditing && current && (current !== originalMarkdown || markdownMode === 'verbose') ? current : '';
-      submitPlanReview(card, tabId, planId, 'approve', editedText);
+      const resolution = resolvePlanReviewApprovalText(card);
+      if (resolution.emptySteps) {
+        const emptyNote = card.querySelector('.plan-review-empty-steps');
+        if (emptyNote) emptyNote.hidden = false;
+        return;
+      }
+      // Persist the markdown mode used for this approval (structured edits force
+      // compact so planner execution metadata is re-appended server-side).
+      card.dataset.planMarkdownMode = resolution.markdownMode;
+      submitPlanReview(card, tabId, planId, 'approve', resolution.editedText);
     });
   }
 
@@ -3744,7 +4932,7 @@ function clearPlanReviewActiveRun(assistantEl, tabId = currentTabId) {
     sendBtn.disabled = false;
     hideActivity();
   }
-  drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+  drainQueuedPromptsAfterRunSettles();
   refreshRecommendedActions();
 }
 
@@ -3752,89 +4940,6 @@ function planReviewConfidenceText(plan) {
   const confidence = Number(plan?.confidence);
   if (!Number.isFinite(confidence)) return '';
   return `${Math.round(Math.max(0, Math.min(1, confidence)) * 100)}%`;
-}
-
-function renderPlanReviewView(plan, fallbackMarkdown = '') {
-  const view = document.createElement('div');
-  view.className = 'plan-review-view';
-  // plan is always normalizePlan output (steps arrive trimmed, non-empty),
-  // so the steps can be rendered as-is.
-  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
-  const summary = String(plan?.summary || '').trim();
-  const skillIds = Array.isArray(plan?.skill_ids)
-    ? plan.skill_ids.map(id => String(id || '').trim()).filter(Boolean)
-    : [];
-
-  if (!steps.length) {
-    const fallback = document.createElement('div');
-    fallback.className = 'plan-review-step-fallback';
-    fallback.textContent = (summary || String(fallbackMarkdown || '')).replace(/^#+\s*/gm, '').trim();
-    view.appendChild(fallback);
-  } else {
-    if (summary) {
-      const summaryEl = document.createElement('div');
-      summaryEl.className = 'plan-review-summary';
-      summaryEl.textContent = summary;
-      view.appendChild(summaryEl);
-    }
-
-    const list = document.createElement('div');
-    list.className = 'plan-review-steps';
-    list.setAttribute('role', 'list');
-    for (const [index, step] of steps.entries()) {
-      const item = document.createElement('div');
-      item.className = 'plan-review-step';
-      item.setAttribute('role', 'listitem');
-
-      const number = document.createElement('span');
-      number.className = 'plan-review-step-number';
-      number.textContent = String(step.id).replace(/\.$/, '') || String(index + 1);
-
-      const action = document.createElement('span');
-      action.className = 'plan-review-step-action';
-      action.textContent = step.action;
-
-      item.appendChild(number);
-      item.appendChild(action);
-      list.appendChild(item);
-    }
-    view.appendChild(list);
-  }
-
-  if (skillIds.length) {
-    const skills = document.createElement('div');
-    skills.className = 'plan-review-skills';
-    const label = document.createElement('div');
-    label.className = 'plan-review-skills-label';
-    label.textContent = typeof t === 'function' ? t('sp.plan.skills') : 'Skills to activate';
-    skills.appendChild(label);
-    const values = document.createElement('div');
-    values.className = 'plan-review-skill-list';
-    for (const skillId of skillIds) {
-      const value = document.createElement('code');
-      value.className = 'plan-review-skill';
-      value.textContent = skillId;
-      values.appendChild(value);
-    }
-    skills.appendChild(values);
-    view.appendChild(skills);
-  }
-  return view;
-}
-
-function revealPlanReviewEditor(card, focus = false) {
-  const textarea = card?.querySelector?.('.plan-review-edit');
-  if (!textarea) return;
-  // The data-editing attribute is the single source of truth; sidepanel.css
-  // shows/hides the read-only view, hint, Change button, and textarea from it.
-  card.dataset.editing = 'true';
-  if (focus) {
-    try {
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    } catch {}
-  }
-  schedulePersist();
 }
 
 function rebindPlanReviewCards() {
@@ -3868,6 +4973,16 @@ function rebindSubscribeButtons() {
     btn.addEventListener('click', () => openSubscribeUrl(btn.dataset.subscribeUrl));
   });
   document.querySelectorAll('.subscribe-resume-btn').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = 'true';
+    btn.addEventListener('click', () => resumeAfterSubscription(btn));
+  });
+}
+
+function rebindCostAllowanceButtons() {
+  document.querySelectorAll('.cost-allowance-bump-btn').forEach(bindCostAllowanceButton);
+  document.querySelectorAll('.cost-allowance-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.cost-allowance-continue-btn').forEach(btn => {
     if (btn.dataset.bound) return;
     btn.dataset.bound = 'true';
     btn.addEventListener('click', () => resumeAfterSubscription(btn));
@@ -3936,6 +5051,30 @@ function createActiveChatPayloadState(retryPayload, requestId = '') {
   };
 }
 
+function activeRetryPayloadForRequest(tabId, requestId = '') {
+  const state = activeChatPayloadsByTab.get(tabId);
+  if (!state) return null;
+  const cleanRequestId = String(requestId || '');
+  if (cleanRequestId && state.requestId !== cleanRequestId) return null;
+  return state.retryPayload || null;
+}
+
+function retryPayloadForRunAssistant(assistantEl) {
+  let userEl = assistantEl?.previousElementSibling || null;
+  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
+  const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
+  if (!String(text || '').trim()) return null;
+  return {
+    text,
+    mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
+      ? assistantEl.dataset.runMode
+      : agentMode,
+    apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
+    attachments: [],
+    attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+  };
+}
+
 function clearActiveChatPayloadForTab(tabId) {
   if (tabId != null) activeChatPayloadsByTab.delete(tabId);
 }
@@ -3967,13 +5106,21 @@ function scheduleActiveChatPayloadCleanup(tabId, state) {
   }, 30000);
 }
 
-function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '') {
+function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', options = {}) {
   const message = data?.message || data?.error || 'unknown error';
+  // Allowance routing depends on terminal durable-turn proof. Live error
+  // updates arrive before that proof, so the run_complete/direct response
+  // path owns the single actionable card.
+  if (parseCostAllowanceError(message)) return;
   const active = takeActiveRetryPayloadForError(tabId, requestId, message);
   if (active.duplicate) return;
   const msgEl = addMessage('error', t('sp.error_prefix', { msg: message }), {
     retryPayload: isTabAbortRequested(tabId) ? null : active.retryPayload,
     subscribeResumeMode: active.retryPayload?.mode,
+    costAllowanceResume: {
+      submittedTurnDurable: options.submittedTurnDurable,
+      retryPayload: active.retryPayload,
+    },
   });
   if (active.requestId) {
     msgEl.dataset.tabId = active.tabId;
@@ -3990,7 +5137,9 @@ function rebindRestoredMessageControls() {
   rebindClarifyCards();
   rebindPlanReviewCards();
   rebindScheduleComposers();
+  document.querySelectorAll('form.workflow-parameter-form').forEach(bindSavedWorkflowParameterForm);
   rebindSubscribeButtons();
+  rebindCostAllowanceButtons();
 }
 
 function getProviderPickerOptions() {
@@ -4000,13 +5149,17 @@ function getProviderPickerOptions() {
 
 function setProviderPickerOpen(open) {
   if (!providerPickerMenu || !providerPickerBtn) return;
+  if (open) setLanguagePickerOpen(false);
   providerPickerMenu.classList.toggle('hidden', !open);
   providerPickerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
   if (open) {
     const selected = getProviderPickerOptions().find((btn) => btn.getAttribute('aria-selected') === 'true')
       || getProviderPickerOptions()[0];
+    setPickerMenuHighlight(providerPickerMenu, selected, { instant: true });
     // Focus the selected (or first) option so keyboard users can arrow immediately.
     queueMicrotask(() => selected?.focus());
+  } else {
+    setPickerMenuHighlight(providerPickerMenu, null);
   }
 }
 
@@ -4027,6 +5180,67 @@ function activateFocusedProviderPickerOption() {
     active.click();
   }
 }
+
+function ensurePickerMenuHighlight(menu) {
+  if (!menu) return null;
+  let highlight = menu.querySelector(':scope > .picker-menu-highlight');
+  if (highlight) return highlight;
+  highlight = document.createElement('div');
+  highlight.className = 'picker-menu-highlight';
+  highlight.setAttribute('aria-hidden', 'true');
+  menu.prepend(highlight);
+  return highlight;
+}
+
+function selectedPickerMenuOption(menu) {
+  return menu?.querySelector('.provider-picker-option[aria-selected="true"]') || null;
+}
+
+function setPickerMenuHighlight(menu, option, { instant = false } = {}) {
+  const highlight = ensurePickerMenuHighlight(menu);
+  if (!highlight) return;
+  if (!option || !menu.contains(option)) {
+    highlight.classList.remove('visible');
+    delete highlight.dataset.targetValue;
+    return;
+  }
+  const targetValue = option.dataset.value || '';
+  if (highlight.dataset.targetValue === targetValue && highlight.classList.contains('visible')) return;
+  highlight.dataset.targetValue = targetValue;
+  if (instant) highlight.classList.add('instant');
+  highlight.style.left = `${option.offsetLeft}px`;
+  highlight.style.width = `${option.offsetWidth}px`;
+  highlight.style.height = `${option.offsetHeight}px`;
+  highlight.style.transform = `translate3d(0, ${option.offsetTop}px, 0)`;
+  highlight.classList.add('visible');
+  if (instant) requestAnimationFrame(() => highlight.classList.remove('instant'));
+}
+
+function bindPickerMenuHighlight(menu) {
+  if (!menu || menu.dataset.highlightBound === 'true') return;
+  menu.dataset.highlightBound = 'true';
+  menu.addEventListener('pointerover', (event) => {
+    const option = event.target.closest?.('.provider-picker-option');
+    setPickerMenuHighlight(menu, option && menu.contains(option) ? option : null);
+  });
+  menu.addEventListener('pointerleave', () => {
+    setPickerMenuHighlight(menu, selectedPickerMenuOption(menu));
+  });
+  menu.addEventListener('focusin', (event) => {
+    const option = event.target.closest?.('.provider-picker-option');
+    if (option && menu.contains(option)) setPickerMenuHighlight(menu, option);
+  });
+  menu.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (!menu.contains(document.activeElement)) {
+        setPickerMenuHighlight(menu, selectedPickerMenuOption(menu));
+      }
+    });
+  });
+}
+
+bindPickerMenuHighlight(providerPickerMenu);
+bindPickerMenuHighlight(languagePickerMenu);
 
 function syncProviderPickerButton() {
   if (!providerSelect || !providerPickerLabel) return;
@@ -4106,6 +5320,171 @@ function appendProviderPickerOption(id, name, meta) {
   });
 
   providerPickerMenu.appendChild(btn);
+}
+
+function getLanguagePickerOptions() {
+  if (!languagePickerMenu) return [];
+  return Array.from(languagePickerMenu.querySelectorAll('.language-picker-option'));
+}
+
+function setLanguagePickerOpen(open) {
+  if (!languagePickerMenu || !languagePickerBtn) return;
+  if (open) setProviderPickerOpen(false);
+  languagePickerMenu.classList.toggle('hidden', !open);
+  languagePickerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) {
+    const selected = getLanguagePickerOptions().find((btn) => btn.getAttribute('aria-selected') === 'true')
+      || getLanguagePickerOptions()[0];
+    setPickerMenuHighlight(languagePickerMenu, selected, { instant: true });
+    queueMicrotask(() => selected?.focus());
+  } else {
+    setPickerMenuHighlight(languagePickerMenu, null);
+    languagePickerTypeahead = '';
+    if (languagePickerTypeaheadTimer) clearTimeout(languagePickerTypeaheadTimer);
+    languagePickerTypeaheadTimer = null;
+  }
+}
+
+function moveLanguagePickerFocus(delta) {
+  const options = getLanguagePickerOptions();
+  if (!options.length) return;
+  const active = document.activeElement;
+  let idx = options.indexOf(active);
+  if (idx < 0) idx = options.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
+  if (idx < 0) idx = 0;
+  options[Math.max(0, Math.min(options.length - 1, idx + delta))]?.focus();
+}
+
+function activateFocusedLanguagePickerOption() {
+  const active = document.activeElement;
+  if (active?.classList?.contains('language-picker-option')) active.click();
+}
+
+function focusLanguagePickerByPrefix(key) {
+  if (key.length !== 1 || !key.trim()) return false;
+  languagePickerTypeahead += key.toLocaleLowerCase();
+  if (languagePickerTypeaheadTimer) clearTimeout(languagePickerTypeaheadTimer);
+  languagePickerTypeaheadTimer = setTimeout(() => {
+    languagePickerTypeahead = '';
+    languagePickerTypeaheadTimer = null;
+  }, 700);
+
+  const options = getLanguagePickerOptions();
+  const activeIndex = Math.max(0, options.indexOf(document.activeElement));
+  const ordered = [...options.slice(activeIndex + 1), ...options.slice(0, activeIndex + 1)];
+  const matches = (btn, query) => (btn.dataset.search || '')
+    .split('\n')
+    .some((part) => part.startsWith(query));
+  let match = ordered.find((btn) => matches(btn, languagePickerTypeahead));
+  if (!match && languagePickerTypeahead.length > 1) {
+    languagePickerTypeahead = key.toLocaleLowerCase();
+    match = ordered.find((btn) => matches(btn, languagePickerTypeahead));
+  }
+  match?.focus();
+  return !!match;
+}
+
+function languageFlagSrc(flagCode) {
+  return `../../icons/flags/${flagCode}.svg`;
+}
+
+function syncLanguagePicker() {
+  if (!languageSelect) return;
+  const code = languageSelect.value || getLocale();
+  const language = LANGUAGES.find((item) => item.code === code);
+  if (languagePickerFlag && language?.flagCode) languagePickerFlag.src = languageFlagSrc(language.flagCode);
+  if (languagePickerCode) languagePickerCode.textContent = code.toUpperCase();
+  if (languagePickerBtn) {
+    const controlLabel = `${t('sp.btn.language')}: ${language?.label || code}`;
+    languagePickerBtn.title = controlLabel;
+    languagePickerBtn.setAttribute('aria-label', controlLabel);
+  }
+  getLanguagePickerOptions().forEach((btn) => {
+    btn.setAttribute('aria-selected', btn.dataset.value === code ? 'true' : 'false');
+  });
+}
+
+function appendLanguagePickerSeparator() {
+  if (!languagePickerMenu) return;
+  const separator = document.createElement('div');
+  separator.className = 'language-picker-separator';
+  separator.setAttribute('role', 'separator');
+  languagePickerMenu.appendChild(separator);
+}
+
+function appendLanguagePickerOption(language) {
+  if (!languagePickerMenu) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'provider-picker-option language-picker-option';
+  btn.setAttribute('role', 'option');
+  btn.setAttribute('aria-selected', 'false');
+  btn.dataset.value = language.code;
+  btn.dataset.search = [language.code, language.label, language.englishLabel]
+    .filter(Boolean)
+    .map((part) => String(part).toLocaleLowerCase())
+    .join('\n');
+
+  const flag = document.createElement('img');
+  flag.className = 'language-picker-option-flag';
+  flag.src = languageFlagSrc(language.flagCode);
+  flag.alt = '';
+  flag.setAttribute('aria-hidden', 'true');
+  btn.appendChild(flag);
+
+  const copy = document.createElement('span');
+  copy.className = 'language-picker-option-copy';
+  const nativeName = document.createElement('span');
+  nativeName.className = 'language-picker-option-native';
+  nativeName.textContent = language.label;
+  nativeName.dir = 'auto';
+  copy.appendChild(nativeName);
+  if (language.englishLabel && language.englishLabel !== language.label) {
+    const englishName = document.createElement('span');
+    englishName.className = 'language-picker-option-english';
+    englishName.textContent = language.englishLabel;
+    englishName.dir = 'ltr';
+    copy.appendChild(englishName);
+  }
+  btn.appendChild(copy);
+
+  const codeLabel = document.createElement('span');
+  codeLabel.className = 'language-picker-option-code';
+  codeLabel.textContent = language.code.toUpperCase();
+  codeLabel.dir = 'ltr';
+  btn.appendChild(codeLabel);
+
+  const check = document.createElement('span');
+  check.className = 'language-picker-check';
+  check.textContent = '✓';
+  check.setAttribute('aria-hidden', 'true');
+  btn.appendChild(check);
+
+  btn.addEventListener('click', () => {
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+    if (!languageSelect || languageSelect.value === language.code) return;
+    languageSelect.value = language.code;
+    syncLanguagePicker();
+    languageSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  languagePickerMenu.appendChild(btn);
+}
+
+function initializeLanguagePicker() {
+  if (!languageSelect) return;
+  languageSelect.replaceChildren();
+  languagePickerMenu?.replaceChildren();
+  LANGUAGES.forEach((language, index) => {
+    const option = document.createElement('option');
+    option.value = language.code;
+    option.textContent = language.label;
+    languageSelect.appendChild(option);
+    if (index === 2) appendLanguagePickerSeparator();
+    appendLanguagePickerOption(language);
+  });
+  languageSelect.value = getLocale();
+  syncLanguagePicker();
 }
 
 async function loadProviders() {
@@ -4558,6 +5937,10 @@ function syncSendButtonState() {
     sendBtn.disabled = true;
     return;
   }
+  if (isConversationClearInProgress()) {
+    sendBtn.disabled = true;
+    return;
+  }
   if (!isProcessing) {
     sendBtn.disabled = isAttachmentReadPendingForTab();
     return;
@@ -4597,7 +5980,9 @@ function showComposerToast(message, { duration = 2600 } = {}) {
 }
 
 function addPersistentSlashMessage(content) {
-  return addMessage('system', content, { beforeCurrentAssistant: true });
+  const msgEl = addMessage('system', content, { beforeCurrentAssistant: true });
+  scrollToBottom({ force: true });
+  return msgEl;
 }
 
 function screenshotFilenamePrefix(pageUrl) {
@@ -4848,6 +6233,36 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
+  if (command.value === '/workflow' && action === 'list') {
+    await showSavedWorkflows(tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'save') {
+    await saveLatestWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'run') {
+    await prepareSavedWorkflowRun(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'delete') {
+    await deleteSavedWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'export') {
+    await exportSavedWorkflow(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/workflow' && action === 'import') {
+    requestSavedWorkflowFile(tabId);
+    return '';
+  }
+
   if (command.value === '/scratchpad' && action === 'append') {
     await editScratchpad(payload, tabId);
     return '';
@@ -4859,7 +6274,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/schedule' && action === 'create') {
-    renderScheduleComposer(payload, tabId);
+    await renderScheduleComposer(payload, tabId);
     return '';
   }
 
@@ -4914,8 +6329,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/reset') {
-    await sendToBackground('clear_conversation', { tabId });
-    await renderClearedConversationForTab(tabId);
+    setConversationClearInProgress(tabId, true);
+    try {
+      suppressRunUpdatesForClearedConversation(tabId);
+      if (isTabProcessing(tabId)) await abortRun(tabId);
+      await sendToBackground('clear_conversation', { tabId });
+      await renderClearedConversationForTab(tabId);
+    } finally {
+      setConversationClearInProgress(tabId, false);
+    }
     return '';
   }
 
@@ -5227,6 +6649,7 @@ async function sendMessage(extraChatParams = {}) {
   if (!text) return;
   const submittedText = text;
   const tabId = currentTabId;
+  if (isConversationClearInProgress(tabId)) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
   text = normalizeScreenshotCommandText(text);
@@ -5249,6 +6672,7 @@ async function sendMessage(extraChatParams = {}) {
       syncSendButtonState();
       await parseSlashCommands(text, tabId, { permissionSkipContext });
       if (currentTabId === tabId) {
+        scrollToBottom({ force: true });
         if (!inputEl.value.trim() || inputEl.value.trim() === text) {
           inputEl.value = '';
           autoResizeInput();
@@ -5300,6 +6724,7 @@ async function sendMessage(extraChatParams = {}) {
   // If the entire message was just the slash command, there's nothing
   // left to send to the agent — bail out after the side effect.
   if (!text) {
+    scrollToBottom({ force: true });
     inputEl.value = '';
     autoResizeInput();
     syncSendButtonState();
@@ -5347,13 +6772,19 @@ async function sendMessage(extraChatParams = {}) {
       clearPendingAttachmentsForTab(tabId);
       renderAttachmentPreviews();
     }
+    resetChatNavigation();
     userEl = addMessage('user', text);
     showActivity(t('sp.activity.thinking'));
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
+    assistantEl.dataset.retryApiMutationsAllowed = apiMutationsAllowedForSend ? 'true' : 'false';
+    assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
+    if (beginReadingFirstTurn(userEl, assistantEl)) {
+      scrollChatToQuestion({ smooth: false });
+    }
   }
   const activePayloadState = createActiveChatPayloadState(retryPayload, requestId);
   activeChatPayloadsByTab.set(tabId, activePayloadState);
@@ -5391,8 +6822,14 @@ async function sendMessage(extraChatParams = {}) {
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(u => u?.type === 'error')
       : null;
-    if (returnedErrorUpdate && renderToCurrentTab && currentTabId === tabId && !isTabAbortRequested(tabId)) {
-      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId);
+    if (returnedErrorUpdate
+        && renderToCurrentTab
+        && currentTabId === tabId
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
+      renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
+        submittedTurnDurable: res.submittedTurnDurable,
+      });
     }
 
     // An unsupported-attachment rejection never records the turn in history;
@@ -5423,10 +6860,22 @@ async function sendMessage(extraChatParams = {}) {
       }
     } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl) {
       const textEl = assistantEl.querySelector('.message-text');
-      if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
+      if (textEl && parseCostAllowanceError(res.content)) {
+        if (!textEl.classList.contains('cost-allowance-error')) {
+          renderCostAllowanceError(textEl, res.content, modeForSend, {
+            submittedTurnDurable: res.submittedTurnDurable,
+            retryPayload,
+          });
+        }
+        addMessageCopyButton(assistantEl);
+      } else if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
         renderAssistantTextUpdate(assistantEl, res.content);
       } else if (textEl && !textEl.textContent.trim()) {
-        if (!renderSubscribeError(textEl, res.content)) {
+        if (!renderCostAllowanceError(textEl, res.content, modeForSend, {
+              submittedTurnDurable: res.submittedTurnDurable,
+              retryPayload,
+            })
+            && !renderSubscribeError(textEl, res.content, modeForSend)) {
           textEl.innerHTML = formatMarkdown(res.content);
         }
         addMessageCopyButton(assistantEl);
@@ -5451,7 +6900,10 @@ async function sendMessage(extraChatParams = {}) {
         }
         syncSendButtonState();
       }
-    } else if (renderToCurrentTab && currentTabId === tabId && !isTabAbortRequested(tabId)) {
+    } else if (renderToCurrentTab
+        && currentTabId === tabId
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
     }
   } finally {
@@ -5484,7 +6936,7 @@ async function sendMessage(extraChatParams = {}) {
       });
     }
     if (renderToCurrentTab && currentTabId === tabId) refreshRecommendedActions();
-    await drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+    await drainQueuedPromptsAfterRunSettles();
   }
   return accepted;
 }
@@ -5718,11 +7170,31 @@ function ensureCurrentRunAssistant(msg) {
       && (!currentAssistantEl.dataset.runRequestId || currentAssistantEl.dataset.runRequestId === requestId)) {
     assistantEl = currentAssistantEl;
   }
-  if (!assistantEl) assistantEl = addMessage('assistant', '');
+  if (!assistantEl) {
+    resetChatNavigation();
+    assistantEl = addMessage('assistant', '');
+  }
   assistantEl.dataset.runRequestId = requestId;
   if (msg.runId) assistantEl.dataset.runId = String(msg.runId);
   currentAssistantEl = assistantEl;
   return assistantEl;
+}
+
+function suppressRunUpdatesForClearedConversation(tabId) {
+  const requestId = String(
+    localRunRequestIds.get(Number(tabId))
+      || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
+      || '',
+  );
+  if (!requestId) return;
+  // Runtime messages are delivered asynchronously. Keep recently cleared
+  // request IDs so a terminal update already queued by the background cannot
+  // recreate an assistant bubble after the empty conversation is rendered.
+  clearedConversationRunRequestIds.delete(requestId);
+  clearedConversationRunRequestIds.add(requestId);
+  while (clearedConversationRunRequestIds.size > 100) {
+    clearedConversationRunRequestIds.delete(clearedConversationRunRequestIds.values().next().value);
+  }
 }
 
 function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestId = '', runId = '', remove = true } = {}) {
@@ -5747,6 +7219,8 @@ function handleAgentUpdateMessage(msg) {
     });
     return;
   }
+
+  if (msg.requestId && clearedConversationRunRequestIds.has(String(msg.requestId))) return;
 
   // Drop updates that belong to a different tab's run. agent_update is a
   // window-wide broadcast (chrome.runtime.sendMessage has no per-tab
@@ -5804,18 +7278,28 @@ function handleAgentUpdateMessage(msg) {
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
         if (textEl && textEl.dataset.suppressToolCallStream !== 'true') {
-          const nextText = textEl.textContent + data.content;
+          // Keep the raw Markdown separate from the rendered DOM. Reading back
+          // textContent would discard markers such as ** and backticks after
+          // the first incremental render, corrupting every later chunk. A
+          // restored chat intentionally persists only an active-stream marker,
+          // while the background journal normally rehydrates the raw source.
+          // Use visible text only as a legacy/overflow fallback so a new chunk
+          // cannot erase the existing response before the authoritative
+          // terminal render restores exact Markdown formatting.
+          const previousText = getStreamedAssistantText(textEl)
+            || (hasStreamedAssistantText(textEl) ? textEl.innerText || textEl.textContent : '');
+          const nextText = previousText + String(data.content || '');
           if (looksLikeRawToolCallText(nextText)) {
             textEl.textContent = '';
             clearStreamedAssistantText(textEl);
             textEl.dataset.suppressToolCallStream = 'true';
           } else {
-            textEl.textContent = nextText;
             streamedAssistantTextByEl.set(textEl, nextText);
+            textEl.dataset.streamedAssistantActive = 'true';
+            scheduleStreamedAssistantMarkdownRender(textEl);
           }
         }
       }
-      scrollToBottom();
       break;
 
     case 'tool_call':
@@ -5881,6 +7365,9 @@ function handleAgentUpdateMessage(msg) {
 
     case 'warning':
       hideActivity();
+      if (data?.code === 'ask_stream_fallback') {
+        showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
+      }
       break;
 
     case 'run_complete':
@@ -5892,9 +7379,41 @@ function handleAgentUpdateMessage(msg) {
       });
       if (currentAssistantEl && data?.finalContent) {
         const textEl = currentAssistantEl.querySelector('.message-text');
-        if (textEl && !textEl.textContent.trim()) {
+        const streamedText = getStreamedAssistantText(textEl);
+        const hasStreamedText = hasStreamedAssistantText(textEl);
+        const visibleStreamedText = streamedText
+          || (hasStreamedText ? textEl?.innerText || textEl?.textContent || '' : '');
+        if (textEl && parseCostAllowanceError(data.finalContent)) {
+          clearAssistantTextStreamState(currentAssistantEl);
+          if (!textEl.classList.contains('cost-allowance-error')) {
+            renderCostAllowanceError(textEl, data.finalContent, '', {
+              submittedTurnDurable: data.submittedTurnDurable,
+              retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId)
+                || retryPayloadForRunAssistant(currentAssistantEl),
+            });
+          }
+          addMessageCopyButton(currentAssistantEl);
+        } else if (textEl && hasStreamedText) {
+          // Background/restored runs do not necessarily reach the local
+          // sendRunWithReconnect response handler. Finalize their lightweight
+          // live Markdown here, cancelling any queued frame and enabling the
+          // terminal-only syntax, math, and copy enhancements. Preserve useful
+          // partial text when the user stopped the run; otherwise the terminal
+          // snapshot is authoritative if it differs from the live stream.
+          const terminalContent = data.status === 'stopped' || data.status === 'cancelled'
+            ? visibleStreamedText
+            : String(data.finalContent);
+          renderAssistantTextUpdate(currentAssistantEl, terminalContent, {
+            replace: terminalContent !== streamedText,
+          });
+        } else if (textEl && !textEl.textContent.trim()) {
+          clearAssistantTextStreamState(currentAssistantEl);
           if (data.status === 'stopped' || data.status === 'cancelled') textEl.innerHTML = t('sp.stopped_by_user_html');
-          else if (!renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent);
+          else if (!renderCostAllowanceError(textEl, data.finalContent, '', {
+                submittedTurnDurable: data.submittedTurnDurable,
+                retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId),
+              })
+              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent);
           addMessageCopyButton(currentAssistantEl);
         }
       }
@@ -5974,8 +7493,10 @@ function renderClarifyCard(data) {
   if (scheduledJobId) hideRecommendedActions();
   let assistantEl = currentAssistantEl;
   if (scheduledJobId && data.forceNewScheduledCard) {
+    resetChatNavigation();
     assistantEl = addMessage('assistant', '');
   } else if (scheduledJobId && !assistantEl) {
+    resetChatNavigation();
     assistantEl = addMessage('assistant', '');
     currentAssistantEl = assistantEl;
   } else if (!assistantEl) {
@@ -6063,7 +7584,7 @@ function renderClarifyCard(data) {
     }
     card.appendChild(optionsEl);
     content.appendChild(card);
-    scrollToBottom();
+    scrollToBottom({ force: true });
     return;
   }
 
@@ -6101,7 +7622,7 @@ function renderClarifyCard(data) {
     card.appendChild(optionsEl);
     content.appendChild(card);
     void maybeShowPermissionEducationHint(card);
-    scrollToBottom();
+    scrollToBottom({ force: true });
     return;
   }
 
@@ -6166,7 +7687,7 @@ function renderClarifyCard(data) {
   }
 
   content.appendChild(card);
-  scrollToBottom();
+  scrollToBottom({ force: true });
   try { input.focus(); } catch {}
 }
 
@@ -6253,8 +7774,11 @@ function renderPlanReviewCard(data) {
   if (tabId == null) return;
   let assistantEl = currentAssistantEl;
   if (!assistantEl) {
+    resetChatNavigation();
     assistantEl = addMessage('assistant', '');
     currentAssistantEl = assistantEl;
+    const questionEl = precedingUserMessage(assistantEl);
+    beginReadingFirstTurn(questionEl, assistantEl);
   }
 
   const planId = String(data.planId || '');
@@ -6270,7 +7794,6 @@ function renderPlanReviewCard(data) {
       bindPlanReviewCard(existing);
       setPlanReviewAwaiting(tabId, true, existing.closest('.message.assistant'));
     }
-    scrollToBottom();
     return;
   }
 
@@ -6311,12 +7834,18 @@ function renderPlanReviewCard(data) {
   const useVerbosePlan = verboseMode && !!data.verboseMarkdown;
   const originalMarkdown = useVerbosePlan ? verboseMarkdown : compactMarkdown;
   card.dataset.planMarkdownMode = useVerbosePlan ? 'verbose' : 'compact';
+  card.dataset.originalMarkdown = originalMarkdown;
+  // Structured dirty checks always compare against compact display text so
+  // step edits do not look "clean" relative to a verbose original blob.
+  card.dataset.originalCompactMarkdown = compactMarkdown;
+  card.dataset.planDirty = 'false';
 
-  card.appendChild(renderPlanReviewView(data.plan, compactMarkdown));
+  const view = renderPlanReviewView(data.plan, compactMarkdown);
+  card.appendChild(view);
 
   const editHint = document.createElement('div');
   editHint.className = 'plan-review-hint';
-  editHint.textContent = typeof t === 'function' ? t('sp.plan.edit_hint') : 'Optional: edit the plan before approving';
+  editHint.textContent = typeof t === 'function' ? t('sp.plan.edit_hint') : 'Optional: edit the plan as markdown';
   card.appendChild(editHint);
 
   const textarea = document.createElement('textarea');
@@ -6332,12 +7861,12 @@ function renderPlanReviewCard(data) {
   const approveBtn = document.createElement('button');
   approveBtn.type = 'button';
   approveBtn.className = 'plan-review-approve';
-  approveBtn.textContent = typeof t === 'function' ? t('sp.plan.approve') : 'Approve & run';
+  approveBtn.textContent = typeof t === 'function' ? t('sp.plan.approve') : 'Run';
 
   const changeBtn = document.createElement('button');
   changeBtn.type = 'button';
   changeBtn.className = 'plan-review-change';
-  changeBtn.textContent = typeof t === 'function' ? t('sp.plan.change') : 'Change';
+  changeBtn.textContent = typeof t === 'function' ? t('sp.plan.edit_as_text') : 'Edit as text';
 
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
@@ -6348,11 +7877,21 @@ function renderPlanReviewCard(data) {
   actions.appendChild(changeBtn);
   actions.appendChild(cancelBtn);
   card.appendChild(actions);
+  mountPlanReviewEditor(card, view);
+  // Anchor dirty-checks to the structured serializer's output, not the
+  // planner markdown string, so renumbering/whitespace alone is not an edit.
+  const initialSerialized = serializePlanDraftToMarkdown(getPlanReviewDraftFromDom(card));
+  card.dataset.originalCompactMarkdown = initialSerialized;
+  if (!useVerbosePlan) {
+    card.dataset.originalMarkdown = initialSerialized;
+    textarea.value = initialSerialized;
+    textarea.defaultValue = initialSerialized;
+  }
   bindPlanReviewCard(card);
 
   content.appendChild(card);
   setPlanReviewAwaiting(tabId, true, assistantEl);
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 function submitPlanReview(card, tabId, planId, action, editedText) {
@@ -6486,7 +8025,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
           syncSendButtonState();
           hideActivity();
         }
-        drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+        drainQueuedPromptsAfterRunSettles();
       }
       /* background may be torn down — clarify state already lives there */
     });
@@ -6614,15 +8153,56 @@ function looksLikeRawToolCallText(text) {
 }
 
 const streamedAssistantTextByEl = new WeakMap();
+const streamedAssistantRenderFrameByEl = new WeakMap();
 
 function getStreamedAssistantText(textEl) {
   return streamedAssistantTextByEl.get(textEl) || textEl?.dataset?.streamedAssistantText || '';
 }
 
+function hasStreamedAssistantText(textEl) {
+  return !!textEl && (
+    streamedAssistantTextByEl.has(textEl)
+    || textEl.dataset.streamedAssistantActive === 'true'
+    || !!textEl.dataset.streamedAssistantText
+  );
+}
+
 function clearStreamedAssistantText(textEl) {
   if (!textEl) return;
+  const frame = streamedAssistantRenderFrameByEl.get(textEl);
+  if (frame != null) cancelAnimationFrame(frame);
+  streamedAssistantRenderFrameByEl.delete(textEl);
   streamedAssistantTextByEl.delete(textEl);
+  delete textEl.dataset.streamedAssistantActive;
   delete textEl.dataset.streamedAssistantText;
+}
+
+function renderStreamedAssistantMarkdownNow(textEl) {
+  if (!textEl || textEl.dataset.suppressToolCallStream === 'true') return;
+  const streamedText = getStreamedAssistantText(textEl);
+  if (!streamedText) return;
+  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false });
+  scrollToBottom();
+}
+
+function scheduleStreamedAssistantMarkdownRender(textEl) {
+  if (!textEl || streamedAssistantRenderFrameByEl.has(textEl)) return;
+  const frame = requestAnimationFrame(() => {
+    if (streamedAssistantRenderFrameByEl.get(textEl) !== frame) return;
+    streamedAssistantRenderFrameByEl.delete(textEl);
+    renderStreamedAssistantMarkdownNow(textEl);
+  });
+  streamedAssistantRenderFrameByEl.set(textEl, frame);
+}
+
+function flushPendingStreamedAssistantMarkdownRenders(root = messagesEl) {
+  root?.querySelectorAll?.('.message-text[data-streamed-assistant-active="true"]').forEach((textEl) => {
+    const frame = streamedAssistantRenderFrameByEl.get(textEl);
+    if (frame == null) return;
+    cancelAnimationFrame(frame);
+    streamedAssistantRenderFrameByEl.delete(textEl);
+    renderStreamedAssistantMarkdownNow(textEl);
+  });
 }
 
 function clearAssistantTextStreamState(assistantEl) {
@@ -6644,6 +8224,16 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
     return;
   }
 
+  // Cost-limit text can stream before the terminal snapshot tells us whether
+  // Retry or Continue is safe. Keep the bubble empty so the terminal renderer
+  // can build the card with authoritative resume context.
+  if (parseCostAllowanceError(content)) {
+    textEl.replaceChildren();
+    clearStreamedAssistantText(textEl);
+    delete textEl.dataset.suppressToolCallStream;
+    return;
+  }
+
   if (renderSubscribeError(textEl, content)) {
     clearStreamedAssistantText(textEl);
     delete textEl.dataset.suppressToolCallStream;
@@ -6652,9 +8242,10 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   }
 
   const streamedText = getStreamedAssistantText(textEl);
-  const isDuplicateStreamFinal = streamedText && streamedText === String(content);
+  const hasStreamedText = hasStreamedAssistantText(textEl);
+  const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;
 
-  if (options.replace === true) {
+  if (options.replace === true || restoredStreamNeedsReplacement) {
     // A rejected streamed terminal must replace its already-rendered deltas
     // even in Verbose mode; appending would leave the invalid plan visible.
     // Empty content clears the bubble (plan-only retry before recovery tools).
@@ -6665,18 +8256,18 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
       textEl.textContent = '';
       clearStreamedAssistantText(textEl);
     }
-  } else if (verboseMode && !isDuplicateStreamFinal) {
+  } else if (verboseMode && !hasStreamedText) {
     // Verbose mode: append each non-streamed turn as its own paragraph so
     // intermediate prose is preserved alongside the steps log. Streaming
-    // finals are already visible live, so format the existing stream instead
-    // of appending a duplicate paragraph at run completion.
+    // finals are already visible live, so format the authoritative terminal
+    // content in place even when cleanup changed it from the raw stream.
     const para = document.createElement('div');
     para.className = 'reasoning-step';
     para.innerHTML = formatMarkdown(content);
     textEl.appendChild(para);
   } else {
     // Compact mode keeps only the latest blurb. A streamed final lands here
-    // too so the live plain text becomes the normal formatted final answer.
+    // too for one authoritative render with terminal-only enhancements.
     textEl.innerHTML = formatMarkdown(content);
   }
 
@@ -6762,6 +8353,76 @@ function appendVerboseToolResult(name, result) {
 // line once the free daily allowance runs out. Detect that shape so we can turn
 // the bare URL into a real Subscribe button instead of making the user copy it.
 const SUBSCRIBE_ERROR_RE = /Subscribe for more usage:\s*(https?:\/\/\S+)/i;
+const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
+const COST_ALLOWANCE_BUMP_USD = 10;
+
+function parseCostAllowanceError(content) {
+  if (typeof content !== 'string') return null;
+  const match = content.match(COST_ALLOWANCE_ERROR_RE);
+  if (!match) return null;
+  const limitUsd = Number(match[2]);
+  if (!Number.isFinite(limitUsd) || limitUsd < 0) return null;
+  return {
+    scope: match[1].toLowerCase() === 'this session' ? 'session' : 'total',
+    limitUsd,
+    message: content.replace(/\s*Increase or reset the allowance in Settings\.\s*$/i, '').trim(),
+  };
+}
+
+function formatCostAllowanceUsd(value) {
+  const amount = Number(value);
+  return '$' + (Number.isFinite(amount) && amount >= 0 ? amount : 0).toFixed(2);
+}
+
+function bindCostAllowanceButton(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', async () => {
+    if (btn.disabled) return;
+    const scope = btn.dataset.costAllowanceScope === 'session' ? 'session' : 'total';
+    const storageKey = scope === 'session' ? 'costAllowanceSessionUsd' : 'costAllowanceTotalUsd';
+    const parsedLimit = Number(btn.dataset.costAllowanceLimit);
+    btn.disabled = true;
+    btn.textContent = '…';
+    btn.setAttribute('aria-busy', 'true');
+
+    try {
+      const stored = await chrome.storage.local.get([storageKey]);
+      const storedLimit = Number(stored?.[storageKey]);
+      const currentLimit = Number.isFinite(storedLimit) && storedLimit >= 0
+        ? storedLimit
+        : (Number.isFinite(parsedLimit) && parsedLimit >= 0 ? parsedLimit : COST_ALLOWANCE_BUMP_USD);
+      const nextLimit = Math.round((currentLimit + COST_ALLOWANCE_BUMP_USD) * 100) / 100;
+      await chrome.storage.local.set({ [storageKey]: nextLimit });
+
+      btn.dataset.costAllowanceLimit = String(nextLimit);
+      btn.textContent = `✓ ${formatCostAllowanceUsd(nextLimit)}`;
+      btn.setAttribute('aria-busy', 'false');
+      btn.classList.add('cost-allowance-bumped');
+      const card = btn.closest('.cost-allowance-error');
+      const resumeBtn = card?.querySelector('.cost-allowance-retry-btn, .cost-allowance-continue-btn');
+      if (resumeBtn) resumeBtn.hidden = false;
+      const status = card?.querySelector('.cost-allowance-status');
+      const scopeLabel = t(scope === 'session'
+        ? 'st.display.cost_session_limit.label'
+        : 'st.display.cost_total_limit.label');
+      const success = `${scopeLabel}: ${formatCostAllowanceUsd(nextLimit)}`;
+      if (status) status.textContent = success;
+      showComposerToast(success, { duration: 5000 });
+      schedulePersist();
+    } catch (error) {
+      btn.disabled = false;
+      btn.textContent = '+ $10';
+      btn.setAttribute('aria-busy', 'false');
+      const failure = t('sp.error_prefix', {
+        msg: error?.message || String(error || 'unknown error'),
+      });
+      const status = btn.closest('.cost-allowance-error')?.querySelector('.cost-allowance-status');
+      if (status) status.textContent = failure;
+      showComposerToast(failure, { duration: 5000 });
+    }
+  });
+}
 
 function parseSubscribeError(content) {
   if (typeof content !== 'string') return null;
@@ -6823,32 +8484,105 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   return true;
 }
 
-function addErrorRetryButton(msgEl, retryPayload) {
-  if (!msgEl || !retryPayload?.text || msgEl.querySelector('.error-retry-btn')) return;
+function renderCostAllowanceError(textEl, content, resumeMode = '', resumeOptions = {}) {
+  const parsed = parseCostAllowanceError(content);
+  if (!parsed) return false;
+
+  textEl.replaceChildren();
+  textEl.classList.add('cost-allowance-error');
+
+  const msg = document.createElement('div');
+  msg.className = 'cost-allowance-error-text';
+  msg.textContent = parsed.message;
+  textEl.appendChild(msg);
+
+  const actions = document.createElement('div');
+  actions.className = 'cost-allowance-actions';
+
+  const bumpBtn = document.createElement('button');
+  bumpBtn.type = 'button';
+  bumpBtn.className = 'cost-allowance-bump-btn';
+  bumpBtn.textContent = '+ $10';
+  bumpBtn.dataset.costAllowanceScope = parsed.scope;
+  bumpBtn.dataset.costAllowanceLimit = String(parsed.limitUsd);
+  const allowanceLabel = t(parsed.scope === 'session'
+    ? 'st.display.cost_session_limit.label'
+    : 'st.display.cost_total_limit.label');
+  bumpBtn.title = `${allowanceLabel}: +$10`;
+  bumpBtn.setAttribute('aria-label', bumpBtn.title);
+  bindCostAllowanceButton(bumpBtn);
+  actions.appendChild(bumpBtn);
+
+  const canContinue = resumeOptions?.submittedTurnDurable === true;
+  const requiresRetry = !canContinue;
+  if (requiresRetry && resumeOptions?.retryPayload?.text) {
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'cost-allowance-retry-btn';
+    retryBtn.textContent = t('sp.retry');
+    retryBtn.hidden = true;
+    configureRetryButton(retryBtn, resumeOptions.retryPayload);
+    actions.appendChild(retryBtn);
+  } else if (canContinue) {
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.className = 'cost-allowance-continue-btn';
+    continueBtn.textContent = t('sp.continue_btn');
+    continueBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
+      ? resumeMode
+      : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
+    continueBtn.hidden = true;
+    continueBtn.dataset.bound = 'true';
+    continueBtn.addEventListener('click', () => resumeAfterSubscription(continueBtn));
+    actions.appendChild(continueBtn);
+  }
+
+  textEl.appendChild(actions);
+
+  const status = document.createElement('div');
+  status.className = 'cost-allowance-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  textEl.appendChild(status);
+  return true;
+}
+
+function configureRetryButton(btn, retryPayload) {
+  if (!btn || !retryPayload?.text) return false;
   const retryId = `retry-${Date.now()}-${++retryPayloadSeq}`;
   const attachments = Array.isArray(retryPayload.attachments) ? retryPayload.attachments.slice() : [];
   if (attachments.length) {
     retryAttachmentPayloads.set(retryId, attachments);
     trackRetryAttachmentId(renderedTabId ?? currentTabId, retryId);
   }
+  btn.dataset.retryId = retryId;
+  btn.dataset.retryText = String(retryPayload.text || '');
+  btn.dataset.retryMode = retryPayload.mode || 'ask';
+  btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
+  const attachmentCount = Number.isFinite(Number(retryPayload.attachmentCount))
+    ? Math.max(0, Number(retryPayload.attachmentCount))
+    : attachments.length;
+  btn.dataset.retryAttachmentCount = String(attachmentCount);
+  bindErrorRetryButton(btn);
+  return true;
+}
+
+function addErrorRetryButton(msgEl, retryPayload) {
+  if (!msgEl || !retryPayload?.text || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn')) return;
   msgEl.classList.add('retryable');
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'error-retry-btn';
   btn.title = t('sp.retry');
   btn.setAttribute('aria-label', t('sp.retry'));
-  btn.dataset.retryId = retryId;
-  btn.dataset.retryText = String(retryPayload.text || '');
-  btn.dataset.retryMode = retryPayload.mode || 'ask';
-  btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
-  btn.dataset.retryAttachmentCount = String(attachments.length);
   btn.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <polyline points="23 4 23 10 17 10"></polyline>
       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
     </svg>`;
-  bindErrorRetryButton(btn);
-  msgEl.querySelector('.message-content')?.appendChild(btn);
+  if (configureRetryButton(btn, retryPayload)) {
+    msgEl.querySelector('.message-content')?.appendChild(btn);
+  }
 }
 
 function addMessage(role, content, options = {}) {
@@ -6876,7 +8610,13 @@ function addMessage(role, content, options = {}) {
   } else if (role === 'system') {
     if (isSystemHtml(content)) textEl.innerHTML = content.__systemHtml;
     else textEl.textContent = content || '';
-  } else if (!renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
+  } else if (!renderCostAllowanceError(
+    textEl,
+    content,
+    options.subscribeResumeMode,
+    options.costAllowanceResume,
+  )
+      && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
     textEl.innerHTML = content ? formatMarkdown(content) : '';
   }
 
@@ -6888,7 +8628,8 @@ function addMessage(role, content, options = {}) {
     messagesEl.appendChild(msgEl);
   }
 
-  if (role === 'error' && options.retryPayload) {
+  if (role === 'error' && options.retryPayload
+      && !textEl.classList.contains('cost-allowance-error')) {
     addErrorRetryButton(msgEl, options.retryPayload);
   }
 
@@ -6957,6 +8698,7 @@ function displayMaxAgentSteps(value) {
 function showContinueButton() {
   // Remove any existing continue button
   document.querySelectorAll('.continue-bar').forEach(el => el.remove());
+  resetChatNavigation();
 
   const bar = document.createElement('div');
   bar.className = 'continue-bar';
@@ -6965,7 +8707,7 @@ function showContinueButton() {
     <button class="continue-btn" id="btn-continue">${escapeHtml(t('sp.continue_btn'))}</button>
   `;
   messagesEl.appendChild(bar);
-  scrollToBottom();
+  scrollToBottom({ force: true });
 
   document.getElementById('btn-continue').addEventListener('click', continueAgent);
 }
@@ -6990,11 +8732,16 @@ async function continueAgent(options = {}) {
     // Remove the continue bar only after the durable history id is hydrated.
     document.querySelectorAll('.continue-bar').forEach(el => el.remove());
 
+    resetChatNavigation();
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
+    const questionEl = precedingUserMessage(assistantEl);
+    if (beginReadingFirstTurn(questionEl, assistantEl)) {
+      scrollChatToQuestion({ smooth: false });
+    }
     showActivity(t('sp.activity.continuing'));
     localRunRequestIds.set(tabId, requestId);
 
@@ -7010,17 +8757,30 @@ async function continueAgent(options = {}) {
 
     if (currentTabId === tabId && res?.content && assistantEl) {
       const textEl = assistantEl.querySelector('.message-text');
-      if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
+      if (textEl && parseCostAllowanceError(res.content)) {
+        if (!textEl.classList.contains('cost-allowance-error')) {
+          renderCostAllowanceError(textEl, res.content, modeForSend, {
+            submittedTurnDurable: res.submittedTurnDurable,
+          });
+        }
+        addMessageCopyButton(assistantEl);
+      } else if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
         renderAssistantTextUpdate(assistantEl, res.content);
       } else if (textEl && !textEl.textContent.trim()) {
-        if (!renderSubscribeError(textEl, res.content)) {
+        if (!renderCostAllowanceError(textEl, res.content, modeForSend, {
+              submittedTurnDurable: res.submittedTurnDurable,
+            })
+            && !renderSubscribeError(textEl, res.content)) {
           textEl.innerHTML = formatMarkdown(res.content);
         }
         addMessageCopyButton(assistantEl);
       }
     }
   } catch (e) {
-    if (currentTabId === tabId && assistantEl && !isTabAbortRequested(tabId)) {
+    if (currentTabId === tabId
+        && assistantEl
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
@@ -7038,7 +8798,7 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId) scrollToBottom();
     if (currentTabId === tabId && renderedTabId === tabId) await flushRenderedTabChat();
     if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    await drainQueuedContextMenuPromptsAfterPendingTabSwitch();
+    await drainQueuedPromptsAfterRunSettles();
   }
 }
 
@@ -7088,7 +8848,223 @@ function hideActivity() {
   hideInspectionBanner();
 }
 
+// A new turn is reading-first: its question stays put while the answer grows.
+// Auto-follow resumes only after the reader deliberately reaches the bottom;
+// the floating control provides explicit shortcuts between both turn anchors.
+const CHAT_SCROLL_EDGE_PX = 24;
+const CHAT_TURN_VISIBILITY_PX = 8;
+const CHAT_USER_SCROLL_SETTLE_MS = 160;
 let scrollToBottomFrame = null;
+let chatNavigationFrame = null;
+let chatNavigationRestoreFrame = null;
+let chatNavigationTurn = null;
+let chatAutoFollow = true;
+let chatUserScrollActive = false;
+let chatUserScrollSettleTimer = null;
+let chatUserChoseReadingPosition = false;
+let chatNavigationDismissedAssistantEl = null;
+let chatNavigationInsetAssistantEl = null;
+
+function precedingUserMessage(assistantEl) {
+  let candidate = assistantEl?.previousElementSibling || null;
+  while (candidate) {
+    if (candidate.matches?.('.message.user')) return candidate;
+    candidate = candidate.previousElementSibling;
+  }
+  return null;
+}
+
+function latestChatTurn() {
+  const latestMessageEl = [...(messagesEl?.querySelectorAll?.(':scope > .message') || [])].at(-1) || null;
+  if (!latestMessageEl?.matches?.('.message.assistant')) return null;
+  const assistantEl = latestMessageEl;
+  // Scheduled runs intentionally have no user-message anchor. Do not infer one
+  // from an unrelated older turn when restoring a tab or panel session.
+  if (assistantEl?.dataset?.scheduledJobId) return null;
+  const userEl = precedingUserMessage(assistantEl);
+  return assistantEl && userEl ? { userEl, assistantEl } : null;
+}
+
+function chatHasPendingInteraction() {
+  return !!messagesEl?.querySelector?.(
+    '.clarify-card:not(.clarify-answered), .plan-review-card:not(.plan-reviewed), .continue-bar',
+  );
+}
+
+function chatTurnIsConnected(turn = chatNavigationTurn) {
+  return !!turn?.userEl?.isConnected && !!turn?.assistantEl?.isConnected;
+}
+
+function chatTurnIsRunning(turn = chatNavigationTurn) {
+  return !!turn && isProcessing && currentAssistantEl === turn.assistantEl;
+}
+
+function setChatNavigationVisible(visible) {
+  const insetAssistantEl = visible && chatTurnIsConnected()
+    ? chatNavigationTurn.assistantEl
+    : null;
+  if (chatNavigationInsetAssistantEl !== insetAssistantEl) {
+    chatNavigationInsetAssistantEl?.classList.remove('chat-navigation-inset');
+    insetAssistantEl?.classList.add('chat-navigation-inset');
+    chatNavigationInsetAssistantEl = insetAssistantEl;
+  }
+  chatNavigationEl?.classList.toggle('hidden', !visible);
+}
+
+function resetChatNavigation() {
+  chatNavigationTurn = null;
+  chatAutoFollow = true;
+  chatUserScrollActive = false;
+  chatUserChoseReadingPosition = false;
+  if (chatUserScrollSettleTimer != null) clearTimeout(chatUserScrollSettleTimer);
+  chatUserScrollSettleTimer = null;
+  if (scrollToBottomFrame != null) cancelAnimationFrame(scrollToBottomFrame);
+  if (chatNavigationFrame != null) cancelAnimationFrame(chatNavigationFrame);
+  if (chatNavigationRestoreFrame != null) cancelAnimationFrame(chatNavigationRestoreFrame);
+  scrollToBottomFrame = null;
+  chatNavigationFrame = null;
+  chatNavigationRestoreFrame = null;
+  setChatNavigationVisible(false);
+  chatNavigationEl?.removeAttribute('data-direction');
+  chatNavigationEl?.removeAttribute('data-action');
+}
+
+function setChatNavigationTurn(userEl, assistantEl, { autoFollow = false } = {}) {
+  if (!userEl?.isConnected || !assistantEl?.isConnected) {
+    resetChatNavigation();
+    return false;
+  }
+  if (chatNavigationDismissedAssistantEl !== assistantEl) {
+    chatNavigationDismissedAssistantEl = null;
+  }
+  chatNavigationTurn = { userEl, assistantEl };
+  chatAutoFollow = autoFollow;
+  chatUserChoseReadingPosition = false;
+  scheduleChatNavigationUpdate();
+  return true;
+}
+
+function beginReadingFirstTurn(userEl, assistantEl) {
+  return setChatNavigationTurn(userEl, assistantEl, { autoFollow: false });
+}
+
+function chatTurnNeedsReadingNavigation(turn = chatNavigationTurn) {
+  if (!chatContainerEl || !chatTurnIsConnected(turn)) return false;
+  const userRect = turn.userEl.getBoundingClientRect();
+  const assistantRect = turn.assistantEl.getBoundingClientRect();
+  return assistantRect.bottom - userRect.top > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
+}
+
+function prefersReducedChatMotion() {
+  return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+}
+
+function scrollChatToQuestion({ smooth = true } = {}) {
+  if (!chatContainerEl || !chatTurnIsConnected()) return;
+  chatAutoFollow = false;
+  if (smooth) chatUserChoseReadingPosition = true;
+  const containerRect = chatContainerEl.getBoundingClientRect();
+  const questionRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const targetTop = Math.max(
+    0,
+    chatContainerEl.scrollTop + questionRect.top - containerRect.top - CHAT_TURN_VISIBILITY_PX,
+  );
+  chatContainerEl.scrollTo({
+    top: targetTop,
+    behavior: smooth && !prefersReducedChatMotion() ? 'smooth' : 'auto',
+  });
+  scheduleChatNavigationUpdate();
+}
+
+function renderChatNavigation() {
+  if (!chatContainerEl || !chatNavigationEl || !chatNavigationActionEl
+      || !chatNavigationLabelEl || !chatTurnIsConnected()
+      || chatNavigationDismissedAssistantEl === chatNavigationTurn.assistantEl) {
+    setChatNavigationVisible(false);
+    return;
+  }
+
+  const containerRect = chatContainerEl.getBoundingClientRect();
+  const userRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const assistantRect = chatNavigationTurn.assistantEl.getBoundingClientRect();
+  const responseContinuesBelow = assistantRect.bottom > containerRect.bottom + CHAT_TURN_VISIBILITY_PX;
+  const questionIsAbove = userRect.bottom < containerRect.top + CHAT_TURN_VISIBILITY_PX;
+  let action = '';
+  let labelKey = '';
+  let direction = '';
+
+  if (responseContinuesBelow) {
+    action = 'latest';
+    direction = 'down';
+    labelKey = chatTurnIsRunning() ? 'sp.chat.follow_response' : 'sp.chat.jump_latest';
+  } else if (questionIsAbove) {
+    action = 'question';
+    direction = 'up';
+    labelKey = 'sp.chat.back_to_question';
+  }
+
+  if (!action) {
+    setChatNavigationVisible(false);
+    return;
+  }
+
+  const label = t(labelKey);
+  chatNavigationEl.dataset.action = action;
+  chatNavigationEl.dataset.direction = direction;
+  chatNavigationActionEl.setAttribute('aria-label', label);
+  chatNavigationActionEl.title = label;
+  chatNavigationLabelEl.textContent = label;
+  setChatNavigationVisible(true);
+}
+
+function scheduleChatNavigationUpdate() {
+  if (chatNavigationFrame != null) return;
+  chatNavigationFrame = requestAnimationFrame(() => {
+    chatNavigationFrame = null;
+    renderChatNavigation();
+  });
+}
+
+function restoreLatestChatTurnPosition() {
+  if (chatNavigationRestoreFrame != null) cancelAnimationFrame(chatNavigationRestoreFrame);
+  chatNavigationRestoreFrame = requestAnimationFrame(() => {
+    chatNavigationRestoreFrame = null;
+    if (chatHasPendingInteraction()) {
+      resetChatNavigation();
+      scrollToBottom({ force: true });
+      return;
+    }
+    const turn = latestChatTurn();
+    if (!turn) {
+      resetChatNavigation();
+      scrollToBottom({ force: true });
+      return;
+    }
+    setChatNavigationTurn(turn.userEl, turn.assistantEl, { autoFollow: true });
+    if (chatTurnIsRunning(turn) || chatTurnNeedsReadingNavigation(turn)) {
+      chatAutoFollow = false;
+      scrollChatToQuestion({ smooth: false });
+    } else {
+      scrollToBottom({ force: true });
+    }
+  });
+}
+
+function settleChatUserScrollIntent() {
+  if (chatUserScrollSettleTimer != null) clearTimeout(chatUserScrollSettleTimer);
+  chatUserScrollSettleTimer = setTimeout(() => {
+    chatUserScrollSettleTimer = null;
+    chatUserScrollActive = false;
+  }, CHAT_USER_SCROLL_SETTLE_MS);
+}
+
+function markChatUserScrollIntent() {
+  // Scroll events also fire for our own pin/jump calls. Once direct input
+  // starts a scroll sequence, keep it user-driven until scrolling settles so
+  // touch and trackpad momentum can still engage follow at the bottom edge.
+  chatUserScrollActive = true;
+  settleChatUserScrollIntent();
+}
 
 function pinChatToBottom(container) {
   // The chat container uses smooth scrolling for user-visible navigation.
@@ -7101,16 +9077,78 @@ function pinChatToBottom(container) {
   container.style.scrollBehavior = previousScrollBehavior;
 }
 
-function scrollToBottom() {
-  const container = document.getElementById('chat-container');
+function scrollToBottom({ force = false } = {}) {
+  const container = chatContainerEl;
   if (!container) return;
+  // A forced jump deliberately takes the reader to the live edge (blocking
+  // prompts, slash-command output, or the navigation pill). Keep subsequent
+  // deltas visible until the reader scrolls upward again.
+  if (force && chatTurnIsConnected()) {
+    chatAutoFollow = true;
+    chatUserChoseReadingPosition = false;
+  }
+  if (!force && chatTurnIsConnected() && !chatAutoFollow
+      && (chatUserChoseReadingPosition || chatTurnIsRunning() || chatTurnNeedsReadingNavigation())) {
+    scheduleChatNavigationUpdate();
+    return;
+  }
 
   pinChatToBottom(container);
   if (scrollToBottomFrame != null) cancelAnimationFrame(scrollToBottomFrame);
   scrollToBottomFrame = requestAnimationFrame(() => {
     scrollToBottomFrame = null;
-    if (container.isConnected) pinChatToBottom(container);
+    if (container.isConnected && (force || chatAutoFollow || !chatTurnIsConnected())) {
+      pinChatToBottom(container);
+    }
+    scheduleChatNavigationUpdate();
   });
+}
+
+chatContainerEl?.addEventListener('wheel', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('touchmove', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('pointerdown', markChatUserScrollIntent, { passive: true });
+chatContainerEl?.addEventListener('pointermove', (event) => {
+  if (event.buttons) markChatUserScrollIntent();
+}, { passive: true });
+chatContainerEl?.addEventListener('scroll', () => {
+  if (chatTurnIsConnected() && chatUserScrollActive) {
+    const distanceToBottom = chatContainerEl.scrollHeight
+      - chatContainerEl.scrollTop
+      - chatContainerEl.clientHeight;
+    chatAutoFollow = distanceToBottom <= CHAT_SCROLL_EDGE_PX;
+    chatUserChoseReadingPosition = !chatAutoFollow;
+    settleChatUserScrollIntent();
+  }
+  scheduleChatNavigationUpdate();
+}, { passive: true });
+
+document.addEventListener('keydown', (event) => {
+  if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return;
+  const target = event.target;
+  if (target?.matches?.('input, textarea, select, button, [contenteditable="true"]')) return;
+  markChatUserScrollIntent();
+});
+
+chatNavigationActionEl?.addEventListener('click', () => {
+  if (!chatTurnIsConnected()) return;
+  if (chatNavigationEl.dataset.action === 'question') {
+    scrollChatToQuestion();
+    return;
+  }
+  chatAutoFollow = true;
+  scrollToBottom({ force: true });
+});
+
+chatNavigationDismissEl?.addEventListener('click', () => {
+  if (!chatTurnIsConnected()) return;
+  chatNavigationDismissedAssistantEl = chatNavigationTurn.assistantEl;
+  setChatNavigationVisible(false);
+});
+
+globalThis.addEventListener?.('resize', scheduleChatNavigationUpdate);
+if (globalThis.ResizeObserver && messagesEl) {
+  const chatNavigationResizeObserver = new ResizeObserver(scheduleChatNavigationUpdate);
+  chatNavigationResizeObserver.observe(messagesEl);
 }
 
 // Debounce math rendering so streaming updates don't re-walk the DOM
@@ -7149,8 +9187,9 @@ function scheduleMathRender() {
   }, 50);
 }
 
-function formatMarkdown(text) {
+function formatMarkdown(text, options = {}) {
   if (!text) return '';
+  const enhance = options.enhance !== false;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
@@ -7195,10 +9234,17 @@ function formatMarkdown(text) {
 
   // 6. Restore fenced code blocks with copy button
   codeBlocks.forEach((block, i) => {
-    const highlighted = highlightCode(block.code, block.lang);
+    // Re-highlighting every accumulated token is expensive and can visibly
+    // flicker. Keep live code escaped/plain, then highlight it once when the
+    // authoritative terminal response arrives.
+    const highlighted = enhance ? highlightCode(block.code, block.lang) : escapeHtml(block.code);
     const langLabel = block.lang ? `<span class="code-lang">${escapeHtml(block.lang)}</span>` : '';
-    const copyBtn = `<button class="code-copy-btn" data-code-index="${i}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`;
-    const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
+    const copyBtn = enhance
+      ? `<button class="code-copy-btn" data-code-index="${i}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`
+      : '';
+    const header = langLabel || copyBtn
+      ? `<div class="code-block-header">${langLabel}${copyBtn}</div>`
+      : '';
     text = text.replace(
       `__CODEBLOCK_${i}__`,
       () => `<div class="code-block-wrapper">${header}<pre><code>${highlighted}</code></pre></div>`
@@ -7209,10 +9255,10 @@ function formatMarkdown(text) {
   // auto-render walks text nodes and replaces $...$, $$...$$, \(...\), \[...\]
   // with rendered spans. It's idempotent (rendered spans are skipped on
   // subsequent passes) so we can safely call it after every innerHTML write.
-  scheduleMathRender();
+  if (enhance) scheduleMathRender();
 
   // Store raw code for copy buttons to use
-  if (codeBlocks.length > 0) {
+  if (enhance && codeBlocks.length > 0) {
     setTimeout(() => {
       document.querySelectorAll('.code-copy-btn').forEach(btn => {
         if (btn.dataset.bound) return;
@@ -7395,7 +9441,7 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   const tabId = Number(payload?.tabId);
   const requestId = String(payload?.requestId || '');
   cancelledRunRecoveryRequestIds.delete(requestId);
-  return runDetachedWithReconnect({
+  const promise = runDetachedWithReconnect({
     initialAction,
     payload,
     start: (action, nextPayload) => sendToBackground(action, nextPayload),
@@ -7419,6 +9465,13 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     },
     ...recoveryOptions,
   });
+  const follower = { requestId, promise };
+  localRunFollowers.set(tabId, follower);
+  try {
+    return await promise;
+  } finally {
+    if (localRunFollowers.get(tabId) === follower) localRunFollowers.delete(tabId);
+  }
 }
 
 function formatBackgroundSendError(action, message) {
@@ -7574,28 +9627,61 @@ modeDevBtn?.addEventListener('click', async () => {
 
 // --- Stop / Abort ---
 
-async function abortRun() {
-  const tabId = currentTabId;
+async function abortRun(tabId = currentTabId) {
   if (!isTabProcessing(tabId)) return;
   const requestId = String(
     localRunRequestIds.get(Number(tabId))
-      || currentAssistantEl?.dataset?.runRequestId
+      || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
       || '',
   );
+  const follower = localRunFollowers.get(Number(tabId));
   if (requestId) cancelledRunRecoveryRequestIds.add(requestId);
   setTabAbortRequested(tabId, true);
-  showActivity(t('sp.activity.stopping'));
+  if (sameTabId(currentTabId, tabId)) showActivity(t('sp.activity.stopping'));
 
-  try {
-    await sendToBackground('abort', { tabId });
-  } catch {
-    // Best effort
-  }
-
-  // Force UI to settle even if background doesn't respond cleanly
-  setTimeout(async () => {
-    if (isTabAbortRequested(tabId)) {
-      if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+  let fallbackTimer = null;
+  let fallbackCancelled = false;
+  let fallbackProbeFailures = 0;
+  const maxFallbackProbeFailures = 5;
+  const fallbackPromise = new Promise(resolve => {
+    const settleWhenInactive = async () => {
+      if (fallbackCancelled) {
+        resolve();
+        return;
+      }
+      if (!isTabAbortRequested(tabId)) {
+        resolve();
+        return;
+      }
+      let state;
+      try {
+        state = await sendToBackground('agent_run_state', { tabId, requestId });
+      } catch {
+        state = null;
+      }
+      if (fallbackCancelled) {
+        resolve();
+        return;
+      }
+      if (!state) {
+        fallbackProbeFailures += 1;
+        // A local follower has its own bounded reconnect policy and remains
+        // authoritative. Without one, eventually release a panel whose
+        // background disappeared instead of polling "Stopping…" forever.
+        if (follower?.requestId === requestId
+            || fallbackProbeFailures < maxFallbackProbeFailures) {
+          fallbackTimer = setTimeout(settleWhenInactive, 1000);
+          return;
+        }
+      } else if (state.running || state.starting) {
+        fallbackProbeFailures = 0;
+        fallbackTimer = setTimeout(settleWhenInactive, 1000);
+        return;
+      }
+      if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) {
+        resolve();
+        return;
+      }
       finalizeSteps();
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
@@ -7609,12 +9695,33 @@ async function abortRun() {
       currentAssistantEl = null;
       setTabAbortRequested(tabId, false);
       await flushRenderedTabChat();
-      await drainQueuedContextMenuPromptsAfterPendingTabSwitch();
-    }
-  }, 3000); // safety timeout if background takes too long
+      await drainQueuedPromptsAfterRunSettles();
+      resolve();
+    };
+    fallbackTimer = setTimeout(settleWhenInactive, 3000);
+  });
+
+  try {
+    await sendToBackground('abort', { tabId });
+  } catch {
+    // Best effort
+  }
+  if (follower?.requestId === requestId) {
+    await Promise.race([
+      follower.promise.catch(() => {}),
+      fallbackPromise,
+    ]);
+    // A stopped background run can become inactive before this reconnect
+    // follower consumes its terminal journal. New conversation awaits
+    // abortRun(), so do not let it clear that journal until the follower has
+    // observed the terminal snapshot (or reached its bounded failure).
+    await follower.promise.catch(() => {});
+    fallbackCancelled = true;
+    clearTimeout(fallbackTimer);
+  }
 }
 
-stopBtn.addEventListener('click', abortRun);
+stopBtn.addEventListener('click', () => abortRun());
 
 // --- Voice input (mic dictation, issue #210) ---
 // Web Speech API: well-supported in Chrome, absent in stock Firefox (which
@@ -8099,9 +10206,20 @@ document.addEventListener('wb-locale-changed', () => {
 
 clearBtn.addEventListener('click', async () => {
   const tabId = currentTabId;
+  if (isConversationClearInProgress(tabId)) return;
   if (!window.confirm(t('sp.clear.confirm'))) return;
-  await sendToBackground('clear_conversation', { tabId });
-  await renderClearedConversationForTab(tabId);
+  setConversationClearInProgress(tabId, true);
+  try {
+    suppressRunUpdatesForClearedConversation(tabId);
+    clearQueuedComposerMessagesForTab(tabId);
+    clearQueuedForTab(tabId);
+    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
+    if (isTabProcessing(tabId)) await abortRun(tabId);
+    await sendToBackground('clear_conversation', { tabId });
+    await renderClearedConversationForTab(tabId);
+  } finally {
+    setConversationClearInProgress(tabId, false);
+  }
 });
 
 providerSelect.addEventListener('change', async () => {
@@ -8239,23 +10357,98 @@ settingsBtn.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
 
-// --- Language selector (globe icon in header) ---
-const languageSelect = document.getElementById('language-select');
+// --- Language picker (compact trigger + accessible custom listbox) ---
 if (languageSelect) {
-  languageSelect.innerHTML = LANGUAGES
-    .map((l) => `<option value="${l.code}">${l.label}</option>`)
-    .join('');
-  languageSelect.value = getLocale();
+  initializeLanguagePicker();
   languageSelect.addEventListener('change', async () => {
     await setLocale(languageSelect.value);
     applyDOMTranslations(document);
+    syncLanguagePicker();
     updateInputPlaceholder();
+    scheduleChatNavigationUpdate();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
+    syncLanguagePicker();
     updateInputPlaceholder();
+    scheduleChatNavigationUpdate();
   });
 }
+
+languagePickerBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const open = languagePickerMenu?.classList.contains('hidden') !== false;
+  setLanguagePickerOpen(open);
+});
+
+languagePickerBtn?.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    if (languagePickerMenu?.classList.contains('hidden')) {
+      setLanguagePickerOpen(true);
+      if (event.key === 'ArrowUp') {
+        queueMicrotask(() => {
+          const options = getLanguagePickerOptions();
+          options[options.length - 1]?.focus();
+        });
+      }
+    }
+  }
+});
+
+languagePickerMenu?.addEventListener('keydown', (event) => {
+  if (languagePickerMenu.classList.contains('hidden')) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveLanguagePickerFocus(1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveLanguagePickerFocus(-1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    getLanguagePickerOptions()[0]?.focus();
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    const options = getLanguagePickerOptions();
+    options[options.length - 1]?.focus();
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    activateFocusedLanguagePickerOption();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+  } else if (event.key === 'Tab') {
+    setLanguagePickerOpen(false);
+  } else if (!event.ctrlKey && !event.metaKey && !event.altKey && focusLanguagePickerByPrefix(event.key)) {
+    event.preventDefault();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('language-picker');
+  if (root && !root.contains(event.target)) setLanguagePickerOpen(false);
+});
+
+document.getElementById('language-picker')?.addEventListener('focusout', (event) => {
+  if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+  const root = document.getElementById('language-picker');
+  const next = event.relatedTarget;
+  if (!root || (next && root.contains(next))) return;
+  queueMicrotask(() => {
+    if (!languagePickerMenu || languagePickerMenu.classList.contains('hidden')) return;
+    if (root.contains(document.activeElement)) return;
+    setLanguagePickerOpen(false);
+  });
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && languagePickerMenu && !languagePickerMenu.classList.contains('hidden')) {
+    setLanguagePickerOpen(false);
+    languagePickerBtn?.focus();
+  }
+});
 
 // --- Start ---
 startInputPlaceholderRotation();

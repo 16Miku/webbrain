@@ -83,6 +83,16 @@
       min-height: 54px;
       padding: 16px;
     }
+
+    .modal {
+      display: none;
+      box-sizing: border-box;
+      width: 520px;
+      min-height: 180px;
+      padding: 24px;
+      border: 2px solid #444;
+      background: #fff;
+    }
   </style>
 </head>
 <body>
@@ -130,6 +140,8 @@
     <input type="text" aria-label="Nested input action">
   </div>
   <button id="native-button" type="button">Native button</button>
+  <button id="disabled-native-button" type="button" disabled>Disabled native action</button>
+  <button id="disabled-aria-button" type="button" aria-disabled="true">Disabled ARIA action</button>
   <details id="native-details" class="row">
     <summary id="native-summary">Native disclosure</summary>
     <div>Native disclosure content</div>
@@ -144,6 +156,10 @@
   <input id="native-input" type="text" value="Native input" aria-label="Native input">
   <select id="native-select" aria-label="Native select"><option>Native select</option></select>
   <div id="editable-row" class="row" role="textbox" aria-label="Editable row" contenteditable="true">Editable row</div>
+  <section id="framework-composer">
+    <div id="framework-editor" role="textbox" aria-label="Framework post text" contenteditable="true"></div>
+    <button id="framework-post" type="button" aria-disabled="true">Framework Post</button>
+  </section>
   <div id="download-row" class="row" role="listitem" data-download tabindex="0">Export report</div>
   <form>
     <div id="form-row" class="row" role="listitem" tabindex="0">Form row</div>
@@ -155,6 +171,10 @@
       <input id="trusted-firefox-checkbox" name="trusted_compatible_apps" value="firefox" type="checkbox">
       Trusted Firefox compatibility
     </label>
+    <label class="external-label">
+      <input id="android-checkbox" name="compatible_apps" value="android" type="checkbox">
+      Firefox for Android compatibility
+    </label>
     <label class="external-label" for="selected-channel-radio">
       <input id="selected-channel-radio" name="channel" value="stable" type="radio" checked>
       Selected channel
@@ -164,6 +184,12 @@
       Blocked channel
     </label>
   </form>
+  <div id="android-confirmation" class="modal">
+    <h3>Firefox for Android compatibility</h3>
+    <p>Did you test your extension to ensure it works as expected on Firefox for Android?</p>
+    <button id="android-confirm-yes" type="button">Yes, I’ve tested my extension with Firefox for Android</button>
+    <a id="android-confirm-no" href="#">No, I have not tested</a>
+  </div>
   <div id="covered-wrap">
     <div id="covered-row" class="row" role="listitem" tabindex="0">Covered row</div>
     <div id="cover">Overlay</div>
@@ -178,9 +204,35 @@
     window.__trustedClickEvents = [];
     window.__syntheticClickEvents = [];
     window.__trustedCheckboxEvents = [];
+    window.__frameworkInputEvents = [];
+    document.getElementById('framework-editor').addEventListener('input', (event) => {
+      window.__frameworkInputEvents.push({ trusted: event.isTrusted, text: event.currentTarget.innerText });
+      if (event.isTrusted && event.currentTarget.innerText.trim()) {
+        document.getElementById('framework-post').setAttribute('aria-disabled', 'false');
+      }
+    });
     document.getElementById('trusted-firefox-checkbox').addEventListener('click', (event) => {
       window.__trustedCheckboxEvents.push({ trusted: event.isTrusted, checked: event.currentTarget.checked });
       if (!event.isTrusted) event.preventDefault();
+    });
+    let androidConfirmed = false;
+    const androidCheckbox = document.getElementById('android-checkbox');
+    const androidConfirmation = document.getElementById('android-confirmation');
+    androidCheckbox.addEventListener('click', (event) => {
+      if (androidConfirmed) return;
+      event.preventDefault();
+      androidConfirmation.style.display = 'block';
+    });
+    document.getElementById('android-confirm-yes').addEventListener('click', () => {
+      androidConfirmed = true;
+      androidCheckbox.checked = true;
+      androidCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+      androidConfirmation.style.display = 'none';
+    });
+    document.getElementById('android-confirm-no').addEventListener('click', (event) => {
+      event.preventDefault();
+      androidCheckbox.checked = false;
+      androidConfirmation.style.display = 'none';
     });
     document.getElementById('blocked-channel-radio').addEventListener('click', (event) => {
       event.preventDefault();

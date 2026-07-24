@@ -601,9 +601,9 @@
   function _findDialogContentForOverlay(overlay) {
     const selector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open],[data-state="open"][role="dialog"],[class*="DialogContent"],[class*="ModalContent"],.modal.show';
     const pick = (node) => {
-      if (!node || node === overlay) return null;
+      if (!node) return null;
       try {
-        if (node.matches?.(selector) && _hasVisibleBox(node, 20, 20)) return node;
+        if (node !== overlay && node.matches?.(selector) && _hasVisibleBox(node, 20, 20)) return node;
         const match = node.querySelector?.(selector);
         if (match && _hasVisibleBox(match, 20, 20)) return match;
       } catch {}
@@ -664,6 +664,8 @@
         if (!includeNonModalDialogs) {
           const dialogContent = _findDialogContentForOverlay(candidates[i]);
           if (dialogContent) return dialogContent;
+          const interactive = candidates[i].querySelector?.(INTERACTIVE_SELECTORS.join(', '));
+          if (!interactive) continue;
         }
         return candidates[i];
       }
@@ -948,6 +950,70 @@
   function _axAccessibleName(el) {
     return _axCanonicalName(el)
       || String(el?.innerText || '').trim().slice(0, 160);
+  }
+
+  function _axVisibleConfirmationSurfaces() {
+    const surfaces = [];
+    const seen = new Set();
+    const selectors = [
+      '[role="dialog"]',
+      '[role="alertdialog"]',
+      '[aria-modal="true"]',
+      'dialog[open]',
+      '.modal',
+    ].join(',');
+    const visible = (el) => {
+      try {
+        if (!el?.isConnected) return false;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 20 && rect.height >= 20;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      for (const surface of document.querySelectorAll(selectors)) {
+        if (!visible(surface)) continue;
+        const id = String(surface.id || '').trim();
+        const role = String(surface.getAttribute('role') || surface.tagName || '').trim().toLowerCase();
+        const heading = surface.querySelector(
+          '[role="heading"],h1,h2,h3,h4,h5,h6,[aria-label]'
+        );
+        const title = String(
+          surface.getAttribute('aria-label')
+          || heading?.innerText
+          || heading?.textContent
+          || ''
+        ).replace(/\s+/g, ' ').trim().slice(0, 160);
+        const actions = [];
+        for (const control of surface.querySelectorAll('button,a,[role="button"]')) {
+          if (!visible(control)) continue;
+          const name = _axAccessibleName(control).replace(/\s+/g, ' ').trim();
+          if (name && !actions.includes(name)) actions.push(name.slice(0, 120));
+          if (actions.length >= 6) break;
+        }
+        const signature = id
+          ? `id:${id}`
+          : `surface:${role}|${title}|${actions.join('|')}`.slice(0, 480);
+        if (!signature || seen.has(signature)) continue;
+        seen.add(signature);
+        surfaces.push({ signature, title, actions });
+        if (surfaces.length >= 8) break;
+      }
+    } catch {}
+    return surfaces;
+  }
+
+  function _axNewConfirmationSurface(before = []) {
+    const previous = new Set(
+      (Array.isArray(before) ? before : [])
+        .map(surface => String(surface?.signature || ''))
+        .filter(Boolean)
+    );
+    return _axVisibleConfirmationSurfaces()
+      .find(surface => !previous.has(surface.signature)) || null;
   }
 
   function _axCheckboxIdentity(el, refId = '') {
@@ -1299,6 +1365,11 @@
    */
   function clickElement(params) {
     let el;
+    // Tracks whether text matching below resolved el via an EXACT-tier
+    // match. The auto-select rescue yields only to exact clickables — a
+    // contains-tier match (e.g. "Contact us" for needle "US") must not
+    // suppress selecting an exactly-matching <select> option.
+    let textResolvedExact = false;
     // Reject jQuery/Playwright selectors with a clear error.
     if (params.selector && /:contains\(|:has-text\(/.test(params.selector)) {
       return {
@@ -1406,6 +1477,7 @@
             inp.scrollIntoView({ block: 'center', inline: 'center' });
             inp.focus();
             el = inp;
+            textResolvedExact = (needle === ltxt);
             break;
           }
         }
@@ -1446,6 +1518,7 @@
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
                 inp.focus();
                 el = inp;
+                textResolvedExact = (needle === ltxt);
                 break;
               }
             }
@@ -1457,7 +1530,22 @@
           // Honor modal scoping here too.
           const _fbScope = _findTopmostModal() || document;
           const fbSels = '[contenteditable="true"],[contenteditable=""],[role="option"],[role="listbox"],[role="combobox"],[role="textbox"],[role="switch"],[role="checkbox"],[role="radio"],[tabindex]:not([tabindex="-1"])';
-          const fbAll = Array.from(_fbScope.querySelectorAll(fbSels)).filter(e => {
+          // Last-resort scan also pierces open shadow roots: sites like
+          // LinkedIn render entire dialogs inside one (the interop shell),
+          // where querySelectorAll on the document is blind.
+          const _fbCollectDeep = (sel) => {
+            const out = [];
+            const scan = (root, depth) => {
+              try { out.push(...root.querySelectorAll(sel)); } catch(err) {}
+              if (depth > 4) return;
+              let els;
+              try { els = root.querySelectorAll('*'); } catch(err) { return; }
+              for (const host of els) { if (host.shadowRoot) scan(host.shadowRoot, depth + 1); }
+            };
+            scan(_fbScope, 0);
+            return out;
+          };
+          const fbAll = _fbCollectDeep(fbSels).filter(e => {
             try {
               const r = e.getBoundingClientRect();
               if (r.width < 1 || r.height < 1) return false;
@@ -1466,9 +1554,12 @@
               return true;
             } catch(err) { return false; }
           });
+          // Quill/ProseMirror-style editors show their placeholder via
+          // data-placeholder / aria-placeholder (CSS pseudo-element), not
+          // text content — match those too.
           const fbNorm = fbAll.map(e => ({
             e,
-            txt: (e.innerText || e.getAttribute('aria-label') || e.getAttribute('placeholder') || '').trim().toLowerCase(),
+            txt: (e.innerText || e.getAttribute('aria-label') || e.getAttribute('placeholder') || e.getAttribute('data-placeholder') || e.getAttribute('aria-placeholder') || '').trim().toLowerCase(),
           })).filter(x => !!x.txt);
           for (const m of modes) {
             const found = fbNorm.filter(x =>
@@ -1479,6 +1570,7 @@
             if (found.length >= 1) {
               found[0].e.scrollIntoView({ block: 'center', inline: 'center' });
               el = found[0].e;
+              textResolvedExact = (m === 'exact');
               break;
             }
           }
@@ -1547,6 +1639,7 @@
       }
       if (!el) {
         let resolved = matches[0].e;
+        textResolvedExact = (usedMode === 'exact');
         // LABEL → associated input resolution
         if (resolved.tagName === 'LABEL') {
           let target = null;
@@ -1571,31 +1664,56 @@
       el = document.elementFromPoint(params.x, params.y);
     }
 
-    if (!el) return { success: false, dispatched: false, error: 'Element not found' };
-    const targetIsSubmitControl = _isSubmitControl(el);
-
     // ── Auto-select: if click text matches a <select> option, select it ──
-    if (params.text) {
+    // Runs when text matching resolved NO element, resolved the <select>
+    // itself (a select's innerText contains its options, so the contains
+    // level routinely lands here for option clicks — skipping the rescue
+    // then would wrongly fall through to the CANNOT-CLICK intercept), or
+    // resolved a clickable only via a NON-exact tier (option text matches
+    // exactly, so it beats a "Contact us"-style contains hit for "US").
+    // It must NOT run when a genuine button/link labeled X matched
+    // exactly — that element is what the model meant.
+    if (params.text && (!el || el instanceof HTMLSelectElement || !textResolvedExact)) {
       const needle = params.text.trim();
       const lc = needle.toLowerCase();
-      const allSels = document.querySelectorAll('select');
+      const selectScope = _findTopmostModal() || document;
+      const allSels = el instanceof HTMLSelectElement
+        ? [el]
+        : selectScope.querySelectorAll('select');
+      const matchingSelects = [];
       for (const sel of allSels) {
         const opts = Array.from(sel.options);
         const match = opts.find(o => o.text.trim() === needle)
           || opts.find(o => o.text.trim().toLowerCase() === lc)
           || opts.find(o => o.value === needle)
           || opts.find(o => o.value.toLowerCase() === lc);
-        if (match && sel.selectedIndex !== match.index) {
-          sel.focus();
-          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-          if (nativeSetter) nativeSetter.call(sel, match.value);
-          else sel.value = match.value;
-          sel.dispatchEvent(new Event('input', { bubbles: true }));
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
+        if (match) matchingSelects.push({ sel, match });
+      }
+      if (matchingSelects.length > 1) {
+        return {
+          success: false,
+          dispatched: false,
+          failureScope: `ambiguous-select-option:${lc}`,
+          error: `Ambiguous select option match for "${needle}" (${matchingSelects.length} dropdowns). Identify the intended field and use type_text on that select instead.`,
+        };
+      }
+      if (matchingSelects.length === 1) {
+        const { sel, match } = matchingSelects[0];
+        if (sel.selectedIndex === match.index) {
+          return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
+        sel.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(sel, match.value);
+        else sel.value = match.value;
+        sel.dispatchEvent(new Event('input', { bubbles: true }));
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
       }
     }
+
+    if (!el) return { success: false, dispatched: false, error: 'Element not found' };
+    const targetIsSubmitControl = _isSubmitControl(el);
 
     // <select> intercept: clicking opens a native OS dropdown that cannot be
     // controlled programmatically. Return error so the model uses type_text.
@@ -1970,6 +2088,141 @@
   }
 
   /**
+   * Locate and select literal page text without relying on browser chrome or
+   * unsupported Ctrl/Cmd keyboard shortcuts.
+   */
+  function findText(params) {
+    const text = String(params?.text || '').trim();
+    if (!text) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text: text is required.' };
+    }
+    if (text.length > 500) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text: text must be 500 characters or fewer.' };
+    }
+    if (typeof window.find !== 'function') {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text is not supported on this page.' };
+    }
+
+    try {
+      const matchCase = params?.matchCase === true;
+      const backwards = params?.backwards === true;
+      const wrap = params?.wrap !== false;
+      // Match browser Find semantics across the whole page, including frames.
+      // When the active match moves into a frame, the top document can retain
+      // an older selection; frame focus keeps that stale range from verifying
+      // the current hit.
+      const found = window.find(text, matchCase, backwards, wrap, false, true, false);
+      if (!found) {
+        return {
+          success: false,
+          found: false,
+          dispatched: false,
+          noDispatch: true,
+          query: text,
+          error: `find_text: "${text}" was not found on the current page. Re-read the page or try a shorter literal phrase.`,
+        };
+      }
+      const activeElement = window.document?.activeElement;
+      const activeElementTag = String(activeElement?.tagName || '').toUpperCase();
+      const inputType = String(activeElement?.type || 'text').toLowerCase();
+      const isTextControl = activeElementTag === 'TEXTAREA'
+        || (activeElementTag === 'INPUT' && ['text', 'search', 'url', 'tel', 'email'].includes(inputType));
+      const normalizedQuery = text.normalize('NFC');
+      const matchesQuery = (value) => {
+        const normalizedValue = String(value || '').normalize('NFC');
+        return matchCase
+          ? normalizedValue === normalizedQuery
+          : normalizedValue.toLowerCase() === normalizedQuery.toLowerCase();
+      };
+      const hasVisibleBounds = (candidate) => !!candidate
+        && [candidate.x, candidate.y, candidate.width, candidate.height].every(Number.isFinite)
+        && candidate.width > 0
+        && candidate.height > 0;
+      const selection = window.getSelection?.();
+      const documentSelectedText = String(selection?.toString?.() || '');
+      const documentBounds = selection?.rangeCount
+        ? selection.getRangeAt(0).getBoundingClientRect()
+        : undefined;
+      let controlSelectedText = '';
+      let controlBounds;
+      const controlSelectionStart = activeElement?.selectionStart;
+      const controlSelectionEnd = activeElement?.selectionEnd;
+      if (
+        isTextControl
+        && Number.isInteger(controlSelectionStart)
+        && Number.isInteger(controlSelectionEnd)
+        && controlSelectionStart >= 0
+        && controlSelectionEnd > controlSelectionStart
+      ) {
+        controlSelectedText = String(activeElement.value || '').slice(controlSelectionStart, controlSelectionEnd);
+        controlBounds = activeElement.getBoundingClientRect?.();
+      }
+      const documentMatchesQuery = matchesQuery(documentSelectedText);
+      const controlMatchesQuery = matchesQuery(controlSelectedText);
+      let selectedText = documentSelectedText;
+      let selectionSource = 'document';
+      let bounds = documentBounds;
+      if (documentMatchesQuery && hasVisibleBounds(documentBounds)) {
+        // Keep the page selection. A focused field can retain an unrelated
+        // selection while window.find advances to a normal document match.
+      } else if (controlMatchesQuery && hasVisibleBounds(controlBounds)) {
+        selectedText = controlSelectedText;
+        bounds = controlBounds;
+        selectionSource = 'text_control';
+      }
+      let rect;
+      if (bounds) {
+        const scrollX = Number.isFinite(Number(window.scrollX)) ? Number(window.scrollX) : 0;
+        const scrollY = Number.isFinite(Number(window.scrollY)) ? Number(window.scrollY) : 0;
+        rect = {
+          x: bounds.x,
+          y: bounds.y,
+          pageX: bounds.x + scrollX,
+          pageY: bounds.y + scrollY,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      }
+      const hasVisibleRect = !!rect
+        && [rect.x, rect.y, rect.pageX, rect.pageY, rect.width, rect.height].every(Number.isFinite)
+        && rect.width > 0
+        && rect.height > 0;
+      const selectionMatchesQuery = matchesQuery(selectedText);
+      const selectionInFrame = activeElementTag === 'IFRAME' || activeElementTag === 'FRAME';
+      const hasSelectionIdentity = selectionSource !== 'text_control'
+        || (
+          Number.isInteger(controlSelectionStart)
+          && Number.isInteger(controlSelectionEnd)
+          && controlSelectionStart >= 0
+          && controlSelectionEnd > controlSelectionStart
+        );
+      const verified = selectionMatchesQuery && hasVisibleRect && hasSelectionIdentity && !selectionInFrame;
+      return {
+        success: true,
+        found: true,
+        verified,
+        query: text,
+        selectedText,
+        selectionMatchesQuery,
+        selectionSource,
+        selectionInFrame,
+        selectionScope: selectionInFrame ? 'frame_match_unverified' : 'current_match_only',
+        ...(selectionSource === 'text_control'
+          ? { selectionStart: controlSelectionStart, selectionEnd: controlSelectionEnd }
+          : {}),
+        replacesPreviousSelection: !selectionInFrame,
+        browserFindUiOpened: false,
+        ...(rect ? { rect } : {}),
+        warning: verified
+          ? 'Only this match is selected. This call replaced any previous page selection, and it did not open the browser Find UI. Do not claim earlier find_text matches remain highlighted.'
+          : 'window.find reported a match, but WebBrain could not verify a visible current selection in the top document (for example, the active match may be inside a frame while an older top-document selection remains). Do not claim it is visibly highlighted. The browser Find UI was not opened.',
+      };
+    } catch (error) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: `find_text failed: ${error.message || error}` };
+    }
+  }
+
+  /**
    * Press supported keyboard keys.
    */
   function pressKeys(params) {
@@ -2028,6 +2281,7 @@
         which: keyMeta.keyCode,
         bubbles: true,
         cancelable: true,
+        composed: true,
       });
       const up = new KeyboardEvent('keyup', {
         key,
@@ -2036,11 +2290,14 @@
         which: keyMeta.keyCode,
         bubbles: true,
         cancelable: true,
+        composed: true,
       });
+      // Dispatch once on the target only. The events bubble, so listeners
+      // attached at document/window level already receive them — dispatching
+      // the same event object on document again would fire those listeners
+      // twice per key (double-advancing ARIA listboxes, menus, etc.).
       target.dispatchEvent(down);
-      document.dispatchEvent(down);
       target.dispatchEvent(up);
-      document.dispatchEvent(up);
       if (key === 'Tab') moveTabFocus();
     }
 
@@ -2402,7 +2659,20 @@
   function waitForElement(params) {
     return new Promise((resolve) => {
       const timeout = params.timeout || 5000;
-      const existing = document.querySelector(params.selector);
+      // Validate the selector up front: an invalid selector makes
+      // querySelector throw SyntaxError, which would reject this promise
+      // and leave the caller hanging on a response that never arrives.
+      let existing;
+      try {
+        existing = document.querySelector(params.selector);
+      } catch (e) {
+        resolve({
+          success: false,
+          found: false,
+          error: `Invalid selector "${params.selector}": ${e.message}. Use plain CSS — jQuery/Playwright extensions like :contains() or :has-text() are not supported.`,
+        });
+        return;
+      }
       if (existing) {
         resolve({ success: true, found: true });
         return;
@@ -2704,6 +2974,7 @@
       return {
         tag,
         type: fieldType,
+        contentEditable: !!el.isContentEditable,
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
         autocomplete: el.getAttribute ? el.getAttribute('autocomplete') : null,
@@ -2765,6 +3036,7 @@
       'inspect_element_styles': () => inspectElementStyles(msg.params || {}),
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
+      'find_text': () => findText(msg.params || {}),
       // execute_js — model-supplied JS body, evaluated in the content
       // script's isolated world via `new Function()`.
       //
@@ -2923,6 +3195,18 @@
               ? ' Nearest existing refs: ' + suggestions.map(s => `${s.ref} (${s.role}${s.name ? ' "' + s.name + '"' : ''})`).join(', ') + '.'
               : '';
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
+          }
+          const disabledOwner = el.closest?.('button:disabled,input:disabled,select:disabled,textarea:disabled,[aria-disabled="true"]');
+          if (disabledOwner) {
+            return failure(
+              `ref_id ${ref_id} is disabled and cannot be activated. Re-read the page after correcting the form or editor state; do not treat this click as submitted.`,
+              {
+                ref_id,
+                disabled: true,
+                nativeDisabled: !!disabledOwner.disabled,
+                ariaDisabled: disabledOwner.getAttribute?.('aria-disabled') === 'true',
+              },
+            );
           }
           const tag = el.tagName ? el.tagName.toLowerCase() : '';
           const inputType = tag === 'input' ? String(el.type || '').toLowerCase() : '';
@@ -3202,6 +3486,7 @@
           }
           const checkedBefore = !!el.checked;
           const checkboxIdentity = _axCheckboxIdentity(el, ref_id);
+          const confirmationSurfacesBefore = _axVisibleConfirmationSurfaces();
           const base = {
             method: 'set_checked',
             ref_id,
@@ -3237,6 +3522,9 @@
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
           const checkedAfter = !!el.checked;
           const success = checkedAfter === checked;
+          const confirmation = success
+            ? null
+            : _axNewConfirmationSurface(confirmationSurfacesBefore);
           return {
             ...base,
             success,
@@ -3250,7 +3538,13 @@
               desiredChecked: checked,
               actualChecked: checkedAfter,
             },
-            ...(success ? {} : {
+            ...(confirmation ? {
+              confirmationRequired: true,
+              recoveryRequired: 'confirmation_dialog',
+              observedEffects: ['confirmation_dialog_opened'],
+              confirmation,
+              warning: 'A confirmation dialog opened before the checkbox could reach the requested state. Do not call set_checked again. Re-read the visible accessibility tree and choose a dialog action only when it is supported by the user request or current evidence.',
+            } : success ? {} : {
               noProgress: true,
               error: `Checkbox remained ${checkedAfter ? 'checked' : 'unchecked'} after one synthetic click. Firefox cannot synthesize trusted pointer input for page content.`,
             }),
@@ -3852,7 +4146,11 @@
 
     const result = handler();
     if (result instanceof Promise) {
-      result.then(sendResponse);
+      // Always settle sendResponse — a rejecting handler (e.g. a throwing
+      // DOM API) must not leave the caller's await hanging forever.
+      result.then(sendResponse, (err) => {
+        sendResponse({ success: false, error: `${msg.action} failed: ${err?.message || String(err)}` });
+      });
       return true; // async
     }
     sendResponse(result);

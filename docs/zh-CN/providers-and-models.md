@@ -11,6 +11,7 @@ class BaseLLMProvider {
   async chat(messages, options)         // → { content, toolCalls, usage }
   async *chatStream(messages, options)  // → async generator yielding { type, content }
   get supportsTools()                   // → boolean
+  get supportsAskStreaming()            // → boolean
   get supportsVision()                  // → boolean
   get promptTier()                      // → 'compact' | 'mid' | 'full'
   async testConnection()                // → { ok, error?, model? }
@@ -35,6 +36,7 @@ class BaseLLMProvider {
 
 | 提供商 ID | 类型 | 类别 | 默认模型 | 视觉能力 |
 |---|---|---|---|---|
+| `webbrain_cloud` | `openai` | 云端 | `webbrain-cloud 1.0` | 是 |
 | `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 是（默认开启） |
 | `ollama` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `lmstudio` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
@@ -42,18 +44,66 @@ class BaseLLMProvider {
 | `vllm` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `sglang` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `localai` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
+| `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
 | `anthropic` | `anthropic` | 云端 | `claude-sonnet-4-6` | 模型名正则 |
-| `claude_subscription` | `anthropic_oauth` | 云端 | `claude-sonnet-4-6` | 是 |
 | `gemini` | `openai` | 云端 | `gemini-3.1-flash` | 模型名正则 |
+| `cloudflare` | `openai` | 路由器 | `@cf/zai-org/glm-5.2` | 模型名正则 |
 | `mistral` | `openai` | 云端 | `mistral-large-latest` | 模型名正则 |
 | `deepseek` | `openai` | 云端 | `deepseek-v4-flash` | 模型名正则 |
 | `xai`（Grok） | `openai` | 云端 | `grok-4.3` | 模型名正则 |
-| `nvidia`（NIM） | `openai` | 云端 | `meta/llama-3.1-8b-instruct` | 模型名正则 |
-| `groq` | `openai` | 云端 | `llama-3.3-70b-versatile` | 模型名正则 |
+| `nvidia`（NIM） | `openai` | 路由器 | `meta/llama-3.1-8b-instruct` | 模型名正则 |
+| `groq` | `openai` | 路由器 | `llama-3.3-70b-versatile` | 模型名正则 |
 | `minimax` | `openai` | 云端 | `minimax-m2.7` | 模型名正则 |
+| `kimi` | `openai` | 云端 | `kimi-k2.5` | 模型名正则 |
 | `alibaba`（Qwen） | `openai` | 云端 | `qwen-max` | 模型名正则 |
+| `together` | `openai` | 路由器 | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 模型名正则 |
 | `openrouter` | `openai` | 路由器 | `openrouter/free` | 模型名正则 |
+| `huggingface` | `openai` | 路由器 | `zai-org/GLM-5.2` | 模型名正则 |
+| `fireworks` | `openai` | 路由器 | `accounts/fireworks/models/llama-v3p3-70b-instruct` | 模型名正则 |
+| `z_ai` | `openai` | 云端 | `glm-5.2` | 模型名正则 |
+
+### 扩展提供商目录
+
+WebBrain 从 OpenCode 提供商目录提交
+`62e4641235d7847dadc60da37cca8a023dd54fc1` 的快照中新增了 76 张默认禁用的
+提供商卡片。加上原有 27 张，设置中共有 **103 个内置提供商**。完整 ID
+列表如下：
+
+`302ai`、`abacus`、`aihubmix`、`alibaba-coding-plan`、
+`alibaba-coding-plan-cn`、`azure-cognitive-services`、`bailing`、`baseten`、
+`berget`、`cerebras`、`chutes`、`clarifai`、`cloudferro-sherlock`、`cohere`、
+`cortecs`、`deepinfra`、`digitalocean`、`dinference`、`drun`、`evroc`、
+`fastrouter`、`friendli`、`google-vertex`、`google-vertex-anthropic`、
+`helicone`、`iflowcn`、`inception`、`inference`、`io-net`、`jiekou`、`kilo`、
+`kimi-for-coding`、`kuae-cloud-coding-plan`、`llama`、`lucidquery`、
+`meganova`、`minimax-cn-coding-plan`、`minimax-coding-plan`、`moark`、
+`modelscope`、`morph`、`nano-gpt`、`nebius`、`nova`、`novita-ai`、
+`ollama-cloud`、`opencode`、`opencode-go`、`ovhcloud`、`perplexity`、
+`perplexity-agent`、`poe`、`privatemode-ai`、`qihang-ai`、`qiniu-ai`、
+`requesty`、`scaleway`、`siliconflow`、`siliconflow-cn`、`stackit`、
+`stepfun`、`submodel`、`synthetic`、`tencent-coding-plan`、`upstage`、`v0`、
+`venice`、`vercel`、`vivgrid`、`vultr`、`wandb`、`xiaomi`、
+`zai-coding-plan`、`zenmux`、`zhipuai`、`zhipuai-coding-plan`。
+
+大多数提供商使用兼容 OpenAI 的 Chat Completions 协议和 Bearer API 密钥。
+Azure AI Foundry 使用资源名称与 `api-key`；Google Vertex AI 使用项目、区域和
+通过 `x-goog-api-key` 发送的 Google 授权密钥；`global` 区域使用
+`aiplatform.googleapis.com`。Vertex Anthropic 使用 `rawPredict` /
+`streamRawPredict`，并为 `us` 和 `eu` 使用对应的多区域主机；Perplexity
+Agent 使用 Responses API。现有 Cloudflare 卡片还支持可选的 AI Gateway
+ID；对于 `@cf/` 模型，留空时会自动使用 `default` 网关。
+
+当 `supportsAskStreaming` 启用时，交互式 Ask 回合会流式显示回复。中断的流会
+清除部分文本、仅以非流式方式重试一次，并在本次运行剩余阶段关闭流式传输。
+Act、Dev、计划任务、云端运行和 Continue 仍使用非流式请求。服务返回令牌用量时，
+WebBrain 会直接记录；若服务省略用量，则记录基于字符数的保守估算，避免流式请求绕过
+已配置的成本限额。
+
+明确不支持的条目：`github-models`（GitHub Models 于 2026 年 7 月 30 日退役）、
+`github-copilot`（订阅/OAuth）、`gitlab` 和 `sap-ai-core`（需要专用认证、
+部署发现或协议）。
 
 ### 本地提供商
 
@@ -126,11 +176,15 @@ pm.getAll();                        // 所有提供商配置（用于设置界�
 await pm.testProvider('openai');    // 测试连接
 ```
 
+### 设置搜索
+
+设置搜索索引包括提供商 ID、标签、类型/类别、模型、Base URL、字段标签与占位符、建议项和兼容性选项。匹配卡片依次按提供商名称/ID 完全匹配、前缀匹配、子串匹配和仅字段匹配排序；同级结果保持原始提供商顺序，当前选中的提供商在类别筛选时始终可见。
+
 ### 配置持久化
 
 配置存储在 `chrome.storage.local` 中的 `providers` 键下，与默认值合并。默认值提供结构（存在哪些提供商键）；存储的配置覆盖每个键的值。这使得引入新提供商条目的升级可以在用户不清空存储的情况下工作。
 
-已弃用的提供商条目（`webbrain`、`openai_subscription`）会被过滤掉。
+已弃用的提供商条目（`webbrain`、`openai_subscription`、`claude_subscription`）会被过滤掉。
 
 ### 费用限额
 

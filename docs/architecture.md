@@ -1,6 +1,6 @@
 # WebBrain Architecture
 
-> Version 24.0.1
+> Version 25.7.12
 
 ## Overview
 
@@ -28,6 +28,7 @@ This doc covers the shared architecture and calls out where the builds diverge.
 │              Background Script / Service Worker      │
 │                                                      │
 │  background.js        — message router               │
+│  run-ui-journal.js     — detached-run reconnect state │
 │    └─ agent.js        — agent loop + executeTool()   │
 │         ├─ tools.js   — tool schemas + system prompts│
 │         ├─ planner.js — Plan-before-Act JSON planner │
@@ -68,7 +69,16 @@ The chat UI. Communicates with the background script via `chrome.runtime.sendMes
 
 Model tiering is separate from mode: `compact | mid | full` controls how many normal tools the model sees, while `ask | act | dev` controls what kind of task the user is allowing.
 
-The user types a message, the panel sends `{action: 'chat', text, mode, tabId}` to the background, then listens for `agent_update` events streamed back during the run. The panel renders tool calls, results, plan-review cards, clarification prompts, and the final answer incrementally.
+The user types a message, the panel sends a detached `{action: 'chat_start', text, mode, tabId, requestId}` request, then reconnects to the background-owned run journal for `agent_update` events. The acknowledged start becomes the existing `chat` handler and `agent.processMessage()` lifecycle; closing or reloading the panel does not transfer ownership or start the run again. The panel renders tool calls, results, plan-review cards, clarification prompts, and the final answer incrementally.
+
+Each new user/assistant pair starts in a reading-first scroll state: the question
+stays visible while a long response grows instead of being pushed immediately
+to the live edge. A floating control changes between **Follow response**,
+**Jump to latest**, and **Back to question** as the viewport crosses the two
+turn anchors. Reaching the bottom deliberately resumes auto-follow; manual
+reading positions are otherwise preserved. Blocking plan/clarification/Continue
+cards, store-review prompts, new questions, and slash-command output force the
+relevant content into view.
 
 Slash commands are defined as structured `SLASH_COMMANDS` metadata in each
 side panel. The metadata owns canonical usage signatures, option descriptions,
@@ -122,18 +132,20 @@ User types "create a product 'namaz' priced 500 CNY, recurring every 2 months"
 
 ### Step 1: Side Panel → Background
 ```
-sidepanel.js → chrome.runtime.sendMessage({
-  action: 'chat',
+sidepanel.js → sendRunWithReconnect('chat_start', {
   text: 'create a product ...',
   mode: 'act',
-  tabId: 42
+  tabId: 42,
+  requestId: '...'
 })
 ```
 
 ### Step 2: Background → Agent
 ```
-background.js handleMessage('chat')
-  → agent.processMessage(tabId, text, onUpdate, mode)
+background.js handleMessage('chat_start')
+  → launchDetachedRun('chat', request)
+  → background.js handleMessage('chat')
+  → agent.processMessage(tabId, text, onUpdate, mode, attachments, runOptions)
 ```
 
 ### Step 3: Enrich First User Message
@@ -152,16 +164,16 @@ _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
 
 ### Step 4: Plan-before-Act Gate
 
-When `planBeforeAct` is enabled and the run is in an action mode (Act or Dev), the agent calls the active provider once before the tool loop with `planner.js`'s structured JSON prompt. Unset storage defaults to try mode; explicit off remains off. The planner sees the user task, sanitized URL/title, and a short recent-history digest; page context is wrapped as untrusted data and image blocks are dropped.
+Manual action-mode runs (Act or Dev) call the active provider once before the tool loop with `planner.js`'s structured JSON prompt. Off uses the compact intent schema; Try and Strict use the full plan schema. Unset storage defaults to Try, while explicit Off remains Off. The planner sees the user task, sanitized URL/title, and a short recent-history digest; page context is wrapped as untrusted data and image blocks are dropped.
 
-If the planner returns valid JSON, the side panel receives `agent_update: plan_review` and renders an editable review card. Approval pins the approved plan into the scratchpad so it survives context compaction. Rejection, timeout, invalid JSON after retry, or user abort stops the run before any browser tools execute. Scheduled runs can set `autoApprovePlanReview` and pin the plan without showing the card.
+If the planner returns valid JSON, the side panel receives `agent_update: plan_review` and renders an editable review card. Approval pins the approved plan into the scratchpad so it survives context compaction. Rejection, timeout, or user abort stops the run before any browser tools execute. In Try mode, invalid JSON after one repair degrades only that turn to the Ask prompt and read-only tool catalog; Strict mode still stops before tools. Scheduled runs can set `autoApprovePlanReview` and pin the plan without showing the card.
 
 ### Step 5: Main Agent Loop
 ```
 while (steps < maxSteps) {
   // 5a. Call LLM
   const tier = provider.promptTier;
-  const result = await provider.chat(messages, {
+  const result = await chatMainTurn(messages, {
     tools: getToolsForMode(mode, { tier }),
     temperature: mode === 'ask' ? 0.3 : 0.15,
     maxTokens: 4096,
@@ -190,6 +202,57 @@ while (steps < maxSteps) {
   }
 }
 ```
+
+### Ask-only provider streaming
+
+`chatMainTurn()` normally delegates to the established cost-aware
+`provider.chat()` call. It selects the stream aggregator only when all of these
+conditions are true:
+
+- the mode is `ask`;
+- the run came from the normal interactive detached `chat_start` path;
+- the Advanced Ask-streaming kill switch (persisted under the legacy
+  `openaiAskStreamingEnabled` storage key) is not off;
+- the provider reports `_supportsInteractiveAskStreaming() === true`;
+- the run is not a trusted Continue, cloud run, scheduled/non-interactive run,
+  or a run whose stream circuit breaker already opened.
+
+Official OpenAI GPT-5.6 and streaming-capable Responses-only GPT-5 Pro variants
+use Responses streaming. Other supported official OpenAI models use Chat
+Completions streaming. Anthropic uses its native Messages event parser, Azure
+OpenAI uses its deployment-based parser, and Gemini, DeepSeek, xAI, Mistral,
+Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Cloud,
+Ollama, LM Studio, Jan, vLLM, SGLang, and LocalAI use the OpenAI-compatible
+Chat Completions parser. z.ai streaming tool calls add its documented
+`tool_stream` request flag. llama.cpp uses its dedicated OpenAI-compatible
+parser. Alibaba Cloud remains non-streaming because DashScope rejects
+`tools` together with `stream: true`, while Ask always supplies its read-only
+tool catalog. Models whose official OpenAI capability table lacks either
+streaming or function calling, including GPT-5.5 Pro, also remain non-streaming.
+
+The aggregator forwards only output-text deltas to the side panel. Reasoning,
+usage, response Items, and function calls remain in memory until the provider
+emits its terminal event: `response.completed` for Responses, `message_stop`
+for Anthropic, or `[DONE]` for Azure/OpenAI-compatible SSE. Only then does it
+return the canonical result to the existing agent loop, which may execute
+buffered tools or persist the assistant turn. A transport read failure,
+malformed/premature EOF, or missing terminal event clears emitted text,
+disables streaming for the rest of that run, and silently retries the same
+generation once through `provider.chat()`. Terminal HTTP/API or in-stream
+provider errors, `content_filter` finish reasons, `response.incomplete`, and
+`response.failed` propagate without issuing a duplicate non-streaming request.
+The persistent setting is unchanged by a transient failure.
+
+Live `text_delta` messages are broadcast immediately. Reconnect-journal
+snapshots for consecutive deltas are cloned and written to `storage.session`
+on a 200 ms trailing interval; any non-delta update, terminal state, or
+pre-tool durability checkpoint cancels that timer and persists the latest
+snapshot immediately.
+
+This is intentionally an integration inside `processMessage()`, not a handoff
+to the older full `processMessageStream()` loop. Attachments, detached-run
+ownership, reconnect replay, persistence, traces, tool guards, and completion
+invariants therefore keep one production lifecycle.
 
 ### Step 6: Tool Execution
 
@@ -391,9 +454,9 @@ Background relays these via `chrome.runtime.sendMessage` to the side panel, whic
 
 ### Plan before Act (`planner.js`)
 
-The optional action-mode planning gate runs before the first browser tool call when enabled; unset storage defaults to try mode while explicit off remains off. The planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
+The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
 
-Planner calls are traced with `phase: "planner"` when trace recording is enabled. They also use the cost allowance guard, abort checks, a JSON-repair retry, and Qwen/DeepSeek no-think handling before the run is allowed to continue.
+Planner calls are traced with `phase: "planner"` when trace recording is enabled. They also use the cost allowance guard, abort checks, a JSON-repair retry, and Qwen/DeepSeek no-think handling. A failed repair cannot authorize actions: Try falls back to an Ask/read-only turn, while Strict stops.
 
 Each new trace run records the manifest version that created it. `/export`
 Markdown records the exporting version, `/export --traces` records both the
@@ -431,6 +494,35 @@ memory list, mode, and success state. The response path does not await this
 job. A short queue drains best-effort through the active provider using the
 existing cost allowance guard; cost exhaustion skips extraction silently, and
 other failures retry once.
+
+### Saved workflows (`agent/workflows.js`)
+
+Saved workflows are compiled artifacts, not serialized trace events. The
+background reads the newest successful trace in the active conversation and
+normalizes its replayable actions into `webbrain-workflow/1`, stored under
+`wb_saved_workflows_v1`. Compilation removes historical element references,
+action CSS selectors, coordinates, query strings, fragments, and typed values. Every typed field
+value becomes a declared runtime parameter; unsupported or failed actions are
+skipped and reported to the user as save warnings.
+
+Each compiled step contains semantic target metadata (role, accessible name,
+label, field identity, link, or placeholder), an expected postcondition, and
+the origin/path family observed before that action. `/workflow --run <id>`
+collects parameters in an ephemeral side-panel form. The replay executor then:
+
+1. checks the current origin/path family before every step;
+2. reads a fresh accessibility tree and resolves exactly one semantic match;
+3. calls `_executeToolBatch()` so the existing permission, form-submit,
+   verification, abort, and action-normalization gates remain authoritative;
+4. validates the saved postcondition; and
+5. either continues deterministically, delegates a known-safe mismatch to the
+   normal Agent, or stops when a state-changing action has an unknown outcome.
+
+Replay does not set `currentRunId`, because ordinary tool tracing would retain
+runtime values. It creates a separate run containing sanitized notes and
+redacted UI tool events. Runtime parameter values are also omitted from the
+fallback prompt and user-memory extraction. Chrome and Firefox ship identical
+workflow schema/compiler code and the same replay policy.
 
 ### Scheduled Tasks (`scheduler.js`)
 
@@ -593,9 +685,24 @@ capabilities still use the normal permission gate.
 - **Image pruning**: strips base64 images from all but the last 4 messages before each LLM call
 - **Tool result cap**: individual results truncated at 8,000 chars
 
-### Conversation Persistence (Chrome only)
+### Conversation and UI Persistence
 
-MV3 service workers can die between turns. Conversations are persisted to `chrome.storage.session` (debounced 300ms) and hydrated on first message to a tab. Per-tab isolated.
+Both builds keep per-tab state in session storage:
+
+- `agentConv:<tabId>` stores the provider-facing conversation and is hydrated
+  before the next message.
+- `tabChat:<tabId>` mirrors rendered chat HTML so closing/reopening the panel or
+  sidebar restores the visible transcript.
+- `runUi:<tabId>` stores the background-owned detached-run snapshot: request/run
+  identity, status, bounded replay events, plan/tool state, terminal content,
+  and the current accumulated streamed text.
+
+`text_delta` journal writes are coalesced on a 200 ms trailing timer; non-delta,
+terminal, and pre-tool durability checkpoints flush immediately. The accumulated
+stream is bounded separately from the 256-event replay window so a reopened
+panel can reconstruct in-progress Markdown even after its early delta events
+have been acknowledged or trimmed. Chrome uses `chrome.storage.session`;
+Firefox uses `browser.storage.session`.
 
 ---
 
@@ -606,7 +713,7 @@ MV3 service workers can die between turns. Conversations are persisted to `chrom
 | Background | Service worker (ephemeral) | Background page (persistent) |
 | Events | CDP-trusted (`isTrusted=true`) | Synthetic (`isTrusted=false`) |
 | Screenshots | CDP `Page.captureScreenshot` | `browser.tabs.captureVisibleTab()` |
-| Conversation persistence | `chrome.storage.session` | In-memory only |
+| Conversation/UI persistence | `chrome.storage.session` | `browser.storage.session` |
 | Offscreen document | Yes (fetch proxy + recorder) | Not available |
 | Trace recorder | IndexedDB (opt-in) | IndexedDB (opt-in) — same `trace/recorder.js` |
 | Duplicate-submit guard | Yes | Not available |
@@ -618,7 +725,7 @@ MV3 service workers can die between turns. Conversations are persisted to `chrom
 | API shortcut observer | `chrome.webRequest` URL/method buffer | `browser.webRequest` URL/method buffer |
 | Slash-driven tab/screen recording | `chrome.tabCapture` / `getDisplayMedia()` + offscreen | Not available |
 | Side panel | `sidePanel` API (MV3) | `sidebar_action` (MV2) |
-| File upload | CDP-powered | Manual dispatch |
+| File upload | CDP path or `downloadId` | `downloadId` re-fetch or WebBrain file picker; no arbitrary local path |
 
 Everything else (agent loop, tools, adapters, providers, loop detection, context management, system prompts) is architecturally identical between the two builds.
 
@@ -632,6 +739,7 @@ src/
 │   ├── manifest.json
 │   ├── skills/       # Packaged default skills
 │   └── src/
+│       ├── run-ui-journal.js # Detached-run replay and streamed-text snapshots
 │       ├── agent/    # agent.js, tools.js, skills.js, adapters.js, scheduler.js, ...
 │       ├── cdp/      # CDP client (Chrome only)
 │       ├── content/  # accessibility-tree.js, content.js, ...

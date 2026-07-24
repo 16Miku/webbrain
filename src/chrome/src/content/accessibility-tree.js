@@ -161,6 +161,11 @@
     const onHost = (domain) => hostname === domain || hostname.endsWith(`.${domain}`);
     if (onHost('bilibili.com')) return { key: 'bilibili', rules: SITE_INTERACTION_RULES.bilibili };
     if (onHost('xiaohongshu.com')) return { key: 'xiaohongshu', rules: SITE_INTERACTION_RULES.xiaohongshu };
+    // LinkedIn's interop shell renders major surfaces (the post composer
+    // dialog among them) inside the open #interop-outlet shadow root. No
+    // custom interaction rules needed — piercing alone makes the dialog's
+    // contenteditable + Post button visible to the tree walk.
+    if (onHost('linkedin.com')) return { key: 'linkedin', rules: [] };
     return { key: '', rules: [] };
   }
 
@@ -190,7 +195,7 @@
     selectors: () => currentSiteInteractionConfig().rules.map(([selector]) => selector),
     describe: getSiteInteractionDescriptor,
     isInteractive: (el) => !!getSiteInteractionDescriptor(el),
-    shouldPierceShadowRoots: () => currentSiteInteractionConfig().key === 'bilibili',
+    shouldPierceShadowRoots: () => ['bilibili', 'linkedin'].includes(currentSiteInteractionConfig().key),
   });
 
   function getRole(el) {
@@ -313,6 +318,30 @@
         }
       } catch {}
     }
+
+    // Native form controls can be wrapped by a <label> without using a
+    // matching `for` attribute. `el.labels` covers both that pattern and
+    // explicit label associations, so action results do not expose an
+    // unnamed checkbox even though the page visibly labels it.
+    try {
+      const labelText = Array.from(el.labels || [])
+        .map(label => (label.innerText || label.textContent || '').replace(/\s+/g, ' ').trim())
+        .find(Boolean);
+      if (labelText) {
+        return labelText.length > MAX_NAME_LEN
+          ? labelText.substring(0, MAX_NAME_LEN) + '...'
+          : labelText;
+      }
+      const wrappingLabel = el.closest && el.closest('label');
+      const wrappingText = (wrappingLabel?.innerText || wrappingLabel?.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (wrappingText) {
+        return wrappingText.length > MAX_NAME_LEN
+          ? wrappingText.substring(0, MAX_NAME_LEN) + '...'
+          : wrappingText;
+      }
+    } catch {}
 
     if (tag === 'input') {
       const t = (el.getAttribute('type') || '').toLowerCase();
@@ -558,6 +587,18 @@
     if (type) line += ' type="' + type + '"';
     const ph = el.getAttribute('placeholder');
     if (ph) line += ' placeholder="' + ph + '"';
+
+    // Disabled submit/action state is a blocker the model must see before it
+    // tries to activate a control. In particular, React editors can contain
+    // visually correct DOM text while their application state still leaves
+    // the associated Post/Send button aria-disabled.
+    let disabled = false;
+    try {
+      disabled = !!el.disabled
+        || el.getAttribute('aria-disabled') === 'true'
+        || el.matches(':disabled');
+    } catch {}
+    if (disabled) line += ' disabled=true';
 
     // Checkbox/radio state is an action-critical value, not decorative
     // metadata. Without it the model has to infer state from a focus ring or
@@ -875,28 +916,51 @@
         ];
         const overlayEls = [];
         const seen = new WeakSet();
+        // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
+        // dialog we must hoist can live inside an open shadow root where
+        // document.querySelectorAll can't see it. Collect those roots so the
+        // overlay scan covers them too — without piercing, a freshly-opened
+        // composer dialog is completely absent from the tree output and the
+        // model falls back to blind coordinate clicks.
+        const overlayRoots = [document];
+        if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
+          const collectShadowRoots = (root, depth) => {
+            if (depth > 4) return;
+            let hosts;
+            try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
+            for (const host of hosts) {
+              if (host.shadowRoot) {
+                overlayRoots.push(host.shadowRoot);
+                collectShadowRoots(host.shadowRoot, depth + 1);
+              }
+            }
+          };
+          collectShadowRoots(document, 0);
+        }
         try {
           for (const sel of overlaySelectors) {
-            const nodes = document.querySelectorAll(sel);
-            for (const n of nodes) {
-              if (seen.has(n)) continue;
-              if (!n.isConnected) continue;
-              // Skip if ancestor already collected — avoids emitting a
-              // nested listbox twice when its ancestor dialog is also hit.
-              let ancIsOverlay = false;
-              for (let p = n.parentElement; p; p = p.parentElement) {
-                if (seen.has(p)) { ancIsOverlay = true; break; }
+            for (const root of overlayRoots) {
+              const nodes = root.querySelectorAll(sel);
+              for (const n of nodes) {
+                if (seen.has(n)) continue;
+                if (!n.isConnected) continue;
+                // Skip if ancestor already collected — avoids emitting a
+                // nested listbox twice when its ancestor dialog is also hit.
+                let ancIsOverlay = false;
+                for (let p = n.parentElement; p; p = p.parentElement) {
+                  if (seen.has(p)) { ancIsOverlay = true; break; }
+                }
+                if (ancIsOverlay) continue;
+                // Quick visibility gate — don't emit hidden overlay shells.
+                try {
+                  const r = n.getBoundingClientRect();
+                  if (r.width < 1 || r.height < 1) continue;
+                  const s = window.getComputedStyle(n);
+                  if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
+                } catch (e) { continue; }
+                seen.add(n);
+                overlayEls.push(n);
               }
-              if (ancIsOverlay) continue;
-              // Quick visibility gate — don't emit hidden overlay shells.
-              try {
-                const r = n.getBoundingClientRect();
-                if (r.width < 1 || r.height < 1) continue;
-                const s = window.getComputedStyle(n);
-                if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
-              } catch (e) { continue; }
-              seen.add(n);
-              overlayEls.push(n);
             }
           }
         } catch (e) {}

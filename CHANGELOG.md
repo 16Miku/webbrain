@@ -4,6 +4,181 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [25.8.0] - 2026-07-23
+
+### Added
+- Added Inkling planner benchmark (OpenRouter default, Chrome thinkingmachines/inkling frozen fixtures) and published the corresponding benchmark docs/blog page.
+
+### Changed
+- Improved sidepanel UI polish for picker controls and the language menu.
+- Added new UI locales for **de** and **nl**, including flag assets, and updated locale ordering/initialization to match expected dropdown behavior in both **Chrome and Firefox**.
+- Updated provider/model documentation and synced docs with recent streaming requirements (including explicit Mistral stream usage guidance).
+- Enabled Ask streaming behavior updates across providers while aligning provider-specific streaming/usage expectations.
+- Rebuilt distribution zips for Chrome/Edge/Firefox.
+
+### Fixed
+- Fixed locale dropdown initialization and ordering issues (including missing locale pieces for **nl**/**de**).
+- Avoided retrying terminal Ask stream errors to prevent incorrect fallback behavior.
+- Corrected provider streaming usage handling for Mistral Ask (ensuring required usage/stream events are used as documented).
+- Preserved provider-specific streaming compatibility rules (e.g., keeping Alibaba Ask non-streaming where required).
+
+### Tests
+- Added Inkling planner benchmark result fixtures to the test suite (Chrome thinkingmachines/inkling frozen set).
+
+## [25.7.12] - 2026-07-23
+
+### Changed
+- Expanded interactive Ask streaming from GPT-5.6 to documented streaming- and function-calling-capable official OpenAI models, while keeping GPT-5.5 Pro and other unsupported variants non-streaming.
+- Routed Responses-only GPT-5 Pro variants through the Responses API and retained Chat Completions streaming for other supported OpenAI models.
+- Enabled interactive Ask streaming for Anthropic, Azure OpenAI, Gemini, DeepSeek, xAI, Mistral, Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Cloud, llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, and LocalAI with provider-specific terminal-event validation.
+- Generalized the Advanced streaming control and made safe transport/protocol fallback silent: the affected generation retries non-streaming once, then streaming stays disabled for the rest of that run.
+
+### Fixed
+- Treat premature official OpenAI Chat Completions stream EOF as an interrupted generation, clearing partial text and retrying once through the non-streaming path.
+- Normalized GPT-5 Pro reasoning effort to its supported `high` value.
+- Propagated explicit Chat Completions, Anthropic, and Azure in-stream API error events instead of accepting a later terminal sentinel as success; HTTP/API errors never trigger the silent fallback.
+- Rejected OpenAI-compatible and Azure streams that finish with `content_filter`, clearing any partial text instead of persisting a filtered response or retrying it non-streaming.
+- Added the documented `gpt-5.2-chat-latest` model to official OpenAI Ask streaming capability detection.
+- Hardened llama.cpp streaming with readable-body, malformed-frame, explicit-error, usage, reasoning, and terminal `[DONE]` handling before enabling its silent non-streaming fallback.
+- Added z.ai's required `tool_stream` request option for streaming generations that expose agent tools.
+- Preserved Groq token usage delivered in the provider-specific `x_groq` streaming envelope.
+- Rejected z.ai streams that finish with `sensitive`, `network_error`, or `model_context_window_exceeded` instead of persisting partial output as a successful response.
+- Kept Alibaba Cloud Ask calls non-streaming because DashScope rejects its required `tools` payload when `stream: true`.
+- Requested Mistral streaming usage events explicitly so interactive Ask turns remain included in cloud cost allowances.
+- Preserved in-progress streamed Markdown across side-panel/sidebar closes, reloads, and reconnects in Chrome and Firefox.
+- Rebuilt restored streams from the background-owned UI journal without duplicating deltas, losing Markdown structure, or leaving an unfinished stream in its incremental render state.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for OpenAI streaming capability detection, GPT-5.4 Pro routing, Chat Completions completion sentinels, and transport fallback.
+- Added mirrored capability, terminal-event, malformed-frame, explicit-error, content-filter, and silent one-time fallback coverage for the newly enabled providers.
+- Added mirrored regression coverage for persisted streamed text, reconnect replay, restored finalization, and journal size limits.
+
+## [25.7.11] - 2026-07-23
+
+### Fixed
+- Ranked provider Settings search results by exact provider name/ID, then prefix, then substring matches while preserving the configured provider order for ties.
+
+### Tests
+- Added Chrome and Firefox provider-search ranking coverage.
+
+## [25.7.10] - 2026-07-23
+
+### Fixed
+- Rendered streamed assistant output as Markdown while deltas arrive and finalized the same message when the terminal response is received.
+- Replaced rejected or corrected streamed terminal content instead of appending a duplicate response.
+- Finalized restored streamed responses consistently after reconnect.
+
+## [25.7.9] - 2026-07-23
+
+### Changed
+- Refined reading-first navigation so new questions remain visible while long responses grow, explicit reader positions are preserved, and restored chats return to the latest turn.
+- Added floating **Follow response**, **Jump to latest**, and **Back to question** controls for clipped long replies.
+
+### Fixed
+- Kept Continue bars, plan/clarification prompts, store-review prompts, new questions, and slash-command output visible when they require attention.
+- Resumed live follow after an explicit jump to the response edge without overriding deliberate reading positions.
+
+## [25.7.8] - 2026-07-23
+
+### Added
+- Added reading-first navigation for long replies across Ask, Act, and Dev modes in Chrome and Firefox.
+
+### Removed
+- Removed the packaged Chrome Web Store release skill, its privileged upload/publish routing, setup UI, dashboard adapter, protected-page exception, and previously seeded local skill records.
+
+### Fixed
+- Kept blocking prompts and slash-command output visible without losing live follow when a run resumes.
+- Kept the navigation control available whenever response content extends below the viewport.
+
+### Tests
+- Added mirrored long-reply navigation, localization, restored-turn, and instant auto-follow regression coverage.
+
+## [25.7.6] - 2026-07-22
+
+### Added
+- Added portable saved workflow JSON export and import commands with Chrome and Firefox parity.
+
+### Changed
+- Updated the official OpenAI model picker to list current dated model variants.
+- Portable workflow imports are normalized, size-bounded, assigned fresh local identity, and rejected when unsafe or over the saved-workflow limits.
+
+### Tests
+- Added mirrored portable workflow parsing, file transfer, redaction, fresh-identity, and account-limit coverage.
+
+## [25.7.0] - 2026-07-22
+
+### Added
+- Added safe saved workflow schema and UI support for saving and managing traced runs (Chrome and Firefox parity).
+
+### Changed
+- Updated workflow replay to use the new safe saved workflow schema, improving reliability and reducing brittle replay behavior (Chrome and Firefox parity).
+- Updated documentation for privacy/data flow and security model to reflect saved workflow/replay behavior.
+
+### Fixed
+- Guarded workflow replay by page scope to prevent cross-page/brittle replays.
+- Rejected brittle selector replay during saved workflow replay to avoid incorrect actions.
+- Improved workflow replay safety by replaying saved actions in a more controlled manner.
+- Closed workflow gaps for save, replay, and telemetry to ensure consistent end-to-end behavior (Chrome and Firefox parity).
+
+### Tests
+- Updated test runner (`test/run.js`) to align with the saved workflow/replay changes.
+
+## [25.6.0] - 2026-07-22
+
+### Added
+- Added Ask-only OpenAI Responses streaming for interactive Ask-mode chats (Chrome and Firefox parity).
+
+### Changed
+- Updated planner benchmark coverage by adding Nanbeige 4.2 planner benchmark results to the repo.
+
+### Fixed
+- Improved structured plan review/editor stability by preserving editor scroll position across input and keeping step editing scroll stable (Chrome and Firefox parity).
+
+### Tests
+- Added Nanbeige 4.2 planner benchmark fixtures/results to the test suite.
+
+## [25.5.0] - 2026-07-22
+
+### Added
+- Added a default-on Advanced setting to disable OpenAI Ask response streaming immediately and return new chats to the established non-streaming provider path.
+- Improved plan review with structured, in-place editing (Chrome and Firefox parity).
+
+### Changed
+- Official OpenAI Responses calls now stream visible text for interactive Ask-mode chats while retaining the detached `chat_start` lifecycle, reconnect journal, and image/text attachment handling.
+- Tool calls and assistant-history persistence remain buffered until `response.completed`; Act, Dev, scheduled, cloud, and Continue runs remain on `provider.chat()`.
+- Drag-and-drop reordering of planner steps.
+- Hardened mixed plan editor modes to keep editing behavior consistent.
+- Preserved multiline plan step edits during editing and review flows.
+- Preserved collapsed raw plan approvals through review.
+- Preserved raw plan edits after review.
+- Stripped canonical plan tool suffixes for cleaner plan tool display.
+
+### Fixed
+- Interrupted OpenAI Ask transports now clear their partial visible text, open a per-run circuit breaker, and retry through `provider.chat()` without accepting incomplete tool calls or persisting an incomplete assistant turn; terminal HTTP, API, and `response.incomplete` errors propagate without a duplicate fallback request.
+- Live Ask text deltas remain immediate while durable reconnect snapshots are coalesced on a short trailing interval, avoiding a full journal clone and `storage.session` write for every SSE chunk; terminal updates and tool checkpoints still flush immediately.
+- Fixed plan review scroll behavior and the run label during plan review/editing.
+- Kept plan step editing scroll stable while interacting with the editor.
+- Captured plan editor scroll before input to prevent scroll jumps.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for streaming scope, attachment delivery, terminal tool-call gating, coalesced reconnect persistence, detached lifecycle wiring, the kill switch, and transport-only non-streaming fallback.
+- Updated test runner (`test/run.js`) to align with the new plan editor/review behaviors.
+
+## [25.4.2] - 2026-07-22
+
+### Added
+- Added a default-disabled packaged Chrome Web Store release skill with trusted status, ZIP upload, and publish tools backed by the official v2 API in Chrome and Firefox.
+- Added skill-scoped setup for user-owned Google OAuth credentials, publisher/item IDs, and an explicitly selected local release ZIP.
+
+### Changed
+- Added a Chrome Web Store dashboard adapter that routes enabled runs to the release skill instead of protected DOM controls.
+
+### Fixed
+- Added an always-on Chrome protected-page guard for the Chrome Web Store Developer Dashboard so DOM tools fail immediately and non-retryably instead of entering wait/read retry loops.
+
+### Security
+- Kept OAuth tokens and release ZIP bytes in extension-local storage and out of model prompts, tool arguments, traces, and tool results; upload and publish remain behind consequential-action permission and submission gates.
+
 ## [25.4.0] - 2026-07-21
 
 ### Added

@@ -17,6 +17,7 @@ import {
   normalizeCustomSkills,
   normalizeDefaultSkillRemovalIds,
   readSkillImportText,
+  removeRetiredPackagedSkills,
 } from '../agent/skills.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
@@ -42,10 +43,11 @@ import {
   PROVIDER_SHORT_LABELS,
   sniffProviderIdFromBaseUrl,
 } from './provider-icons.js';
+import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '25.4.2';
+const EXT_VERSION = '25.8.5';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -67,9 +69,13 @@ const costTotalLimitInput = document.getElementById('input-cost-total-limit');
 const costSpentValueLabel = document.getElementById('cost-spent-value');
 const btnResetCostSpend = document.getElementById('btn-reset-cost-spend');
 const autoScreenshotSelect = document.getElementById('select-auto-screenshot');
+const imageDetailSelect = document.getElementById('select-image-detail');
+const maxScreenshotsSelect = document.getElementById('select-max-screenshots');
+const maxImageDimensionSelect = document.getElementById('select-max-image-dimension');
 const siteAdaptersToggle = document.getElementById('toggle-site-adapters');
 const voiceInputToggle = document.getElementById('toggle-voice-input');
 const apiMutationObserverToggle = document.getElementById('toggle-api-mutation-observer');
+const openAIAskStreamingToggle = document.getElementById('toggle-openai-ask-streaming');
 const planBeforeActModeSelect = document.getElementById('select-plan-before-act-mode');
 const planReviewModeSelect = document.getElementById('select-plan-review-mode');
 const planReviewConfidenceRange = document.getElementById('range-plan-review-confidence');
@@ -386,7 +392,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'apiMutationObserverEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction']);
+  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -430,9 +436,13 @@ async function init() {
     clarifyTimeoutValueLabel.textContent = formatClarifyTimeoutLabel(cSec);
   }
   if (autoScreenshotSelect) autoScreenshotSelect.value = stored.autoScreenshot || 'state_change';
+  if (imageDetailSelect) imageDetailSelect.value = stored.imageDetail || 'auto';
+  if (maxScreenshotsSelect) maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
+  if (maxImageDimensionSelect) maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   if (siteAdaptersToggle) siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
   if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
+  if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);
   if (planReviewModeSelect) planReviewModeSelect.value = normalizePlanReviewMode(stored);
   if (planReviewConfidenceRange) {
@@ -611,7 +621,7 @@ function escapeHtml(s) {
 // --- Skills ---
 
 function makeSkillId() {
-  return `skill_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `skill_${Date.now().toString(36)}_${globalThis.crypto.randomUUID()}`;
 }
 
 function showSkillsResult(className, text, color = '') {
@@ -733,7 +743,7 @@ skillPreviewViewButtons.forEach((button) => {
 async function loadCustomSkills() {
   if (!skillsList) return;
   const stored = await browser.storage.local.get(CUSTOM_SKILLS_STORAGE_KEY);
-  customSkills = normalizeCustomSkills(stored[CUSTOM_SKILLS_STORAGE_KEY]);
+  customSkills = normalizeCustomSkills(removeRetiredPackagedSkills(stored[CUSTOM_SKILLS_STORAGE_KEY]));
   renderSkills();
 }
 
@@ -940,7 +950,7 @@ btnClearSkillForm?.addEventListener('click', () => {
 if (globalThis.browser?.storage?.onChanged) {
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[CUSTOM_SKILLS_STORAGE_KEY]) return;
-    customSkills = normalizeCustomSkills(changes[CUSTOM_SKILLS_STORAGE_KEY].newValue);
+    customSkills = normalizeCustomSkills(removeRetiredPackagedSkills(changes[CUSTOM_SKILLS_STORAGE_KEY].newValue));
     renderSkills();
   });
 }
@@ -1028,6 +1038,29 @@ autoScreenshotSelect?.addEventListener('change', async () => {
   await browser.storage.local.set({ autoScreenshot: autoScreenshotSelect.value }).catch(() => {});
 });
 
+imageDetailSelect?.addEventListener('change', async () => {
+  const v = imageDetailSelect.value;
+  const imageDetail = (v === 'high' || v === 'low' || v === 'auto') ? v : 'auto';
+  imageDetailSelect.value = imageDetail;
+  await browser.storage.local.set({ imageDetail }).catch(() => {});
+});
+
+maxScreenshotsSelect?.addEventListener('change', async () => {
+  let n = parseInt(maxScreenshotsSelect.value, 10);
+  if (!Number.isFinite(n) || n < 0) n = 0;
+  if (n > 5) n = 5;
+  maxScreenshotsSelect.value = String(n);
+  await browser.storage.local.set({ maxScreenshotsPerTurn: n }).catch(() => {});
+});
+
+maxImageDimensionSelect?.addEventListener('change', async () => {
+  let n = parseInt(maxImageDimensionSelect.value, 10);
+  if (!Number.isFinite(n) || n <= 0) n = 1568;
+  n = Math.max(1, Math.min(2048, n));
+  maxImageDimensionSelect.value = String(n);
+  await browser.storage.local.set({ maxImageDimension: n }).catch(() => {});
+});
+
 siteAdaptersToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ useSiteAdapters: siteAdaptersToggle.checked }).catch(() => {});
 });
@@ -1038,6 +1071,10 @@ voiceInputToggle?.addEventListener('change', async () => {
 
 apiMutationObserverToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ apiMutationObserverEnabled: apiMutationObserverToggle.checked }).catch(() => {});
+});
+
+openAIAskStreamingToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ openaiAskStreamingEnabled: openAIAskStreamingToggle.checked }).catch(() => {});
 });
 
 if (planBeforeActModeSelect) {
@@ -1909,6 +1946,16 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
   ].filter(Boolean).join(' '));
 }
 
+function providerSearchRank(id, config, query) {
+  const names = [id, config.label, config.providerName]
+    .filter(Boolean)
+    .map(normalizeGeneralSearchText);
+  if (names.some((name) => name === query)) return 0;
+  if (names.some((name) => name.startsWith(query))) return 1;
+  if (names.some((name) => name.includes(query))) return 2;
+  return 3;
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2011,7 +2058,18 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
-          suggestions: ['gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6', 'gpt-5.5', 'gpt-5.4', 'gpt-5.2', 'gpt-5.3-codex'] },
+          suggestions: [
+            'gpt-5.6-terra',
+            'gpt-5.6-sol',
+            'gpt-5.6-luna',
+            'gpt-5.6',
+            'gpt-5.5-2026-04-23',
+            'gpt-5.5-pro-2026-04-23',
+            'gpt-5.4-2026-03-05',
+            'gpt-5.4-pro-2026-03-05',
+            'gpt-5.4-mini-2026-03-17',
+            'gpt-5.4-nano-2026-03-17',
+          ] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.openai.com/v1' },
         ...OPENAI_COST_ESTIMATE_FIELDS,
       ],
@@ -2075,6 +2133,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'API token' },
         { key: 'accountId', label: 'Cloudflare Account ID', type: 'text', placeholder: '0123456789abcdef0123456789abcdef' },
+        { key: 'gatewayId', label: 'AI Gateway ID (optional; @cf defaults to default)', type: 'text', placeholder: 'my-gateway' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: '@cf/zai-org/glm-5.2',
           suggestions: ['@cf/zai-org/glm-5.2'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
@@ -2179,10 +2238,64 @@ function renderProviders() {
   };
 
   // Filter pill row above the providers list.
+  // Additional providers share a predictable OpenAI-compatible settings
+  // shape. Provider-specific suggestions/placeholders stay in the catalog;
+  // UI-only metadata is never persisted with credentials.
+  for (const [id, meta] of Object.entries(ADDITIONAL_PROVIDER_UI)) {
+    const config = providersData[id] || {};
+    const fields = [
+      {
+        key: 'apiKey',
+        labelKey: 'st.provider.field.api_key',
+        type: 'password',
+        placeholder: meta.apiKeyPlaceholder || 'API key',
+      },
+    ];
+    if (id === 'azure-cognitive-services') {
+      fields.push({ key: 'resource', label: 'Azure resource name', type: 'text', placeholder: 'my-resource' });
+    }
+    if (id === 'google-vertex' || id === 'google-vertex-anthropic') {
+      fields.push(
+        { key: 'project', label: 'Google Cloud project ID', type: 'text', placeholder: 'my-project' },
+        { key: 'location', label: 'Google Cloud location', type: 'text', placeholder: id === 'google-vertex' ? 'us-central1' : 'us-east5' },
+      );
+    }
+    fields.push(
+      {
+        key: 'model',
+        labelKey: 'st.provider.field.model',
+        type: 'text',
+        placeholder: config.model || (id === 'azure-cognitive-services' ? 'deployed-model-name' : 'model-id'),
+        suggestions: meta.suggestions || [],
+      },
+      {
+        key: 'baseUrl',
+        labelKey: 'st.provider.field.api_base_url',
+        type: 'text',
+        placeholder: config.baseUrl || 'https://provider.example/v1',
+      },
+      CONTEXT_WINDOW_FIELD,
+      { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+    );
+    if (config.category === 'router' || config.category === 'local') fields.push(PROMPT_TIER_FIELD);
+    fields.push(...COST_ESTIMATE_FIELDS);
+    providerConfigs[id] = { fields };
+  }
+
   providersContainer.appendChild(renderProviderFilterBar());
 
-  const entries = Object.entries(providersData);
+  let entries = Object.entries(providersData);
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
+  if (providerQuery) {
+    entries = entries
+      .map((entry, index) => ({
+        entry,
+        index,
+        rank: providerSearchRank(entry[0], entry[1], providerQuery),
+      }))
+      .sort((a, b) => a.rank - b.rank || a.index - b.index)
+      .map(({ entry }) => entry);
+  }
   let visibleCount = 0;
   for (const [id, config] of entries) {
     const isSelected = id === activeProviderId;
@@ -2453,12 +2566,19 @@ function renderProviderFilterBar() {
     { key: 'cloud',  labelKey: 'st.providers.filter.cloud' },
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
+  const filterCounts = Object.values(providersData).reduce((counts, config) => {
+    counts.all += 1;
+    const category = config.category || 'cloud';
+    if (Object.hasOwn(counts, category) && category !== 'all') counts[category] += 1;
+    return counts;
+  }, { all: 0, local: 0, cloud: 0, router: 0 });
   for (const f of filters) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `provider-filter-pill${providerFilter === f.key ? ' active' : ''}`;
     btn.dataset.filter = f.key;
-    btn.innerHTML = `${filterIcons[f.key] || ''}<span>${escapeHtml(t(f.labelKey))}</span>`;
+    btn.innerHTML = `${filterIcons[f.key] || ''}<span>${escapeHtml(t(f.labelKey))}</span>`
+      + `<span class="provider-filter-count">${filterCounts[f.key]}</span>`;
     btn.addEventListener('click', async () => {
       if (providerFilter === f.key) return;
       // Snapshot whatever the user has typed but not yet saved BEFORE we

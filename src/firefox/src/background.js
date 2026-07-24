@@ -9,9 +9,17 @@ import {
   PACKAGED_SKILL_SOURCES,
   normalizeCustomSkills,
   normalizeDefaultSkillRemovalIds,
+  removeRetiredPackagedSkills,
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import {
+  compileLatestSuccessfulWorkflow,
+  createSavedWorkflowStore,
+  exportPortableWorkflowDefinition,
+  importPortableWorkflowDefinition,
+} from './agent/workflows.js';
+import * as workflowTrace from './trace/recorder.js';
 import {
   startClaudeOAuth,
   refreshClaudeAccessToken,
@@ -26,7 +34,7 @@ import {
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-import { RunUiJournal, runUiSnapshotForRequest } from './run-ui-journal.js';
+import { RunUiJournal, RunUiPersistenceScheduler, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
   USER_MEMORY_ENABLED_KEY,
@@ -54,6 +62,11 @@ import {
 } from './config-transfer.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX, createRunCaptureController } from './run-capture.js';
 import { playWatchAlert } from './watch-alert.js';
+import {
+  getChromeWebStoreOAuthStatus,
+  signOutChromeWebStoreOAuth,
+  startChromeWebStoreOAuth,
+} from './chrome-web-store-release.js';
 
 /**
  * WebBrain Background Script (Firefox)
@@ -63,6 +76,7 @@ import { playWatchAlert } from './watch-alert.js';
 const providerManager = new ProviderManager();
 const agent = new Agent(providerManager);
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
+const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const profileSync = new ProfileSyncManager(browser.storage.local);
 const runCaptureController = createRunCaptureController({
   api: browser,
@@ -242,6 +256,15 @@ async function loadScreenshotRedaction() {
 }
 const screenshotRedactionReady = loadScreenshotRedaction().catch(() => {});
 
+// Image budget (issue #311): screenshot quality + how many screenshots the
+// agent may capture per turn, and the max image dimension. Defaults preserve
+// the previous behavior (auto detail, unlimited screenshots, 1568px cap).
+async function loadImageBudget() {
+  const stored = await browser.storage.local.get(['imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  agent.applyImageBudgetFromStorage(stored);
+}
+const imageBudgetReady = loadImageBudget().catch(() => {});
+
 async function syncAgentUserMemoryFromStorage() {
   const [store, settings] = await Promise.all([
     userMemoryStore.load(),
@@ -269,6 +292,7 @@ let userMemoryExtractionDrainPromise = null;
 let userMemoryExtractionTimer = null;
 let userMemoryExtractionQueueLock = Promise.resolve();
 let userMemoryStoreLock = Promise.resolve();
+let savedWorkflowStoreLock = Promise.resolve();
 const userMemoryTurnContextByTab = new Map();
 
 function userMemoryTurnContextKey(tabId) {
@@ -447,6 +471,12 @@ async function withUserMemoryStoreLock(task) {
   return run;
 }
 
+async function withSavedWorkflowStoreLock(task) {
+  const run = savedWorkflowStoreLock.then(task, task);
+  savedWorkflowStoreLock = run.catch(() => {});
+  return run;
+}
+
 async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operations) {
   return withUserMemoryStoreLock(async () => {
     if (!await isUserMemoryExtractionEnabled()) {
@@ -616,7 +646,18 @@ async function loadCustomSkills() {
     DEFAULT_SKILLS_SEEDED_STORAGE_KEY,
     'enableAllPackagedSkills',
   ]);
-  let skills = normalizeCustomSkills(stored[CUSTOM_SKILLS_STORAGE_KEY]);
+  const storedSkills = Array.isArray(stored[CUSTOM_SKILLS_STORAGE_KEY])
+    ? stored[CUSTOM_SKILLS_STORAGE_KEY]
+    : [];
+  const retainedSkills = removeRetiredPackagedSkills(storedSkills);
+  let skills = normalizeCustomSkills(retainedSkills);
+  if (retainedSkills.length !== storedSkills.length) {
+    try {
+      await browser.storage.local.set({ [CUSTOM_SKILLS_STORAGE_KEY]: skills });
+    } catch (error) {
+      console.warn('[WebBrain] Retired packaged skills could not be removed', error);
+    }
+  }
   const removedDefaultIds = new Set(normalizeDefaultSkillRemovalIds(stored[DEFAULT_SKILLS_REMOVED_STORAGE_KEY]));
   try {
     const existingIds = new Set(skills.map((skill) => skill.id));
@@ -789,6 +830,13 @@ browser.storage.onChanged.addListener((changes) => {
   if (changes.screenshotRedaction) {
     agent.screenshotRedaction = !!changes.screenshotRedaction.newValue;
   }
+  if (changes.imageDetail || changes.maxScreenshotsPerTurn || changes.maxImageDimension) {
+    agent.applyImageBudgetFromStorage({
+      imageDetail: changes.imageDetail ? changes.imageDetail.newValue : undefined,
+      maxScreenshotsPerTurn: changes.maxScreenshotsPerTurn ? changes.maxScreenshotsPerTurn.newValue : undefined,
+      maxImageDimension: changes.maxImageDimension ? changes.maxImageDimension.newValue : undefined,
+    });
+  }
   if (changes.profileText) {
     agent.profileText = changes.profileText.newValue || '';
     refreshPrompts = true;
@@ -812,7 +860,16 @@ browser.storage.onChanged.addListener((changes) => {
     });
   }
   if (changes[CUSTOM_SKILLS_STORAGE_KEY]) {
-    agent.customSkills = normalizeCustomSkills(changes[CUSTOM_SKILLS_STORAGE_KEY].newValue);
+    const storedSkills = Array.isArray(changes[CUSTOM_SKILLS_STORAGE_KEY].newValue)
+      ? changes[CUSTOM_SKILLS_STORAGE_KEY].newValue
+      : [];
+    const retainedSkills = removeRetiredPackagedSkills(storedSkills);
+    agent.customSkills = normalizeCustomSkills(retainedSkills);
+    if (retainedSkills.length !== storedSkills.length) {
+      browser.storage.local.set({ [CUSTOM_SKILLS_STORAGE_KEY]: agent.customSkills }).catch((error) => {
+        console.warn('[WebBrain] Retired packaged skills could not be removed', error);
+      });
+    }
     refreshPrompts = true;
   }
   if (changes.captchaSolverEnabled) {
@@ -1365,15 +1422,23 @@ function persistRunUiSnapshot(tabId, snapshot) {
   return write;
 }
 
+const runUiSnapshotPersistence = new RunUiPersistenceScheduler({
+  persist: persistRunUiSnapshot,
+});
+
 function flushRunUiSnapshot(tabId, requestId) {
-  const pending = runUiPersistenceQueues.get(tabId);
+  const pending = runUiSnapshotPersistence.flush(tabId) || runUiPersistenceQueues.get(tabId);
   if (pending) return pending;
   return Promise.resolve(runUiPersistenceFailures.get(tabId) !== String(requestId || ''));
 }
 
 const runUiJournal = new RunUiJournal({
-  onChange(tabId, snapshot) {
-    void persistRunUiSnapshot(tabId, snapshot);
+  onChange(tabId, snapshot, change) {
+    if (change?.eventType === 'text_delta') {
+      runUiSnapshotPersistence.defer(tabId, snapshot);
+      return;
+    }
+    void runUiSnapshotPersistence.persistNow(tabId, snapshot);
   },
 });
 
@@ -1433,6 +1498,7 @@ async function getRunUiSnapshot(tabId) {
 }
 
 function clearRunUiSnapshot(tabId) {
+  runUiSnapshotPersistence.cancel(tabId);
   runUiJournal.clear(tabId);
   runUiPersistenceFailures.delete(tabId);
   const previous = runUiPersistenceQueues.get(tabId) || Promise.resolve();
@@ -1518,6 +1584,29 @@ function cancelDetachedRunStart(tabId) {
   return true;
 }
 
+async function stopActiveRunBeforeConversationClear(tabId) {
+  const activeStart = detachedRunStarts.get(tabId) || null;
+  const running = agent.activeRunState(tabId)?.running === true;
+  if (!activeStart && !running) return false;
+
+  cancelDetachedRunStart(tabId);
+  try { agent.abort(tabId); } catch { /* best effort */ }
+
+  // Keep the old conversation alive until its run has unwound. Clearing it
+  // first leaves the per-tab run guard active while the UI already looks like
+  // a fresh chat, so the next send fails with "run already in progress".
+  if (activeStart?.promise) {
+    await activeStart.promise.catch(() => {});
+  }
+  // Direct chat/chat_stream callers do not have a detached-start promise.
+  // Do not clear their conversation until processMessage's finally block has
+  // released the agent's per-tab run guard.
+  while (agent.activeRunState(tabId)?.running) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
 function acquireRunKeepalive() {
   let released = false;
   const touch = () => {
@@ -1562,8 +1651,13 @@ function launchDetachedRun(action, msg, sender) {
   return { ok: true, accepted: true, requestId };
 }
 
-function sendAgentRunComplete(tabId, snapshot = null) {
+async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
+  const submittedTurnDurable = snapshot.kind === 'continue'
+    || await agent.hasDurableSubmittedTurn(
+      tabId,
+      snapshot.requestId,
+    ).catch(() => false);
   browser.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1576,6 +1670,7 @@ function sendAgentRunComplete(tabId, snapshot = null) {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
       endedAt: snapshot.endedAt || Date.now(),
+      submittedTurnDurable,
     },
   }).catch(() => {});
 }
@@ -1612,6 +1707,7 @@ async function handleMessage(msg, sender) {
   // onChanged keeps them in sync afterward.
   await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
   await screenshotRedactionReady;
+  await imageBudgetReady;
 
   switch (msg.action) {
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
@@ -1705,6 +1801,48 @@ async function handleMessage(msg, sender) {
       return { ok: true, ...result };
     }
 
+    case 'list_saved_workflows':
+      return { ok: true, workflows: await savedWorkflowStore.list() };
+
+    case 'get_saved_workflow': {
+      const workflow = await savedWorkflowStore.get(String(msg.id || ''));
+      return workflow ? { ok: true, workflow } : { ok: false, reason: 'not_found' };
+    }
+
+    case 'export_saved_workflow': {
+      const workflow = await savedWorkflowStore.get(String(msg.id || ''));
+      if (!workflow) return { ok: false, reason: 'not_found' };
+      const portable = exportPortableWorkflowDefinition(workflow);
+      return portable.workflow
+        ? { ok: true, workflow: portable.workflow }
+        : { ok: false, reason: portable.reason };
+    }
+
+    case 'import_saved_workflow': {
+      const portable = importPortableWorkflowDefinition(msg.definition);
+      if (!portable.workflow) return { ok: false, reason: portable.reason };
+      const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(portable.workflow));
+      return { ok: saved.changed, workflow: saved.workflow, reason: saved.reason || '' };
+    }
+
+    case 'save_latest_workflow': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required' };
+      const conversationId = await agent.getConversationId(tabId);
+      const compiled = await compileLatestSuccessfulWorkflow(workflowTrace, {
+        conversationId,
+        name: msg.name,
+      });
+      if (!compiled.workflow) return { ok: false, ...compiled };
+      const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
+      return { ok: saved.changed, workflow: saved.workflow, warnings: compiled.warnings, reason: saved.reason || '' };
+    }
+
+    case 'delete_saved_workflow': {
+      const result = await withSavedWorkflowStoreLock(() => savedWorkflowStore.delete(String(msg.id || '')));
+      return { ok: result.changed, ...result };
+    }
+
     case 'ensure_conversation_id': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
@@ -1724,7 +1862,8 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
       assertRunCanStart(tabId, msg);
-      const mode = msg.mode || 'ask';
+      const isWorkflowRun = !!msg.workflowId;
+      const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');
       const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, { mode, kind: 'chat' });
       const releaseRunKeepalive = acquireRunKeepalive();
 
@@ -1748,10 +1887,13 @@ async function handleMessage(msg, sender) {
           await contextMenuStorage.clear(msg.contextMenuClear.tabId, msg.contextMenuClear.promptId);
         }
 
+        const askStreamingSettings = await browser.storage.local.get('openaiAskStreamingEnabled').catch(() => ({}));
         const runOptions = {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           locale: msg.locale,
           intentFailureMessage: msg.intentFailureMessage,
+          interactiveChat: true,
+          askStreamingEnabled: askStreamingSettings.openaiAskStreamingEnabled !== false,
           detachedRequestId: runUi.requestId,
           isDetachedStartCancelled: () => isDetachedRunStartCancelled(tabId, msg),
           beforeConsequentialTool: () => flushRunUiSnapshot(tabId, runUi.requestId),
@@ -1760,20 +1902,47 @@ async function handleMessage(msg, sender) {
             return flushRunUiSnapshot(tabId, runUi.requestId);
           },
         };
-        result = await agent.processMessage(tabId, msg.text, (type, data) => {
+        const publishUpdate = (type, data) => {
           updates.push({ type, data });
           sendAgentUpdate(tabId, runUi.requestId, type, data);
-        }, mode, msg.attachments, runOptions);
+        };
+        if (isWorkflowRun) {
+          const workflow = await savedWorkflowStore.get(String(msg.workflowId || ''));
+          if (!workflow) throw new Error('Saved workflow not found.');
+          const replay = await agent.replaySavedWorkflow(
+            tabId,
+            workflow,
+            msg.workflowParameters && typeof msg.workflowParameters === 'object' ? msg.workflowParameters : {},
+            publishUpdate,
+            runOptions,
+          );
+          result = replay.summary || '';
+          if (replay.status === 'fallback') {
+            publishUpdate('workflow_fallback', {
+              workflowId: workflow.id,
+              stepIndex: replay.stepIndex,
+              reason: replay.reason,
+            });
+            result = await agent.processMessage(tabId, replay.prompt, publishUpdate, 'act', [], runOptions);
+          }
+        } else {
+          result = await agent.processMessage(tabId, msg.text, publishUpdate, mode, msg.attachments, runOptions);
+        }
 
-        const userMemoryPayload = takeUserMemoryTurnExtractionPayload(tabId, {
-          userText: msg.text,
-          assistantText: result,
-          mode,
-          succeeded: runUpdatesSucceeded(updates),
-        });
-        userMemoryPayload.conversationId = await agent.getConversationId(tabId);
-        userMemoryTurnContextTaken = true;
-        enqueueUserMemoryExtractionAfterTurn(userMemoryPayload);
+        if (isWorkflowRun) {
+          clearUserMemoryTurnContext(tabId);
+          userMemoryTurnContextTaken = true;
+        } else {
+          const userMemoryPayload = takeUserMemoryTurnExtractionPayload(tabId, {
+            userText: msg.text,
+            assistantText: result,
+            mode,
+            succeeded: runUpdatesSucceeded(updates),
+          });
+          userMemoryPayload.conversationId = await agent.getConversationId(tabId);
+          userMemoryTurnContextTaken = true;
+          enqueueUserMemoryExtractionAfterTurn(userMemoryPayload);
+        }
         return { content: result, updates, requestId: runUi.requestId, conversationId: await agent.getConversationId(tabId) };
       } catch (error) {
         runError = error;
@@ -1796,7 +1965,7 @@ async function handleMessage(msg, sender) {
           clearRunUiSnapshot(tabId);
         } else {
           const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
-          sendAgentRunComplete(tabId, snapshot);
+          await sendAgentRunComplete(tabId, snapshot);
         }
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
@@ -1845,7 +2014,7 @@ async function handleMessage(msg, sender) {
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
         const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
-        sendAgentRunComplete(tabId, snapshot);
+        await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
       }
@@ -1894,7 +2063,7 @@ async function handleMessage(msg, sender) {
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
         const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
-        sendAgentRunComplete(tabId, snapshot);
+        await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
       }
@@ -1904,6 +2073,7 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
+        await stopActiveRunBeforeConversationClear(tabId);
         await scheduler.cancelForConversation(tabId, conversationId);
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
@@ -1935,10 +2105,13 @@ async function handleMessage(msg, sender) {
       const detachedError = requestedRequestId && failure?.requestId === requestedRequestId
         ? { requestId: failure.requestId, message: failure.message }
         : null;
-      const submittedTurnDurable = requestedRequestId
-        ? await agent.hasDurableSubmittedTurn(tabId, requestedRequestId)
-        : false;
       const runUiSnapshot = await getRunUiSnapshot(tabId);
+      const requestedRunUi = runUiSnapshotForRequest(runUiSnapshot, requestedRequestId);
+      const durabilityRequestId = requestedRequestId || String(requestedRunUi?.requestId || '');
+      const submittedTurnDurable = requestedRunUi?.kind === 'continue'
+        || (durabilityRequestId
+          ? await agent.hasDurableSubmittedTurn(tabId, durabilityRequestId)
+          : false);
       return {
         ok: true,
         ...agent.activeRunState(tabId),
@@ -1948,7 +2121,7 @@ async function handleMessage(msg, sender) {
         runUiDurable: !runUiSnapshot
           || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || ''),
         detachedError,
-        runUi: runUiSnapshotForRequest(runUiSnapshot, requestedRequestId),
+        runUi: requestedRunUi,
       };
     }
 
@@ -2217,6 +2390,22 @@ async function handleMessage(msg, sender) {
       } catch (e) {
         return { ok: false, error: e.message };
       }
+    }
+
+    case 'chrome_web_store_oauth_start': {
+      try {
+        await startChromeWebStoreOAuth(msg.config || {});
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+    case 'chrome_web_store_oauth_status': {
+      return { ok: true, ...(await getChromeWebStoreOAuthStatus()) };
+    }
+    case 'chrome_web_store_oauth_signout': {
+      await signOutChromeWebStoreOAuth();
+      return { ok: true };
     }
 
     case 'list_provider_models': {

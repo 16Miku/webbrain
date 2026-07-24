@@ -632,7 +632,8 @@ body {
   flex: 0 1 auto;
 }
 
-.provider-select-native {
+.provider-select-native,
+.language-select-native {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -719,6 +720,7 @@ body {
   max-width: min(280px, 90vw);
   max-height: min(320px, 50vh);
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg-secondary, var(--bg-input));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -726,8 +728,42 @@ body {
   padding: 4px;
 }
 
+.picker-menu-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: 0;
+  height: 0;
+  border-radius: 4px;
+  background: rgba(108, 99, 255, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, width, height;
+  transition:
+    transform 170ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 170ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 170ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 90ms ease;
+}
+
+.picker-menu-highlight.visible {
+  opacity: 1;
+}
+
+.picker-menu-highlight.instant {
+  transition: none;
+}
+
 .provider-picker-menu.hidden {
   display: none;
+}
+
+.provider-picker-group-label,
+.provider-picker-option,
+.language-picker-separator {
+  position: relative;
+  z-index: 1;
 }
 
 .provider-picker-group-label {
@@ -775,7 +811,7 @@ body {
 
 .provider-picker-option:hover,
 .provider-picker-option:focus-visible {
-  background: rgba(108, 99, 255, 0.12);
+  background: transparent;
   outline: none;
 }
 
@@ -784,7 +820,14 @@ body {
 }
 
 .provider-picker-option[aria-selected="true"] {
-  background: rgba(108, 99, 255, 0.18);
+  background: transparent;
+  box-shadow: inset 2px 0 0 var(--accent, #6c63ff);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picker-menu-highlight {
+    transition: none;
+  }
 }
 
 .provider-picker-option-text {
@@ -801,37 +844,140 @@ body {
   flex-shrink: 0;
 }
 
-/* Globe language selector. Native select overlaid on a globe icon so it
-   keeps the header icon-button look while staying accessible. */
-.language-wrapper {
+/* Compact language picker: representative SVG flags aid scanning while the
+   language code and native/English names stay authoritative. */
+.language-picker {
   position: relative;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: 4px;
-  transition: color 0.2s, background 0.2s;
-}
-.language-wrapper:hover { color: var(--text-primary); background: var(--accent-dim); }
-.language-wrapper .language-icon { pointer-events: none; }
-.language-wrapper select {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  appearance: none;
+  flex: 0 0 auto;
 }
 
-/* Icon buttons in the header-right cluster only. Do not target
-   .provider-picker-btn / .provider-picker-option — those need select chrome. */
-#header .header-right button {
+.language-picker-btn {
+  min-width: 56px;
+  padding: 3px 4px 3px 6px;
+  gap: 4px;
+  color: var(--text-secondary);
+  direction: ltr;
+}
+
+.language-picker-btn:hover,
+.language-picker-btn[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+.language-picker-flag,
+.language-picker-option-flag {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: var(--bg-input);
+}
+
+.language-picker-flag {
+  width: 20px;
+  height: 15px;
+  border-radius: 3px;
+}
+
+.language-picker-code {
+  min-width: 18px;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.45px;
+  line-height: 1;
+  text-align: center;
+}
+
+.language-picker-caret {
+  width: 12px;
+  height: 16px;
+  margin-left: 0;
+}
+
+.language-picker-menu {
+  right: 0;
+  left: auto;
+  min-width: 224px;
+  max-width: min(272px, calc(100vw - 16px));
+  max-height: min(352px, 60vh);
+  direction: ltr;
+}
+
+.language-picker-option {
+  direction: ltr;
+  text-align: left;
+}
+
+.language-picker-option-flag {
+  width: 24px;
+  height: 18px;
+  border-radius: 3px;
+}
+
+.language-picker-option-code {
+  min-width: 18px;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.language-picker-option-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  direction: ltr;
+  text-align: left;
+}
+
+.language-picker-option-native,
+.language-picker-option-english {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.language-picker-option-native {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+.language-picker-option-english {
+  margin-top: 2px;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.language-picker-check {
+  width: 14px;
+  height: 14px;
+  color: var(--accent, #6c63ff);
+  opacity: 0;
+  flex: 0 0 auto;
+}
+
+.language-picker-option[aria-selected="true"] .language-picker-check {
+  opacity: 1;
+}
+
+.language-picker-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* Icon buttons in the header-right cluster only. Custom picker controls keep
+   their select chrome even though the language picker also lives here. */
+#header .header-right button:not(.language-picker-btn):not(.language-picker-option) {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -843,12 +989,12 @@ body {
   transition: color 0.2s, background 0.2s;
 }
 
-#header .header-right button:hover {
+#header .header-right button:not(.language-picker-btn):not(.language-picker-option):hover {
   color: var(--text-primary);
   background: var(--accent-dim);
 }
 
-#header .header-right button.active {
+#header .header-right button:not(.language-picker-btn):not(.language-picker-option).active {
   color: var(--accent);
   background: var(--accent-dim);
 }
@@ -911,12 +1057,120 @@ body {
 }
 
 /* Chat Container */
-#chat-container {
+#chat-shell {
+  position: relative;
   flex: 1;
+  min-height: 0;
+}
+
+#chat-container {
+  height: 100%;
   overflow-y: auto;
   padding: 12px;
   scroll-behavior: smooth;
   position: relative;
+}
+
+.message.assistant.chat-navigation-inset .message-content {
+  padding-block-end: 60px;
+}
+
+.chat-navigation {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 7;
+  display: inline-block;
+  max-width: calc(100% - 36px);
+  transform: translateX(-50%);
+  transition: transform 0.15s;
+}
+
+.chat-navigation-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  max-width: 100%;
+  padding-block: 7px;
+  padding-inline: 12px 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  color: var(--text-primary);
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--overlay-bg-strong) 72%, transparent);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.chat-navigation.hidden {
+  display: none;
+}
+
+.chat-navigation:hover {
+  transform: translate(-50%, -1px);
+}
+
+.chat-navigation-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.chat-navigation-action:focus-visible,
+.chat-navigation-dismiss:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.chat-navigation-action svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+}
+
+.chat-navigation[data-direction="down"] .chat-navigation-action svg {
+  transform: rotate(180deg);
+}
+
+.chat-navigation-dismiss {
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -6px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--overlay-bg-strong) 60%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.chat-navigation-dismiss:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-navigation,
+  .chat-navigation-action svg {
+    transition: none;
+  }
 }
 
 #messages {
@@ -2550,6 +2804,91 @@ body {
   outline-offset: 2px;
 }
 
+/* Paid-provider allowance stop — let the user raise the active guard in place. */
+.message-text.cost-allowance-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.cost-allowance-error-text {
+  line-height: 1.45;
+}
+
+.cost-allowance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cost-allowance-bump-btn,
+.cost-allowance-retry-btn,
+.cost-allowance-continue-btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.cost-allowance-bump-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+}
+
+.cost-allowance-bump-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.cost-allowance-bump-btn:disabled {
+  cursor: default;
+  opacity: 0.76;
+}
+
+.cost-allowance-bump-btn.cost-allowance-bumped {
+  background: rgba(76, 175, 80, 0.14);
+  border-color: rgba(76, 175, 80, 0.46);
+  color: var(--text-primary);
+}
+
+.cost-allowance-retry-btn,
+.cost-allowance-continue-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.cost-allowance-retry-btn:hover,
+.cost-allowance-retry-btn:focus-visible,
+.cost-allowance-continue-btn:hover,
+.cost-allowance-continue-btn:focus-visible {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+.cost-allowance-bump-btn:focus-visible,
+.cost-allowance-retry-btn:focus-visible,
+.cost-allowance-continue-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cost-allowance-status {
+  min-height: 15px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cost-allowance-status:empty {
+  display: none;
+}
+
 /* Clarify card — agent paused to ask user a question */
 .clarify-card {
   margin: 8px 0;
@@ -2742,14 +3081,10 @@ body {
   color: var(--text-secondary);
 }
 
-/* The card's data-editing attribute is the single source of truth for
-   read-only vs editing mode; JS only flips the attribute. */
+/* data-editing=true expands the optional raw-markdown editor under the
+   always-visible structured step list. Structured rows stay visible. */
 .plan-review-card:not([data-editing="true"]) .plan-review-hint,
 .plan-review-card:not([data-editing="true"]) .plan-review-edit {
-  display: none;
-}
-.plan-review-card[data-editing="true"] .plan-review-view,
-.plan-review-card[data-editing="true"] .plan-review-change {
   display: none;
 }
 
@@ -2759,12 +3094,46 @@ body {
   gap: 7px;
 }
 
-.plan-review-summary {
+.plan-review-summary,
+.plan-review-summary-input {
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.plan-review-summary-input,
+.plan-review-step-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 7px;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  resize: none;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.plan-review-summary-input:hover,
+.plan-review-step-input:hover {
+  border-color: var(--border);
+  background: var(--bg-input);
+}
+
+.plan-review-summary-input:focus,
+.plan-review-step-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-input);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .plan-review-steps {
@@ -2775,14 +3144,19 @@ body {
 
 .plan-review-step {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: 22px minmax(0, 1fr) 26px;
+  gap: 6px;
   align-items: start;
+  border-radius: 4px;
+  transition: box-shadow 120ms ease, opacity 120ms ease;
 }
 
 .plan-review-step-number {
   width: 22px;
   height: 22px;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -2791,15 +3165,122 @@ body {
   color: #fff;
   font-size: 11px;
   font-weight: 700;
+  font-family: inherit;
   line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.plan-review-step-number:hover,
+.plan-review-step-number:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  outline: none;
+}
+
+.plan-review-step-number:active {
+  cursor: grabbing;
+}
+
+.plan-review-step-dragging {
+  opacity: 0.45;
+}
+
+.plan-review-step-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.plan-review-step-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .plan-review-step-action,
+.plan-review-step-input,
 .plan-review-step-fallback {
   min-width: 0;
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.plan-review-step-input {
+  font-weight: 400;
+}
+
+.plan-review-step-remove {
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.plan-review-step-remove:hover,
+.plan-review-step-remove:focus-visible {
+  border-color: var(--border);
+  background: rgba(244, 67, 54, 0.12);
+  color: var(--error, #f44336);
+  outline: none;
+}
+
+.plan-review-reorder-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.plan-review-reorder-icon {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.plan-review-add-step {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.plan-review-add-step:hover,
+.plan-review-add-step:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.plan-review-empty-steps {
+  font-size: 11px;
+  color: var(--error, #f44336);
+}
+
+.plan-review-risks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.plan-review-risk {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -2886,7 +3367,11 @@ body {
 .plan-review-approve:disabled,
 .plan-review-change:disabled,
 .plan-review-cancel:disabled,
-.plan-review-edit:disabled {
+.plan-review-edit:disabled,
+.plan-review-add-step:disabled,
+.plan-review-step-remove:disabled,
+.plan-review-summary-input:disabled,
+.plan-review-step-input:disabled {
   opacity: 0.5;
   cursor: default;
 }

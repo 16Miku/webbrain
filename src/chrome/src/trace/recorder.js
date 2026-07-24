@@ -8,7 +8,7 @@
  *   - shots      keyPath=[runId, seq]           // screenshot Blobs
  *
  * All writes are fire-and-forget. Recording is gated on the `tracingEnabled`
- * setting; when disabled, every call is a cheap no-op.
+ * setting. When disabled, every call is a cheap no-op.
  */
 
 const DB_NAME = 'webbrain_traces';
@@ -57,9 +57,26 @@ function promisifyReq(req) {
 
 async function tracingEnabled() {
   try {
+    if (typeof indexedDB === 'undefined') return false;
     const { tracingEnabled } = await chrome.storage.local.get(['tracingEnabled']);
     return tracingEnabled === true;
   } catch { return false; }
+}
+
+async function isForcedTraceRun(runId) {
+  if (!runId) return false;
+  if (_runState.get(runId)?.forced === true) return true;
+  try {
+    const db = await openDB();
+    const record = await promisifyReq(
+      tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
+    );
+    return record?.forced === true;
+  } catch { return false; }
+}
+
+async function tracingEnabledForRun(runId) {
+  return (await tracingEnabled()) || (await isForcedTraceRun(runId));
 }
 
 // ----- Per-run state (held in memory on the service worker) ------------------
@@ -92,8 +109,9 @@ function _newSeq(runId) {
 
 // ----- Public API ------------------------------------------------------------
 
-export async function startRun(meta) {
-  if (!(await tracingEnabled())) return null;
+export async function startRun(meta = {}) {
+  const forced = meta.force === true;
+  if (!forced && !(await tracingEnabled())) return null;
   try {
     const db = await openDB();
     const runId = meta.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -116,13 +134,14 @@ export async function startRun(meta) {
       tabUrl: meta.tabUrl || '',
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
+      forced,
       stepCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       finalContent: null,
     };
     await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
-    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId });
+    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced });
     return runId;
   } catch (e) {
     console.warn('[trace] startRun failed:', e);
@@ -132,13 +151,13 @@ export async function startRun(meta) {
 
 async function _appendEvent(runId, kind, data) {
   if (!runId) return;
-  if (!(await tracingEnabled())) return;
+  if (!(await tracingEnabledForRun(runId))) return;
   try {
     const db = await openDB();
     if (!_runState.has(runId)) {
       // Recover from SW eviction.
       const seq = await _peekSeq(db, runId);
-      _runState.set(runId, { seq });
+      _runState.set(runId, { seq, forced: await isForcedTraceRun(runId) });
     }
     const seq = _newSeq(runId);
     const ev = { runId, seq, ts: Date.now(), kind, data: data || null };
@@ -195,13 +214,13 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
 
 export async function recordScreenshot(runId, step, dataUrl, caption = '') {
   if (!runId) return;
-  if (!(await tracingEnabled())) return;
+  if (!(await tracingEnabledForRun(runId))) return;
   if (!dataUrl) return;
   try {
     const db = await openDB();
     if (!_runState.has(runId)) {
       const seq = await _peekSeq(db, runId);
-      _runState.set(runId, { seq });
+      _runState.set(runId, { seq, forced: await isForcedTraceRun(runId) });
     }
     const seq = _newSeq(runId);
     // Decode data URL to a Blob so IDB stores raw bytes (no base64 overhead).
@@ -230,6 +249,15 @@ export function recordError(runId, step, phase, message) {
 }
 
 /**
+ * Record the lifecycle of an interactive Ask streaming attempt without
+ * persisting token contents. Payloads contain only decision/outcome codes,
+ * protocol, aggregate counts, timing, and a redacted error summary.
+ */
+export function recordStreaming(runId, step, payload = {}) {
+  return _appendEvent(runId, 'streaming', { step, ...payload });
+}
+
+/**
  * Record a vision sub-call: the agent asked a dedicated vision model to
  * describe a screenshot so the main planning model receives text instead
  * of pixels. Captured for debugging and quality inspection — description
@@ -253,7 +281,7 @@ export function recordNote(runId, step, note, extra = null) {
 
 export async function endRun(runId, { status = 'done', finalContent = null } = {}) {
   if (!runId) return;
-  if (!(await tracingEnabled())) return;
+  if (!(await tracingEnabledForRun(runId))) return;
   try {
     const db = await openDB();
     // Tally usage from events. `totalCost` is the sum of `usage.cost` across

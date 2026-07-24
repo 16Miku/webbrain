@@ -195,6 +195,10 @@ How it is wired:
   tools must be POST, `readOnly: false`, `requiresDownloadPermission: true`,
   and declare same-origin status/file/cleanup endpoint templates with
   `{job_id}`.
+- There is no privileged third manifest kind. Packaged, pasted, and URL-imported
+  skills all remain limited to the two HTTP kinds above; browser-privileged
+  behavior must be implemented as a core tool and pass the normal permission
+  and safety gates.
 
 Security model:
 

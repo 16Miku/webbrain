@@ -41,7 +41,7 @@ The user chooses their provider in Settings. Options include:
 
 - **WebBrain Cloud**: requests go through `api.webbrain.one`; selected interactions may be retained and used for evaluation, improvement, fine-tuning, and training while Help Improve WebBrain is enabled
 - **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials and are never collected by WebBrain
-- **Local providers**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang — data stays on the user's machine
+- **Local providers**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, LocalAI — data stays on the user's machine
 
 Local-model and bring-your-own API requests are never collected by WebBrain. WebBrain Cloud requests are processed and may be retained as described below.
 
@@ -105,7 +105,15 @@ deletion or de-identification. De-identified datasets may be retained for up to
 
 ### Conversation History
 
-Stored in `chrome.storage.session` (Chrome) or in-memory (Firefox). Used to restore conversation across service-worker restarts. Relevant conversation content is sent to the configured provider as request context; the stored copy is not separately synced to WebBrain.
+Stored in browser session storage: `chrome.storage.session` on Chrome and
+`browser.storage.session` on Firefox. Per-tab provider history
+(`agentConv:<tabId>`), rendered chat (`tabChat:<tabId>`), and the detached-run
+UI journal (`runUi:<tabId>`) let a panel/sidebar close, reload, or background
+restart restore the conversation and an in-progress run. The UI journal keeps
+a bounded event window plus separately bounded accumulated streamed text so
+in-progress Markdown can be reconstructed after reconnect. Relevant
+conversation content is sent to the configured provider as request context;
+the stored copies are not separately synced to WebBrain.
 
 ### Trace Recorder
 
@@ -116,6 +124,30 @@ When enabled (Settings → Display → "Record traces"), every agent run is writ
 - **`shots` store**: screenshot blobs
 
 The Traces page (`ui/traces.html`) reads from local IndexedDB only. Export produces a JSON blob saved to the user's Downloads folder. **No trace data ever leaves the browser.**
+
+### Saved Workflows
+
+`/workflow --save <name>` locally compiles the latest successful trace into a
+separate `webbrain-workflow/1` record in browser local storage
+(`wb_saved_workflows_v1`). The saved record contains action names, sanitized
+arguments, semantic target descriptors, URL origin/path families,
+postconditions, and parameter descriptors. It does not contain typed field
+values, raw historical `ref_id` values, action CSS selectors, coordinates, URL query strings, or URL
+fragments.
+
+`/workflow --run <id>` collects declared values in a temporary side-panel form
+and sends them directly to the background replay executor. The values are not
+written to the workflow, chat text, retry payload, user memory, replay trace,
+or Agent fallback prompt. They necessarily reach the active page when the
+requested field action runs. A source trace is a separate opt-in record and may
+still contain the original raw tool arguments; saving a workflow does not
+delete or redact that source trace.
+
+Replay traces contain workflow/step IDs, semantic match status and score,
+postcondition status, fallback status, and estimated model calls saved. They do
+not contain runtime parameter values or freshly resolved element references.
+If deterministic replay cannot safely continue, a fallback Agent receives only
+saved metadata and must ask the user again for any still-needed value.
 
 ### Settings
 
@@ -392,4 +424,5 @@ data-flow patterns are otherwise the same, except:
 
 - No dedicated vision sub-call (screenshots go directly to the main provider if vision is supported)
 - No slash-driven tab/screen recording
-- Conversation history is not persisted (lost when the sidebar closes)
+- Conversation, rendered chat, and detached-run UI journals use
+  `browser.storage.session`, matching Chrome's session-scoped persistence.

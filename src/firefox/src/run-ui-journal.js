@@ -1,4 +1,6 @@
 export const RUN_UI_EVENT_LIMIT = 256;
+export const RUN_UI_TEXT_DELTA_PERSIST_DELAY_MS = 200;
+export const RUN_UI_STREAM_TEXT_LIMIT = 100000;
 
 export function createRunRequestId(tabId, supplied = '') {
   const clean = String(supplied || '').trim();
@@ -32,6 +34,70 @@ export function compactRunUiData(type, data) {
   return data;
 }
 
+export class RunUiPersistenceScheduler {
+  constructor({
+    persist,
+    delayMs = RUN_UI_TEXT_DELTA_PERSIST_DELAY_MS,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
+  } = {}) {
+    if (typeof persist !== 'function') throw new TypeError('persist must be a function');
+    this.persist = persist;
+    this.delayMs = delayMs;
+    // Browser timer functions are Web APIs with receiver checks. Calling a
+    // saved setTimeout/clearTimeout as an instance property makes `this` the
+    // scheduler and Chrome throws "Illegal invocation" on the first streamed
+    // text delta. Bind injected and native timers to the actual global scope.
+    this.setTimeoutFn = setTimeoutFn.bind(globalThis);
+    this.clearTimeoutFn = clearTimeoutFn.bind(globalThis);
+    this.pending = new Map();
+  }
+
+  _persist(tabId, snapshot) {
+    try {
+      return Promise.resolve(this.persist(tabId, snapshot));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  _take(tabId, cancelTimer = true) {
+    const pending = this.pending.get(tabId);
+    if (!pending) return null;
+    this.pending.delete(tabId);
+    if (cancelTimer && pending.timer != null) this.clearTimeoutFn(pending.timer);
+    return pending.snapshot;
+  }
+
+  defer(tabId, snapshot) {
+    const existing = this.pending.get(tabId);
+    if (existing) {
+      existing.snapshot = snapshot;
+      return;
+    }
+    const pending = { snapshot, timer: null };
+    this.pending.set(tabId, pending);
+    pending.timer = this.setTimeoutFn(() => {
+      const latest = this._take(tabId, false);
+      if (latest) void this._persist(tabId, latest).catch(() => {});
+    }, this.delayMs);
+  }
+
+  persistNow(tabId, snapshot) {
+    this.cancel(tabId);
+    return this._persist(tabId, snapshot);
+  }
+
+  flush(tabId) {
+    const snapshot = this._take(tabId);
+    return snapshot ? this._persist(tabId, snapshot) : null;
+  }
+
+  cancel(tabId) {
+    this._take(tabId);
+  }
+}
+
 export class RunUiJournal {
   constructor({ eventLimit = RUN_UI_EVENT_LIMIT, onChange = null } = {}) {
     this.eventLimit = eventLimit;
@@ -39,8 +105,8 @@ export class RunUiJournal {
     this.snapshots = new Map();
   }
 
-  _changed(tabId, snapshot) {
-    if (typeof this.onChange === 'function') this.onChange(tabId, snapshot);
+  _changed(tabId, snapshot, change = {}) {
+    if (typeof this.onChange === 'function') this.onChange(tabId, snapshot, change);
     return snapshot;
   }
 
@@ -63,6 +129,10 @@ export class RunUiJournal {
       hadError: false,
       lastError: '',
       pendingToolCall: null,
+      streamedText: '',
+      streamedTextStartSeq: 0,
+      streamedTextSeq: 0,
+      streamedTextTruncated: false,
       startedAt: Date.now(),
       endedAt: null,
     };
@@ -96,6 +166,28 @@ export class RunUiJournal {
       ts: Date.now(),
     };
     snapshot.events.push(event);
+    if (type === 'text_delta') {
+      const chunk = String(event.data?.content || '');
+      if (!snapshot.streamedText && !snapshot.streamedTextTruncated) {
+        snapshot.streamedTextStartSeq = event.seq;
+      }
+      snapshot.streamedTextSeq = event.seq;
+      if (!snapshot.streamedTextTruncated) {
+        const nextText = snapshot.streamedText + chunk;
+        if (nextText.length <= RUN_UI_STREAM_TEXT_LIMIT) {
+          snapshot.streamedText = nextText;
+        } else {
+          snapshot.streamedText = '';
+          snapshot.streamedTextStartSeq = 0;
+          snapshot.streamedTextTruncated = true;
+        }
+      }
+    } else if (type === 'text' || type === 'tool_call') {
+      snapshot.streamedText = '';
+      snapshot.streamedTextStartSeq = 0;
+      snapshot.streamedTextSeq = 0;
+      snapshot.streamedTextTruncated = false;
+    }
     while (snapshot.events.length > this.eventLimit) {
       const removed = snapshot.events.shift();
       snapshot.truncatedBeforeSeq = removed?.seq || snapshot.truncatedBeforeSeq;
@@ -136,7 +228,7 @@ export class RunUiJournal {
         || (type === 'max_steps_reached' ? 'The run reached its maximum step limit.' : ''),
       ).slice(0, 2000);
     }
-    this._changed(tabId, snapshot);
+    this._changed(tabId, snapshot, { eventType: type });
     return { ...event, requestId: snapshot.requestId, runId: snapshot.runId };
   }
 
@@ -181,6 +273,17 @@ export class RunUiJournal {
     }
     if (typeof snapshot.mode !== 'string') snapshot.mode = '';
     if (snapshot.kind !== 'continue' && snapshot.kind !== 'chat') snapshot.kind = 'chat';
+    if (typeof snapshot.streamedText !== 'string') snapshot.streamedText = '';
+    if (snapshot.streamedText.length > RUN_UI_STREAM_TEXT_LIMIT) {
+      snapshot.streamedText = '';
+      snapshot.streamedTextTruncated = true;
+    } else if (snapshot.streamedTextTruncated !== true) {
+      snapshot.streamedTextTruncated = false;
+    }
+    const restoredStreamStartSeq = Number(snapshot.streamedTextStartSeq || 0);
+    const restoredStreamSeq = Number(snapshot.streamedTextSeq || 0);
+    snapshot.streamedTextStartSeq = Number.isFinite(restoredStreamStartSeq) ? Math.max(0, restoredStreamStartSeq) : 0;
+    snapshot.streamedTextSeq = Number.isFinite(restoredStreamSeq) ? Math.max(0, restoredStreamSeq) : 0;
     if (!snapshot.lastPlanResolution || typeof snapshot.lastPlanResolution !== 'object') {
       snapshot.lastPlanResolution = null;
     }

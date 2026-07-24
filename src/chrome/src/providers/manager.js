@@ -2,8 +2,10 @@ import { LlamaCppProvider } from './llamacpp.js';
 import { OpenAICompatibleProvider } from './openai.js';
 import { AzureOpenAIProvider } from './azure-openai.js';
 import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
+import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
+import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
 // The provider modules above already import this statically, so it's in the SW
@@ -32,7 +34,7 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
 const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
-const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth']);
+const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
@@ -154,6 +156,7 @@ export class ProviderManager {
         inputCostPerMillionUsd: 0.20,
         outputCostPerMillionUsd: 1.15,
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         supportsVision: true,
         // WebBrain Cloud proxies to OpenRouter, whose upstream models
         // (minimax, stepfun, …) handle tools + images together fine. Dropping
@@ -171,6 +174,7 @@ export class ProviderManager {
         baseUrl: 'http://localhost:8080',
         model: '',
         contextWindow: 16384,
+        supportsAskStreaming: true,
         // Default ON for local providers: in practice users who reach for
         // local OpenAI-compatible backends in 2026 are running multimodal
         // models (Qwen-VL, Llama 3.2-Vision, etc.). False-positives where a
@@ -190,6 +194,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: 'ollama',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -202,6 +207,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: 'lm-studio',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -214,6 +220,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: '',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -226,6 +233,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: '',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -238,6 +246,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: '',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -250,6 +259,7 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: '',
+        supportsAskStreaming: true,
         supportsVision: true,
         enabled: true,
       },
@@ -265,6 +275,7 @@ export class ProviderManager {
         model: '',
         apiVersion: '2024-10-21',
         apiKey: '',
+        supportsAskStreaming: true,
         enabled: false,
       },
       aws_bedrock: {
@@ -317,6 +328,7 @@ export class ProviderManager {
         cacheWriteCostPerMillionUsd: 3.75,
         cacheWrite1hCostPerMillionUsd: 6,
         outputCostPerMillionUsd: 15,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.anthropic.com/settings/keys',
         enabled: false,
@@ -332,19 +344,21 @@ export class ProviderManager {
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
         model: 'gemini-3.1-flash',
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         enabled: false,
       },
       cloudflare: {
         type: 'openai',
         category: 'router',
-        label: 'Cloudflare Workers AI',
+        label: 'Cloudflare AI Gateway / Workers AI',
         providerName: 'cloudflare',
         baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1',
         model: '@cf/zai-org/glm-5.2',
         contextWindow: 262144,
         supportsStreamUsageOptions: false,
         accountId: '',
+        gatewayId: '',
         apiKey: '',
         apiKeyUrl: 'https://dash.cloudflare.com/profile/api-tokens',
         enabled: false,
@@ -358,7 +372,8 @@ export class ProviderManager {
         model: 'mistral-large-latest',
         inputCostPerMillionUsd: 0.5,
         outputCostPerMillionUsd: 1.5,
-        supportsStreamUsageOptions: false,
+        supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.mistral.ai/api-keys/',
         enabled: false,
@@ -374,6 +389,7 @@ export class ProviderManager {
         inputCostPerMillionUsd: 0.27,
         outputCostPerMillionUsd: 1.1,
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://platform.deepseek.com/api_keys',
         enabled: false,
@@ -387,6 +403,7 @@ export class ProviderManager {
         model: 'grok-4.3',
         inputCostPerMillionUsd: 1.25,
         outputCostPerMillionUsd: 2.5,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.x.ai/',
         enabled: false,
@@ -401,6 +418,7 @@ export class ProviderManager {
         model: 'meta/llama-3.1-8b-instruct',
         inputCostPerMillionUsd: 0.22,
         outputCostPerMillionUsd: 0.22,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://build.nvidia.com/',
         enabled: false,
@@ -414,6 +432,7 @@ export class ProviderManager {
         model: 'llama-3.3-70b-versatile',
         inputCostPerMillionUsd: 0.59,
         outputCostPerMillionUsd: 0.79,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://console.groq.com/keys',
         enabled: false,
@@ -450,6 +469,7 @@ export class ProviderManager {
         providerName: 'alibaba',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         model: 'qwen-max',
+        supportsStreamUsageOptions: true,
         apiKey: '',
         apiKeyUrl: 'https://dashscope.console.aliyun.com/apiKey',
         enabled: false,
@@ -462,6 +482,7 @@ export class ProviderManager {
         baseUrl: 'https://api.together.xyz/v1',
         model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://api.together.ai/settings/api-keys',
         enabled: false,
@@ -474,6 +495,7 @@ export class ProviderManager {
         baseUrl: 'https://openrouter.ai/api/v1',
         model: OPENROUTER_DEFAULT_MODEL,
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://openrouter.ai/keys',
         enabled: false,
@@ -498,6 +520,7 @@ export class ProviderManager {
         baseUrl: 'https://api.fireworks.ai/inference/v1',
         model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
         supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://fireworks.ai/account/api-keys',
         enabled: false,
@@ -513,10 +536,13 @@ export class ProviderManager {
         inputCostPerMillionUsd: 1.4,
         cacheReadCostPerMillionUsd: 0.26,
         outputCostPerMillionUsd: 4.4,
+        supportsToolStreamOption: true,
+        supportsAskStreaming: true,
         apiKey: '',
         apiKeyUrl: 'https://docs.z.ai/guides/overview/quick-start',
         enabled: false,
       },
+      ...ADDITIONAL_PROVIDER_DEFAULTS,
     };
   }
 
@@ -624,6 +650,14 @@ export class ProviderManager {
     const normalizedConfig = {
       ...config,
       category: ProviderManager.categoryFor(id, config),
+      supportsAskStreaming: config.supportsAskStreaming ?? [
+        'llamacpp',
+        'openai',
+        'azure_openai',
+        'anthropic',
+        'anthropic_oauth',
+        'vertex_anthropic',
+      ].includes(config.type),
     };
     switch (normalizedConfig.type) {
       case 'llamacpp':
@@ -638,6 +672,8 @@ export class ProviderManager {
         return new AnthropicProvider(normalizedConfig);
       case 'anthropic_oauth':
         return new AnthropicOAuthProvider(normalizedConfig);
+      case 'vertex_anthropic':
+        return new VertexAnthropicProvider(normalizedConfig);
       default:
         throw new Error(`Unknown provider type: ${normalizedConfig.type}`);
     }
@@ -876,11 +912,17 @@ export class ProviderManager {
           let errBody = '';
           try { errBody = await res.text(); } catch {}
           if (res.status === 403) {
-            if (!firstFailure) firstFailure = {
-              ok: false,
-              error:
-                'Ollama returned 403 - set OLLAMA_ORIGINS="*" (or moz-extension://*,chrome-extension://*) and restart `ollama serve`.',
-            };
+            // The OLLAMA_ORIGINS remediation only applies to Ollama — for
+            // the other local providers sharing this path (llamacpp,
+            // lmstudio, jan, vllm, sglang, localai) a 403 means something
+            // else (auth proxy, --api-key, ...), so report it generically.
+            if (!firstFailure) firstFailure = id === 'ollama'
+              ? {
+                  ok: false,
+                  error:
+                    'Ollama returned 403 - set OLLAMA_ORIGINS="*" (or moz-extension://*,chrome-extension://*) and restart `ollama serve`.',
+                }
+              : this._modelListFailure(res.status, errBody, res.statusText);
             continue;
           }
           if (!firstFailure) firstFailure = this._modelListFailure(res.status, errBody, res.statusText);

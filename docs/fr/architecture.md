@@ -1,6 +1,6 @@
 # Architecture de WebBrain
 
-> Version 18.0.0
+> Version 25.7.12
 
 ## Aperçu
 
@@ -67,7 +67,16 @@ L'interface de chat. Communique avec le script d'arrière-plan via `chrome.runti
 
 Le niveau de modèle est séparé du mode : `compact | mid | full` contrôle combien d'outils normaux le modèle voit, tandis que `ask | act | dev` contrôle le type de tâche que l'utilisateur autorise.
 
-L'utilisateur tape un message, le panneau envoie `{action: 'chat', text, mode, tabId}` à l'arrière-plan, puis écoute les événements `agent_update` renvoyés en flux pendant l'exécution. Le panneau rend les appels d'outils, les résultats, les cartes de révision du plan, les invites de clarification et la réponse finale de manière incrémentale.
+L'utilisateur tape un message, le panneau envoie une requête détachée `{action: 'chat_start', text, mode, tabId, requestId}`, puis se reconnecte au journal d'exécution possédé par l'arrière-plan pour recevoir les événements `agent_update`. Fermer ou recharger le panneau ne transfère pas la propriété de l'exécution et ne la redémarre pas. Le panneau rend les appels d'outils, les résultats, les cartes de révision du plan, les invites de clarification et la réponse finale de manière incrémentale.
+
+Chaque paire question/réponse commence dans un état de défilement pensé pour
+la lecture : la question reste visible pendant qu'une longue réponse s'allonge.
+Une commande flottante alterne entre **Suivre la réponse**, **Aller au plus
+récent** et **Retour à la question** selon la position de lecture. Atteindre
+délibérément le bas réactive le suivi automatique ; les positions de lecture
+manuelles sont sinon préservées. Les cartes Plan/clarification/Continuer
+bloquantes, les invites de revue, les nouvelles questions et la sortie des
+commandes slash restent visibles lorsqu'elles nécessitent une action.
 
 ### Script d'arrière-plan (`src/chrome/src/background.js`)
 
@@ -97,17 +106,19 @@ L'utilisateur tape « créer un produit 'namaz' à 500 CNY, récurrent tous les 
 
 ### Étape 1 : Panneau latéral → Arrière-plan
 ```
-sidepanel.js → chrome.runtime.sendMessage({
-  action: 'chat',
+sidepanel.js → sendRunWithReconnect('chat_start', {
   text: 'create a product ...',
   mode: 'act',
-  tabId: 42
+  tabId: 42,
+  requestId: '...'
 })
 ```
 
 ### Étape 2 : Arrière-plan → Agent
 ```
-background.js handleMessage('chat')
+background.js handleMessage('chat_start')
+  → crée/persiste l'instantané runUi:<tabId>
+  → lance le cycle de vie `chat` détaché
   → agent.processMessage(tabId, text, onUpdate, mode)
 ```
 
@@ -127,9 +138,9 @@ _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
 
 ### Étape 4 : Porte Plan-before-Act
 
-Lorsque `planBeforeAct` est activé et que l'exécution est en mode action (Act ou Dev), l'agent appelle le fournisseur actif une fois avant la boucle d'outils avec le prompt JSON structuré de `planner.js`. Le stockage non défini par défaut est en mode essai ; la désactivation explicite reste désactivée. Le planificateur voit la tâche utilisateur, l'URL/titre nettoyés, et un résumé d'historique récent court ; le contexte de la page est enveloppé comme donnée non fiable et les blocs d'image sont supprimés.
+Les exécutions manuelles en mode action (Act ou Dev) appellent le fournisseur actif une fois avant la boucle d'outils avec le prompt JSON structuré de `planner.js`. Off utilise le schéma compact d'intention ; Essai et Strict utilisent le schéma de plan complet. Le stockage non défini utilise Essai par défaut, tandis qu'un Off explicite reste Off. Le planificateur voit la tâche utilisateur, l'URL/titre nettoyés, et un résumé d'historique récent court ; le contexte de la page est enveloppé comme donnée non fiable et les blocs d'image sont supprimés.
 
-Si le planificateur retourne un JSON valide, le panneau latéral reçoit `agent_update: plan_review` et rend une carte de révision modifiable. L'approbation épingle le plan approuvé dans le bloc-notes pour qu'il survive à la compaction du contexte. Le rejet, le délai d'attente, le JSON invalide après nouvelle tentative ou l'abandon par l'utilisateur arrête l'exécution avant que des outils navigateur soient exécutés. Les exécutions planifiées peuvent définir `autoApprovePlanReview` et épingler le plan sans afficher la carte.
+Si le planificateur retourne un JSON valide, le panneau latéral reçoit `agent_update: plan_review` et rend une carte de révision modifiable. L'approbation épingle le plan approuvé dans le bloc-notes pour qu'il survive à la compaction du contexte. Le rejet, le délai d'attente ou l'abandon par l'utilisateur arrête l'exécution avant que des outils navigateur soient exécutés. En mode Essai, un JSON toujours invalide après une réparation fait passer uniquement ce tour au prompt Ask et aux outils en lecture seule ; le mode Strict s'arrête toujours avant les outils. Les exécutions planifiées peuvent définir `autoApprovePlanReview` et épingler le plan sans afficher la carte.
 
 ### Étape 5 : Boucle principale de l'agent
 ```
@@ -251,7 +262,7 @@ L'arrière-plan relaie ces informations via `chrome.runtime.sendMessage` vers le
 
 La porte de planification optionnelle en mode action s'exécute avant le premier appel d'outil navigateur lorsqu'elle est activée ; le stockage non défini par défaut est en mode essai tandis que la désactivation explicite reste désactivée. Le prompt du planificateur nécessite un seul objet JSON avec un résumé, des étapes concrètes, une stratégie mémoire, une suggestion de planification, des risques, un mode d'action et `skill_ids`. Il ne reçoit que le catalogue des compétences éligibles. `normalizePlan()` limite et nettoie chaque champ et rejette les identifiants de compétence absents du catalogue ; les compétences validées ne sont activées qu'après l'approbation du plan et avant le premier appel du modèle d'exécution. `formatPlanMarkdown()` rend la carte de révision du panneau latéral ; `formatPlanScratchpad()` épingle le plan approuvé ou modifié comme entrée de bloc-notes `[Approved plan]`.
 
-Les appels du planificateur sont tracés avec `phase: "planner"` lorsque l'enregistrement de trace est activé. Ils utilisent également la garde de limite de coût, les vérifications d'abandon, une nouvelle tentative de réparation JSON, et la gestion no-think Qwen/DeepSeek avant que l'exécution puisse continuer.
+Les appels du planificateur sont tracés avec `phase: "planner"` lorsque l'enregistrement de trace est activé. Ils utilisent également la garde de limite de coût, les vérifications d'abandon, une nouvelle tentative de réparation JSON et la gestion no-think Qwen/DeepSeek. Un échec de réparation ne peut pas autoriser d'action : Essai passe à un tour Ask en lecture seule, tandis que Strict s'arrête.
 
 Chaque nouvel enregistrement de trace conserve `webbrainVersion`. `/export` inclut la version courante du manifeste ; `/export --traces` indique la version d'export et la version d'enregistrement de chaque tour, ou « indisponible » pour les traces héritées. L'export JSON de la page Traces ajoute `exportedByWebBrainVersion` tout en conservant le schéma rétrocompatible `webbrain-trace/1`.
 
@@ -366,9 +377,22 @@ Lorsque l'observateur de mutation API optionnel est activé et qu'une boucle `cl
 - **Élagage d'images** : supprime les images base64 de tous les messages sauf les 4 derniers avant chaque appel LLM
 - **Limite de résultat d'outil** : résultats individuels tronqués à 8 000 caractères
 
-### Persistance des conversations (Chrome uniquement)
+### Persistance des conversations et de l'interface
 
-Les service workers MV3 peuvent mourir entre les tours. Les conversations sont persistées dans `chrome.storage.session` (débruité à 300 ms) et hydratées dès le premier message vers un onglet. Isolées par onglet.
+Les deux builds conservent un état isolé par onglet dans le stockage de session :
+
+- `agentConv:<tabId>` contient la conversation envoyée au fournisseur ;
+- `tabChat:<tabId>` reflète le HTML du chat visible ;
+- `runUi:<tabId>` contient l'identité et l'état de l'exécution détachée, une
+  fenêtre bornée d'événements, l'état Plan/outils, le contenu terminal et le
+  texte streamé accumulé.
+
+Les écritures de `text_delta` sont regroupées sur une fenêtre glissante de
+200 ms ; les événements non-delta, les états terminaux et les points de
+durabilité avant outil sont persistés immédiatement. Le texte streamé possède
+sa propre limite, distincte de la fenêtre de 256 événements, afin qu'un panneau
+rouvert reconstruise correctement le Markdown en cours. Chrome utilise
+`chrome.storage.session` et Firefox `browser.storage.session`.
 
 ---
 
@@ -379,7 +403,7 @@ Les service workers MV3 peuvent mourir entre les tours. Les conversations sont p
 | Arrière-plan | Service worker (éphémère) | Page d'arrière-plan (persistante) |
 | Événements | CDP de confiance (`isTrusted=true`) | Synthétiques (`isTrusted=false`) |
 | Captures d'écran | CDP `Page.captureScreenshot` | `browser.tabs.captureVisibleTab()` |
-| Persistance conversation | `chrome.storage.session` | En mémoire uniquement |
+| Persistance conversation/interface | `chrome.storage.session` | `browser.storage.session` |
 | Document hors-écran | Oui (proxy fetch + enregistreur) | Non disponible |
 | Enregistreur de trace | IndexedDB (optionnel) | IndexedDB (optionnel) — même `trace/recorder.js` |
 | Garde de soumission en double | Oui | Non disponible |
@@ -389,7 +413,7 @@ Les service workers MV3 peuvent mourir entre les tours. Les conversations sont p
 | Observateur de raccourci API | Tampon URL/méthode `chrome.webRequest` | Tampon URL/méthode `browser.webRequest` |
 | Enregistrement d'onglet/écran par barre oblique | `chrome.tabCapture` / `getDisplayMedia()` + hors-écran | Non disponible |
 | Panneau latéral | API `sidePanel` (MV3) | `sidebar_action` (MV2) |
-| Téléchargement de fichier | Basé sur CDP | Distribution manuelle |
+| Téléversement de fichier | Chemin CDP ou `downloadId` | Rechargement via `downloadId` ou sélecteur de fichier WebBrain ; pas de chemin local arbitraire |
 
 Tout le reste (boucle d'agent, outils, adaptateurs, fournisseurs, détection de boucle, gestion de contexte, prompts système) est architecturalement identique entre les deux builds.
 

@@ -37,15 +37,17 @@
   - **llama.cpp** (local) — No API key needed. Also **Ollama**, **LM Studio**, **Jan**, **vLLM**, **SGLang**, and **LocalAI**
   - **OpenAI** (GPT-5.6, etc.)
   - **Anthropic Claude** (native API)
-  - **Google Gemini**, **Mistral AI**, **DeepSeek**, **xAI Grok**, **Groq**
-  - **MiniMax**, **Kimi**, **Alibaba Cloud (Qwen)**
-  - **Cloudflare Workers AI**, **Nvidia NIM**
+  - **Azure OpenAI**, **AWS Bedrock**, **Google Gemini**, **Mistral AI**, **DeepSeek**, **xAI Grok**
+  - **MiniMax**, **Kimi**, **Alibaba Cloud (Qwen)**, **z.ai GLM**
+  - **Cloudflare Workers AI**, **Nvidia NIM**, **Groq**, **Together AI**, **Hugging Face Inference**, **Fireworks**
   - **OpenRouter** (default model: `openrouter/free`; access 100+ models)
+  - **76 additional direct APIs and routers** — 103 built-in provider cards in total; see the [provider catalog](docs/providers-and-models.md#extended-provider-catalog)
 - **Onboarding Wizard** — First-launch walkthrough covering Act mode safety and provider setup
 - **Side Panel UI** — Clean chat interface that lives alongside your browsing
+- **Reading-first long replies** — New questions stay in view while answers grow, with floating controls to follow the response, jump to the latest content, or return to the question
 - **Per-Tab Conversations** — Each tab has its own chat history
 - **User Memory** — Optional local memory for user-stated preferences, with explicit `/memory --add` commands and opt-in background auto-learning
-- **Streaming** — Real-time token streaming from all providers
+- **Ask streaming** — Interactive Ask chats stream capable provider responses as they arrive; tools and history wait for a terminal stream event, with an Advanced kill switch and automatic non-streaming fallback for interrupted streams
 - **Smart Context** — Token-aware auto-compaction (summarizes older turns once the conversation nears the model's context window, with a visible "Context automatically compacted" notice), tool result limits, and emergency overflow recovery
 - **Browser History Control** — Act mode can use native `go_back` / `go_forward` history tools instead of CSP-sensitive page JavaScript
 - **API Shortcut Hints** — Repeated clicks that fire the same XHR/fetch request can surface a matching `fetch_url` suggestion while preserving the UI-first and `/allow-api` mutation policy
@@ -80,7 +82,7 @@ git clone https://github.com/webbrain-one/webbrain.git
 
 > **Note:** Temporary add-ons are removed when Firefox restarts. For permanent installation, the extension needs to be signed via [addons.mozilla.org](https://addons.mozilla.org).
 
-### Start a local LLM (default)
+### Start a local LLM (optional)
 
 ```bash
 # Using llama.cpp
@@ -137,7 +139,7 @@ Click the gear icon or go to the extension's Options page to configure:
 - Verbose Mode — Show full tool call JSON (off by default)
 - Auto-screenshot — Provide visual context when DOM/page reads are insufficient
 - Max Agent Steps — Configurable step limit (5-195 or unlimited, default 130)
-- Plan before Act — Optionally generate and review a structured Act-mode plan before browser tools run (try mode by default; explicit off is preserved)
+- Plan before Act — Optionally generate and review a structured Act-mode plan before browser tools run (Try by default; failed planner JSON safely falls back to a read-only turn, while explicit Off and Strict are preserved)
 
 **Profile and Memory:**
 - Profile auto-fill and user memory are stored in plaintext browser local storage.
@@ -154,10 +156,14 @@ Click the gear icon or go to the extension's Options page to configure:
 
 **Providers:**
 
-Base URLs are pre-filled in Settings when you select a provider. Local servers use the default port shown below.
+Base URLs are pre-filled in Settings when you select a provider. Local servers
+use the default port shown below. This table highlights the original providers;
+the [full catalog](docs/providers-and-models.md#extended-provider-catalog)
+contains 103 built-in cards.
 
 | Provider | API Key | Default Model |
 |----------|---------|---------------|
+| WebBrain Cloud | Not needed | webbrain-cloud 1.0 |
 | llama.cpp (`:8080`) | Not needed | (your loaded model) |
 | Ollama (`:11434/v1`) | Not needed | (your loaded model) |
 | LM Studio (`:1234/v1`) | Not needed | (your loaded model) |
@@ -165,10 +171,12 @@ Base URLs are pre-filled in Settings when you select a provider. Local servers u
 | vLLM (`:8000/v1`) | Optional | (your served model) |
 | SGLang (`:30000/v1`) | Optional | (your served model) |
 | LocalAI (`:8080/v1`) | Optional | (your loaded model) |
+| Azure OpenAI | Required | (your deployment) |
+| AWS Bedrock | AWS credentials | (your model ID) |
 | OpenAI | Required | gpt-5.6-terra |
 | Anthropic Claude | Required | claude-sonnet-4-6 |
 | Google Gemini | Required | gemini-3.1-flash |
-| Cloudflare Workers AI | Required (+ Account ID) | @cf/zai-org/glm-5.2 |
+| Cloudflare AI Gateway / Workers AI | Required (+ Account ID) | @cf/zai-org/glm-5.2 |
 | Mistral AI | Required | mistral-large-latest |
 | DeepSeek | Required | deepseek-v4-flash |
 | xAI Grok | Required | grok-4.3 |
@@ -177,7 +185,11 @@ Base URLs are pre-filled in Settings when you select a provider. Local servers u
 | MiniMax | Required | minimax-m2.7 |
 | Kimi | Required | kimi-k2.5 |
 | Alibaba Cloud (Qwen) | Required | qwen-max |
+| Together AI | Required | meta-llama/Llama-3.3-70B-Instruct-Turbo |
+| z.ai GLM | Required | glm-5.2 |
 | OpenRouter | Required | openrouter/free |
+| Hugging Face Inference | Required | zai-org/GLM-5.2 |
+| Fireworks | Required | accounts/fireworks/models/llama-v3p3-70b-instruct |
 
 ## Architecture
 
@@ -186,6 +198,7 @@ src/chrome/                        src/firefox/
 ├── manifest.json (MV3)            ├── manifest.json (MV2)
 ├── src/                           ├── src/
 │   ├── background.js              │   ├── background.js (+ background.html)
+│   ├── run-ui-journal.js          │   ├── run-ui-journal.js
 │   ├── agent/                     │   ├── agent/
 │   ├── content/                   │   ├── content/
 │   ├── providers/                 │   ├── providers/
@@ -337,6 +350,12 @@ WebBrain accepts slash commands as the first thing on a line in the input box. T
 | `/memory` | Show saved user memory |
 | `/memory --add <text>` | Save a user preference to memory |
 | `/memory --forget <id>` | Forget a saved memory by ID |
+| `/workflow` | List saved workflows and their IDs |
+| `/workflow --save <name>` | Compile the latest successful traced run into a reusable, value-free workflow |
+| `/workflow --run <id>` | Run a saved workflow in Act mode, collecting any runtime parameters locally |
+| `/workflow --delete <id>` | Delete a saved workflow |
+| `/workflow --export <id>` | Download a sanitized portable `webbrain-workflow/1` JSON file |
+| `/workflow --import --file` | Import a portable workflow file as a new local saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** Lifts the UI-first restriction so the agent may use POST/PUT/PATCH/DELETE via `fetch_url` when UI is failing. Badge appears while active; clears on `/reset`. |
 | `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting. |
 | `/compact` | Force context compaction for the current conversation |
@@ -382,6 +401,25 @@ the originating run tab before saving the after screenshot. If the recording
 or initial screenshot cannot be started and saved, the run is not sent.
 Standalone `/record` and `/screenshot` keep their existing behavior.
 
+Saved workflows use a separate `webbrain-workflow/1` schema; they are not raw
+trace replays. Historical `ref_id` values, action CSS selectors, coordinates,
+query strings, fragments, and typed field values are excluded. Typed values become runtime
+parameters, and each action is bound to the recorded origin and URL family.
+At run time WebBrain resolves a fresh accessibility-tree target and executes
+through the normal Act permission, submit-confirmation, and verification gates.
+Ambiguous targets fail closed. If an action may already have happened but its
+result is unknown, replay stops instead of retrying it. Runtime parameter values
+are not saved to the workflow, conversation, user memory, replay trace, or Agent
+fallback prompt; they are still delivered to the target page by the requested
+browser action. The original opt-in source trace remains separate and can
+contain raw tool arguments until the user deletes that trace.
+
+Portable workflow files contain the raw sanitized `webbrain-workflow/1`
+definition and are limited to 1 MiB. Export re-normalizes the definition before
+download. Import normalizes it again, assigns a fresh local ID and timestamps,
+and never overwrites an existing workflow, so the same file can safely move
+between Chrome, Firefox, and WebBrain Cloud.
+
 The default UI-first rule exists because API actions are invisible (you don't see what's being sent), often require separate auth tokens you may not have configured, and can have a much larger blast radius than a visible mis-click. Only use `/allow-api` when you've decided you want that tradeoff for a specific job.
 
 ## Keyboard Shortcuts
@@ -402,7 +440,6 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 - **Firefox is meaningfully weaker than Chrome.** Firefox has no equivalent to Chrome DevTools Protocol via `chrome.debugger`, so several Chrome-only features are missing in the Firefox build:
   - Click/type goes through the content-script path (`document.querySelector` + `el.click()`) instead of CDP `Input.dispatchMouseEvent`. This means **no shadow-DOM piercing**, **no real trusted mouse events** (some React/Vue handlers won't fire), **no closed-shadow-root traversal**, and **no `resolveSelector` retry budget**.
   - **No SPA-navigation-aware retry extension.**
-  - **No conversation persistence** across background restarts.
   - **No CDP screenshots.** Auto-screenshot uses `tabs.captureVisibleTab` instead, which works for active tabs only and at slightly lower quality.
   - **No closed shadow root support** for read/extract tools.
   - Site adapters, vision detection, loop detection, the auto-screenshot loop, and the opt-in compact prompt/tool set *are* mirrored to Firefox.
@@ -411,7 +448,7 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 
 ## What's New
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full version history. Recent highlights include Plan before Act, native browser-history tools, repeated-click API shortcut hints, WebBrain Cloud 1.0, scheduled tasks, compact-mode improvements, and native PDF reading.
+See [CHANGELOG.md](./CHANGELOG.md) for the full version history. Recent highlights include reading-first long-reply navigation, reconnect-safe streamed Markdown, ranked provider search, Plan before Act, native browser-history tools, repeated-click API shortcut hints, and saved workflows.
 
 ## Adding a New Provider
 

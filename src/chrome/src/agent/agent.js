@@ -46,9 +46,22 @@ import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from 
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
+import {
+  findWorkflowTarget,
+  parseAccessibilityTreeDescriptors,
+  redactWorkflowArgsForTelemetry,
+  redactWorkflowClarifyForTelemetry,
+  redactWorkflowResultForTelemetry,
+  resolveWorkflowArgs,
+  validateWorkflowStepResult,
+  workflowFallbackPrompt,
+  workflowUrlMatches,
+} from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
 import { resolveSavedDownload } from '../download-result.js';
+import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
+import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
@@ -112,6 +125,7 @@ export class Agent {
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
     this._progressSessionCounter = 0;
     this.conversationModes = new Map(); // tabId -> 'ask' | 'act' | 'dev'
+    this._runModeOverrides = new Map(); // tabId -> effective mode for the active run only
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
     this.submittedRunRequestIds = new Map(); // tabId -> request whose user turn is durable in storage.session
     this.plannerFollowUpSkipTabs = new Set(); // tabIds allowed one short follow-up after an approved try-mode plan
@@ -165,6 +179,24 @@ export class Agent {
     // (form fields + email/phone text) BEFORE leaving the extension. Off by
     // default — loaded from chrome.storage.local in background.js.
     this.screenshotRedaction = false;
+    // Image budget (issue #311): screenshot quality + capture limits. All
+    // loaded from chrome.storage.local in background.js. Defaults preserve the
+    // previous behavior: no explicit `detail` was ever sent (so the provider
+    // uses its own default — OpenAI's is 'auto'), auto-screenshots were
+    // unlimited per turn, and images were capped at 1568px per side.
+    this.imageDetail = 'auto';       // 'high' | 'low' | 'auto' (provider-dependent)
+    this.maxScreenshotsPerTurn = 0;  // 0 = unlimited
+    this.maxImageDimension = 1568;   // max width/height in px for any vision image
+    // tabId -> auto-screenshot count within the current turn/run. Enforces
+    // `maxScreenshotsPerTurn` for every automatic capture (initial viewport
+    // AND post-action). Reset when a run starts and on tab cleanup.
+    this.autoScreenshotCount = new Map();
+    // tabId -> {scaleX, scaleY} image-pixel→CSS-pixel factors for the most
+    // recent screenshot shown to the model. Set when maxImageDimension forced
+    // a downscale; cleared when the last capture was 1:1. Consumed by
+    // click({x, y, from_screenshot: true}) so the extension — not the model —
+    // does the coordinate conversion.
+    this.screenshotClickScale = new Map();
     this.costAllowanceSessionUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
     this.costAllowanceTotalUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
     this.cloudCostSpentUsd = 0;
@@ -207,8 +239,8 @@ export class Agent {
     // at call time so rotating the key doesn't require a restart.
     this.captchaSolverEnabled = false;
     // Pre-execution planner (Settings → Plan before Act). Default "try";
-    // attempts a read-only planning LLM call but continues without a pinned
-    // plan if planning itself fails. "strict" fails closed.
+    // attempts a read-only planning LLM call and degrades the current turn to
+    // Ask/read-only if structured planning itself fails. "strict" fails closed.
     this.planBeforeActMode = 'try';
     this.planBeforeAct = true; // legacy boolean mirror for older call sites/tests
     this.planReviewMode = 'confidence'; // confidence | always | never
@@ -432,6 +464,10 @@ export class Agent {
   }
 
   _recordCompletionSubmitAttempt(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '') {
+    // API-backed Chrome Web Store submission is verified by the subsequent
+    // chrome_web_store_status observation. Do not create DOM-form transition
+    // state for a dashboard Chrome intentionally prevents us from inspecting.
+    if (name === 'chrome_web_store_publish') return null;
     // execute_js is always classified as submit-capable for its permission
     // prompt, but that conservative fallback is not evidence that this call
     // actually submitted anything. Only arm completion verification for JS
@@ -477,7 +513,7 @@ export class Agent {
   }
 
   _completionDoneBlock(tabId, name, args, batchStartState = null) {
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     const state = this.completionInvariants.get(tabId);
     const block = completionDoneBlock(state, name, args);
@@ -623,7 +659,7 @@ export class Agent {
   }
 
   _completionPlainFinalBlock(tabId) {
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     return completionPlainFinalBlock(this.completionInvariants.get(tabId));
   }
@@ -1084,6 +1120,207 @@ export class Agent {
     return result;
   }
 
+  _estimateAskStreamUsage(messages, options, content, reasoningContent, toolCalls) {
+    let toolSchemaChars = 0;
+    let toolCallChars = 0;
+    try { toolSchemaChars = JSON.stringify(options?.tools || []).length; } catch {}
+    try { toolCallChars = JSON.stringify(toolCalls || []).length; } catch {}
+    const promptTokens = Math.max(
+      1,
+      Math.ceil((this._estimateContextChars(Array.isArray(messages) ? messages : []) + toolSchemaChars) / 4),
+    );
+    const completionChars = String(content || '').length
+      + String(reasoningContent || '').length
+      + toolCallChars;
+    const completionTokens = completionChars > 0 ? Math.max(1, Math.ceil(completionChars / 4)) : 0;
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+      estimated: true,
+    };
+  }
+
+  _interactiveAskStreamingDecision(provider, mode, runOptions = {}, disabledForRun = false) {
+    const streamingEnabled = runOptions?.askStreamingEnabled
+      ?? runOptions?.openaiAskStreamingEnabled;
+    if (mode !== 'ask') return { eligible: false, reason: 'mode_not_ask' };
+    if (runOptions?.interactiveChat !== true) return { eligible: false, reason: 'not_interactive_chat' };
+    if (streamingEnabled === false) return { eligible: false, reason: 'disabled_in_settings' };
+    if (runOptions?.trustedContinuation === true) return { eligible: false, reason: 'trusted_continuation' };
+    if (runOptions?.cloudRun === true) return { eligible: false, reason: 'cloud_run' };
+    if (disabledForRun === true) return { eligible: false, reason: 'disabled_after_fallback' };
+    if (typeof provider?.chatStream !== 'function') return { eligible: false, reason: 'provider_missing_chat_stream' };
+    try {
+      if (provider?._supportsInteractiveAskStreaming?.() !== true) {
+        return { eligible: false, reason: 'provider_not_supported' };
+      }
+    } catch {
+      return { eligible: false, reason: 'provider_capability_check_failed' };
+    }
+    return { eligible: true, reason: 'eligible' };
+  }
+
+  _shouldStreamInteractiveAsk(provider, mode, runOptions = {}, disabledForRun = false) {
+    return this._interactiveAskStreamingDecision(provider, mode, runOptions, disabledForRun).eligible;
+  }
+
+  _interactiveAskStreamingProtocol(provider) {
+    try {
+      if (typeof provider?._usesResponsesApi === 'function') {
+        return provider._usesResponsesApi() === true ? 'responses' : 'chat_completions';
+      }
+      return 'provider_native';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  _interactiveAskStreamingFailure(error) {
+    const rawMessage = String(error?.message || error || 'Streaming request failed.');
+    const message = rawMessage
+      .replace(/\b(Bearer)\s+[^\s,;]+/gi, '$1 [redacted]')
+      .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:api[_ -]?key|access[_ -]?token|token|secret|password)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
+      .replace(/([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&\s]+/gi, '$1[redacted]')
+      .replace(/\b(?:sk-(?:or-v1-)?|gsk_|xai-)[a-zA-Z0-9_-]{12,}\b/g, '[redacted]')
+      .slice(0, 500);
+    const rawCode = error?.incompleteReason || error?.code || '';
+    const errorCode = String(rawCode).replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 80);
+    let reason = 'stream_error';
+    if (this._isCostAllowanceError(error)) reason = 'cost_limit';
+    else if (errorCode === 'missing_response_completed' || /before (?:its )?terminal event/i.test(rawMessage)) {
+      reason = 'missing_terminal_event';
+    } else if (this._shouldFallbackAskStream(error)) reason = 'transport_error';
+    else if (error?.isAskStreamTerminalError === true) reason = 'provider_stream_error';
+    return { reason, errorCode: errorCode || null, message };
+  }
+
+  // Backward-compatible aliases for integrations/tests that used the original
+  // OpenAI-specific helper names.
+  _shouldStreamOpenAIAsk(provider, mode, runOptions = {}, disabledForRun = false) {
+    return this._shouldStreamInteractiveAsk(provider, mode, runOptions, disabledForRun);
+  }
+
+  _shouldFallbackAskStream(error) {
+    return error?.isAskStreamFallbackSafe === true
+      || error?.isOpenAIAskStreamFallbackSafe === true
+      || error?.isResponsesStreamFallbackSafe === true;
+  }
+
+  _shouldFallbackOpenAIAskStream(error) {
+    return this._shouldFallbackAskStream(error);
+  }
+
+  async _chatStreamWithCostAllowance(provider, messages, options, costState, requestContext = null, onTextDelta = () => {}) {
+    const before = await this._checkCostAllowance(provider, costState);
+    if (before) throw this._costAllowanceError(before);
+
+    const streamOptions = requestContext
+      ? this._cloudGenerationOptions(provider, options, requestContext)
+      : options;
+    let content = '';
+    let reasoningContent = '';
+    let usage = null;
+    let responseItems = null;
+    let sawCompleted = false;
+    let usageRecorded = false;
+    const toolCalls = new Map();
+
+    const recordUsage = async () => {
+      if (usageRecorded) return null;
+      usageRecorded = true;
+      return this._recordCostUsage(provider, usage, costState);
+    };
+    const estimateUsageIfMissing = (completed = false) => {
+      if (usage) return;
+      const partialToolCalls = [...toolCalls.values()];
+      if (!completed && !content && !reasoningContent && partialToolCalls.length === 0) return;
+      usage = this._estimateAskStreamUsage(
+        messages,
+        streamOptions,
+        content,
+        reasoningContent,
+        partialToolCalls,
+      );
+    };
+    const mergeToolCall = (toolCall, fallbackIndex = 0) => {
+      if (!toolCall || typeof toolCall !== 'object') return;
+      const index = Number.isInteger(toolCall.index) ? toolCall.index : fallbackIndex;
+      const existing = toolCalls.get(index) || {
+        id: '',
+        type: 'function',
+        function: { name: '', arguments: '' },
+      };
+      if (toolCall.id) existing.id = toolCall.id;
+      if (toolCall.type) existing.type = toolCall.type;
+      if (toolCall.function?.name) existing.function.name += toolCall.function.name;
+      if (toolCall.function?.arguments) existing.function.arguments += toolCall.function.arguments;
+      toolCalls.set(index, existing);
+    };
+
+    try {
+      for await (const chunk of provider.chatStream(messages, streamOptions)) {
+        if (chunk?.type === 'text') {
+          const delta = String(chunk.content || '');
+          if (delta) {
+            content += delta;
+            onTextDelta(delta);
+          }
+        } else if (chunk?.type === 'reasoning') {
+          reasoningContent += String(chunk.content || '');
+        } else if (chunk?.type === 'usage') {
+          usage = chunk.usage || usage;
+        } else if (chunk?.type === 'tool_call') {
+          const calls = Array.isArray(chunk.content) ? chunk.content : [];
+          calls.forEach((toolCall, index) => mergeToolCall(toolCall, index));
+        } else if (chunk?.type === 'tool_call_start') {
+          const index = toolCalls.size;
+          mergeToolCall({
+            index,
+            id: chunk.content?.id || '',
+            function: { name: chunk.content?.name || '', arguments: '' },
+          }, index);
+        } else if (chunk?.type === 'tool_call_delta') {
+          const index = Math.max(0, toolCalls.size - 1);
+          mergeToolCall({
+            index,
+            function: { name: '', arguments: String(chunk.content || '') },
+          }, index);
+        } else if (chunk?.type === 'done') {
+          if (Array.isArray(chunk.responseItems)) responseItems = chunk.responseItems;
+          if (chunk.usage) usage = chunk.usage;
+          sawCompleted = true;
+          break;
+        }
+      }
+      if (!sawCompleted) {
+        const error = new Error('Ask stream ended before its terminal event.');
+        error.isAskStreamError = true;
+        error.isAskStreamFallbackSafe = true;
+        throw error;
+      }
+    } catch (error) {
+      // Incomplete Responses streams can still report billable usage. Record
+      // that once before the caller either propagates or retries the failure.
+      estimateUsageIfMissing(false);
+      try { await recordUsage(); } catch {}
+      throw error;
+    }
+
+    estimateUsageIfMissing(true);
+    content = Agent._stripReasoningTags(content);
+    const result = {
+      content,
+      reasoningContent,
+      toolCalls: toolCalls.size ? [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call) : null,
+      usage,
+      responseItems,
+    };
+    const after = await recordUsage();
+    if (after) result.costAllowanceMessage = after;
+    return result;
+  }
+
   _withResponseItems(message, responseItems, reasoningContent = '', provider = null) {
     if (Array.isArray(responseItems) && responseItems.length) {
       return { ...message, response_items: responseItems };
@@ -1161,6 +1398,48 @@ export class Agent {
     return false;
   }
 
+  _findTextMatchLoopIdentity(result) {
+    if (result?.success !== true || result?.verified === false || !result?.rect || typeof result.rect !== 'object') return '';
+    const rect = result.rect;
+    const pageX = typeof rect.pageX === 'number' ? rect.pageX : NaN;
+    const pageY = typeof rect.pageY === 'number' ? rect.pageY : NaN;
+    const viewportX = typeof rect.x === 'number' ? rect.x : NaN;
+    const viewportY = typeof rect.y === 'number' ? rect.y : NaN;
+    const width = typeof rect.width === 'number' ? rect.width : NaN;
+    const height = typeof rect.height === 'number' ? rect.height : NaN;
+    const x = Number.isFinite(pageX) ? pageX : viewportX;
+    const y = Number.isFinite(pageY) ? pageY : viewportY;
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return '';
+    let selectionIdentity = 'document';
+    if (result.selectionSource === 'text_control') {
+      const selectionStart = result.selectionStart;
+      const selectionEnd = result.selectionEnd;
+      if (
+        !Number.isInteger(selectionStart)
+        || !Number.isInteger(selectionEnd)
+        || selectionStart < 0
+        || selectionEnd <= selectionStart
+      ) return '';
+      selectionIdentity = `text_control:${selectionStart}:${selectionEnd}`;
+    }
+    const rectIdentity = [x, y, width, height]
+      .map(value => Math.round(value * 2) / 2)
+      .join(',');
+    return `${selectionIdentity}|${rectIdentity}`;
+  }
+
+  _noteHealthyLoopCall(tabId) {
+    // Do not reset the nudge counter immediately: one healthy call between
+    // two stuck actions must not launder the surrounding loop.
+    const healthy = (this.healthyCallsSinceLoop.get(tabId) || 0) + 1;
+    this.healthyCallsSinceLoop.set(tabId, healthy);
+    if (healthy >= 2) {
+      this.loopNudges.delete(tabId);
+      this.healthyCallsSinceLoop.delete(tabId);
+    }
+    return { kind: 'none' };
+  }
+
   _loopCallKey(name, args, result) {
     if (result?.nonRetryableScope) {
       // Definitive platform/permission failures keep one identity across
@@ -1190,6 +1469,10 @@ export class Agent {
     // same logical file via 8 different API endpoints. See loop-bucket.js.
     const errored = this._isToolResultErroredForLoop(name, args, result);
     const argsHash = bucketArgsKey(name, args);
+    if (name === 'find_text' && !errored) {
+      const matchIdentity = this._findTextMatchLoopIdentity(result);
+      if (matchIdentity) return `${name}|${argsHash}|match:${matchIdentity}`;
+    }
     return `${name}|${argsHash}|${errored ? 'err' : 'ok'}`;
   }
 
@@ -1956,7 +2239,7 @@ export class Agent {
     const currentUrl = await this._currentUrl(tabId);
     const publicAttempt = this._downloadPublicMediaAttempt(messages, currentUrl);
     const needsExplicitTarget = this._publicMediaUrlNeedsExplicitTarget(currentUrl);
-    const mode = this.conversationModes.get(tabId) || 'act';
+    const mode = this._effectiveRunMode(tabId, 'act');
     const tier = this._resolvePromptTier();
     let activeTool = this._activeSkillToolForName(tabId, 'download_public_media');
     const owner = activeTool
@@ -2247,6 +2530,17 @@ export class Agent {
     if (toolResult?.pageUrlChanged === true && !this._noteNavArrival(tabId, toolResult.currentUrl)) {
       this._clearLoopState(tabId);
     }
+    if (
+      toolName === 'find_text'
+      && toolResult?.success === true
+      && !this._findTextMatchLoopIdentity(toolResult)
+    ) {
+      // A cross-origin frame match can be selected by window.find while its
+      // range is unavailable to the top document. Successful same-query calls
+      // intentionally advance to the next match, so an unlocated match is not
+      // safe evidence of a repeat loop.
+      return this._noteHealthyLoopCall(tabId);
+    }
     const { buf, key } = this._recordCall(tabId, toolName, toolArgs, toolResult);
     if (this._isBrowserMutationTool(toolName)) {
       const normalizeFailureScope = value => String(value).slice(0, 320);
@@ -2311,18 +2605,12 @@ export class Agent {
       }
     }
     const loop = this._detectLoop(buf, key);
+    if (loop?.type === 'oscillation' && loop.a === 'find_text' && loop.b === 'find_text') {
+      // Alternating match positions is normal when a finite page search wraps.
+      return this._noteHealthyLoopCall(tabId);
+    }
     if (!loop) {
-      // Healthy, non-looping call. We don't reset the nudge counter
-      // immediately — that would let the agent escape detection by
-      // doing one read_page between two stuck clicks. Only reset after
-      // a sustained run of healthy calls (a full window's worth).
-      const healthy = (this.healthyCallsSinceLoop.get(tabId) || 0) + 1;
-      this.healthyCallsSinceLoop.set(tabId, healthy);
-      if (healthy >= 2) {
-        this.loopNudges.delete(tabId);
-        this.healthyCallsSinceLoop.delete(tabId);
-      }
-      return { kind: 'none' };
+      return this._noteHealthyLoopCall(tabId);
     }
 
     const method = String(toolArgs?.method || 'GET').toUpperCase();
@@ -2382,7 +2670,7 @@ export class Agent {
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
-  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
   static NAV_PRONE_TOOLS = new Set(['click', 'click_ax', 'set_checked', 'navigate', 'go_back', 'go_forward', 'execute_js', 'iframe_click', 'execute_webmcp_tool']);
   static RECOMMENDED_ACTION_FAST_PATH_IDS = new Set(['download-media', 'tweet-webbrain', 'post-webbrain-linkedin']);
   static RECOMMENDED_ACTION_FIRST_TOOLS = Object.freeze({
@@ -2582,7 +2870,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { role: 'user', content: contextLine + userMessage };
     }
 
-    const shot = await this._captureAutoScreenshot(tabId);
+    // Count toward maxScreenshotsPerTurn so a limit of 1 is a true per-turn
+    // maximum (initial + post-action share the same budget). Issue #311.
+    // onUpdate may be null here (enrich runs before some callers wire UI);
+    // budget skips still try trace when a runId exists.
+    const shot = await this._captureBudgetedAutoScreenshot(tabId);
     if (!shot) {
       return { role: 'user', content: contextLine + userMessage };
     }
@@ -2613,7 +2905,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       role: 'user',
       content: [
         { type: 'text', text: contextLine + screenshotNote + userMessage },
-        { type: 'image_url', image_url: { url: shot.dataUrl } },
+        { type: 'image_url', image_url: this._withImageDetail({ url: shot.dataUrl }) },
       ],
     };
   }
@@ -2794,7 +3086,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const cssBoxHint = this._canUseToolInCurrentBatch(allowedToolNames, 'inspect_element_styles')
       ? 'then use get_accessibility_tree or inspect_element_styles to get CSS-pixel boxes'
       : 'then use get_accessibility_tree or get_interactive_elements to choose a reachable target';
-    return `[COORDINATE CLICK WARNING: You've clicked at or near (${args.x}, ${args.y}) several times with no visible page change. The click may be missing its target. Try: (a) call get_interactive_elements to find a real selector, (b) click({text: "..."}) to target by visible text, or (c) inspect the latest injected auto_screenshot/visual context for element positions, ${cssBoxHint}. Try a different approach before clicking these coordinates again.]`;
+    return `[COORDINATE CLICK WARNING: You've clicked at or near (${args.x}, ${args.y}) several times with no visible page change. The click may be missing its target. Try: (a) call get_interactive_elements to find a real selector, (b) click({text: "..."}) to target by visible text, (c) inspect the latest injected auto_screenshot/visual context for element positions, ${cssBoxHint}, or (d) if you are trying to focus a text editor in a dialog, STOP clicking — dialogs on some sites render in a shadow root where coordinate clicks hit the backdrop and CLOSE the dialog. Reopen it if needed, then call type_text({selector: '[contenteditable]:not([contenteditable=\"false\"])', text: "..."}) directly; it focuses the editor without a click. Try a different approach before clicking these coordinates again.]`;
   }
 
   _noProgressRecoveryWarning(allowedToolNames = AGENT_TOOL_NAMES) {
@@ -2805,7 +3097,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _devStyleInspectionAvailableForTab(tabId) {
-    return (this.conversationModes.get(tabId) || 'ask') === 'dev'
+    return this._effectiveRunMode(tabId) === 'dev'
       && this._resolvePromptTier() !== 'compact';
   }
 
@@ -2823,6 +3115,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return false;
   }
 
+  async _chromeProtectedPageFailure(tabId, toolName) {
+    if (!isChromeProtectedPageDomTool(toolName)) return null;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      return chromeProtectedPageFailure(tab?.url || '', toolName);
+    } catch {
+      // A missing/closed tab will fail through the ordinary tool handler. Do
+      // not misclassify unrelated tab lookup failures as protected-page hits.
+      return null;
+    }
+  }
+
   async _prepareWebMCPToolCall(tabId, name, args = {}) {
     if (name !== 'execute_webmcp_tool') return { args };
     if (!this.webMcpEnabled) {
@@ -2836,7 +3140,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         },
       };
     }
-    if ((this.conversationModes.get(tabId) || 'ask') === 'ask') {
+    if (this._effectiveRunMode(tabId) === 'ask') {
       return {
         error: {
           success: false,
@@ -2906,6 +3210,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _browserActionFreshTurnReason(tier, toolName, toolResult) {
     if (toolName === 'done' && toolResult?.completionPageBlock === true) {
       return 'completion_page_block';
+    }
+    // Publishing must be planned only after the model has seen the upload
+    // result and can verify the staged revision with chrome_web_store_status.
+    // Never execute a publish call generated in the same assistant batch.
+    if (toolName === 'chrome_web_store_upload') {
+      return 'chrome_web_store_upload_requires_status';
+    }
+    // The status response itself is the publish precondition. Give the model a
+    // fresh turn to inspect it instead of executing a publish call that was
+    // planned before the response existed.
+    if (toolName === 'chrome_web_store_status') {
+      return 'chrome_web_store_status_requires_inspection';
     }
     if (!this._isBrowserMutationTool(toolName)) return '';
     if (
@@ -3052,7 +3368,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, argRepair.args);
       const argRepairNotice = argRepair.note || '';
 
-      const webMcpPreparation = await this._prepareWebMCPToolCall(tabId, fnName, fnArgs);
+      // Chrome-protected pages must be rejected before any helper can touch
+      // the DOM or debugger. In particular, WebMCP preparation attaches CDP
+      // and submit/form-validation preflights execute page probes before the
+      // call reaches executeTool(). Keep the failure in the ordinary result
+      // pipeline below so tracing, loop handling, and trusted recovery notes
+      // still behave exactly like other tool results.
+      const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);
+
+      const webMcpPreparation = protectedPageFailure
+        ? { args: fnArgs }
+        : await this._prepareWebMCPToolCall(tabId, fnName, fnArgs);
       if (webMcpPreparation.error) {
         messages.push({
           role: 'tool',
@@ -3083,7 +3409,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // A call may require MORE THAN ONE capability — e.g. set_field({submit})
       // both types AND submits, so it needs a TYPE grant and a CLICK grant.
       const skillCallTool = this._activeSkillToolForName(tabId, fnName);
-      let capabilities = capabilitiesFor(fnName, fnArgs);
+      let capabilities = protectedPageFailure ? [] : capabilitiesFor(fnName, fnArgs);
       if (skillCallTool?.requiresDownloadPermission && !capabilities.includes(Capability.DOWNLOAD)) {
         capabilities.push(Capability.DOWNLOAD);
       }
@@ -3091,15 +3417,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // path later removes a capability whose prompt was already satisfied.
       // A missing response after any consequential call is an unknown outcome:
       // the side effect may have completed before its reply was lost.
-      const isStateChangingCall = Agent.STATE_CHANGE_TOOLS.has(fnName);
+      const isStateChangingCall = !protectedPageFailure && Agent.STATE_CHANGE_TOOLS.has(fnName);
       const missingResponseOutcomeUnknown = capabilities.length > 0 || isStateChangingCall;
-      const executionMutationEvidence = this._isExecutionMutationEvidence(fnName, fnArgs, capabilities);
-      const clarificationAuthorizationBlock = this._clarificationAuthorizationBlock(
-        tabId,
-        fnName,
-        fnArgs,
-        capabilities,
-      );
+      const executionMutationEvidence = !protectedPageFailure
+        && this._isExecutionMutationEvidence(fnName, fnArgs, capabilities);
+      const clarificationAuthorizationBlock = protectedPageFailure
+        ? null
+        : this._clarificationAuthorizationBlock(
+            tabId,
+            fnName,
+            fnArgs,
+            capabilities,
+          );
       if (clarificationAuthorizationBlock) {
         const blockedResult = clarificationAuthorizationBlock.result;
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
@@ -3183,7 +3512,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: 'API mutation blocked until /allow-api is enabled.' });
         continue;
       }
-      const formValidationCandidate = this._isFormValidationCandidate(fnName, fnArgs);
+      const formValidationCandidate = !protectedPageFailure
+        && this._isFormValidationCandidate(fnName, fnArgs);
       let formValidationCoordinateFrames = null;
       if (
         formValidationCandidate
@@ -3212,6 +3542,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               : {}),
           })
         : null;
+      if (fnName === 'chrome_web_store_publish') {
+        detectedSubmitAction = {
+          isSubmit: true,
+          host: 'chromewebstore.googleapis.com',
+          reason: 'submit the configured Chrome Web Store release for review',
+        };
+      }
       const validationBlock = formValidationCandidate ? this._formValidationBlocks.get(tabId) : null;
       let priorValidationFailure = !!validationBlock;
       let correctedPriorValidationFailure = false;
@@ -3252,7 +3589,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const requiresMandatoryWebMCPGates = fnName === 'execute_webmcp_tool';
       const bypassesConsequentialGates = !requiresMandatoryWebMCPGates
         && (this._skipPermissionGate || scheduledBypassesGate);
-      if (!bypassesConsequentialGates) {
+      if (!protectedPageFailure && !bypassesConsequentialGates) {
         const submitConfirmation = detectedSubmitAction || await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
         detectedSubmitAction = submitConfirmation;
         if (submitConfirmation?.isSubmit) {
@@ -3457,7 +3794,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Snapshot URL before nav-prone calls. Some tools are conditional:
       // Enter and set_field({submit:true}) can navigate, while other key
       // presses and ordinary field edits should avoid the URL-check delay.
-      const navigationProneCall = this._isNavigationProneToolCall(fnName, fnArgs);
+      const navigationProneCall = !protectedPageFailure
+        && this._isNavigationProneToolCall(fnName, fnArgs);
       let beforeUrl = '';
       let afterUrl = '';
       const beforeDocument = String(this._lastAxScopes.get(tabId)?.documentToken || '');
@@ -3477,9 +3815,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const _toolStart = Date.now();
-      const rawToolResult = await this.executeTool(tabId, fnName, fnArgs, onUpdate, {
-        completionBatchStartState,
-      });
+      const rawToolResult = protectedPageFailure || await this.executeTool(
+        tabId,
+        fnName,
+        fnArgs,
+        onUpdate,
+        { completionBatchStartState },
+      );
       const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
       const inspectFormValidationAfter = formValidationCandidate
         && this._formValidationActionLooksSubmit(
@@ -3689,9 +4031,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           return { action: 'return', value: planOnlyDecision.failure, status: 'plan_only_output' };
         }
+        const rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
+        if (this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
+          const blockedResult = {
+            success: false,
+            blockedDone: true,
+            metaOnlySummary: true,
+            error: 'The done summary is displayed verbatim to the user, but this summary only says that an answer was given and omits the answer itself. Reuse the facts already gathered and call done again with the complete user-facing answer or result. Do not merely say that you explained, confirmed, provided, or answered it.',
+          };
+          onUpdate('tool_result', { name: fnName, result: blockedResult });
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify(blockedResult),
+          });
+          recordFinalToolTrace(blockedResult);
+          this._appendSyntheticToolResults(
+            tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: meta-only done summary requires a fresh answer turn' })
+          );
+          onUpdate('text', { content: '', replace: true });
+          onUpdate('warning', { message: 'Completion summary omitted the actual answer; continuing.' });
+          this._persist(tabId);
+          return { action: 'continue' };
+        }
         onUpdate('tool_result', { name: fnName, result: toolResult });
         this._doneBlockCount.delete(tabId);
-        const rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
         const repairedDoneSummary = repairAssistantDisplayText(rawDoneSummary);
         const finalResponse = this._appendProgressLedgerToFinal(tabId, repairedDoneSummary);
         if (repairedDoneSummary !== rawDoneSummary) {
@@ -3775,6 +4140,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // our own trusted notes (the loop nudge), so the nudge stays outside the
       // <untrusted_page_content> box and is read as an instruction, not data.
       let resultContent = this._wrapUntrusted(fnName, this._limitToolResult(toolResult));
+      if (toolResult?.errorCode === 'chrome_protected_page') {
+        resultContent += '\n[TRUSTED RUNTIME ROUTING: Chrome blocks extension DOM/debugger access on this dashboard. Do not call another DOM, accessibility, wait, script, iframe, WebMCP, or upload_file tool here. Continue manually in the dashboard.]';
+        onUpdate('warning', { message: 'Chrome-protected dashboard detected; DOM automation is unavailable.' });
+      }
       if (nytimesPageGateFallback) {
         resultContent += `\n${nytimesPageGateFallback.note}`;
         onUpdate('warning', {
@@ -3864,7 +4233,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(fnName === 'done' && toolResult?.blockedDone ? { transientCompletionVerification: true } : {}),
           content: [
             { type: 'text', text: noteText },
-            { type: 'image_url', image_url: { url: attachedImage } },
+            { type: 'image_url', image_url: this._withImageDetail({ url: attachedImage }) },
           ],
         });
         const _runIdForShot = this.currentRunId.get(tabId);
@@ -3989,7 +4358,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
       if (Date.now() - lastTs >= 500) {
         await new Promise(r => setTimeout(r, 250));
-        const shot = await this._captureAutoScreenshot(tabId);
+        // Shared budget check+increment (issue #311) — same helper as the
+        // initial viewport capture so the configured value is a true max.
+        // Pass onUpdate + messages so a budget skip is not silent.
+        const shot = await this._captureBudgetedAutoScreenshot(tabId, { onUpdate, messages });
         if (shot) {
           this.lastAutoScreenshotTs.set(tabId, Date.now());
           // Pair the image with a textual list of visible clickables so
@@ -4033,7 +4405,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               role: 'user',
               content: [
                 { type: 'text', text: textBlock },
-                { type: 'image_url', image_url: { url: shot.dataUrl } },
+                { type: 'image_url', image_url: this._withImageDetail({ url: shot.dataUrl }) },
               ],
             });
             pushed = true;
@@ -4180,9 +4552,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   /**
    * Auto-select a <select> option by keyboard arrows.
-   * Scans ALL selects on the page. If `optionText` matches a non-current
-   * option, focuses that select, sends ArrowDown/Up via CDP, verifies,
-   * and returns a success result.  Returns null if no match found.
+   * Scans selects in the active blocking modal, or the full page when no
+   * modal is open. If `optionText` matches a non-current option, focuses that
+   * select, sends ArrowDown/Up via CDP, verifies, and returns a success result.
+   * Returns null if no match is found.
    *
    * When `optionText` matches the ALREADY-SELECTED option, returns a
    * result telling the agent it's already set (no action needed).
@@ -4190,33 +4563,104 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _autoSelectOption(tabId, cdpClient, optionText) {
     const needle = (optionText || '').trim();
     if (!needle) return null;
+    // Keep an exact reference to the scoped select across the separate CDP
+    // evaluations below. Re-discovering it by option text after Escape can
+    // target a different (for example, background) select with the same
+    // options.
+    const targetSlot = `__webbrainAutoSelectTarget_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
     const scanResult = await cdpClient.evaluate(tabId, `
       (() => {
         const needle = ${JSON.stringify(needle)};
         const lc = needle.toLowerCase();
-        const sels = document.querySelectorAll('select');
+        const targetSlot = ${JSON.stringify(targetSlot)};
+        const hasVisibleBox = (el, minWidth = 1, minHeight = 1) => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width < minWidth || r.height < minHeight) return false;
+          const cs = getComputedStyle(el);
+          return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity) !== 0;
+        };
+        const findBlockingModal = () => {
+          const nativeDialogs = Array.from(document.querySelectorAll('dialog[open]')).reverse();
+          for (const dialog of nativeDialogs) {
+            try { if (dialog.matches(':modal')) return dialog; } catch {}
+            if (dialog.getAttribute('aria-modal') === 'true') return dialog;
+          }
+          const ariaModals = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')).reverse();
+          for (const dialog of ariaModals) {
+            if (hasVisibleBox(dialog)) return dialog;
+          }
+          const overlays = Array.from(document.querySelectorAll(
+            '[data-overlay], .modal-overlay, .overlay, [class*="overlay"][class*="active"], [class*="DialogOverlay"], [class*="ModalOverlay"]'
+          )).reverse();
+          const dialogSelector = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open], [class*="DialogContent"], [class*="ModalContent"], .modal.show';
+          for (const overlay of overlays) {
+            if (!hasVisibleBox(overlay, 100, 100)) continue;
+            const siblings = overlay.parentElement ? Array.from(overlay.parentElement.children) : [];
+            const start = siblings.indexOf(overlay);
+            const ordered = start < 0
+              ? []
+              : siblings.slice(start + 1).concat(siblings.slice(0, start).reverse());
+            for (const sibling of ordered) {
+              if (sibling === overlay) continue;
+              if (sibling.matches?.(dialogSelector) && hasVisibleBox(sibling, 20, 20)) return sibling;
+              const nested = sibling.querySelector?.(dialogSelector);
+              if (nested && hasVisibleBox(nested, 20, 20)) return nested;
+            }
+          }
+          return null;
+        };
+        const scope = findBlockingModal() || document;
+        // Yield to the normal text-click path ONLY when it would resolve an
+        // exact-tier clickable: an exactly-labeled button/link is what the
+        // model meant, but an exact <option> match beats a prefix/contains
+        // clickable (needle "OK" must select the OK option, not click a
+        // "Book" button that merely contains the substring). The extraction
+        // and hidden-option filtering mirror the text-click evaluate below;
+        // <select> elements never suppress — this rescue IS their path.
+        const clickSels = 'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], input:not([type="hidden"]), textarea, input[type="button"], input[type="submit"], summary, label, [onclick], [data-action]';
+        const _valIsLabel = (el) => {
+          if (el.tagName === 'TEXTAREA') return false;
+          if (el.tagName !== 'INPUT') return true;
+          const t = (el.getAttribute('type') || 'text').toLowerCase();
+          return t === 'button' || t === 'submit' || t === 'reset';
+        };
+        for (const el of scope.querySelectorAll(clickSels)) {
+          try {
+            if (!hasVisibleBox(el)) continue;
+            if (el.closest('[aria-hidden="true"],[hidden]')) continue;
+          } catch (e) { continue; }
+          const txt = (el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
+          if (txt && txt === lc) return { found: false, suppressedByClickable: true };
+        }
+        const matchingSelects = [];
+        const sels = scope.querySelectorAll('select');
         for (const sel of sels) {
           const opts = Array.from(sel.options);
           const match = opts.find(o => o.text.trim() === needle)
             || opts.find(o => o.text.trim().toLowerCase() === lc)
             || opts.find(o => o.value === needle)
             || opts.find(o => o.value.toLowerCase() === lc);
-          if (match) {
-            sel.focus();
-            const cur = sel.selectedIndex;
-            return {
-              found: true,
-              alreadySelected: cur === match.index,
-              currentIndex: cur,
-              targetIndex: match.index,
-              targetText: match.text.trim(),
-              targetValue: match.value,
-              currentText: sel.options[cur]?.text?.trim() || '',
-              allOptions: opts.map(o => o.text.trim()),
-            };
-          }
+          if (match) matchingSelects.push({ sel, match, opts });
         }
-        return { found: false };
+        // When more than one dropdown offers the same option, choosing the
+        // first one would be another silent cross-control mutation. Let the
+        // normal text resolver return an ambiguity instead.
+        if (matchingSelects.length !== 1) return { found: false, matchingSelectCount: matchingSelects.length };
+        const { sel, match, opts } = matchingSelects[0];
+        sel.focus();
+        const cur = sel.selectedIndex;
+        if (cur !== match.index) globalThis[targetSlot] = sel;
+        return {
+          found: true,
+          alreadySelected: cur === match.index,
+          currentIndex: cur,
+          targetIndex: match.index,
+          targetText: match.text.trim(),
+          targetValue: match.value,
+          currentText: sel.options[cur]?.text?.trim() || '',
+          allOptions: opts.map(o => o.text.trim()),
+        };
       })()
     `);
     const scan = scanResult?.result?.value;
@@ -4232,58 +4676,78 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
-    // Close any open native dropdown
-    await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-      type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-    });
-    await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-      type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-    });
-    // Re-focus the select (Escape may have blurred it)
-    await cdpClient.evaluate(tabId, `
-      (() => {
-        const el = document.activeElement;
-        if (el && el.tagName === 'SELECT') return;
-        const sels = document.querySelectorAll('select');
-        for (const sel of sels) {
-          const opts = Array.from(sel.options);
-          if (opts.some(o => o.text.trim() === ${JSON.stringify(needle)} || o.text.trim().toLowerCase() === ${JSON.stringify(needle.toLowerCase())})) {
-            sel.focus(); return;
-          }
-        }
-      })()
-    `);
-
-    // Navigate with ArrowDown/ArrowUp
-    const delta = scan.targetIndex - scan.currentIndex;
-    const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
-    const arrowVK = delta > 0 ? 40 : 38;
-    for (let i = 0; i < Math.abs(delta); i++) {
-      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-      });
-      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-      });
-    }
-
-    // Verify
-    const verify = await cdpClient.evaluate(tabId, `
-      (() => {
-        const el = document.activeElement;
-        if (!el || el.tagName !== 'SELECT') return { verified: false };
-        return { verified: true, selectedText: el.options[el.selectedIndex]?.text?.trim(), selectedValue: el.value };
-      })()
-    `);
-    const v = verify?.result?.value;
-
-    return {
-      success: true,
-      method: 'auto-select-keyboard',
-      selectedText: v?.selectedText || scan.targetText,
-      selectedValue: v?.selectedValue || scan.targetValue,
-      keyPresses: Math.abs(delta),
+    const cleanupTarget = async () => {
+      try {
+        await cdpClient.evaluate(tabId, `delete globalThis[${JSON.stringify(targetSlot)}]`);
+      } catch {}
     };
+
+    try {
+      // Close any open native dropdown.
+      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+      });
+      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+      });
+      // Escape may blur the control. Re-focus only the exact select chosen by
+      // the modal-scoped, ambiguity-checked scan; never perform a global
+      // option-text lookup here.
+      const focusResult = await cdpClient.evaluate(tabId, `
+        (() => {
+          const target = globalThis[${JSON.stringify(targetSlot)}];
+          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
+          if (document.activeElement !== target) target.focus();
+          return { focused: document.activeElement === target };
+        })()
+      `);
+      if (!focusResult?.result?.value?.focused) return null;
+
+      // Navigate with ArrowDown/ArrowUp.
+      const delta = scan.targetIndex - scan.currentIndex;
+      const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
+      const arrowVK = delta > 0 ? 40 : 38;
+      for (let i = 0; i < Math.abs(delta); i++) {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+        });
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+        });
+      }
+
+      // Verify the exact target rather than whichever select happens to be
+      // active after the keyboard events.
+      const verify = await cdpClient.evaluate(tabId, `
+        (() => {
+          const target = globalThis[${JSON.stringify(targetSlot)}];
+          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { verified: false };
+          return {
+            verified: target.selectedIndex === ${JSON.stringify(scan.targetIndex)},
+            selectedText: target.options[target.selectedIndex]?.text?.trim(),
+            selectedValue: target.value,
+          };
+        })()
+      `);
+      const v = verify?.result?.value;
+      if (!v?.verified) {
+        return {
+          success: false,
+          method: 'auto-select-keyboard',
+          error: `Could not verify that the intended dropdown changed to "${scan.targetText}".`,
+        };
+      }
+
+      return {
+        success: true,
+        method: 'auto-select-keyboard',
+        selectedText: v.selectedText || scan.targetText,
+        selectedValue: v.selectedValue || scan.targetValue,
+        keyPresses: Math.abs(delta),
+      };
+    } finally {
+      await cleanupTarget();
+    }
   }
 
   /**
@@ -4524,6 +4988,65 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { ...shot, blankFrameRetry: meta };
   }
 
+  /**
+   * Whether another automatic screenshot is allowed under maxScreenshotsPerTurn
+   * (issue #311). 0 means unlimited. Does not mutate the counter.
+   */
+  _canTakeAutoScreenshot(tabId) {
+    const cap = Number(this.maxScreenshotsPerTurn) || 0;
+    if (cap <= 0) return true;
+    return (this.autoScreenshotCount.get(tabId) || 0) < cap;
+  }
+
+  /**
+   * Record a successful automatic screenshot against the per-turn budget.
+   * No-op when the budget is unlimited.
+   */
+  _recordAutoScreenshot(tabId) {
+    const cap = Number(this.maxScreenshotsPerTurn) || 0;
+    if (cap <= 0) return;
+    this.autoScreenshotCount.set(tabId, (this.autoScreenshotCount.get(tabId) || 0) + 1);
+  }
+
+  /**
+   * Surface a maxScreenshotsPerTurn skip so the agent/user are not silently
+   * "blind" mid-turn (issue #311 review). Trusted note only — not page content.
+   */
+  _notifyAutoScreenshotBudgetSkipped(tabId, { onUpdate = null, messages = null } = {}) {
+    const message = 'auto-screenshot skipped: maxScreenshotsPerTurn reached';
+    try {
+      if (typeof onUpdate === 'function') onUpdate('warning', { message });
+    } catch { /* ignore UI delivery failures */ }
+    try {
+      if (Array.isArray(messages)) {
+        messages.push({ role: 'user', content: `[${message}]` });
+      }
+    } catch { /* ignore */ }
+    try {
+      const runId = this.currentRunId.get(tabId);
+      if (runId) {
+        trace.recordNote(runId, null, 'auto_screenshot_budget_skipped', { message });
+      }
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * Capture an automatic screenshot only when the per-turn budget allows it.
+   * Check-then-capture-then-increment so a failed capture does not burn a slot,
+   * and both the initial viewport shot and post-action shots share one counter.
+   * When the budget blocks a capture, emits a warning/trace/trusted note so the
+   * skip is not silent (opts.onUpdate / opts.messages).
+   */
+  async _captureBudgetedAutoScreenshot(tabId, opts = {}) {
+    if (!this._canTakeAutoScreenshot(tabId)) {
+      this._notifyAutoScreenshotBudgetSkipped(tabId, opts);
+      return null;
+    }
+    const shot = await this._captureAutoScreenshot(tabId, opts);
+    if (shot) this._recordAutoScreenshot(tabId);
+    return shot;
+  }
+
   async _captureAutoScreenshot(tabId, { coordAligned = false } = {}) {
     try {
       await cdpClient.attach(tabId);
@@ -4538,12 +5061,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
 
       if (coordAligned) {
-        // Pixel-accuracy mode: image pixels must equal CSS pixels so the
-        // planner can click by coordinate off the screenshot. Skip the
-        // token-budget resize — the whole point of this mode is fidelity.
-        // We DO still run the byte-ceiling fallback afterwards: if the
-        // CSS viewport happens to be huge, we'd rather lose some JPEG
-        // quality than overflow the provider's image cap.
+        // Prefer 1:1 CSS↔image pixels so click({x,y}) lands correctly. Cap only
+        // by maxImageDimension (per side), not the vision token budget — so a
+        // normal 1080p viewport stays 1:1 under the default 1568px cap (issue
+        // #311 review). When a side exceeds the cap, resize and report scale.
+        const budget = this._budgetForCoordAlignedCapture();
         const captureOnce = async () => {
           const shot = await this._withIndicatorsHidden(tabId, () =>
             cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
@@ -4554,8 +5076,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
           if (!shot?.data) return null;
           const rawDataUrl = `data:image/jpeg;base64,${shot.data}`;
-          const shrunk = await this._compressJpegToByteCeiling(rawDataUrl);
-          const redacted = await this._redactScreenshotDataUrl(tabId, shrunk, { coordinateSpace: 'viewport' });
+          const needsResize = cssW > budget.maxTargetPx || cssH > budget.maxTargetPx;
+          if (needsResize) {
+            const shrunk = await this._shrinkImageForBudget(rawDataUrl, cssW, cssH, budget);
+            const redacted = await this._redactScreenshotDataUrl(tabId, shrunk.dataUrl, { coordinateSpace: 'viewport' });
+            return {
+              dataUrl: redacted,
+              width: shrunk.width,
+              height: shrunk.height,
+              cssWidth: cssW,
+              cssHeight: cssH,
+              scaleX: cssW / Math.max(1, shrunk.width),
+              scaleY: cssH / Math.max(1, shrunk.height),
+              coordAligned: false,
+            };
+          }
+          const compressed = await this._compressJpegToByteCeiling(rawDataUrl, budget);
+          const redacted = await this._redactScreenshotDataUrl(tabId, compressed, { coordinateSpace: 'viewport' });
           return { dataUrl: redacted, width: cssW, height: cssH, coordAligned: true };
         };
         const first = await captureOnce();
@@ -4566,13 +5103,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // binary-search, then ask CDP to capture + scale in one pass. This
       // avoids ever materializing a multi-MB native-DPR JPEG that we'd
       // then have to decode and resize in the service worker.
-      const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH);
+      const budget = this._budgetForCapture();
+      const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH, budget);
       const scale = targetW < cssW ? targetW / cssW : 1;
       const captureOnce = async () => {
         const shot = await this._withIndicatorsHidden(tabId, () =>
           cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
             format: 'jpeg',
-            quality: Math.round(Agent.IMAGE_BUDGET.initialJpegQuality * 100),
+            quality: Math.round(budget.initialJpegQuality * 100),
             fromSurface: true,
             clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
           })
@@ -4583,7 +5121,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // CDP-side resize + JPEG q=75 usually fits. Iterative quality
         // downgrade is the safety net for high-DPR screens where the
         // captured image can still exceed the base64 ceiling.
-        const shrunk = await this._compressJpegToByteCeiling(rawDataUrl);
+        const shrunk = await this._compressJpegToByteCeiling(rawDataUrl, budget);
         const redacted = await this._redactScreenshotDataUrl(tabId, shrunk, { coordinateSpace: 'viewport' });
         return {
           dataUrl: redacted,
@@ -4753,7 +5291,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           role: 'user',
           content: [
             { type: 'text', text: 'Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.' },
-            { type: 'image_url', image_url: { url: dataUrl } },
+            { type: 'image_url', image_url: this._withImageDetail({ url: dataUrl }) },
           ],
         },
       ];
@@ -4859,14 +5397,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (!shot?.data) return null;
       const cropDataUrl = `data:image/png;base64,${shot.data}`;
-      let dataUrl = await this._compressJpegToByteCeiling(cropDataUrl);
+      // Model-facing path honors maxImageDimension (issue #311). Keep the raw
+      // `cropDataUrl` at full CSS resolution for the local download crop;
+      // `_locateVisibleMediaWithVision` maps vision boxes back to that space.
+      const shrunk = await this._shrinkImageForBudget(cropDataUrl, cssW, cssH, this._budgetForCapture());
+      let dataUrl = shrunk.dataUrl;
       // Local screenshot redaction (issue #312): the model-facing `dataUrl`
       // is sent to vision for media localization, so pixelate PII on it.
       // The raw `cropDataUrl` is kept untouched for the local download.
       if (this.screenshotRedaction) {
         dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
       }
-      return { dataUrl, cropDataUrl, width: cssW, height: cssH, coordAligned: true };
+      return {
+        dataUrl,
+        cropDataUrl,
+        width: cssW,
+        height: cssH,
+        visionWidth: shrunk.width,
+        visionHeight: shrunk.height,
+        coordAligned: true,
+      };
     } catch (_) {
       const fallback = await this._captureAutoScreenshot(tabId, { coordAligned: true });
       return fallback ? { ...fallback, cropDataUrl: fallback.dataUrl } : null;
@@ -4889,13 +5439,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const target = ['image', 'video', 'media'].includes(opts.target) ? opts.target : 'media';
-    const width = Math.max(1, Math.round(screenshot.width || 0));
-    const height = Math.max(1, Math.round(screenshot.height || 0));
+    // Original crop/CSS space (used to map the vision box back for cropping).
+    const origW = Math.max(1, Math.round(screenshot.width || 0));
+    const origH = Math.max(1, Math.round(screenshot.height || 0));
+    // Prefer already-budgeted vision dims from capture — re-shrinking with CSS
+    // dims double-encodes JPEG and can desync scale (issue #311 review).
+    let visionDataUrl;
+    let visionW;
+    let visionH;
+    if (screenshot.visionWidth && screenshot.visionHeight) {
+      visionDataUrl = screenshot.dataUrl;
+      visionW = Math.max(1, Math.round(screenshot.visionWidth));
+      visionH = Math.max(1, Math.round(screenshot.visionHeight));
+    } else {
+      const shrunk = await this._shrinkImageForBudget(
+        screenshot.dataUrl, origW, origH, this._budgetForCapture(),
+      );
+      visionDataUrl = shrunk.dataUrl;
+      visionW = Math.max(1, Math.round(shrunk.width || origW));
+      visionH = Math.max(1, Math.round(shrunk.height || origH));
+    }
     const started = Date.now();
     const runId = this.currentRunId.get(tabId);
     const costState = opts.costState || this.currentCostState.get(tabId) || null;
     const prompt = [
-      `Image size: ${width}x${height} pixels.`,
+      `Image size: ${visionW}x${visionH} pixels.`,
       `Task: locate the single visible ${target} the user most likely means by "this image", "this video", or "this media" on the current page.`,
       'Return JSON only with this exact shape:',
       '{"found":true,"x":0,"y":0,"width":100,"height":100,"confidence":0.9,"mediaType":"image","reason":"largest central visible media"}',
@@ -4909,7 +5477,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           role: 'user',
           content: [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: screenshot.dataUrl } },
+            { type: 'image_url', image_url: this._withImageDetail({ url: visionDataUrl }) },
           ],
         },
       ], {
@@ -4919,9 +5487,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, costState, { tabId, generationName: 'vision' });
 
       const raw = res?.content || '';
-      const rect = Agent._normalizeVisibleMediaLocation(raw, { width, height });
-      if (!rect) throw new Error('vision model did not return a usable media box');
-      if (rect.confidence < 0.45) throw new Error(`vision confidence too low (${rect.confidence})`);
+      const visionRect = Agent._normalizeVisibleMediaLocation(raw, { width: visionW, height: visionH });
+      if (!visionRect) throw new Error('vision model did not return a usable media box');
+      if (visionRect.confidence < 0.45) throw new Error(`vision confidence too low (${visionRect.confidence})`);
+      // Map vision-image pixels back to the original cropDataUrl coordinate space.
+      const scaleX = origW / visionW;
+      const scaleY = origH / visionH;
+      const rect = {
+        ...visionRect,
+        x: Math.round(visionRect.x * scaleX),
+        y: Math.round(visionRect.y * scaleY),
+        width: Math.round(visionRect.width * scaleX),
+        height: Math.round(visionRect.height * scaleY),
+      };
       const latencyMs = Date.now() - started;
       trace.recordVisionSubCall(runId, {
         context: 'download_social_media_visible_media',
@@ -5226,6 +5804,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
+   * Downscale a capture to exactly `cssW`×`cssH` so image pixel (X, Y) ==
+   * CSS pixel (X, Y). `tabs.captureVisibleTab` has no clip/scale control and
+   * snapshots at native devicePixelRatio, so on hi-DPI displays (e.g. Apple
+   * Retina, DPR 2) the raw image is DPR× larger than the CSS viewport —
+   * pixel coords read off it would be 2× off. Returns the input unchanged
+   * when it already matches (DPR 1) or on any decode failure.
+   */
+  async _normalizeDataUrlToCssPixels(dataUrl, cssW, cssH) {
+    try {
+      if (!dataUrl || !(cssW > 0) || !(cssH > 0)) return dataUrl;
+      const resp = await fetch(dataUrl);
+      const bmp = await createImageBitmap(await resp.blob());
+      if (bmp.width === cssW && bmp.height === cssH) return dataUrl;
+      const canvas = new OffscreenCanvas(cssW, cssH);
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bmp, 0, 0, bmp.width, bmp.height, 0, 0, cssW, cssH);
+      const blob = await canvas.convertToBlob({
+        type: 'image/jpeg',
+        quality: Agent.IMAGE_BUDGET.initialJpegQuality,
+      });
+      return Agent._bufferToDataUrl(await blob.arrayBuffer(), 'image/jpeg');
+    } catch {
+      return dataUrl;
+    }
+  }
+
+  /**
    * End-to-end "shrink this screenshot to fit the vision budget" pass.
    * Decodes, resizes to the target dims picked by `_fitImageDimensions`,
    * and runs JPEG iterative-quality fallback if bytes are still too large.
@@ -5304,7 +5911,150 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Draw a red outline rectangle over a base64 PNG/JPEG screenshot, at the
+   * Build a snapshot of the active image budget for a single capture. Starts
+   * from the static defaults and applies the user's `maxImageDimension` cap
+   * (issue #311) so the per-side pixel limit AND the total-token budget both
+   * track the setting. When the cap is the limiting factor, the token budget
+   * is widened to exactly fit a square image at the cap so the dimension cap
+   * (not the legacy 1568px token budget) governs sizing.
+   */
+  _budgetForCapture() {
+    const base = Agent.IMAGE_BUDGET;
+    const cap = Math.max(1, Math.min(2048, Number(this.maxImageDimension) || 1568));
+    const tokensForCap = Math.ceil((cap / base.pxPerToken) * (cap / base.pxPerToken));
+    // Defaults must preserve the pre-#311 behavior. The default cap (1568)
+    // maps to the legacy budget byte-for-byte — same per-side limit AND same
+    // total-token limit — so a square viewport is still downscaled to ~1109px
+    // exactly as before. A LOWER cap shrinks both limits; a HIGHER cap widens
+    // them so the larger dimension is actually honored ("keep fidelity").
+    if (cap === base.maxTargetPx) {
+      return { ...base };
+    }
+    return {
+      ...base,
+      maxTargetPx: cap,
+      maxTargetTokens: tokensForCap,
+    };
+  }
+
+  /**
+   * Budget for coord-aligned (1:1 CSS↔image) captures. Only the per-side
+   * `maxImageDimension` cap applies — the vision token budget does NOT force
+   * a downscale. So 1920×1080 stays 1:1 under the default 1568px cap; resize
+   * only when a side exceeds the cap (issue #311 review option a).
+   */
+  _budgetForCoordAlignedCapture() {
+    const base = this._budgetForCapture();
+    return {
+      ...base,
+      // Large enough that `_fitImageDimensions` is gated only by maxTargetPx.
+      maxTargetTokens: Number.MAX_SAFE_INTEGER,
+    };
+  }
+
+  /**
+   * Record the image-pixel→CSS-pixel factors of the most recent screenshot
+   * shown to the model for `tabId`. Factors of 1 (a true 1:1 capture) clear
+   * the entry so a stale scale from an earlier downscaled capture can never
+   * corrupt clicks planned off a newer aligned one.
+   */
+  _setScreenshotClickScale(tabId, scaleX, scaleY) {
+    const sx = Number(scaleX);
+    const sy = Number(scaleY);
+    if (!Number.isFinite(sx) || !Number.isFinite(sy) || sx <= 0 || sy <= 0) return;
+    if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6) {
+      this.screenshotClickScale.delete(tabId);
+      return;
+    }
+    this.screenshotClickScale.set(tabId, { scaleX: sx, scaleY: sy });
+  }
+
+  /**
+   * Resolve click({x, y}) args to CSS pixels. When the model sets
+   * `from_screenshot: true` AND the last screenshot for this tab was
+   * downscaled, multiply by the stored factors — the extension does the
+   * conversion mechanically instead of trusting the model to do arithmetic
+   * from a prose note. Otherwise coords pass through unchanged (an aligned
+   * screenshot's image pixels already ARE CSS pixels).
+   */
+  _screenshotClickCoords(tabId, args = {}) {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (!args.from_screenshot) return { x, y, converted: false };
+    const scale = this.screenshotClickScale.get(tabId);
+    if (!scale) return { x, y, converted: false };
+    return {
+      x: Math.round(x * scale.scaleX),
+      y: Math.round(y * scale.scaleY),
+      converted: true,
+    };
+  }
+
+  /**
+   * Coerce storage / settings values for image budget (issue #311). Rejects
+   * corrupted or out-of-range values so provider payloads never see e.g.
+   * `detail: "medium"` and counters stay within the UI set (0–5).
+   */
+  static normalizeImageDetail(value, fallback = 'auto') {
+    return (value === 'high' || value === 'low' || value === 'auto') ? value : fallback;
+  }
+
+  static normalizeMaxScreenshotsPerTurn(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    const i = Math.trunc(n);
+    if (i <= 0) return 0;
+    return Math.min(5, i);
+  }
+
+  static normalizeMaxImageDimension(value, fallback = 1568) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return fallback;
+    return Math.max(1, Math.min(2048, Math.round(n)));
+  }
+
+  /**
+   * Apply validated image-budget fields from storage. Only keys present on
+   * `stored` are updated; missing keys leave current agent defaults alone.
+   */
+  applyImageBudgetFromStorage(stored = {}) {
+    if (stored.imageDetail != null) {
+      this.imageDetail = Agent.normalizeImageDetail(stored.imageDetail, this.imageDetail);
+    }
+    if (stored.maxScreenshotsPerTurn != null) {
+      this.maxScreenshotsPerTurn = Agent.normalizeMaxScreenshotsPerTurn(
+        stored.maxScreenshotsPerTurn, this.maxScreenshotsPerTurn,
+      );
+    }
+    if (stored.maxImageDimension != null) {
+      this.maxImageDimension = Agent.normalizeMaxImageDimension(
+        stored.maxImageDimension, this.maxImageDimension,
+      );
+    }
+  }
+
+  /**
+   * The `detail` value to attach to an OpenAI-style image_url block, driven by
+   * the `imageDetail` setting (issue #311). Returns null when the setting is
+   * 'auto' so the provider uses its own default (OpenAI's is 'auto'); 'high'
+   * and 'low' are passed through. Anthropic ignores unknown `detail`, so this
+   * is harmless there.
+   */
+  _imageDetailField() {
+    return this.imageDetail === 'auto' ? null : this.imageDetail;
+  }
+
+  /**
+   * Return a copy of `imageUrl` with a `detail` field merged in when the user
+   * has chosen a non-auto image detail (issue #311). No-op for 'auto'.
+   */
+  _withImageDetail(imageUrl) {
+    const detail = this._imageDetailField();
+    return detail ? { ...imageUrl, detail } : imageUrl;
+  }
+
+  /**
    * given CSS-pixel rect. Scales the rect by the ratio between the image's
    * actual pixel dimensions and the CSS viewport so it lines up regardless
    * of whether the capture was taken at scale=1 or native DPR.
@@ -5770,7 +6520,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null) {
+  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
     const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
     // Tracing must never break a run: a recorder failure returns null and the
     // run proceeds untraced rather than throwing out of the message path.
@@ -5786,11 +6536,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabTitle,
         mode,
         conversationId: this.conversationIds.get(tabId) || null,
+        force: runOptions?.cloudRun === true,
       });
     } catch {
       return null;
     }
-    if (runId) this.currentRunId.set(tabId, runId);
+    if (runId) {
+      this.currentRunId.set(tabId, runId);
+      if (typeof runOptions?.onTraceStarted === 'function') {
+        try { runOptions.onTraceStarted(runId); } catch {}
+      }
+    }
     return runId;
   }
 
@@ -6205,6 +6961,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       proceed: true,
       requestKind: gate.requestKind || 'execute',
       responseOnly: gate.responseOnly === true,
+      readOnlyFallback: gate.readOnlyFallback === true,
       requiresStateChange: gate.requiresStateChange === true,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
@@ -6252,9 +7009,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _plannerIntentFailureMessage(runOptions = {}) {
     return sanitizePlannerText(
       runOptions?.intentFailureMessage
-        || 'I could not reliably determine whether you wanted a plan or execution. Please clarify before I take any action.',
+        || 'The planner could not return valid structured output after one repair. Continuing this turn in read-only mode.',
       500,
     );
+  }
+
+  _plannerReadOnlyFallback(runOptions, onUpdate) {
+    const message = this._plannerIntentFailureMessage(runOptions);
+    onUpdate('warning', { message });
+    return {
+      proceed: true,
+      requestKind: 'respond',
+      responseOnly: false,
+      readOnlyFallback: true,
+      requiresStateChange: false,
+      requiresSubmission: false,
+      progressLedgerPolicy: 'disabled',
+      progressAction: null,
+    };
+  }
+
+  _activatePlannerReadOnlyMode(tabId, messages) {
+    this._runModeOverrides.set(tabId, 'ask');
+    if (messages[0]?.role === 'system') {
+      messages[0].content = this._buildSystemPrompt('ask', tabId);
+    }
+    this._persist(tabId);
+    return 'ask';
+  }
+
+  _strictPlannerFailure(onUpdate) {
+    const message = 'Strict Planning could not produce valid structured output after one repair. No tools ran; retry the request or switch Plan before Act to Try.';
+    onUpdate('warning', { message });
+    return {
+      proceed: false,
+      message,
+      reason: 'planner_error',
+      requestKind: 'clarify',
+      requiresStateChange: false,
+    };
+  }
+
+  _plannerRequestFailure(error, onUpdate) {
+    const detail = sanitizePlannerText(
+      error?.message || String(error || 'Unknown planner request error.'),
+      500,
+      { collapseWhitespace: true },
+    );
+    const message = `Planner request failed before a valid response was available: ${detail}`;
+    onUpdate('warning', { message });
+    return {
+      proceed: false,
+      message,
+      reason: 'planner_error',
+      requestKind: 'respond',
+      requiresStateChange: false,
+    };
   }
 
   _plannerTerminalMessage(plan) {
@@ -6384,9 +7194,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       if (!plan) {
-        const message = this._plannerIntentFailureMessage(runOptions);
-        onUpdate('warning', { message });
-        return { proceed: false, message, reason: 'clarify', requestKind: 'clarify', requiresStateChange: false };
+        return this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (plan.request_kind === 'respond') {
         return {
@@ -6416,12 +7224,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...this._plannerProgressLedgerGateFields(plan),
       };
     } catch (e) {
+      if (this._checkAbort(tabId)) {
+        return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+      }
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
-      const message = this._plannerIntentFailureMessage(runOptions);
-      onUpdate('warning', { message });
-      return { proceed: false, message, reason: 'clarify', requestKind: 'clarify', requiresStateChange: false };
+      return this._plannerRequestFailure(e, onUpdate);
     }
   }
 
@@ -6506,9 +7315,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]' };
       }
       if (!plan) {
-        const msg = this._plannerIntentFailureMessage(runOptions);
-        onUpdate('warning', { message: msg });
-        return { proceed: false, message: msg, reason: 'clarify', requestKind: 'clarify', requiresStateChange: false };
+        return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
+          ? this._strictPlannerFailure(onUpdate)
+          : this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (plan.request_kind === 'respond') {
         return {
@@ -6613,12 +7422,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...approvedProgressLedger,
       };
     } catch (e) {
+      if (this._checkAbort(tabId)) {
+        return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+      }
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
-      const msg = this._plannerIntentFailureMessage(runOptions);
-      onUpdate('warning', { message: msg });
-      return { proceed: false, message: msg, reason: 'clarify', requestKind: 'clarify', requiresStateChange: false };
+      return this._plannerRequestFailure(e, onUpdate);
     }
   }
 
@@ -8085,6 +8895,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return mode === 'act' || mode === 'dev';
   }
 
+  _effectiveRunMode(tabId, fallback = 'ask') {
+    return this._runModeOverrides.get(tabId)
+      || this.conversationModes.get(tabId)
+      || fallback;
+  }
+
   _devModeBlockedMessage(provider = null) {
     const providerName = provider?.name || provider?.config?.model || 'the active provider';
     return `Dev mode requires a Mid or Full prompt tier. ${providerName} is currently configured as Compact, so Dev mode is blocked for this provider. Switch to a Mid/Full-tier provider or change this provider's prompt tier, then try Dev again.`;
@@ -8221,7 +9037,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _activeSkillToolForName(tabId, name) {
     if (!name) return null;
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     const tier = this._resolvePromptTier();
     const skills = this._activeSkillRecords(tabId, mode, tier);
     const allowed = buildSkillToolDefinitions(skills, {
@@ -8257,7 +9073,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { skill, alreadyLoaded };
   }
 
-  _refreshSystemPromptForTab(tabId, mode = this.conversationModes.get(tabId) || 'ask') {
+  _refreshSystemPromptForTab(tabId, mode = this._effectiveRunMode(tabId)) {
     const messages = this.conversations.get(tabId);
     if (messages?.[0]?.role === 'system') {
       messages[0].content = this._buildSystemPrompt(mode, tabId);
@@ -8275,7 +9091,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _loadSkillForRun(tabId, args = {}) {
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     const tier = this._resolvePromptTier();
     const skillId = String(args.skill_id || '').trim();
     const { skill, alreadyLoaded } = this._activateSkillForRun(tabId, skillId, mode, tier);
@@ -8337,7 +9153,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._nytimesPageGateNotified.has(tabId)) return null;
     this._nytimesPageGateNotified.add(tabId);
 
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     const tier = this._resolvePromptTier();
     let tool = this._activeSkillToolForName(tabId, 'fetch_nytimes_article');
     let activatedSkillId = '';
@@ -8377,6 +9193,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _skillPermissionArgsForCapability(skillTool, capability, args) {
+    if (
+      isTrustedChromeWebStoreSkillTool(skillTool)
+      && (capability === Capability.NETWORK || capability === Capability.UPLOAD)
+    ) {
+      return capability === Capability.UPLOAD
+        ? { ...(args || {}), _trustedPermissionUrl: skillTool.endpoint }
+        : { ...(args || {}), url: skillTool.endpoint };
+    }
     if (capability !== Capability.DOWNLOAD || !skillTool?.requiresDownloadPermission) return args;
     const inputUrlArg = skillTool.inputUrlArg || 'url';
     if (!inputUrlArg || inputUrlArg === 'url') return args;
@@ -8399,7 +9223,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._skillToolRegistry()
       : buildSkillToolRegistry(this._activeSkillRecords(
         tabId,
-        this.conversationModes.get(tabId) || 'ask',
+        this._effectiveRunMode(tabId),
         this._resolvePromptTier(),
       ), { excludeNames: RESERVED_AGENT_TOOL_NAMES });
     for (const tool of registry.values()) {
@@ -8506,8 +9330,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressSessions.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
+    this.autoScreenshotCount.delete(tabId);
+    this.screenshotClickScale.delete(tabId);
     this.lastSeenAdapter.delete(tabId);
     this.activeSkillIds.delete(tabId);
+    this._runModeOverrides.delete(tabId);
     this._nytimesPageGateNotified.delete(tabId);
     this._lastInteractionRect.delete(tabId);
     this._clarificationAuthorizationGuards.delete(tabId);
@@ -10021,7 +10848,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _shouldBlockDoneForProgress(tabId) {
-    if (!this._isActionMode(this.conversationModes.get(tabId) || 'ask')) return false;
+    if (!this._isActionMode(this._effectiveRunMode(tabId))) return false;
     return !!this._progressDoneBlock(tabId, 'success');
   }
 
@@ -10136,6 +10963,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _isExecutionMutationEvidence(name, args = {}, capabilities = []) {
+    if (name === 'chrome_web_store_upload' || name === 'chrome_web_store_publish') return true;
     const mutationCapabilities = new Set([
       Capability.NAVIGATE,
       Capability.CLICK,
@@ -10156,9 +10984,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && this.constructor.EXECUTION_APP_STATE_TOOLS.has(name);
     const requiredScheduleSucceeded = state?.requiredSchedulingTool === name
       && this._isSuccessfulSchedulingEvidence(result);
+    // find_text is observational: verified:false means it did not prove a
+    // visible selection. Keep this tool-specific because mutations such as
+    // upload_file may dispatch successfully, return verified:false, and rely
+    // on the completion invariant's required follow-up page observation.
+    const unverifiedFindText = name === 'find_text'
+      && (result?.found !== true || result?.verified !== true || result?.inconclusive === true);
     if (!state?.enabled
         || name === 'done'
         || (this.constructor.EXECUTION_META_TOOLS.has(name) && !requestedAppStateTool)
+        || unverifiedFindText
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
@@ -10209,6 +11044,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } else {
       this._continuationExecutionEvidence.delete(tabId);
     }
+  }
+
+  _looksLikeMetaOnlyDoneSummary(content) {
+    const text = String(content || '').trim();
+    if (!text || text.length > 500) return false;
+    // A colon, line break, or list usually means the model followed its status
+    // phrase with the actual deliverable. The broken form is a short sentence
+    // such as "Explained how ..." or "Confirmed the exact ..." and nothing
+    // else; because done.summary is rendered verbatim, that leaves the user
+    // without the promised answer.
+    if (/[:\n\r]|(?:^|\s)(?:[-*]|\d+[.)])\s/.test(text)) return false;
+    const status = /^(?:i\s+)?(?:have\s+)?(explained|confirmed|provided|answered|described|outlined|summarized|detailed|clarified|reviewed|analyzed|checked)\s+(?:how|what|why|where|when|whether|the\s+(?:exact|requested|answer|details?|instructions?|steps?|explanation|summary)|your\s+question|this\s+question)\b/i.exec(text);
+    if (!status) return false;
+    const remainder = text.slice(status[0].length);
+    // "Confirmed/checked the exact ... are X" is itself a concise answer,
+    // not a claim that an unseen answer was delivered. Keep the recovery
+    // narrow enough that these direct predicates can finish normally.
+    if (/^(?:confirmed|checked)$/i.test(status[1])
+        && /\b(?:is|are|was|were|equals?|exists?|appears?|opens?|lives?|resides?|sits?|can\s+be\s+(?:found|accessed)|(?:is|are)\s+available)\b/i.test(remainder)) {
+      return false;
+    }
+    if (/\band\s+(?:found|identified|verified|determined|showed)\b/i.test(remainder)) return false;
+    return true;
   }
 
   _isSafetyRefusalTerminal(content) {
@@ -10440,7 +11298,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _augmentScheduledResumeMessage(tabId, userMessage) {
     if (typeof userMessage !== 'string') return userMessage;
-    if (!this._isActionMode(this.conversationModes.get(tabId) || 'ask')) return userMessage;
+    if (!this._isActionMode(this._effectiveRunMode(tabId))) return userMessage;
     if (!this._isScheduledResumeTurn(userMessage)) return userMessage;
     const { rows } = this._progressRowsForResumeGuard(tabId);
     if (!rows.length) return userMessage;
@@ -10486,7 +11344,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _scheduleAutoProgressResume(tabId, onUpdate = () => {}) {
     if (!this.scheduler) return null;
-    const mode = this.conversationModes.get(tabId) || 'ask';
+    const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     if (!this._shouldBlockDoneForProgress(tabId)) return null;
 
@@ -11534,13 +12392,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // recovering, defeating the whole point of the fallback.
     while (recent.length && recent[0].role === 'tool') recent.shift();
 
-    // Also truncate any huge tool results in remaining messages
+    // Also truncate any huge tool results in remaining messages. Use the
+    // wrapper-preserving variant: a plain slice can cut the
+    // </untrusted_page_content> closing tag off an untrusted tool result,
+    // which makes _hasUntrustedWrapper() return false on later passes and
+    // can launder page text into the trusted trim summary (see
+    // _truncatePreservingUntrustedWrapper's doc comment).
     for (const msg of recent) {
       if (msg.role === 'tool' && msg.content && msg.content.length > 2000) {
-        msg.content = msg.content.slice(0, 2000) + '\n[...truncated due to context limit]';
+        msg.content = this._truncatePreservingUntrustedWrapper(msg.content, 2000);
       }
       if (typeof msg.content === 'string' && msg.content.length > 5000) {
-        msg.content = msg.content.slice(0, 5000) + '\n[...truncated due to context limit]';
+        msg.content = this._truncatePreservingUntrustedWrapper(msg.content, 5000);
       }
     }
 
@@ -12031,6 +12894,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!response || response.success !== true || response.needsTrustedClick !== true) {
       return response;
     }
+    const confirmationSurfacesBefore = Array.isArray(response._confirmationSurfaces)
+      ? response._confirmationSurfaces
+      : [];
     const beforeDocument = await this._getDevDocumentIdentity(tabId);
     const trustedSelector = String(response.trustedSelector || '');
     const marker = String(response.marker || '');
@@ -12117,6 +12983,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stateMatches = !checkboxIdentityMismatch && checkedAfter === args.checked;
     const success = trustedClickSucceeded && (stateMatches || verificationLostAfterTrustedClick);
     const checkboxIdentity = expectedCheckboxIdentity || observedCheckboxIdentity;
+    const confirmationSurfacesAfter = Array.isArray(verified?._confirmationSurfaces)
+      ? verified._confirmationSurfaces
+      : [];
+    const priorConfirmationSignatures = new Set(
+      confirmationSurfacesBefore
+        .map(surface => String(surface?.signature || ''))
+        .filter(Boolean)
+    );
+    const confirmation = confirmationSurfacesAfter.find(
+      surface => !priorConfirmationSignatures.has(String(surface?.signature || ''))
+    ) || null;
     const completed = {
       ...response,
       ...(verified || {}),
@@ -12151,6 +13028,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       marker: undefined,
       trustedSelector: undefined,
     };
+    delete completed._confirmationSurfaces;
     if (verificationLostAfterTrustedClick) {
       return {
         ...completed,
@@ -12162,6 +13040,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         noProgress: undefined,
         error: undefined,
         warning: 'The trusted checkbox click was sent, but its document disappeared before the checked state could be re-read, likely because the click navigated or reloaded the page. Do not repeat set_checked; observe the current page.',
+      };
+    }
+    if (
+      trustedClickSucceeded
+      && !stateMatches
+      && !checkboxIdentityMismatch
+      && confirmation
+    ) {
+      return {
+        ...completed,
+        success: false,
+        verified: false,
+        confirmationRequired: true,
+        recoveryRequired: 'confirmation_dialog',
+        observedEffects: ['confirmation_dialog_opened'],
+        confirmation,
+        noProgress: undefined,
+        error: undefined,
+        warning: 'A confirmation dialog opened before the checkbox could reach the requested state. Do not call set_checked again. Re-read the visible accessibility tree and choose a dialog action only when it is supported by the user request or current evidence.',
       };
     }
     const failureError = clickError
@@ -12181,6 +13078,212 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error: failureError,
       }),
     };
+  }
+
+  async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
+    if (this._runningTabs.has(tabId)) throw new Error('An agent run is already in progress for this tab.');
+    if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
+      throw new Error('Saved workflow is missing or invalid.');
+    }
+    await this._hydrate(tabId);
+    // Align pre-run cleanup with processMessage so a prior Act turn cannot
+    // leak click-AX CDP fallbacks, plan guards, or active-skill state into
+    // deterministic replay (or the reverse on the next turn).
+    this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+    this._clearRunLoopState(tabId);
+    this._clickAxCdpFallbacks?.delete(tabId);
+    this.abortFlags.delete(tabId);
+    this._prepareClarificationAuthorizationForRun(tabId);
+    this.permissions.beginTurn(tabId);
+    this.conversationModes.set(tabId, 'act');
+    const completionRunToken = this._beginCompletionInvariant(tabId);
+    this._runningTabs.add(tabId);
+    const startUrl = await this._currentUrl(tabId);
+    const conversationId = await this.ensureConversationId(tabId, 'act');
+    const traceRunId = await trace.startRun({
+      conversationId,
+      userMessage: `Run saved workflow: ${workflow.name}`,
+      tabUrl: startUrl,
+      mode: 'act',
+      model: this.providerManager?.getActive?.()?.model || '',
+      providerId: this.providerManager?.activeProviderId || '',
+    });
+    let traceStatus = 'workflow_stopped';
+    let finalContent = '';
+    let matchedSteps = 0;
+
+    const finishStopped = (reason, stepIndex = 0) => {
+      const summary = `Saved workflow "${workflow.name}" stopped safely at step ${stepIndex + 1}: ${reason}.`;
+      onUpdate('tool_result', {
+        name: 'done',
+        result: { success: false, done: true, outcome: 'failed', summary, workflowReplay: true },
+      });
+      traceStatus = 'workflow_stopped';
+      finalContent = summary;
+      return { status: 'stopped', summary, reason, stepIndex, matchedSteps };
+    };
+
+    try {
+      if (!workflowUrlMatches(workflow.start, startUrl)) {
+        trace.recordNote(traceRunId, 0, 'workflow_replay_start_miss', {
+          workflowId: workflow.id,
+          expectedOrigin: workflow.start?.origin || '',
+        });
+        return finishStopped('the current page is outside the saved origin or URL family', 0);
+      }
+
+      for (let index = 0; index < workflow.steps.length; index++) {
+        if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
+        const step = workflow.steps[index];
+        const stepUrl = await this._currentUrl(tabId);
+        if (step.scope && !workflowUrlMatches(step.scope, stepUrl)) {
+          const reason = 'page scope mismatch';
+          trace.recordNote(traceRunId, index + 1, 'workflow_replay_scope_miss', {
+            workflowId: workflow.id,
+            stepId: step.id,
+            tool: step.tool,
+            expectedOrigin: step.scope.origin,
+            expectedPathFamily: step.scope.pathFamily,
+          });
+          traceStatus = 'workflow_fallback';
+          finalContent = `Deterministic replay paused at step ${index + 1}; continuing with the agent.`;
+          return {
+            status: 'fallback',
+            reason,
+            stepIndex: index,
+            matchedSteps,
+            prompt: workflowFallbackPrompt(workflow, index, reason),
+          };
+        }
+        let executionArgs;
+        try {
+          executionArgs = resolveWorkflowArgs(step.args, parameters);
+        } catch (error) {
+          return finishStopped(error?.message || 'a required runtime parameter is missing', index);
+        }
+
+        let targetMatch = null;
+        if (step.target) {
+          const treeResult = await this.executeTool(tabId, 'get_accessibility_tree', {
+            filter: 'all',
+            maxChars: 60000,
+          });
+          const treeText = typeof treeResult === 'string'
+            ? treeResult
+            : treeResult?.pageContent || treeResult?.tree || treeResult?.content || '';
+          const candidates = parseAccessibilityTreeDescriptors(treeText);
+          targetMatch = findWorkflowTarget(step.target, candidates);
+          if (targetMatch.status !== 'matched') {
+            trace.recordNote(traceRunId, index + 1, 'workflow_replay_target_miss', {
+              workflowId: workflow.id,
+              stepId: step.id,
+              tool: step.tool,
+              match: targetMatch.status,
+            });
+            const reason = `semantic target ${targetMatch.status}`;
+            traceStatus = 'workflow_fallback';
+            finalContent = `Deterministic replay paused at step ${index + 1}; continuing with the agent.`;
+            return {
+              status: 'fallback',
+              reason,
+              stepIndex: index,
+              matchedSteps,
+              prompt: workflowFallbackPrompt(workflow, index, reason),
+            };
+          }
+          if (['click_ax', 'set_checked', 'type_ax', 'set_field', 'scroll'].includes(step.tool)) {
+            executionArgs.ref_id = targetMatch.candidate.refId;
+          }
+        }
+
+        const toolCall = {
+          id: `workflow_${workflow.id}_${step.id}_${Date.now()}`,
+          type: 'function',
+          function: { name: step.tool, arguments: JSON.stringify(executionArgs) },
+        };
+        const messages = [{ role: 'assistant', content: null, tool_calls: [toolCall] }];
+        let rawResult = null;
+        const replayUpdate = (type, data = {}) => {
+          if (type === 'tool_result' && data?.name === step.tool) rawResult = data.result;
+          if (type === 'tool_call' && data?.name === step.tool) {
+            onUpdate(type, { ...data, args: redactWorkflowArgsForTelemetry(step.args, executionArgs), workflowReplay: true });
+            return;
+          }
+          if (type === 'tool_result' && data?.name === step.tool) {
+            onUpdate(type, { ...data, result: redactWorkflowResultForTelemetry(step.tool, data.result), workflowReplay: true });
+            return;
+          }
+          if (type === 'clarify') {
+            onUpdate(type, redactWorkflowClarifyForTelemetry(data));
+            return;
+          }
+          onUpdate(type, { ...(data && typeof data === 'object' ? data : {}), workflowReplay: true });
+        };
+        const beforeUrl = stepUrl;
+        const batch = await this._executeToolBatch(
+          tabId,
+          [toolCall],
+          messages,
+          replayUpdate,
+          this.providerManager?.getActive?.(),
+          null,
+          new Set([step.tool]),
+          index + 1,
+          runOptions,
+        );
+        const afterUrl = await this._currentUrl(tabId);
+        const validation = validateWorkflowStepResult(step.expected, rawResult, { beforeUrl, afterUrl, tool: step.tool });
+        trace.recordNote(traceRunId, index + 1, 'workflow_replay_step', {
+          workflowId: workflow.id,
+          stepId: step.id,
+          tool: step.tool,
+          targetMatch: targetMatch?.status || 'not_applicable',
+          targetScore: targetMatch?.score || 0,
+          validation: validation.ok ? 'passed' : validation.reason,
+        });
+
+        if (batch?.action === 'abort') return finishStopped('stopped by the user', index);
+        if (!validation.ok) {
+          if (validation.outcomeUnknown || rawResult?.denied || rawResult?.cancelled) {
+            return finishStopped(validation.reason, index);
+          }
+          traceStatus = 'workflow_fallback';
+          finalContent = `Deterministic replay paused at step ${index + 1}; continuing with the agent.`;
+          return {
+            status: 'fallback',
+            reason: validation.reason,
+            stepIndex: index,
+            matchedSteps,
+            prompt: workflowFallbackPrompt(workflow, index, validation.reason),
+          };
+        }
+        matchedSteps += 1;
+      }
+
+      const summary = `Saved workflow "${workflow.name}" completed ${matchedSteps} step${matchedSteps === 1 ? '' : 's'} with deterministic replay.`;
+      trace.recordNote(traceRunId, workflow.steps.length + 1, 'workflow_replay_complete', {
+        workflowId: workflow.id,
+        matchedSteps,
+        modelFallbacks: 0,
+        estimatedLlmCallsSaved: matchedSteps,
+      });
+      onUpdate('tool_result', {
+        name: 'done',
+        result: { success: true, done: true, outcome: 'success', summary, workflowReplay: true },
+      });
+      traceStatus = 'done';
+      finalContent = summary;
+      return { status: 'completed', summary, matchedSteps, estimatedLlmCallsSaved: matchedSteps };
+    } finally {
+      await trace.endRun(traceRunId, { status: traceStatus, finalContent });
+      this.currentCostState.delete(tabId);
+      this._planExecutionGuards.delete(tabId);
+      this._resetActiveSkillsForRun(tabId);
+      this._runningTabs.delete(tabId);
+      this._clearRunLoopState(tabId);
+      this._clickAxCdpFallbacks?.delete(tabId);
+      this._clearCompletionInvariant(tabId, completionRunToken);
+    }
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
@@ -12223,6 +13326,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         beepStyle: watch.beepStyle,
       };
     }
+    const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
+    if (protectedFailure) return protectedFailure;
     if (name === 'list_webmcp_tools') {
       if (!this.webMcpEnabled) {
         return {
@@ -12257,7 +13362,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       try {
-        if ((this.conversationModes.get(tabId) || 'ask') === 'ask') {
+        if (this._effectiveRunMode(tabId) === 'ask') {
           return {
             success: false,
             denied: true,
@@ -12361,7 +13466,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const result = await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
-        mode: this.conversationModes.get(tabId) || 'act',
+        mode: this._effectiveRunMode(tabId, 'act'),
         args: this._resumeArgsWithProgressGuard(tabId, args || {}),
         currentUrl: tab?.url || '',
         currentTitle: tab?.title || '',
@@ -12718,10 +13823,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // user message, not a base64 string embedded in a tool-result's JSON
         // text. Either way the model never sees the picture.
         let dataUrl = null;
+        // Pre-budget capture for Downloads when save:true (issue #311 review).
+        // Model path uses the budgeted `dataUrl`; disk gets full CSS when available.
+        let saveDataUrl = null;
         let description = '';
         let probe = null;
         let coordAligned = false;
+        // True when maxImageDimension forced a resize of a coord_aligned
+        // capture — the structured result must then report coordAligned:
+        // false so the model never trusts raw image pixels as CSS pixels.
+        let coordDownscaled = false;
         let blankFrameRetry = null;
+        const wantSave = !!(args && args.save);
         try {
           await cdpClient.attach(tabId);
           await cdpClient.sendCommand(tabId, 'Page.enable');
@@ -12733,9 +13846,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           const captureOnce = async () => {
             if (coordAligned) {
-              // Pixel-accuracy mode: image pixels must equal CSS pixels so
-              // click({x,y}) off the screenshot lands on the real element.
-              // PNG (lossless, no quality knob) so no artifacts at glyph edges.
+              // Prefer CSS-pixel fidelity for click({x,y}). Cap only by
+              // maxImageDimension (sides), not the token budget (issue #311).
+              // PNG capture (lossless) so glyph edges stay sharp before re-encode.
+              const budget = this._budgetForCoordAlignedCapture();
               const screenshot = await this._withIndicatorsHidden(tabId, () =>
                 cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                   format: 'png',
@@ -12745,21 +13859,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               );
               if (!screenshot?.data) return null;
               const rawUrl = `data:image/png;base64,${screenshot.data}`;
+              const needsResize = cssW > budget.maxTargetPx || cssH > budget.maxTargetPx;
+              if (needsResize) {
+                const shrunk = await this._shrinkImageForBudget(rawUrl, cssW, cssH, budget);
+                this._setScreenshotClickScale(
+                  tabId,
+                  cssW / Math.max(1, shrunk.width),
+                  cssH / Math.max(1, shrunk.height),
+                );
+                return {
+                  dataUrl: shrunk.dataUrl,
+                  saveDataUrl: rawUrl,
+                  coordDownscaled: true,
+                  description: `Screenshot captured via CDP (${screenshot.data.length} bytes). CSS viewport ${cssW}×${cssH} downscaled to ${shrunk.width}×${shrunk.height} for maxImageDimension. To click something you located on this image, pass its image-pixel coords as click({x, y, from_screenshot: true}) — they are converted to CSS pixels automatically.`,
+                };
+              }
+              this._setScreenshotClickScale(tabId, 1, 1);
               return {
-                dataUrl: await this._compressJpegToByteCeiling(rawUrl),
+                dataUrl: await this._compressJpegToByteCeiling(rawUrl, budget),
+                saveDataUrl: rawUrl,
                 description: `Screenshot captured via CDP (${screenshot.data.length} bytes, CSS-pixel aligned for pixel clicks)`,
               };
             }
 
-            // Budget-aware mode (default): pick target dims via binary
-            // search, ask CDP to capture + scale in one pass, then run
-            // the iterative-quality fallback if bytes are still over.
-            const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH);
+            // Budget-aware mode (default). When the user also asked to save,
+            // capture full CSS first so Downloads gets full resolution, then
+            // shrink a model-facing copy (mirrors full_page_screenshot).
+            const budget = this._budgetForCapture();
+            if (wantSave) {
+              const screenshot = await this._withIndicatorsHidden(tabId, () =>
+                cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+                  format: 'png',
+                  fromSurface: true,
+                  clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+                })
+              );
+              if (!screenshot?.data) return null;
+              const rawUrl = `data:image/png;base64,${screenshot.data}`;
+              const shrunk = await this._shrinkImageForBudget(rawUrl, cssW, cssH, budget);
+              const resized = (shrunk.width < cssW || shrunk.height < cssH)
+                ? ` (model copy resized ${cssW}×${cssH} → ${shrunk.width}×${shrunk.height} for vision budget; Downloads keeps full CSS)`
+                : '';
+              return {
+                dataUrl: shrunk.dataUrl,
+                saveDataUrl: rawUrl,
+                description: `Screenshot captured via CDP (${screenshot.data.length} bytes, PNG)${resized}`,
+              };
+            }
+
+            // No save: pick target dims via binary search, ask CDP to capture
+            // + scale in one pass, then iterative-quality fallback if needed.
+            const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH, budget);
             const scale = targetW < cssW ? targetW / cssW : 1;
             const screenshot = await this._withIndicatorsHidden(tabId, () =>
               cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                 format: 'jpeg',
-                quality: Math.round(Agent.IMAGE_BUDGET.initialJpegQuality * 100),
+                quality: Math.round(budget.initialJpegQuality * 100),
                 fromSurface: true,
                 clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
               })
@@ -12768,14 +13923,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const rawUrl = `data:image/jpeg;base64,${screenshot.data}`;
             const resized = scale < 1 ? ` (resized ${cssW}×${cssH} → ${targetW}×${targetH} for vision-token budget)` : '';
             return {
-              dataUrl: await this._compressJpegToByteCeiling(rawUrl),
+              dataUrl: await this._compressJpegToByteCeiling(rawUrl, budget),
               description: `Screenshot captured via CDP (${screenshot.data.length} bytes, JPEG)${resized}`,
             };
           };
           const captured = await this._retryBlankScreenshotCapture(await captureOnce(), captureOnce, { probe });
           if (!captured?.dataUrl) throw new Error('CDP returned an empty screenshot');
           dataUrl = captured.dataUrl;
+          saveDataUrl = captured.saveDataUrl || null;
           description = captured.description || '';
+          coordDownscaled = !!captured.coordDownscaled;
           blankFrameRetry = captured.blankFrameRetry || null;
         } catch {
           const tab = await chrome.tabs.get(tabId);
@@ -12787,26 +13944,58 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           // Tabs API fallback: no clip/scale available. Capture full, then
           // decode + resize + recompress via OffscreenCanvas to fit budget.
+          // Keep the raw capture for Downloads when save:true.
           const captureOnce = async () => {
             const rawUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 80 });
+            const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
+            const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
+            const budget = this._budgetForCapture();
             if (!coordAligned) {
-              const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
-              const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
-              const shrunk = await this._shrinkImageForBudget(rawUrl, cssW, cssH);
+              // captureVisibleTab snapshots at native DPR — pass 0,0 so the
+              // shrink decodes the real bitmap dims instead of trusting CSS
+              // dims (which would skip the resize entirely on hi-DPI and ship
+              // an oversized image while reporting CSS-sized dimensions).
+              const shrunk = await this._shrinkImageForBudget(rawUrl, 0, 0, budget);
               return {
                 dataUrl: shrunk.dataUrl,
+                saveDataUrl: rawUrl,
                 description: `Screenshot captured via tabs API (${shrunk.dataUrl.length} bytes base64, resized to ${shrunk.width}×${shrunk.height})`,
               };
             }
-            const compressed = await this._compressJpegToByteCeiling(rawUrl);
+            // coord_aligned tabs-API fallback: side cap only (not token budget).
+            const coordBudget = this._budgetForCoordAlignedCapture();
+            const needsResize = cssW > coordBudget.maxTargetPx || cssH > coordBudget.maxTargetPx;
+            if (needsResize) {
+              const shrunk = await this._shrinkImageForBudget(rawUrl, 0, 0, coordBudget);
+              this._setScreenshotClickScale(
+                tabId,
+                cssW / Math.max(1, shrunk.width),
+                cssH / Math.max(1, shrunk.height),
+              );
+              return {
+                dataUrl: shrunk.dataUrl,
+                saveDataUrl: rawUrl,
+                coordDownscaled: true,
+                description: `Screenshot captured via tabs API (${shrunk.dataUrl.length} bytes base64). CSS viewport ${cssW}×${cssH} downscaled to ${shrunk.width}×${shrunk.height} for maxImageDimension. To click something you located on this image, pass its image-pixel coords as click({x, y, from_screenshot: true}) — they are converted to CSS pixels automatically.`,
+              };
+            }
+            // Native-DPR raw → exact CSS dims so "CSS-pixel aligned" is true
+            // on hi-DPI displays too (pre-#311 this shipped the DPR-scaled
+            // image while claiming alignment).
+            const aligned = await this._normalizeDataUrlToCssPixels(rawUrl, cssW, cssH);
+            const compressed = await this._compressJpegToByteCeiling(aligned, coordBudget);
+            this._setScreenshotClickScale(tabId, 1, 1);
             return {
               dataUrl: compressed,
-              description: `Screenshot captured via tabs API (${compressed.length} bytes base64)`,
+              saveDataUrl: rawUrl,
+              description: `Screenshot captured via tabs API (${compressed.length} bytes base64, CSS-pixel aligned)`,
             };
           };
           const captured = await this._retryBlankScreenshotCapture(await captureOnce(), captureOnce, { probe });
           dataUrl = captured?.dataUrl || null;
+          saveDataUrl = captured?.saveDataUrl || null;
           description = captured?.description || '';
+          coordDownscaled = !!captured?.coordDownscaled;
           blankFrameRetry = captured?.blankFrameRetry || null;
         }
         if (!dataUrl) {
@@ -12816,23 +14005,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
 
-        // Apply redaction after both capture branches converge so the tabs-API
-        // fallback cannot bypass the privacy setting when CDP is unavailable.
-        if (this.screenshotRedaction) {
-          dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
-        }
-
-        // If the user asked to save this screenshot to Downloads, do it
-        // here — directly from the service worker via chrome.downloads.
-        // This runs BEFORE the vision-presentation branch because saving
-        // is independent of whether the agent can see the image. The
-        // screenshot data URLs are clean (image/png or image/jpeg with
-        // no parameters) so they pass through downloads.download safely
-        // — unlike the recorder's video/webm;codecs=... edge case.
+        // Save first from the pre-budget capture (full CSS when available),
+        // matching full_page_screenshot: Downloads keep full resolution;
+        // only the model-facing copy is budget-resized / redacted.
         let savedFile = null;
-        if (args && args.save) {
+        if (wantSave) {
           try {
-            const mimeMatch = /^data:([^;]+);/.exec(dataUrl);
+            const urlForSave = saveDataUrl || dataUrl;
+            const mimeMatch = /^data:([^;]+);/.exec(urlForSave);
             const mime = mimeMatch ? mimeMatch[1] : 'image/png';
             const ext = mime === 'image/jpeg' ? 'jpg' : 'png';
             const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19).replace('T', '_');
@@ -12842,13 +14022,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             filename = filename.split('/').pop().split('\\').pop();
             if (!/\.(png|jpg|jpeg)$/i.test(filename)) filename += `.${ext}`;
             const downloadId = await chrome.downloads.download({
-              url: dataUrl, filename, saveAs: false,
+              url: urlForSave, filename, saveAs: false,
             });
             const savedDownload = await resolveSavedDownload(chrome, downloadId);
             savedFile = { ...savedDownload, mimeType: mime };
           } catch (e) {
             savedFile = { error: e.message || String(e) };
           }
+        }
+
+        // Apply redaction after save so the local download is untouched
+        // (same pattern as full_page_screenshot). Tabs-API fallback cannot
+        // bypass the privacy setting for the model-facing path.
+        if (this.screenshotRedaction) {
+          dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
         }
 
         // Pick the presentation path based on what the active providers can
@@ -12867,7 +14054,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               method: 'vision_describe',
               description: `[Screenshot described by vision model ${desc.model}]\n${desc.text}`,
               page: probe || undefined,
-              coordAligned,
+              coordAligned: coordAligned && !coordDownscaled,
               blankFrameRetry: blankFrameRetry || undefined,
               savedFile: savedFile || undefined,
             };
@@ -12886,7 +14073,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             method: 'image_attach',
             description,
             page: probe || undefined,
-            coordAligned,
+            coordAligned: coordAligned && !coordDownscaled,
             blankFrameRetry: blankFrameRetry || undefined,
             savedFile: savedFile || undefined,
             _attachImage: dataUrl,
@@ -12901,7 +14088,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             description: `Screenshot saved to ${savedFile.filename}. (The active model has no vision, so the image was not shown to the model.)`,
             savedFile,
             page: probe || undefined,
-            coordAligned,
+            coordAligned: coordAligned && !coordDownscaled,
             blankFrameRetry: blankFrameRetry || undefined,
           };
         }
@@ -12936,7 +14123,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'done') {
       const outcome = normalizeDoneOutcome(args?.outcome);
       // In action modes, require a verification screenshot + page info before completing.
-      const mode = this.conversationModes.get(tabId) || 'ask';
+      const mode = this._effectiveRunMode(tabId);
       if (this._isActionMode(mode)) {
         try {
           // done() short-circuits the tool loop, so a verification screenshot
@@ -13103,6 +14290,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const skillTool = this._activeSkillToolForName(tabId, name);
     if (skillTool) {
+      if (isTrustedChromeWebStoreSkillTool(skillTool)) {
+        return await executeChromeWebStoreSkillTool(skillTool, args, { tabId });
+      }
       return await executeHttpSkillTool(skillTool, args, { tabId });
     }
     const skillEndpointRedirect = this._skillEndpointToolRedirect(name, args, tabId);
@@ -13338,10 +14528,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         // Full-page captures are the worst case for size — a tall document
         // at native DPR easily blows past any provider's image
-        // budget. Always shrink to the token/byte budget. Dimensions come
+        // budget. Always shrink to the token/byte budget (which honors the
+        // user's `maxImageDimension` cap, issue #311). Dimensions come
         // from decoding the bitmap (we don't know the real doc size up
         // front the way we do for viewport captures).
-        const shrunk = await this._shrinkImageForBudget(rawUrl, 0, 0);
+        const shrunk = await this._shrinkImageForBudget(rawUrl, 0, 0, this._budgetForCapture());
 
         // Local screenshot redaction (issue #312): pixelate form fields +
         // email/phone text on the image BEFORE it is sent to any vision
@@ -13495,8 +14686,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // blows past the tool-result char cap and gets truncated to garbage
           // that the vision model can never read.
           let verifyShotUrl = `data:image/png;base64,${shot.data}`;
-          // Local screenshot redaction (issue #312): pixelate form fields +
-          // email/phone text BEFORE the image reaches the model.
+          // Apply the user's image budget (issue #311) before the image
+          // reaches the model, then run local redaction (issue #312) on the
+          // budget-fit copy so PII is pixelated at the size the model sees.
+          verifyShotUrl = (await this._shrinkImageForBudget(verifyShotUrl, 0, 0, this._budgetForCapture())).dataUrl;
           if (this.screenshotRedaction) {
             verifyShotUrl = await this._redactScreenshotDataUrl(tabId, verifyShotUrl, { coordinateSpace: 'viewport' });
           }
@@ -14187,6 +15380,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: this._normalizedCoordinateRecoveryError(tabId, args),
             };
           }
+          // from_screenshot: coords were read off the most recent screenshot;
+          // when that capture was downscaled for maxImageDimension, convert
+          // image pixels → CSS pixels here so the model never does the math.
+          const mapped = this._screenshotClickCoords(tabId, args);
+          if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
         }
 
         await cdpClient.attach(tabId);
@@ -14858,10 +16056,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       return true;
                     } catch(e) { return false; }
                   }
-                  const all = Array.from(document.querySelectorAll(sels)).filter(vis);
+                  // Last-resort scan also pierces open shadow roots: sites
+                  // like LinkedIn render entire dialogs inside one (the
+                  // interop shell), where document.querySelectorAll is blind.
+                  function collectDeep(sel) {
+                    const out = [];
+                    const scan = (root, depth) => {
+                      try { out.push(...root.querySelectorAll(sel)); } catch(e) {}
+                      if (depth > 4) return;
+                      let els;
+                      try { els = root.querySelectorAll('*'); } catch(e) { return; }
+                      for (const host of els) { if (host.shadowRoot) scan(host.shadowRoot, depth + 1); }
+                    };
+                    scan(document, 0);
+                    return out;
+                  }
+                  const all = collectDeep(sels).filter(vis);
+                  // Quill/ProseMirror-style editors show their placeholder via
+                  // data-placeholder / aria-placeholder (CSS pseudo-element),
+                  // not text content — match those too so "click the 'What do
+                  // you want to talk about?' box" resolves.
                   const norm = all.map(el => ({
                     el,
-                    txt: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().toLowerCase(),
+                    txt: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').trim().toLowerCase(),
                   })).filter(x => !!x.txt);
                   const modes = explicit ? [explicit] : ['exact', 'prefix', 'contains'];
                   for (const m of modes) {
@@ -15769,6 +16986,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       'wait_for_element': 'wait_for_element',
       'wait_for_stable': 'wait_for_stable',
       'get_selection': 'get_selection',
+      'find_text': 'find_text',
     };
 
     const action = actionMap[name];
@@ -15807,7 +17025,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           name === 'get_accessibility_tree' || name === 'get_interactive_elements' ||
           name === 'extract_data' || name === 'inspect_element_styles' ||
           name === 'wait_for_element' || name === 'wait_for_stable' ||
-          name === 'get_selection'
+          name === 'get_selection' || name === 'find_text'
         ) {
           return {
             success: false,
@@ -16312,8 +17530,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       trustedFallbackAttempted: true,
       recoveryRequired: 'fresh_tree',
     };
+    let trustedDispatched = false;
     try {
-      const prepared = await chrome.tabs.sendMessage(tabId, {
+      let prepared = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
         params: { ref_id: args.ref_id },
@@ -16326,7 +17545,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       await cdpClient.attach(tabId);
-      await cdpClient.sendCommand(tabId, 'Input.insertText', { text: expected });
+      if (prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
+        const x = prepared.rect.x + prepared.rect.w / 2;
+        const y = prepared.rect.y + prepared.rect.h / 2;
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x, y, button: 'none', buttons: 0,
+        });
+        trustedDispatched = true;
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+        });
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+        });
+        // The trusted click collapses the preflight selection. Re-resolve the
+        // same ref and select all once more before Input.insertText replaces
+        // the editor contents.
+        const reselected = await chrome.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'ax_prepare_field_for_trusted_type',
+          params: { ref_id: args.ref_id },
+        });
+        if (!reselected?.success) {
+          return {
+            ...failed,
+            dispatched: true,
+            noDispatch: false,
+            error: `${response.error || 'Field verification failed'} Trusted retry focused the editor but could not reselect it: ${reselected?.error || 'unknown preparation failure'}`,
+          };
+        }
+        prepared = reselected;
+      }
+      trustedDispatched = true;
+      if (expected) {
+        await cdpClient.sendCommand(tabId, 'Input.insertText', { text: expected });
+      } else {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+        });
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+        });
+      }
       await new Promise(resolve => setTimeout(resolve, 120));
       const verification = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
@@ -16336,6 +17596,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!verification?.success || verification.verified !== true) {
         return {
           ...failed,
+          dispatched: true,
+          noDispatch: false,
           verified: false,
           ...(verification?.fieldMeta ? { fieldMeta: verification.fieldMeta } : {}),
           ...(Object.prototype.hasOwnProperty.call(verification || {}, 'actual') ? { actual: verification.actual } : {}),
@@ -16346,6 +17608,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recovered = {
         ...response,
         success: true,
+        dispatched: true,
+        trusted: true,
         verified: true,
         method: `${toolName}_cdp_fallback`,
         fallbackAttempted: true,
@@ -16353,8 +17617,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fieldMeta: verification.fieldMeta || prepared.fieldMeta || response.fieldMeta,
       };
       delete recovered.error;
+      delete recovered.noDispatch;
       delete recovered.actual;
       delete recovered.actualRedacted;
+      delete recovered.trustedTypeRequired;
       delete recovered.recoveryRequired;
       delete recovered.failureScope;
       delete recovered.retryable;
@@ -16383,6 +17649,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       return {
         ...failed,
+        ...(trustedDispatched ? { dispatched: true, noDispatch: false } : {}),
         error: `${response.error || 'Field verification failed'} Trusted Chrome retry failed: ${error?.message || String(error)}`,
       };
     }
@@ -17129,6 +18396,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
@@ -17139,6 +18407,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
+      this._runModeOverrides.delete(tabId);
       this._resetActiveSkillsForRun(tabId);
       if (runOptions.cloudRun) {
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
@@ -17162,7 +18431,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * provider — the caller surfaces `error` as the turn's plain-text response,
    * without ever pushing the message to the conversation.
    */
-  _applyAttachments(enriched, attachments, provider, options = {}) {
+  async _applyAttachments(enriched, attachments, provider, options = {}) {
     const blocks = [];
     const textAttachmentCount = (attachments || []).filter(att => att?.kind === 'text').length;
     let textBudgetRemaining = this._textAttachmentContentBudget(provider, { ...options, enriched });
@@ -17175,7 +18444,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.`,
           };
         }
-        blocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+        // Budget-resize a model-facing copy; leave the original attachment
+        // untouched so the UI/history still has the user-picked full image
+        // (issue #311 maxImageDimension).
+        const shrunk = await this._shrinkImageForBudget(att.dataUrl, 0, 0, this._budgetForCapture());
+        blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: shrunk.dataUrl }) });
       } else if (att.kind === 'document') {
         if (!provider?.supportsDocuments) {
           return {
@@ -17209,6 +18482,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _processMessageInner(tabId, userMessage, onUpdate, mode, attachments = [], runOptions = {}) {
     await this._hydrate(tabId);
+    // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
@@ -17244,6 +18519,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let runId = null;
     let finalResponse = '';
     let _traceStatus = 'done'; // updated on early exits
+    let askStreamingTraceWrite = Promise.resolve();
+    let shouldOrderInteractiveAskTrace = false;
+    const queueAskStreamingTraceWrite = (write) => {
+      askStreamingTraceWrite = askStreamingTraceWrite
+        .then(write)
+        .catch(() => {});
+      return askStreamingTraceWrite;
+    };
 
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
@@ -17267,7 +18550,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // agent run, and the message must never be pushed to history this way.
     if (attachments && attachments.length) {
       const canUseScratchpadTool = this._isActionMode(mode);
-      const attachResult = this._applyAttachments(enriched, attachments, provider, {
+      const attachResult = await this._applyAttachments(enriched, attachments, provider, {
         canUseScratchpadTool,
         tabId,
         messages,
@@ -17295,7 +18578,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Fetch the tab url/title once and reuse it for both the trace start and
       // the planner gate, instead of fetching the same tab twice.
       plannerTabInfo = await this._getTabUrlTitle(tabId);
-      runId = await this._startTraceRun(tabId, userMessage, mode, provider, plannerTabInfo);
+      runId = await this._startTraceRun(
+        tabId, userMessage, mode, provider, plannerTabInfo, runOptions,
+      );
     }
 
     const gateOutcome = await this._maybeRunPlannerGate(
@@ -17306,6 +18591,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? 'cost_limit'
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return (finalResponse = gateOutcome.message || 'More information is required.');
+    }
+    if (gateOutcome.readOnlyFallback === true) {
+      // The intent/planner model failed its JSON contract, not the user's
+      // request. Keep the turn useful without silently authorizing actions:
+      // switch this run to the ordinary Ask prompt and Ask tool catalog.
+      mode = this._activatePlannerReadOnlyMode(tabId, messages);
     }
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
@@ -17346,9 +18637,120 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // in the main loop to avoid an infinite empty→nudge→empty→nudge loop.
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
+    let askStreamingDisabledForRun = false;
+
+    // Keep trace persistence ordered without putting IndexedDB on the token
+    // delivery path. Once generation settles, later response/finalization
+    // writes flush this queue so lifecycle events cannot arrive afterward.
+    shouldOrderInteractiveAskTrace = mode === 'ask' && runOptions?.interactiveChat === true;
+    const recordAskStreaming = (payload) => {
+      const traceRunId = runId;
+      const traceStep = steps;
+      if (!traceRunId) return;
+      queueAskStreamingTraceWrite(
+        () => trace.recordStreaming(traceRunId, traceStep, payload),
+      );
+    };
+
+    const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
+      const decision = this._interactiveAskStreamingDecision(
+        provider,
+        mode,
+        runOptions,
+        askStreamingDisabledForRun,
+      );
+      const protocol = this._interactiveAskStreamingProtocol(provider);
+      if (!decision.eligible) {
+        if (mode === 'ask' && runOptions?.interactiveChat === true) {
+          recordAskStreaming({
+            status: 'skipped',
+            reason: decision.reason,
+            protocol,
+          });
+        }
+        return this._chatWithCostAllowance(
+          provider,
+          chatMessages,
+          chatOptions,
+          costState,
+          requestContext,
+        );
+      }
+
+      let firstDeltaMs = null;
+      let textDeltaCount = 0;
+      let textChars = 0;
+      let emittedText = false;
+      recordAskStreaming({
+        status: 'attempted',
+        reason: decision.reason,
+        protocol,
+      });
+      const streamStartedAt = Date.now();
+      const streamMetrics = () => ({
+        durationMs: Date.now() - streamStartedAt,
+        firstDeltaMs,
+        textDeltaCount,
+        textChars,
+      });
+      try {
+        const result = await this._chatStreamWithCostAllowance(
+          provider,
+          chatMessages,
+          chatOptions,
+          costState,
+          requestContext,
+          (delta) => {
+            emittedText = true;
+            if (firstDeltaMs == null) firstDeltaMs = Date.now() - streamStartedAt;
+            textDeltaCount += 1;
+            textChars += delta.length;
+            onUpdate('text_delta', { content: delta });
+          },
+        );
+        recordAskStreaming({
+          status: 'completed',
+          reason: 'terminal_event_received',
+          protocol,
+          ...streamMetrics(),
+          toolCallCount: Array.isArray(result?.toolCalls) ? result.toolCalls.length : 0,
+        });
+        return result;
+      } catch (error) {
+        const fallbackSafe = this._shouldFallbackAskStream(error);
+        recordAskStreaming({
+          status: fallbackSafe ? 'fallback' : 'failed',
+          protocol,
+          ...streamMetrics(),
+          ...this._interactiveAskStreamingFailure(error),
+        });
+        if (this._isCostAllowanceError(error)) throw error;
+        if (emittedText) onUpdate('text', { content: '', replace: true });
+        if (!fallbackSafe) throw error;
+        askStreamingDisabledForRun = true;
+        onUpdate('warning', {
+          code: 'ask_stream_fallback',
+          message: 'Response streaming was interrupted; retrying this Ask turn without streaming.',
+        });
+        this._logDebug({
+          type: 'llm_stream_fallback',
+          provider: provider.constructor?.name || provider.name,
+          error: error?.message || String(error),
+        });
+        return this._chatWithCostAllowance(
+          provider,
+          chatMessages,
+          chatOptions,
+          costState,
+          requestContext,
+        );
+      }
+    };
 
     if (!runId) {
-      runId = await this._startTraceRun(tabId, userMessage, mode, provider);
+      runId = await this._startTraceRun(
+        tabId, userMessage, mode, provider, null, runOptions,
+      );
     }
 
     const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
@@ -17408,9 +18810,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
         const prunedMessages = this._pruneOldImages(messages, provider);
         this._logDebug({ type: 'llm_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
-        if (runId) trace.recordLLMRequest(runId, steps, { providerClass: provider.constructor.name, model: provider.model, messageCount: prunedMessages.length, toolsCount: (chatOpts.tools || []).length });
+        if (runId) {
+          const writeRequestTrace = () => trace.recordLLMRequest(runId, steps, {
+            providerClass: provider.constructor.name,
+            model: provider.model,
+            messageCount: prunedMessages.length,
+            toolsCount: (chatOpts.tools || []).length,
+          });
+          if (shouldOrderInteractiveAskTrace) queueAskStreamingTraceWrite(writeRequestTrace);
+          else writeRequestTrace();
+        }
         const _llmStart = Date.now();
-        result = await this._chatWithCostAllowance(provider, prunedMessages, chatOpts, costState, { tabId, generationName: 'main' });
+        result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
         if (result?.usage?.prompt_tokens) {
           this._lastInputTokens.set(tabId, result.usage.prompt_tokens);
           // Snapshot the conversation size at this reading so the next
@@ -17419,7 +18830,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const _llmLatency = Date.now() - _llmStart;
         this._logDebug({ type: 'llm_response', step: steps, content: result.content, toolCalls: result.toolCalls });
-        if (runId) trace.recordLLMResponse(runId, steps, { content: result.content, toolCalls: result.toolCalls, usage: result.usage, latencyMs: _llmLatency, model: provider.model });
+        if (runId) {
+          const writeResponseTrace = () => trace.recordLLMResponse(runId, steps, {
+            content: result.content,
+            toolCalls: result.toolCalls,
+            usage: result.usage,
+            latencyMs: _llmLatency,
+            model: provider.model,
+          });
+          if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeResponseTrace);
+          else writeResponseTrace();
+        }
       } catch (e) {
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
@@ -17438,7 +18859,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
             const prunedMessages = this._pruneOldImages(messages, provider);
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
-            result = await this._chatWithCostAllowance(provider, prunedMessages, chatOpts, costState, { tabId, generationName: 'main' });
+            result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
@@ -17455,13 +18876,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             break;
           }
         } else {
+          if (e?.isAskStreamTerminalError === true) {
+            onUpdate('error', { message: e.message });
+            finalResponse = `Error communicating with LLM: ${e.message}`;
+            messages.push({ role: 'assistant', content: finalResponse });
+            break;
+          }
           // Retry once after a short delay for transient errors (rate limits, network).
           this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
           await new Promise(r => setTimeout(r, 2000));
           try {
             const useTools2 = provider.supportsTools;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-            result = await this._chatWithCostAllowance(provider, this._pruneOldImages(messages, provider), chatOpts2, costState, { tabId, generationName: 'main' });
+            result = await chatMainTurn(this._pruneOldImages(messages, provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
@@ -17707,10 +19134,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const message = error?.message || String(error);
       _traceStatus = 'error';
       finalResponse = `Error: ${message}`;
-      if (runId) trace.recordError(runId, null, 'agent', message);
+      if (runId) {
+        const writeErrorTrace = () => trace.recordError(runId, null, 'agent', message);
+        if (shouldOrderInteractiveAskTrace) await queueAskStreamingTraceWrite(writeErrorTrace);
+        else writeErrorTrace();
+      }
       throw error;
     } finally {
       this.currentCostState.delete(tabId);
+      await askStreamingTraceWrite;
       this._endTraceRun(tabId, runId, _traceStatus, finalResponse);
     }
   }
@@ -17728,6 +19160,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
@@ -17738,6 +19171,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
+      this._runModeOverrides.delete(tabId);
       this._resetActiveSkillsForRun(tabId);
       if (runOptions.cloudRun) {
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
@@ -17752,6 +19186,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions = {}) {
     await this._hydrate(tabId);
+    // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
@@ -17807,7 +19243,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Fetch the tab url/title once and reuse it for both the trace start and
       // the planner gate, instead of fetching the same tab twice.
       plannerTabInfo = await this._getTabUrlTitle(tabId);
-      runId = await this._startTraceRun(tabId, userMessage, mode, provider, plannerTabInfo);
+      runId = await this._startTraceRun(
+        tabId, userMessage, mode, provider, plannerTabInfo, runOptions?.onTraceStarted,
+      );
     }
 
     const gateOutcome = await this._maybeRunPlannerGate(
@@ -17818,6 +19256,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? 'cost_limit'
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return finish(gateOutcome.message || 'More information is required.', status);
+    }
+    if (gateOutcome.readOnlyFallback === true) {
+      // See processMessage: malformed planner output degrades only this turn
+      // to Ask/read-only instead of pretending the user's intent was unclear.
+      mode = this._activatePlannerReadOnlyMode(tabId, messages);
     }
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(

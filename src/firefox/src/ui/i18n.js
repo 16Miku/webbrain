@@ -18,28 +18,43 @@ import ms from './locales/ms.js';
 import tl from './locales/tl.js';
 import pl from './locales/pl.js';
 import he from './locales/he.js';
+import hi from './locales/hi.js';
+import pt from './locales/pt.js';
+import vi from './locales/vi.js';
+import bn from './locales/bn.js';
+import fa from './locales/fa.js';
+import nl from './locales/nl.js';
+import de from './locales/de.js';
 
-const DICTS = { en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he };
+const DICTS = { en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de };
 const LS_KEY = 'wbLocale';
-const RTL_LOCALES = new Set(['ar', 'he']);
+const RTL_LOCALES = new Set(['ar', 'he', 'fa']);
 
 export const LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'es', label: 'Español' },
-  { code: 'fr', label: 'Français' },
-  { code: 'tr', label: 'Türkçe' },
-  { code: 'zh', label: '中文' },
-  { code: 'ru', label: 'Русский' },
-  { code: 'uk', label: 'Українська' },
-  { code: 'ar', label: 'العربية' },
-  { code: 'ja', label: '日本語' },
-  { code: 'ko', label: '한국어' },
-  { code: 'id', label: 'Bahasa Indonesia' },
-  { code: 'th', label: 'ไทย' },
-  { code: 'ms', label: 'Bahasa Melayu' },
-  { code: 'tl', label: 'Filipino' },
-  { code: 'pl', label: 'Polski' },
-  { code: 'he', label: 'עברית' },
+  { code: 'en', label: 'English', englishLabel: 'English', flagCode: 'us' },
+  { code: 'zh', label: '中文', englishLabel: 'Chinese', flagCode: 'cn' },
+  // English and Chinese stay pinned first; the rest are sorted by English name.
+  { code: 'ar', label: 'العربية', englishLabel: 'Arabic', flagCode: 'sa' },
+  { code: 'bn', label: 'বাংলা', englishLabel: 'Bengali', flagCode: 'bd' },
+  { code: 'nl', label: 'Nederlands', englishLabel: 'Dutch', flagCode: 'nl' },
+  { code: 'tl', label: 'Filipino', englishLabel: 'Filipino', flagCode: 'ph' },
+  { code: 'fr', label: 'Français', englishLabel: 'French', flagCode: 'fr' },
+  { code: 'de', label: 'Deutsch', englishLabel: 'German', flagCode: 'de' },
+  { code: 'he', label: 'עברית', englishLabel: 'Hebrew', flagCode: 'il' },
+  { code: 'hi', label: 'हिन्दी', englishLabel: 'Hindi', flagCode: 'in' },
+  { code: 'id', label: 'Bahasa Indonesia', englishLabel: 'Indonesian', flagCode: 'id' },
+  { code: 'ja', label: '日本語', englishLabel: 'Japanese', flagCode: 'jp' },
+  { code: 'ko', label: '한국어', englishLabel: 'Korean', flagCode: 'kr' },
+  { code: 'ms', label: 'Bahasa Melayu', englishLabel: 'Malay', flagCode: 'my' },
+  { code: 'fa', label: 'فارسی', englishLabel: 'Persian', flagCode: 'ir' },
+  { code: 'pl', label: 'Polski', englishLabel: 'Polish', flagCode: 'pl' },
+  { code: 'pt', label: 'Português', englishLabel: 'Portuguese', flagCode: 'br' },
+  { code: 'ru', label: 'Русский', englishLabel: 'Russian', flagCode: 'ru' },
+  { code: 'es', label: 'Español', englishLabel: 'Spanish', flagCode: 'es' },
+  { code: 'th', label: 'ไทย', englishLabel: 'Thai', flagCode: 'th' },
+  { code: 'tr', label: 'Türkçe', englishLabel: 'Turkish', flagCode: 'tr' },
+  { code: 'uk', label: 'Українська', englishLabel: 'Ukrainian', flagCode: 'ua' },
+  { code: 'vi', label: 'Tiếng Việt', englishLabel: 'Vietnamese', flagCode: 'vn' },
 ];
 
 function detect() {

@@ -38,10 +38,42 @@ export class BaseLLMProvider {
   }
 
   /**
+   * Whether this provider's streaming protocol is complete enough for the
+   * interactive Ask UI. Built-ins opt in explicitly; custom providers remain
+   * non-streaming unless their config declares support.
+   */
+  _supportsInteractiveAskStreaming() {
+    return this.config.supportsAskStreaming === true;
+  }
+
+  _askStreamTransportError(message) {
+    const error = new Error(message);
+    error.isAskStreamError = true;
+    error.isAskStreamFallbackSafe = this._supportsInteractiveAskStreaming();
+    return error;
+  }
+
+  _askStreamTerminalError(message) {
+    const error = new Error(message);
+    error.isAskStreamError = true;
+    error.isAskStreamTerminalError = true;
+    return error;
+  }
+
+  /**
    * Check if this provider supports tool/function calling.
    */
   get supportsTools() {
     return false;
+  }
+
+  /**
+   * Whether interactive Ask turns may use this provider's streaming method.
+   * Providers must opt in explicitly; merely implementing chatStream() is not
+   * enough because some adapters retain a non-streaming compatibility shim.
+   */
+  get supportsAskStreaming() {
+    return this.config.supportsAskStreaming === true;
   }
 
   /**

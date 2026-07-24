@@ -8,7 +8,7 @@
  *   - shots      keyPath=[runId, seq]           // screenshot Blobs
  *
  * All writes are fire-and-forget. Recording is gated on the `tracingEnabled`
- * setting; when disabled, every call is a cheap no-op.
+ * setting. When disabled, every call is a cheap no-op.
  */
 
 const DB_NAME = 'webbrain_traces';
@@ -57,6 +57,7 @@ function promisifyReq(req) {
 
 async function tracingEnabled() {
   try {
+    if (typeof indexedDB === 'undefined') return false;
     const storageApi = (typeof browser !== 'undefined' ? browser : chrome).storage.local;
     const { tracingEnabled } = await storageApi.get(['tracingEnabled']);
     return tracingEnabled === true;
@@ -228,6 +229,15 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
 
 export function recordError(runId, step, phase, message) {
   return _appendEvent(runId, 'error', { step, phase, message });
+}
+
+/**
+ * Record the lifecycle of an interactive Ask streaming attempt without
+ * persisting token contents. Payloads contain only decision/outcome codes,
+ * protocol, aggregate counts, timing, and a redacted error summary.
+ */
+export function recordStreaming(runId, step, payload = {}) {
+  return _appendEvent(runId, 'streaming', { step, ...payload });
 }
 
 /**

@@ -201,12 +201,16 @@
   // Interactive-element discovery.
   //
   // IMPORTANT: this is the single source of truth for what counts as an
-  // "interactive element" on a page. `getInteractiveElements`,
-  // `clickElement({index})` and `typeText({index})` MUST all go through
-  // `queryInteractive()` so that index N means the same element in all
-  // three code paths. Historically they used three different selector
-  // lists, which caused the "missing inputs" / "clicked the wrong thing"
-  // bug on complex pages (shadow DOM, overlays, rich editors).
+  // "interactive element" on a page. The agent-facing enumeration
+  // (`get_interactive_elements` → `getInteractiveElementsFull`) and every
+  // index-based follow-up action (`clickElement({index})`,
+  // `typeText({index})`) MUST all go through `queryInteractiveFull()` so
+  // that index N means the same element in all code paths. Historically
+  // they used different selector lists / orderings, which caused the
+  // "missing inputs" / "clicked the wrong thing" bug on complex pages
+  // (shadow DOM, overlays, rich editors). The legacy `queryInteractive()`
+  // order is still used by the plain content handler
+  // (`getInteractiveElements`), but it is not the list the agent sees.
   // ---------------------------------------------------------------------
   const INTERACTIVE_SELECTORS = [
     'a[href]',
@@ -254,11 +258,45 @@
     }
   }
 
+  function _composedParent(node) {
+    if (!node) return null;
+    const parent = node.parentNode;
+    if (parent) {
+      return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)
+        ? parent.host
+        : parent;
+    }
+    const root = node.getRootNode?.();
+    return (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot)
+      ? root.host
+      : null;
+  }
+
+  function _isComposedAncestor(ancestor, node) {
+    let cur = node;
+    while (cur) {
+      if (cur === ancestor) return true;
+      cur = _composedParent(cur);
+    }
+    return false;
+  }
+
+  function _hasComposedClosest(el, selector) {
+    let cur = el;
+    while (cur) {
+      try {
+        if (cur.nodeType === Node.ELEMENT_NODE && cur.matches(selector)) return true;
+      } catch {}
+      cur = _composedParent(cur);
+    }
+    return false;
+  }
+
   function isVisiblyInteractive(el) {
     if (!el || el.tagName === 'BODY' || el.tagName === 'HTML') return false;
     // aria-hidden / inert subtrees are non-interactive for assistive tech
     // and should be for us too.
-    if (el.closest('[aria-hidden="true"], [inert]')) return false;
+    if (_hasComposedClosest(el, '[aria-hidden="true"], [inert]')) return false;
 
     const style = el.ownerDocument.defaultView.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
@@ -328,6 +366,55 @@
     }
   }
 
+  function _isNativeBlockingDialog(dialog) {
+    if (!dialog) return false;
+    try {
+      if (dialog.matches(':modal')) return true;
+    } catch {}
+    return dialog.getAttribute('aria-modal') === 'true';
+  }
+
+  function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+    try {
+      const r = el.getBoundingClientRect();
+      if (r.width < minWidth || r.height < minHeight) return false;
+      const s = getComputedStyle(el);
+      if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function _findDialogContentForOverlay(overlay) {
+    const selector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open],[data-state="open"][role="dialog"],[class*="DialogContent"],[class*="ModalContent"],.modal.show';
+    const pick = (node) => {
+      if (!node || node === overlay) return null;
+      try {
+        if (node.matches?.(selector) && _hasVisibleBox(node, 20, 20)) return node;
+        const match = node.querySelector?.(selector);
+        if (match && _hasVisibleBox(match, 20, 20)) return match;
+      } catch {}
+      return null;
+    };
+
+    const siblings = overlay?.parentElement ? Array.from(overlay.parentElement.children) : [];
+    const idx = siblings.indexOf(overlay);
+    if (idx >= 0) {
+      for (let i = idx + 1; i < siblings.length; i++) {
+        const found = pick(siblings[i]);
+        if (found) return found;
+      }
+      for (let i = idx - 1; i >= 0; i--) {
+        const found = pick(siblings[i]);
+        if (found) return found;
+      }
+    }
+
+    return pick(overlay);
+  }
+
   /**
    * Detect the topmost modal/overlay/dialog on the page. If one is found,
    * only elements inside it (and the backdrop) are "reachable" — everything
@@ -342,12 +429,14 @@
    *   4. Common overlay class/attribute patterns (Stripe, Material, Radix,
    *      Chakra, etc.): data-overlay, data-state="open", .modal.show, etc.
    */
-  function _findTopmostModal() {
+  function _findTopmostModal(opts = {}) {
+    const includeNonModalDialogs = opts.includeNonModalDialogs !== false;
     // 1. Native <dialog open>
     const dialogs = document.querySelectorAll('dialog[open]');
-    if (dialogs.length > 0) return dialogs[dialogs.length - 1]; // last = topmost
+    for (let i = dialogs.length - 1; i >= 0; i--) {
+      if (includeNonModalDialogs || _isNativeBlockingDialog(dialogs[i])) return dialogs[i];
+    }
 
-    // 2. ARIA modal
     const ariaModals = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
     for (let i = ariaModals.length - 1; i >= 0; i--) {
       const r = ariaModals[i].getBoundingClientRect();
@@ -355,32 +444,41 @@
     }
 
     // 3. Visible role="dialog"
-    const roleDialogs = document.querySelectorAll('[role="dialog"]');
-    for (let i = roleDialogs.length - 1; i >= 0; i--) {
-      const r = roleDialogs[i].getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) return roleDialogs[i];
+    if (includeNonModalDialogs) {
+      const roleDialogs = document.querySelectorAll('[role="dialog"]');
+      for (let i = roleDialogs.length - 1; i >= 0; i--) {
+        const r = roleDialogs[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return roleDialogs[i];
+      }
     }
 
-    // 4. Common overlay patterns — look for large, high-z-index containers
-    // that cover most of the viewport. These often contain forms/modals on
-    // sites like Stripe, GitHub, AWS, etc.
     const candidates = document.querySelectorAll(
-      '[data-overlay], [data-state="open"][role="dialog"], ' +
+      '[data-overlay], ' +
+      (includeNonModalDialogs ? '[data-state="open"][role="dialog"], ' : '') +
       '.modal.show, .modal-overlay, .overlay, [class*="modal"][class*="open"], ' +
       '[class*="overlay"][class*="active"], [class*="DialogOverlay"], ' +
       '[class*="ModalOverlay"]'
     );
     for (let i = candidates.length - 1; i >= 0; i--) {
       const r = candidates[i].getBoundingClientRect();
-      if (r.width > 100 && r.height > 100) return candidates[i];
+      if (r.width > 100 && r.height > 100) {
+        const dialogContent = _findDialogContentForOverlay(candidates[i]);
+        if (dialogContent) return dialogContent;
+        const interactive = candidates[i].querySelector?.(INTERACTIVE_SELECTORS.join(', '));
+        if (interactive) return candidates[i];
+      }
     }
 
     return null;
   }
 
+  function _findTopmostBlockingModal() {
+    return _findTopmostModal({ includeNonModalDialogs: false });
+  }
+
   function queryInteractive() {
     const all = document.querySelectorAll([...INTERACTIVE_SELECTORS, ..._siteInteractiveSelectors()].join(', '));
-    const modal = _findTopmostModal();
+    const modal = _findTopmostBlockingModal();
     const out = [];
     for (const el of all) {
       if (!isVisiblyInteractive(el)) continue;
@@ -388,7 +486,7 @@
       // This prevents the agent from seeing (and accidentally clicking)
       // elements behind the overlay — the #1 cause of "clicked Export
       // instead of filling the form" on sites like Stripe.
-      if (modal && !modal.contains(el)) continue;
+      if (modal && !_isComposedAncestor(modal, el)) continue;
       out.push(el);
     }
     return out;
@@ -398,7 +496,7 @@
     if (params?.index == null) return null;
     const index = Number(params.index);
     if (!Number.isInteger(index) || index < 0) return null;
-    return queryInteractive()[index] || null;
+    return queryInteractiveForToolIndex()[index] || null;
   };
 
   /**
@@ -579,6 +677,70 @@
   function _axAccessibleName(el) {
     return _axCanonicalName(el)
       || String(el?.innerText || '').trim().slice(0, 160);
+  }
+
+  function _axVisibleConfirmationSurfaces() {
+    const surfaces = [];
+    const seen = new Set();
+    const selectors = [
+      '[role="dialog"]',
+      '[role="alertdialog"]',
+      '[aria-modal="true"]',
+      'dialog[open]',
+      '.modal',
+    ].join(',');
+    const visible = (el) => {
+      try {
+        if (!el?.isConnected) return false;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 20 && rect.height >= 20;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      for (const surface of document.querySelectorAll(selectors)) {
+        if (!visible(surface)) continue;
+        const id = String(surface.id || '').trim();
+        const role = String(surface.getAttribute('role') || surface.tagName || '').trim().toLowerCase();
+        const heading = surface.querySelector(
+          '[role="heading"],h1,h2,h3,h4,h5,h6,[aria-label]'
+        );
+        const title = String(
+          surface.getAttribute('aria-label')
+          || heading?.innerText
+          || heading?.textContent
+          || ''
+        ).replace(/\s+/g, ' ').trim().slice(0, 160);
+        const actions = [];
+        for (const control of surface.querySelectorAll('button,a,[role="button"]')) {
+          if (!visible(control)) continue;
+          const name = _axAccessibleName(control).replace(/\s+/g, ' ').trim();
+          if (name && !actions.includes(name)) actions.push(name.slice(0, 120));
+          if (actions.length >= 6) break;
+        }
+        const signature = id
+          ? `id:${id}`
+          : `surface:${role}|${title}|${actions.join('|')}`.slice(0, 480);
+        if (!signature || seen.has(signature)) continue;
+        seen.add(signature);
+        surfaces.push({ signature, title, actions });
+        if (surfaces.length >= 8) break;
+      }
+    } catch {}
+    return surfaces;
+  }
+
+  function _axNewConfirmationSurface(before = []) {
+    const previous = new Set(
+      (Array.isArray(before) ? before : [])
+        .map(surface => String(surface?.signature || ''))
+        .filter(Boolean)
+    );
+    return _axVisibleConfirmationSurfaces()
+      .find(surface => !previous.has(surface.signature)) || null;
   }
 
   function _axCheckboxIdentity(el, refId = '') {
@@ -1105,6 +1267,11 @@
    */
   function clickElement(params) {
     let el;
+    // Tracks whether text matching below resolved el via an EXACT-tier
+    // match. The auto-select rescue yields only to exact clickables — a
+    // contains-tier match (e.g. "Contact us" for needle "US") must not
+    // suppress selecting an exactly-matching <select> option.
+    let textResolvedExact = false;
     if (params.selector && /:contains\(|:has-text\(/.test(params.selector)) {
       return {
         success: false,
@@ -1175,6 +1342,7 @@
             inp.scrollIntoView({ block: 'center', inline: 'center' });
             inp.focus();
             el = inp;
+            textResolvedExact = (needle === ltxt);
             break;
           }
         }
@@ -1215,6 +1383,7 @@
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
                 inp.focus();
                 el = inp;
+                textResolvedExact = (needle === ltxt);
                 break;
               }
             }
@@ -1285,6 +1454,7 @@
       }
       if (!el) {
         let resolved = matches[0].e;
+        textResolvedExact = (usedMode === 'exact');
         // LABEL → associated input resolution
         if (resolved.tagName === 'LABEL') {
           let target = null;
@@ -1302,40 +1472,65 @@
     } else if (params.selector) {
       el = safeQuerySelector(params.selector);
     } else if (params.index != null) {
-      // Must use the SAME traversal as getInteractiveElements so the
+      // Must use the SAME traversal as get_interactive_elements so the
       // index the agent saw is the index we resolve.
-      const interactive = queryInteractive();
+      const interactive = queryInteractiveForToolIndex();
       el = interactive[params.index];
       if (!el) return { ..._staleIndexError(params.index, interactive), dispatched: false };
     } else if (params.x != null && params.y != null) {
       el = document.elementFromPoint(params.x, params.y);
     }
 
-    if (!el) return { success: false, dispatched: false, error: 'Element not found' };
-    const targetIsSubmitControl = _isSubmitControl(el);
-
     // ── Auto-select: if click text matches a <select> option, select it ──
-    if (params.text) {
+    // Runs when text matching resolved NO element, resolved the <select>
+    // itself (a select's innerText contains its options, so the contains
+    // level routinely lands here for option clicks — skipping the rescue
+    // then would wrongly fall through to the CANNOT-CLICK intercept), or
+    // resolved a clickable only via a NON-exact tier (option text matches
+    // exactly, so it beats a "Contact us"-style contains hit for "US").
+    // It must NOT run when a genuine button/link labeled X matched
+    // exactly — that element is what the model meant.
+    if (params.text && (!el || el instanceof HTMLSelectElement || !textResolvedExact)) {
       const needle = params.text.trim();
       const lc = needle.toLowerCase();
-      const allSels = document.querySelectorAll('select');
+      const selectScope = _findTopmostModal() || document;
+      const allSels = el instanceof HTMLSelectElement
+        ? [el]
+        : selectScope.querySelectorAll('select');
+      const matchingSelects = [];
       for (const sel of allSels) {
         const opts = Array.from(sel.options);
         const match = opts.find(o => o.text.trim() === needle)
           || opts.find(o => o.text.trim().toLowerCase() === lc)
           || opts.find(o => o.value === needle)
           || opts.find(o => o.value.toLowerCase() === lc);
-        if (match && sel.selectedIndex !== match.index) {
-          sel.focus();
-          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-          if (nativeSetter) nativeSetter.call(sel, match.value);
-          else sel.value = match.value;
-          sel.dispatchEvent(new Event('input', { bubbles: true }));
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
+        if (match) matchingSelects.push({ sel, match });
+      }
+      if (matchingSelects.length > 1) {
+        return {
+          success: false,
+          dispatched: false,
+          failureScope: `ambiguous-select-option:${lc}`,
+          error: `Ambiguous select option match for "${needle}" (${matchingSelects.length} dropdowns). Identify the intended field and use type_text on that select instead.`,
+        };
+      }
+      if (matchingSelects.length === 1) {
+        const { sel, match } = matchingSelects[0];
+        if (sel.selectedIndex === match.index) {
+          return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
+        sel.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(sel, match.value);
+        else sel.value = match.value;
+        sel.dispatchEvent(new Event('input', { bubbles: true }));
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
       }
     }
+
+    if (!el) return { success: false, dispatched: false, error: 'Element not found' };
+    const targetIsSubmitControl = _isSubmitControl(el);
 
     // <select> intercept: clicking opens a native OS dropdown that cannot be
     // controlled programmatically. Return error so the model uses type_text.
@@ -1600,8 +1795,8 @@
     if (params.selector) {
       el = safeQuerySelector(params.selector);
     } else if (params.index != null) {
-      // Same index space as getInteractiveElements / clickElement.
-      const interactive = queryInteractive();
+      // Same index space as get_interactive_elements / clickElement.
+      const interactive = queryInteractiveForToolIndex();
       el = interactive[params.index];
       if (!el) {
         const stale = _staleIndexError(params.index, interactive);
@@ -1699,6 +1894,141 @@
   }
 
   /**
+   * Locate and select literal page text without relying on browser chrome or
+   * unsupported Ctrl/Cmd keyboard shortcuts.
+   */
+  function findText(params) {
+    const text = String(params?.text || '').trim();
+    if (!text) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text: text is required.' };
+    }
+    if (text.length > 500) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text: text must be 500 characters or fewer.' };
+    }
+    if (typeof window.find !== 'function') {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: 'find_text is not supported on this page.' };
+    }
+
+    try {
+      const matchCase = params?.matchCase === true;
+      const backwards = params?.backwards === true;
+      const wrap = params?.wrap !== false;
+      // Match browser Find semantics across the whole page, including frames.
+      // When the active match moves into a frame, the top document can retain
+      // an older selection; frame focus keeps that stale range from verifying
+      // the current hit.
+      const found = window.find(text, matchCase, backwards, wrap, false, true, false);
+      if (!found) {
+        return {
+          success: false,
+          found: false,
+          dispatched: false,
+          noDispatch: true,
+          query: text,
+          error: `find_text: "${text}" was not found on the current page. Re-read the page or try a shorter literal phrase.`,
+        };
+      }
+      const activeElement = window.document?.activeElement;
+      const activeElementTag = String(activeElement?.tagName || '').toUpperCase();
+      const inputType = String(activeElement?.type || 'text').toLowerCase();
+      const isTextControl = activeElementTag === 'TEXTAREA'
+        || (activeElementTag === 'INPUT' && ['text', 'search', 'url', 'tel', 'email'].includes(inputType));
+      const normalizedQuery = text.normalize('NFC');
+      const matchesQuery = (value) => {
+        const normalizedValue = String(value || '').normalize('NFC');
+        return matchCase
+          ? normalizedValue === normalizedQuery
+          : normalizedValue.toLowerCase() === normalizedQuery.toLowerCase();
+      };
+      const hasVisibleBounds = (candidate) => !!candidate
+        && [candidate.x, candidate.y, candidate.width, candidate.height].every(Number.isFinite)
+        && candidate.width > 0
+        && candidate.height > 0;
+      const selection = window.getSelection?.();
+      const documentSelectedText = String(selection?.toString?.() || '');
+      const documentBounds = selection?.rangeCount
+        ? selection.getRangeAt(0).getBoundingClientRect()
+        : undefined;
+      let controlSelectedText = '';
+      let controlBounds;
+      const controlSelectionStart = activeElement?.selectionStart;
+      const controlSelectionEnd = activeElement?.selectionEnd;
+      if (
+        isTextControl
+        && Number.isInteger(controlSelectionStart)
+        && Number.isInteger(controlSelectionEnd)
+        && controlSelectionStart >= 0
+        && controlSelectionEnd > controlSelectionStart
+      ) {
+        controlSelectedText = String(activeElement.value || '').slice(controlSelectionStart, controlSelectionEnd);
+        controlBounds = activeElement.getBoundingClientRect?.();
+      }
+      const documentMatchesQuery = matchesQuery(documentSelectedText);
+      const controlMatchesQuery = matchesQuery(controlSelectedText);
+      let selectedText = documentSelectedText;
+      let selectionSource = 'document';
+      let bounds = documentBounds;
+      if (documentMatchesQuery && hasVisibleBounds(documentBounds)) {
+        // Keep the page selection. A focused field can retain an unrelated
+        // selection while window.find advances to a normal document match.
+      } else if (controlMatchesQuery && hasVisibleBounds(controlBounds)) {
+        selectedText = controlSelectedText;
+        bounds = controlBounds;
+        selectionSource = 'text_control';
+      }
+      let rect;
+      if (bounds) {
+        const scrollX = Number.isFinite(Number(window.scrollX)) ? Number(window.scrollX) : 0;
+        const scrollY = Number.isFinite(Number(window.scrollY)) ? Number(window.scrollY) : 0;
+        rect = {
+          x: bounds.x,
+          y: bounds.y,
+          pageX: bounds.x + scrollX,
+          pageY: bounds.y + scrollY,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      }
+      const hasVisibleRect = !!rect
+        && [rect.x, rect.y, rect.pageX, rect.pageY, rect.width, rect.height].every(Number.isFinite)
+        && rect.width > 0
+        && rect.height > 0;
+      const selectionMatchesQuery = matchesQuery(selectedText);
+      const selectionInFrame = activeElementTag === 'IFRAME' || activeElementTag === 'FRAME';
+      const hasSelectionIdentity = selectionSource !== 'text_control'
+        || (
+          Number.isInteger(controlSelectionStart)
+          && Number.isInteger(controlSelectionEnd)
+          && controlSelectionStart >= 0
+          && controlSelectionEnd > controlSelectionStart
+        );
+      const verified = selectionMatchesQuery && hasVisibleRect && hasSelectionIdentity && !selectionInFrame;
+      return {
+        success: true,
+        found: true,
+        verified,
+        query: text,
+        selectedText,
+        selectionMatchesQuery,
+        selectionSource,
+        selectionInFrame,
+        selectionScope: selectionInFrame ? 'frame_match_unverified' : 'current_match_only',
+        ...(selectionSource === 'text_control'
+          ? { selectionStart: controlSelectionStart, selectionEnd: controlSelectionEnd }
+          : {}),
+        replacesPreviousSelection: !selectionInFrame,
+        browserFindUiOpened: false,
+        ...(rect ? { rect } : {}),
+        warning: verified
+          ? 'Only this match is selected. This call replaced any previous page selection, and it did not open the browser Find UI. Do not claim earlier find_text matches remain highlighted.'
+          : 'window.find reported a match, but WebBrain could not verify a visible current selection in the top document (for example, the active match may be inside a frame while an older top-document selection remains). Do not claim it is visibly highlighted. The browser Find UI was not opened.',
+      };
+    } catch (error) {
+      return { success: false, found: false, dispatched: false, noDispatch: true, error: `find_text failed: ${error.message || error}` };
+    }
+  }
+
+  /**
    * Press supported keyboard keys.
    */
   function pressKeys(params) {
@@ -1756,6 +2086,7 @@
         which: keyMeta.keyCode,
         bubbles: true,
         cancelable: true,
+        composed: true,
       });
       const up = new KeyboardEvent('keyup', {
         key,
@@ -1764,11 +2095,14 @@
         which: keyMeta.keyCode,
         bubbles: true,
         cancelable: true,
+        composed: true,
       });
+      // Dispatch once on the target only. The events bubble, so listeners
+      // attached at document/window level already receive them — dispatching
+      // the same event object on document again would fire those listeners
+      // twice per key (double-advancing ARIA listboxes, menus, etc.).
       target.dispatchEvent(down);
-      document.dispatchEvent(down);
       target.dispatchEvent(up);
-      document.dispatchEvent(up);
       if (key === 'Tab') moveTabFocus();
     }
 
@@ -2132,7 +2466,20 @@
   function waitForElement(params) {
     return new Promise((resolve) => {
       const timeout = params.timeout || 5000;
-      const existing = document.querySelector(params.selector);
+      // Validate the selector up front: an invalid selector makes
+      // querySelector throw SyntaxError, which would reject this promise
+      // and leave the caller hanging on a response that never arrives.
+      let existing;
+      try {
+        existing = document.querySelector(params.selector);
+      } catch (e) {
+        resolve({
+          success: false,
+          found: false,
+          error: `Invalid selector "${params.selector}": ${e.message}. Use plain CSS — jQuery/Playwright extensions like :contains() or :has-text() are not supported.`,
+        });
+        return;
+      }
       if (existing) {
         resolve({ success: true, found: true });
         return;
@@ -2506,11 +2853,16 @@
     };
   }
 
-  function getInteractiveElementsFull() {
+  function queryInteractiveFull() {
     const collected = []; // {el, rect, inShadow}
     const seen = new Set(); // dedupe nested wrappers (button > span > svg etc.)
+    const modal = _findTopmostBlockingModal();
 
     const isUsable = (el, rect) => {
+      if (_hasComposedClosest(el, '[aria-hidden="true"], [inert]')) return false;
+      // Keep the agent-facing list and every indexed follow-up action inside
+      // the same topmost modal/dialog boundary as the legacy collector.
+      if (modal && !_isComposedAncestor(modal, el)) return false;
       // Visible and in viewport. Aggressive filtering on purpose: a global
       // header link scrolled offscreen creates noise indices that shift
       // every page and confuse models that trust index across turns.
@@ -2589,7 +2941,20 @@
       return a.rect.left - b.rect.left;
     });
 
-    return collected.map((c, i) => {
+    return collected;
+  }
+
+  function queryInteractiveForToolIndex() {
+    // The agent maps get_interactive_elements to the full/CDP collector
+    // above, so index-based follow-up actions (click, type_text) must
+    // resolve against that same ordering. The legacy queryInteractive()
+    // order is still used by the plain content handler but it is not the
+    // list the agent sees.
+    return queryInteractiveFull().map(c => c.el);
+  }
+
+  function getInteractiveElementsFull() {
+    return queryInteractiveFull().map((c, i) => {
       const el = c.el;
       return {
         index: i,
@@ -3291,6 +3656,7 @@
       return {
         tag,
         type: fieldType,
+        contentEditable: !!el.isContentEditable,
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
         autocomplete: el.getAttribute ? el.getAttribute('autocomplete') : null,
@@ -3327,6 +3693,7 @@
       'dev_unmark_targets': () => unmarkDevTargets(msg.params || {}),
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
+      'find_text': () => findText(msg.params || {}),
       // ── Accessibility-tree-backed reads and actions ──────────────────
       //
       // The tree is built by src/content/accessibility-tree.js (a port of
@@ -3443,6 +3810,18 @@
               ? ' Nearest existing refs: ' + suggestions.map(s => `${s.ref} (${s.role}${s.name ? ' "' + s.name + '"' : ''})`).join(', ') + '.'
               : '';
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
+          }
+          const disabledOwner = el.closest?.('button:disabled,input:disabled,select:disabled,textarea:disabled,[aria-disabled="true"]');
+          if (disabledOwner) {
+            return failure(
+              `ref_id ${ref_id} is disabled and cannot be activated. Re-read the page after correcting the form or editor state; do not treat this click as submitted.`,
+              {
+                ref_id,
+                disabled: true,
+                nativeDisabled: !!disabledOwner.disabled,
+                ariaDisabled: disabledOwner.getAttribute?.('aria-disabled') === 'true',
+              },
+            );
           }
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
           try { el.focus({ preventScroll: true }); } catch {}
@@ -3792,6 +4171,7 @@
           }
           const checkedBefore = !!el.checked;
           const checkboxIdentity = _axCheckboxIdentity(el, ref_id);
+          const confirmationSurfacesBefore = _axVisibleConfirmationSurfaces();
           const base = {
             method: 'set_checked',
             ref_id,
@@ -3849,6 +4229,7 @@
               needsTrustedClick: true,
               marker: marker || undefined,
               trustedSelector: trustedSelector || undefined,
+              _confirmationSurfaces: confirmationSurfacesBefore,
               ...base,
             };
           }
@@ -3856,6 +4237,9 @@
           el.click();
           const checkedAfter = !!el.checked;
           const success = checkedAfter === checked;
+          const confirmation = success
+            ? null
+            : _axNewConfirmationSurface(confirmationSurfacesBefore);
           return {
             ...base,
             success,
@@ -3869,7 +4253,13 @@
               desiredChecked: checked,
               actualChecked: checkedAfter,
             },
-            ...(success ? {} : {
+            ...(confirmation ? {
+              confirmationRequired: true,
+              recoveryRequired: 'confirmation_dialog',
+              observedEffects: ['confirmation_dialog_opened'],
+              confirmation,
+              warning: 'A confirmation dialog opened before the checkbox could reach the requested state. Do not call set_checked again. Re-read the visible accessibility tree and choose a dialog action only when it is supported by the user request or current evidence.',
+            } : success ? {} : {
               noProgress: true,
               error: `Checkbox remained ${checkedAfter ? 'checked' : 'unchecked'} after one synthetic click. This page may require trusted pointer input.`,
             }),
@@ -3931,23 +4321,20 @@
           let method = '';
           let selectExpected = null;
           if (el.isContentEditable) {
-            dispatched = true;
             previous = _editableTextValue(el);
-            if (clear) {
-              try {
-                const sel = window.getSelection();
-                const r = document.createRange();
-                r.selectNodeContents(el);
-                sel.removeAllRanges();
-                sel.addRange(r);
-                document.execCommand('delete');
-              } catch {}
-            }
-            try { document.execCommand('insertText', false, text); } catch {
-              el.textContent = (clear ? '' : previous) + text;
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            method = 'type_ax_contenteditable';
+            return failure(
+              'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
+              {
+                method: 'type_ax_contenteditable_trusted',
+                ref_id,
+                rect: typeRect,
+                verified: false,
+                fieldMeta,
+                fallbackAttempted: false,
+                trustedTypeRequired: true,
+                _expectedValue: (clear ? '' : previous) + text,
+              },
+            );
           } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
             // Guard against non-typeable INPUT subtypes. These all share the
             // INPUT tagName so without this check a confused model calling
@@ -4112,25 +4499,25 @@
           } else if (!el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
           }
+          const fieldMeta = _fieldMeta(el);
           let prevValue = '';
-          dispatched = true;
           if (el.isContentEditable) {
             prevValue = _editableTextValue(el);
-            if (clear) {
-              try {
-                const sel = window.getSelection();
-                const r = document.createRange();
-                r.selectNodeContents(el);
-                sel.removeAllRanges();
-                sel.addRange(r);
-                document.execCommand('delete');
-              } catch {}
-            }
-            try { document.execCommand('insertText', false, text); } catch {
-              el.textContent = (clear ? '' : prevValue) + text;
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
+            return failure(
+              'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
+              {
+                method: 'set_field_contenteditable_trusted',
+                ref_id,
+                rect,
+                verified: false,
+                fieldMeta,
+                fallbackAttempted: false,
+                trustedTypeRequired: true,
+                _expectedValue: (clear ? '' : prevValue) + text,
+              },
+            );
           } else {
+            dispatched = true;
             prevValue = el.value || '';
             const proto = el.tagName === 'TEXTAREA'
               ? window.HTMLTextAreaElement.prototype
@@ -4152,7 +4539,6 @@
               { ref_id, verified: false, recoveryRequired: 'fresh_tree', failureScope: `field-value:${ref_id}`, retryable: false },
             );
           }
-          const fieldMeta = _fieldMeta(el);
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
           const fallbackAttempted = false;
@@ -4265,7 +4651,20 @@
           const isCombobox = role === 'combobox'
             || !!(el.getAttribute && el.getAttribute('aria-autocomplete'))
             || (el.getAttribute && el.getAttribute('aria-expanded') === 'true');
-          return { success: true, ref_id, fieldMeta: _fieldMeta(el), isCombobox };
+          const rect = el.getBoundingClientRect();
+          return {
+            success: true,
+            ref_id,
+            fieldMeta: _fieldMeta(el),
+            isCombobox,
+            contentEditable: !!el.isContentEditable,
+            rect: {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              w: Math.round(rect.width),
+              h: Math.round(rect.height),
+            },
+          };
         } catch (error) {
           return { success: false, error: error && error.message || String(error) };
         }
@@ -4618,7 +5017,11 @@
 
     const result = handler();
     if (result instanceof Promise) {
-      result.then(sendResponse);
+      // Always settle sendResponse — a rejecting handler (e.g. a throwing
+      // DOM API) must not leave the caller's await hanging forever.
+      result.then(sendResponse, (err) => {
+        sendResponse({ success: false, error: `${msg.action} failed: ${err?.message || String(err)}` });
+      });
       return true; // async
     }
     sendResponse(result);

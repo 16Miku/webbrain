@@ -49,7 +49,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'set_checked',
-      description: 'Idempotently set a native checkbox to the requested checked state by ref_id. Unlike click_ax, this never blindly toggles: it first reads checkedBefore, does nothing when already correct, performs at most one click when needed, and returns checkedAfter.',
+      description: 'Idempotently set a native checkbox to the requested checked state by ref_id. Unlike click_ax, this never blindly toggles: it first reads checkedBefore, does nothing when already correct, performs at most one click when needed, and returns checkedAfter. If the click opens a confirmation dialog instead of changing state, returns confirmationRequired:true; handle that dialog from fresh page evidence and do not retry the checkbox.',
       parameters: {
         type: 'object',
         properties: {
@@ -262,7 +262,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'click',
-      description: 'Click an element. FOUR ways to use it: (1) visible text, (2) element index from get_interactive_elements, (3) CSS selector, (4) x/y coordinates. For text clicks, default matching is EXACT and case-insensitive. You can opt into broader matching with `textMatch: "prefix"` or `textMatch: "contains"`. jQuery/Playwright pseudo-classes like `:contains()` and `:has-text()` are NOT valid CSS — use the text parameter instead.',
+      description: 'Click an element. FOUR ways to use it: (1) visible text, (2) element index from get_interactive_elements, (3) CSS selector, (4) x/y coordinates. For text clicks, default matching is EXACT and case-insensitive. You can opt into broader matching with `textMatch: "prefix"` or `textMatch: "contains"`. jQuery/Playwright pseudo-classes like `:contains()` and `:has-text()` are NOT valid CSS — use the text parameter instead. COORDINATES are CSS pixels; if x/y were read off a screenshot image that was reported as downscaled, pass from_screenshot: true and the image pixels are converted to CSS pixels automatically.',
       parameters: {
         type: 'object',
         properties: {
@@ -272,6 +272,7 @@ export const AGENT_TOOLS = [
           index: { type: 'number', description: 'Index from get_interactive_elements result.' },
           x: { type: 'number', description: 'X coordinate to click.' },
           y: { type: 'number', description: 'Y coordinate to click.' },
+          from_screenshot: { type: 'boolean', description: 'Set true when x/y were read off the most recent screenshot image. If that screenshot was downscaled, coordinates are converted from image pixels to CSS pixels automatically; harmless otherwise.' },
         },
       },
     },
@@ -297,7 +298,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'press_keys',
-      description: 'Press keyboard keys. Supports Escape, Tab, Enter, ArrowUp, ArrowDown, ArrowLeft, and ArrowRight. Useful for dismissing modals/dropdowns (Escape), moving focus (Tab), confirming dialogs/forms (Enter), and nudging range sliders or custom widgets that respond to arrow keys (ArrowUp/ArrowDown/ArrowLeft/ArrowRight). Note: Firefox has no CDP, so these are untrusted synthetic events — they reach JS keydown listeners reliably but may not step native controls on every site (see ARCHITECTURE.md).',
+      description: 'Press one unmodified keyboard key. Supports only Escape, Tab, Enter, ArrowUp, ArrowDown, ArrowLeft, and ArrowRight. Ctrl/Cmd/Alt/Shift combinations and browser shortcuts such as Ctrl+F are not supported. Use find_text to select one page-text match. Firefox dispatches synthetic events, so native controls may not react on every site.',
       parameters: {
         type: 'object',
         properties: {
@@ -510,6 +511,23 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'find_text',
+      description: 'Find and select the next occurrence of literal text in the current page. Use this instead of Ctrl+F or Cmd+F; press_keys cannot send modifier combinations. Repeating the same search advances to the next match. Each call replaces the previous page selection, so only the current match remains selected. This tool does not open the browser Find UI. Never claim that sequential find_text calls leave multiple terms highlighted.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', maxLength: 500, description: 'Literal page text to find (maximum 500 characters).' },
+          matchCase: { type: 'boolean', description: 'Whether matching is case-sensitive (default: false).' },
+          backwards: { type: 'boolean', description: 'Search backward from the current selection (default: false).' },
+          wrap: { type: 'boolean', description: 'Wrap at the end or beginning of the page (default: true).' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'execute_js',
       description: 'Execute custom JavaScript code on the page and return the result. Use for complex operations not covered by other tools.',
       parameters: {
@@ -539,11 +557,11 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'done',
-      description: 'Signal that the task is finished for this run. Only call this when you have successfully accomplished the user\'s request OR have exhausted every reasonable alternative (at least 3-4 different approaches). Provide a summary of what was accomplished. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: when summarizing, prefer generic references ("logged in with the provided password", "API key updated") over echoing the literal value — keeps summaries tidy and avoids needlessly persisting secrets in trace logs. If the user explicitly asked you to show them a value (a recovery code, an API key on the page, etc.), including the value IS the answer and you should include it.',
+      description: 'Signal that the task is finished for this run. Only call this when you have successfully accomplished the user\'s request OR have exhausted every reasonable alternative (at least 3-4 different approaches). The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: when summarizing, prefer generic references ("logged in with the provided password", "API key updated") over echoing the literal value — keeps summaries tidy and avoids needlessly persisting secrets in trace logs. If the user explicitly asked you to show them a value (a recovery code, an API key on the page, etc.), including the value IS the answer and you should include it.',
       parameters: {
         type: 'object',
         properties: {
-          summary: { type: 'string', description: 'Summary of what was accomplished.' },
+          summary: { type: 'string', description: 'Complete user-facing answer or result, displayed verbatim. Do not merely describe that you answered or completed the task.' },
         },
         required: DONE_REQUIRED,
       },
@@ -950,7 +968,7 @@ export const FULL_TOOL_NAMES = new Set(
 export const COMPACT_TOOL_NAMES = new Set([
   'get_accessibility_tree', 'read_page', 'scroll',
   'get_window_info',
-  'extract_data', 'get_selection',
+  'extract_data', 'get_selection', 'find_text',
   'click_ax', 'set_checked', 'type_ax', 'set_field',
   'click', 'type_text', 'press_keys',
   'navigate', 'new_tab', 'wait_for_element',
@@ -962,11 +980,11 @@ const DONE_TOOL_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. Provide a summary of what was accomplished. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: when summarizing, prefer generic references ("logged in with the provided password", "API key updated") over echoing the literal value — keeps summaries tidy and avoids needlessly persisting secrets in trace logs. If the user explicitly asked you to show them a value (a recovery code, an API key on the page, etc.), including the value IS the answer and you should include it.',
+    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: when summarizing, prefer generic references ("logged in with the provided password", "API key updated") over echoing the literal value — keeps summaries tidy and avoids needlessly persisting secrets in trace logs. If the user explicitly asked you to show them a value (a recovery code, an API key on the page, etc.), including the value IS the answer and you should include it.',
     parameters: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Summary of what was accomplished.' },
+        summary: { type: 'string', description: 'Complete user-facing answer or result, displayed verbatim. Do not merely describe that you answered or completed the task.' },
         outcome: DONE_OUTCOME_PROPERTY,
       },
       required: DONE_REQUIRED_WITH_OUTCOME,
@@ -978,11 +996,11 @@ const DONE_TOOL_COMPACT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives.',
+    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it.',
     parameters: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Concise result or blocker summary.' },
+        summary: { type: 'string', description: 'Concise user-facing answer, result, or blocker, displayed verbatim.' },
         outcome: DONE_OUTCOME_PROPERTY,
       },
       required: DONE_REQUIRED_WITH_OUTCOME,
@@ -1000,11 +1018,11 @@ const DONE_TOOL_STRICT = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'Signal that the task is finished for this run. Only call this when you have successfully accomplished the user\'s request OR have exhausted every reasonable alternative (at least 3-4 different approaches). Provide a summary of what was accomplished. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
+    description: 'Signal that the task is finished for this run. Only call this when you have successfully accomplished the user\'s request OR have exhausted every reasonable alternative (at least 3-4 different approaches). The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
     parameters: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Summary of what was accomplished. Must NOT contain credentials, passwords, API keys, tokens, OTPs, or any secret the user provided or that you read from a password field.' },
+        summary: { type: 'string', description: 'Complete user-facing answer or result, displayed verbatim. Must NOT contain credentials, passwords, API keys, tokens, OTPs, or any secret the user provided or that you read from a password field.' },
       },
       required: DONE_REQUIRED,
     },
@@ -1015,11 +1033,11 @@ const DONE_TOOL_STRICT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. Provide a summary of what was accomplished. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
+    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
     parameters: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Summary of what was accomplished. Must NOT contain credentials, passwords, API keys, tokens, OTPs, or any secret the user provided or that you read from a password field.' },
+        summary: { type: 'string', description: 'Complete user-facing answer or result, displayed verbatim. Must NOT contain credentials, passwords, API keys, tokens, OTPs, or any secret the user provided or that you read from a password field.' },
         outcome: DONE_OUTCOME_PROPERTY,
       },
       required: DONE_REQUIRED_WITH_OUTCOME,
@@ -1031,11 +1049,11 @@ const DONE_TOOL_COMPACT_STRICT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives. Never include credentials or secrets in the summary.',
+    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it. Never include credentials or secrets in the summary.',
     parameters: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Concise result or blocker summary without credentials or secrets.' },
+        summary: { type: 'string', description: 'Concise user-facing answer, result, or blocker, displayed verbatim and without credentials or secrets.' },
         outcome: DONE_OUTCOME_PROPERTY,
       },
       required: DONE_REQUIRED_WITH_OUTCOME,
@@ -1179,14 +1197,15 @@ TOOLS - use only these:
 - get_window_info: Read window/viewport size.
 - scroll: Scroll up/down.
 - extract_data: Get tables, headings, images, or links.
-- get_selection: Read highlighted text.
 - click_ax({ref_id}): Click by ref_id from the tree. Preferred.
 - set_checked({ref_id, checked}): Idempotently set and verify a native checkbox. Never toggle checkboxes repeatedly with click_ax.
 - type_ax({ref_id, text}): Type into a field by ref_id.
 - set_field({ref_id, text, submit}): Focus + clear + type + verify in one call. Preferred for forms and set submit:true for search fields.
 - click({text}): Click by visible text. Fallback when no ref_id works.
 - type_text({text}): Type into the focused element. Click the field first.
-- press_keys({key}): Press Escape, Tab, Enter, ArrowUp, ArrowDown, ArrowLeft, or ArrowRight.
+- get_selection: Read highlighted text.
+- find_text({text}): Select one literal page-text match instead of Ctrl/Cmd+F. Each call replaces the previous selection; no browser Find UI or simultaneous highlights.
+- press_keys({key}): Press one supported unmodified key. Ctrl/Cmd/Alt/Shift combinations and browser shortcuts are unavailable.
 - navigate({url}): Go to a URL.
 - new_tab({url}): Open a URL in a background tab for user reference. It does not activate or retarget the current run, so never use it as a site-permission workaround.
 - wait_for_element({selector}): Wait for an element to appear.
@@ -1304,6 +1323,8 @@ Available tools:
 - schedule_resume: Durably pause this current task and resume it later in the same tab/conversation. Terminal tool; use only for external waits.
 - schedule_task: Create a one-shot or fixed-minute-interval task only when the user explicitly asks for future scheduled work. It does not support calendar/cron recurrence; never approximate monthly recurrence. Prefer URL targets for repeatable automations; current_tab is strict and fails if the tab changes.
 - get_selection: Get highlighted text
+- find_text: Select one literal page-text match instead of Ctrl/Cmd+F. Each call replaces the previous selection; it does not open browser Find UI or keep multiple terms highlighted.
+- press_keys: Press only unmodified Escape/Tab/Enter/arrows. Modifier combinations and browser shortcuts are unsupported.
 - new_tab: Open a background reference tab; the current run stays on its original tab
 - clarify: Pause and ask the user a question. Use ONLY for material ambiguity that you cannot resolve by reading the page (e.g. "my API key" on a site with multiple plugins that each have one). Unanswered clarifies auto-select options[0] after the timeout (default 60s) with source=timeout (not high-risk approval); Settings Instant yields source=auto (intentional auto-approve — continue). Put the safe/default first. Do NOT use to confirm correct actions; do NOT call before every step. Budget 1-2 per run, max.
 - done: Signal task completion
@@ -1488,7 +1509,7 @@ export const MID_TOOL_NAMES = new Set([
   'list_webmcp_tools', 'execute_webmcp_tool',
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
   'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'go_back', 'go_forward',
-  'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection',
+  'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
   'new_tab', 'done', 'clarify', 'schedule_resume', 'schedule_task',
   'iframe_read', 'iframe_click', 'iframe_type',
   'fetch_url', 'research_url', 'list_downloads', 'read_downloaded_file',
@@ -1527,8 +1548,8 @@ TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
 - read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run.
-- get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks.
-- extract_data: tables/headings/images/links. get_selection: highlighted text. read_pdf: read a PDF.
+- get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows, never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.
+- extract_data: tables/headings/images/links. get_selection: read highlighted text. find_text({text}): select one literal page-text match; each call replaces the previous selection and never creates simultaneous highlights or browser Find UI. read_pdf: read a PDF.
 - wait_for_element({selector}) / wait_for_stable({quietMs}): wait for an element / for the page to go quiet after an action.
 - schedule_resume({after_seconds|run_at, reason, resume_instruction}): terminal durable pause for this current task.
 - schedule_task({title, prompt, schedule, target, mode}): create one-shot or fixed-minute-interval future work only when explicitly requested by the user. Calendar/cron recurrence is unsupported and must not be approximated. Prefer target.type:"url" for monitors/repeatable automations; use current_tab only for exact current-tab state.
@@ -1555,7 +1576,7 @@ TYPING:
 - For text fields prefer set_field({ref_id, text, submit}) — one call that focuses, clears, verifies, and only then optionally submits. Prefer submit:true for search fields. Otherwise type_ax({ref_id, text}) after reading the tree.
 - DRAFT CHECKPOINT: before filling an external email/message/post composer, formulate the exact recipient(s), subject (when applicable), and body. If the body is more than a short one-liner, save the complete text as \`[pending draft]\` with scratchpad_write before typing; never label it sent until the UI verifies sending.
 - HARD RULE: after click_ax on a text field, your NEXT call MUST be type_ax/set_field on the SAME ref. Do not click_ax again or re-read the tree first.
-- Native <select>: click_ax to focus, then press_keys the first letter (or ArrowDown + Enter). Custom/ARIA dropdowns (role="combobox", Stripe/Radix/React-Select): open it, then type-to-filter + Enter, or arrows + Enter — clicking an option ref usually fails silently.
+- Native <select>: use type_ax({ref_id,text:"exact option label"}); fallback to click_ax, then ArrowDown/ArrowUp + Enter. Custom/ARIA dropdowns (role="combobox", Stripe/Radix/React-Select): open them, use type_text({text:"filter"}) + Enter or arrows + Enter. press_keys does not support letter keys or modifiers.
 - Fill forms ONE FIELD AT A TIME: focus field A → type value A → field B → type value B. Never concatenate multiple values (name + price + period) into one type call.
 
 CLICKING:
