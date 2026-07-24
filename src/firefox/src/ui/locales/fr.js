@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': 'Ce plan n\'est plus en attente de révision — l\'exécution a été annulée.',
   'sp.plan.awaiting_review': 'Approuvez ou annulez le plan ci-dessus avant d\'envoyer un autre message.',
   'sp.plan.intent_unavailable': 'Le planificateur n’a pas pu produire une sortie structurée valide après une tentative de réparation. Ce tour continue en mode lecture seule.',
-  'sp.slash.busy_only_oob': 'Les messages sont mis en file d\'attente pendant que WebBrain est occupé. Seuls /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces et /verbose peuvent s\'exécuter immédiatement comme commandes slash.',
+  'sp.slash.busy_only_oob': 'Les messages sont mis en file d\'attente pendant que WebBrain est occupé. Seuls /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces et /verbose peuvent s\'exécuter immédiatement comme commandes slash.',
   'tool.go_back': 'Revenir en arrière',
   'tool.go_forward': 'Aller en avant',
   'st.display.search.placeholder': 'Rechercher dans les paramètres généraux',

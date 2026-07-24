@@ -2126,6 +2126,9 @@ function scheduledJobMeta(job) {
     if (job.watch?.lastObservation && job.status !== 'completed') {
       parts.push(truncate(String(job.watch.lastObservation), 80));
     }
+    if (job.watch?.lastAlertWarning) {
+      parts.push(truncate(String(job.watch.lastAlertWarning), 80));
+    }
   } else if (job.schedule?.type === 'recurring' && job.schedule?.interval_minutes) {
     parts.push(t('sp.scheduled.recurring', { minutes: job.schedule.interval_minutes }));
   }
@@ -2376,9 +2379,10 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
   if (assistantEl) {
     finalizeSteps(assistantEl);
     const textEl = assistantEl.querySelector('.message-text');
-    if (textEl && !textEl.textContent.trim() && (
+    const watchPollEvent = ['polled', 'triggered'].includes(event);
+    if (textEl && (watchPollEvent || !textEl.textContent.trim()) && (
       ['completed', 'clarification_required'].includes(event)
-      || ['polled', 'triggered'].includes(event)
+      || watchPollEvent
     ) && job?.lastResult) {
       textEl.innerHTML = formatMarkdown(job.lastResult);
       addMessageCopyButton(assistantEl);
@@ -2427,9 +2431,15 @@ function handleScheduledJobEvent(data, tabId) {
     setTabProcessing(runTabId, true);
     setTabAbortRequested(runTabId, false);
     syncSendButtonState();
-    hideRecommendedActions();
-    resetChatNavigation();
-    currentAssistantEl = addMessage('assistant', '');
+    if (job?.source === 'watch') {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = ensureScheduledTerminalMessage(job);
+    } else {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = addMessage('assistant', '');
+    }
     if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
     showActivity(t('sp.scheduled.running', { title }));
   } else if (event === 'completed') {

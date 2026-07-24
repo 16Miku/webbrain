@@ -534,7 +534,7 @@ The scheduler lets the agent defer work to a future browser session using the br
 |---|---|---|
 | `resume` | `schedule_resume` tool | Continues the current conversation in the same tab at a future time. Terminal tool — the current run ends when it fires. |
 | `task` | `schedule_task` tool | Runs a standalone user-authored prompt at a future time, optionally recurring. |
-| `task` with `source: "watch"` | `/watch` slash command | Polls the initiating page for a condition at a fixed 30–120 second interval. |
+| `task` with `source: "watch"` | `/watch` slash command | Polls the initiating page URL in a dedicated inactive tab at a fixed 30–120 second interval. |
 
 **Job lifecycle**
 
@@ -578,8 +578,11 @@ before the requested action and reports a duplicate key before an action can be
 repeated; it does not play audio itself. The scheduler first persists a fresh
 event key and requires verified `done(outcome="success")`. Only then does the
 Chrome offscreen document or Firefox background page generate the selected
-default, short, or long tone. Playback follows the existing `notifySound`
-setting.
+default, short, or long tone. If a model verifies success but omits `beep`, the
+scheduler records a warning and completes or continues the watch without audio
+instead of discarding the successful action. Watch helper tabs are never forced
+back to the URL after they diverge; the next poll creates a fresh inactive helper.
+Playback follows the existing `notifySound` setting.
 
 **Persistence**
 

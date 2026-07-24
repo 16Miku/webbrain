@@ -300,7 +300,7 @@ export default {
   "sp.watch.created": "הדף הזה נבדק כל {seconds} שניות.",
   "sp.watch.error": "לא ניתן ליצור מעקב: {error}",
   "sp.slash.unsupported": "{usage} אינו נתמך בדפדפן זה.",
-  "sp.slash.busy_only_oob": "הודעות נכנסות לתור בזמן ש-WebBrain עסוק. רק הפקודות /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces ו-/verbose יכולות לפעול מיד כפקודות לוכסן.",
+  "sp.slash.busy_only_oob": "הודעות נכנסות לתור בזמן ש-WebBrain עסוק. רק הפקודות /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ו-/verbose יכולות לפעול מיד כפקודות לוכסן.",
   "sp.compact.nothing_to_compact": "עדיין אין מה לדחוס - אין מספיק הקשר ישן יותר.",
   "sp.compact.busy": "לא ניתן לדחוס בזמן שהריצה מתבצעת - המתן עד שהיא תסתיים.",
   "sp.compact.failed": "דחיסה של ההקשר נכשלה: {error}",

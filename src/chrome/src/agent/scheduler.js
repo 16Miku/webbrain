@@ -256,16 +256,22 @@ function scheduledTimesAreNear(a, b) {
 function sameScheduledIntent(a, b) {
   const targetA = scheduledJobDuplicateTargetKey(a);
   const targetB = scheduledJobDuplicateTargetKey(b);
-  return !!targetA &&
+  const samePayload = !!targetA &&
     targetA === targetB &&
     a?.kind === b?.kind &&
     scheduledJobConversationKey(a) === scheduledJobConversationKey(b) &&
     String(a?.mode || 'act') === String(b?.mode || 'act') &&
-    scheduledJobPayloadKey(a) === scheduledJobPayloadKey(b) &&
+    scheduledJobPayloadKey(a) === scheduledJobPayloadKey(b);
+  if (!samePayload) return false;
+  if (a?.source === 'watch' || b?.source === 'watch') {
+    return a?.source === 'watch' && b?.source === 'watch';
+  }
+  return (
     scheduledJobIsImmediate(a) === scheduledJobIsImmediate(b) &&
     scheduledJobScheduleType(a) === scheduledJobScheduleType(b) &&
     scheduledJobIntervalMinutes(a) === scheduledJobIntervalMinutes(b) &&
-    scheduledTimesAreNear(a, b);
+    scheduledTimesAreNear(a, b)
+  );
 }
 
 function normalizeAgentTaskTarget(target, source, currentUrl = '') {
@@ -513,6 +519,7 @@ export function summarizeScheduledJob(job) {
       intervalSeconds: job.watch?.intervalSeconds || null,
       baselineEstablished: job.watch?.baselineEstablished === true,
       lastObservation: job.watch?.lastObservation || null,
+      lastAlertWarning: job.watch?.lastAlertWarning || null,
       lastTriggeredEventKey: job.watch?.lastTriggeredEventKey || null,
       lastTriggeredAt: job.watch?.lastTriggeredAt || null,
     } : null,
@@ -861,7 +868,7 @@ export class ScheduledJobManager {
       kind: 'task',
       source: 'watch',
       status: 'pending',
-      tabId,
+      tabId: null,
       conversationId: null,
       mode: 'act',
       title: parsed.title,
@@ -874,7 +881,6 @@ export class ScheduledJobManager {
       target: {
         type: 'url',
         url: parsed.url,
-        ...(tabId != null ? { tabId } : {}),
         originalTitle: String(currentTitle || '').slice(0, 300),
       },
       watch: {
@@ -884,6 +890,7 @@ export class ScheduledJobManager {
         intervalSeconds: parsed.intervalSeconds,
         baselineEstablished: false,
         lastObservation: null,
+        lastAlertWarning: null,
         lastTriggeredEventKey: null,
         lastTriggeredAt: null,
       },
@@ -1189,10 +1196,12 @@ export class ScheduledJobManager {
           if (sameTargetUrl(job.target.url, tab?.url || '')) {
             return job.target.tabId;
           }
-          try {
-            await this.api.tabs.update(job.target.tabId, { url: job.target.url });
-            return job.target.tabId;
-          } catch { /* create a fresh tab below */ }
+          if (job.source !== 'watch') {
+            try {
+              await this.api.tabs.update(job.target.tabId, { url: job.target.url });
+              return job.target.tabId;
+            } catch { /* create a fresh tab below */ }
+          }
         } catch { /* create a fresh tab below */ }
       }
       const tab = await this.api.tabs.create({ url: job.target.url, active: false });
@@ -1258,15 +1267,15 @@ export class ScheduledJobManager {
       && !!eventKey
       && !duplicateAlert
       && eventKey !== job.watch?.lastTriggeredEventKey;
-    const alertContractFailed = lastOutcome === 'success'
+    const alertWarning = lastOutcome === 'success'
       && job.watch?.beep === true
       && !duplicateAlert
-      && !freshAlert;
+      && !freshAlert
+      ? 'Watch reported success without arming a fresh /beep event; the action succeeded without an alert.'
+      : null;
     const effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
-    if (!lastOutcome || lastOutcome === 'failed' || alertContractFailed) {
-      const lastError = alertContractFailed
-        ? 'Watch reported success without arming a fresh /beep event.'
-        : lastOutcome === 'failed'
+    if (!lastOutcome || lastOutcome === 'failed') {
+      const lastError = lastOutcome === 'failed'
         ? (observation || 'Watch reported a failed check or action.')
         : 'Watch run ended without an explicit done outcome.';
       const failed = await this._updateJobIf(job.id, (prev) => (
@@ -1311,6 +1320,7 @@ export class ScheduledJobManager {
             ...prev.watch,
             baselineEstablished: true,
             lastObservation: observation,
+            lastAlertWarning: alertWarning,
             ...(effectiveOutcome === 'success' ? { lastTriggeredAt: iso(this.now()) } : {}),
             ...(freshAlert ? { lastTriggeredEventKey: eventKey } : {}),
           },
@@ -1355,6 +1365,7 @@ export class ScheduledJobManager {
         ...prev.watch,
         baselineEstablished: true,
         lastObservation: observation,
+        lastAlertWarning: alertWarning,
         ...(freshAlert ? { lastTriggeredEventKey: eventKey } : {}),
         lastTriggeredAt: iso(this.now()),
       },

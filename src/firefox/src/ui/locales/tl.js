@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': 'Ang planong ito ay hindi na naghihintay ng pagsusuri — ang pagtakbo ay kinansela.',
   'sp.plan.awaiting_review': 'Aprubahan o kanselahin ang plano sa itaas bago magpadala ng isa pang mensahe.',
   'sp.plan.intent_unavailable': 'Hindi nakapagbalik ang planner ng wastong nakaayos na output matapos ang isang pag-aayos. Magpapatuloy ang turn na ito sa read-only mode.',
-  'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',
+  'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',
   'tool.go_back': 'Bumabalik',
   'tool.go_forward': 'Sumusulong',
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',

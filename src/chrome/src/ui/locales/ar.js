@@ -637,7 +637,7 @@ export default {
   'sp.plan.expired': 'لم تعد هذه الخطة قيد المراجعة — تم إلغاء التشغيل.',
   'sp.plan.awaiting_review': 'وافق على الخطة أعلاه أو ألغها قبل إرسال رسالة أخرى.',
   'sp.plan.intent_unavailable': 'تعذر على المخطط إرجاع إخراج منظم صالح بعد محاولة إصلاح واحدة. ستستمر هذه الدورة في وضع القراءة فقط.',
-  'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /scratchpad و /memory و /schedule --list و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',
+  'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /scratchpad و /memory و /schedule --list و /watch و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',
   'tool.go_back': 'العودة للخلف',
   'tool.go_forward': 'التقدم للأمام',
   'st.display.search.placeholder': 'البحث في الإعدادات العامة',

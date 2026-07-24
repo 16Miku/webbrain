@@ -17437,7 +17437,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       locale,
-      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/scratchpad, \/memory, \/schedule --list, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
+      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
       `${label}: busy slash notice should explain queued messages and safe slash commands`,
     );
   }
@@ -17561,7 +17561,7 @@ test('sidepanel busy slash notice is updated in every locale', async () => {
       const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
       const message = locale['sp.slash.busy_only_oob'];
       assert.equal(typeof message, 'string', `${label}/${filename}: busy slash notice key missing`);
-      for (const syntax of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
+      for (const syntax of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
         assert.match(message, new RegExp(syntax.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${label}/${filename}: busy notice should mention ${syntax}`);
       }
     }
@@ -18815,8 +18815,8 @@ test('ScheduledJobManager plays successful /beep watches once per distinct event
       currentUrl: 'https://example.com/',
     });
     await missingArm.manager.handleAlarm(missingArm.alarmName(missingCreated.jobId));
-    assert.equal(missingArm.jobs()[0].status, 'failed', `${label}: /beep success without a fresh key should fail closed`);
-    assert.match(missingArm.jobs()[0].lastError, /without arming a fresh \/beep event/);
+    assert.equal(missingArm.jobs()[0].status, 'completed', `${label}: a missed optional beep should not destroy a successful watch`);
+    assert.match(missingArm.jobs()[0].watch.lastAlertWarning, /without arming a fresh \/beep event/);
   }
 });
 
@@ -18845,6 +18845,16 @@ test('/watch alert audio is background-owned, configurable, and distinct by styl
     assert.match(background, /playWatchAlert(?:,|:)/, `${label}: scheduler should own alert playback`);
     assert.match(panel, /event === 'completed' && job\?\.source !== 'watch'/, `${label}: watch completion must not also play the side-panel completion sound`);
     assert.match(panel, /'polled', 'triggered'/, `${label}: continuing watch runs should settle their side-panel run state`);
+    assert.match(
+      panel,
+      /event === 'running'[\s\S]*?job\?\.source === 'watch'[\s\S]*?ensureScheduledTerminalMessage\(job\)[\s\S]*?addMessage\('assistant', ''\)/,
+      `${label}: watch polls should reuse one assistant message instead of appending empty bubbles`,
+    );
+    assert.match(
+      panel,
+      /const watchPollEvent = \['polled', 'triggered'\]\.includes\(event\);[\s\S]*?watchPollEvent \|\| !textEl\.textContent\.trim\(\)[\s\S]*?formatMarkdown\(job\.lastResult\)/,
+      `${label}: every watch poll should replace the sticky message with its latest observation`,
+    );
   }
 });
 
@@ -18852,7 +18862,7 @@ test('/watch cards and documentation expose polling, baseline, and stop semantic
   for (const [label, prefix] of [['chrome', 'src/chrome/src'], ['firefox', 'src/firefox/src']]) {
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'ui/sidepanel.js'), 'utf8');
     assert.match(panel, /job\?\.source === 'watch'[\s\S]*?job\.watch\?\.intervalSeconds[\s\S]*?sp\.scheduled\.watch_once/, `${label}: watch cards should show interval and one-shot/keep semantics`);
-    assert.match(panel, /job\.watch\?\.beep[\s\S]*?beepStyle[\s\S]*?lastObservation/, `${label}: watch cards should expose alert style and the last observation`);
+    assert.match(panel, /job\.watch\?\.beep[\s\S]*?beepStyle[\s\S]*?lastObservation[\s\S]*?lastAlertWarning/, `${label}: watch cards should expose alert style, the latest observation, and alert warnings`);
     assert.match(panel, /card\.dataset\.source = job\.source \|\| ''/, `${label}: watch cards should retain a stable source marker`);
   }
 
@@ -18867,7 +18877,16 @@ test('/watch cards and documentation expose polling, baseline, and stop semantic
 test('ScheduledJobManager creates immediate URL-bound watches and dedupes identical intent', async () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
   for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
-    const h = makeSchedulerHarness(SchedulerMod, { now });
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('tool_result', {
+          name: 'done',
+          result: { done: true, summary: 'No new release.', outcome: 'partial' },
+        });
+        return 'No new release.';
+      },
+    });
     const args = {
       prompt: 'When a new release appears, summarize it.',
       interval_seconds: 60,
@@ -18886,8 +18905,10 @@ test('ScheduledJobManager creates immediate URL-bound watches and dedupes identi
 
     const stored = h.jobs()[0];
     assert.equal(stored.source, 'watch');
+    assert.equal(stored.tabId, null, `${label}: a watch should not retain the user's initiating tab`);
     assert.equal(stored.target.type, 'url');
     assert.equal(stored.target.url, 'https://example.com/releases');
+    assert.equal(stored.target.tabId, undefined, `${label}: a watch target should start without the initiating tab id`);
     assert.deepEqual(stored.watch, {
       keep: true,
       beep: false,
@@ -18895,9 +18916,18 @@ test('ScheduledJobManager creates immediate URL-bound watches and dedupes identi
       intervalSeconds: 60,
       baselineEstablished: false,
       lastObservation: null,
+      lastAlertWarning: null,
       lastTriggeredEventKey: null,
       lastTriggeredAt: null,
     });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    const firstPoll = h.jobs()[0];
+    assert.equal(firstPoll.status, 'pending', `${label}: partial watch poll should stay live`);
+    assert.equal(firstPoll.immediate, false, `${label}: later polls should no longer be marked immediate`);
+    assert.equal(firstPoll.target.tabId, 100, `${label}: first poll should create a dedicated helper tab`);
+    assert.equal(h.tabs.get(100).active, false, `${label}: watch helper tab should stay inactive`);
+    assert.equal(h.tabs.get(77).url, 'https://example.com/', `${label}: watch should not navigate the initiating tab`);
 
     const duplicate = await h.manager.createWatchJob({
       tabId: 77,
@@ -18905,9 +18935,16 @@ test('ScheduledJobManager creates immediate URL-bound watches and dedupes identi
       currentUrl: 'https://example.com/releases',
       currentTitle: 'Releases',
     });
-    assert.equal(duplicate.deduped, true, `${label}: identical live watch should be deduped`);
+    assert.equal(duplicate.deduped, true, `${label}: identical live watch should remain deduped after a poll`);
     assert.equal(duplicate.jobId, created.jobId);
     assert.equal(h.jobs().length, 1);
+
+    h.tabs.set(100, { ...h.tabs.get(100), url: 'https://example.com/elsewhere' });
+    h.setNow(now + 60_000);
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    assert.equal(h.tabs.get(100).url, 'https://example.com/elsewhere', `${label}: a diverged helper tab should not be forced back`);
+    assert.equal(h.jobs()[0].target.tabId, 101, `${label}: a diverged helper should be replaced with a fresh background tab`);
+    assert.equal(h.tabs.get(101).active, false, `${label}: replacement helper tab should stay inactive`);
 
     const distinct = await h.manager.createWatchJob({
       tabId: 77,

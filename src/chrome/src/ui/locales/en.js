@@ -326,7 +326,7 @@ export default {
   "sp.watch.created": "Watching this page every {seconds} seconds.",
   "sp.watch.error": "Could not create watch: {error}",
   "sp.slash.unsupported": "{usage} is not supported in this browser.",
-  'sp.slash.busy_only_oob': 'Messages are queued while WebBrain is busy. Only /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose can run immediately as slash commands.',
+  'sp.slash.busy_only_oob': 'Messages are queued while WebBrain is busy. Only /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose can run immediately as slash commands.',
   'sp.compact.nothing_to_compact': 'Nothing to compact yet — there is not enough older context.',
   'sp.compact.busy': 'Cannot compact while a run is in progress — wait for it to finish.',
   'sp.compact.failed': 'Context compaction failed: {error}',

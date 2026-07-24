@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': 'Rencana ini tidak lagi menunggu peninjauan — proses dibatalkan.',
   'sp.plan.awaiting_review': 'Setujui atau batalkan rencana di atas sebelum mengirim pesan lain.',
   'sp.plan.intent_unavailable': 'Perencana tidak dapat menghasilkan keluaran terstruktur yang valid setelah satu upaya perbaikan. Giliran ini dilanjutkan dalam mode hanya-baca.',
-  'sp.slash.busy_only_oob': 'Pesan dimasukkan ke antrean saat WebBrain sibuk. Hanya /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose yang dapat langsung berjalan sebagai perintah slash.',
+  'sp.slash.busy_only_oob': 'Pesan dimasukkan ke antrean saat WebBrain sibuk. Hanya /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose yang dapat langsung berjalan sebagai perintah slash.',
   'tool.go_back': 'Kembali',
   'tool.go_forward': 'Maju',
   'st.display.search.placeholder': 'Cari pengaturan Umum',

@@ -637,7 +637,7 @@ export default {
   'sp.plan.expired': 'แผนนี้ไม่ได้รอการตรวจสอบอีกต่อไป — การดำเนินการถูกยกเลิก',
   'sp.plan.awaiting_review': 'อนุมัติหรือยกเลิกแผนด้านบนก่อนส่งข้อความอื่น',
   'sp.plan.intent_unavailable': 'ตัววางแผนไม่สามารถส่งคืนผลลัพธ์แบบมีโครงสร้างที่ถูกต้องหลังการซ่อมหนึ่งครั้ง เทิร์นนี้จะดำเนินต่อในโหมดอ่านอย่างเดียว',
-  'sp.slash.busy_only_oob': 'ข้อความจะถูกเข้าคิวขณะที่ WebBrain ไม่ว่าง เฉพาะ /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces และ /verbose เท่านั้นที่เรียกใช้ได้ทันทีในฐานะคำสั่ง slash',
+  'sp.slash.busy_only_oob': 'ข้อความจะถูกเข้าคิวขณะที่ WebBrain ไม่ว่าง เฉพาะ /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces และ /verbose เท่านั้นที่เรียกใช้ได้ทันทีในฐานะคำสั่ง slash',
   'tool.go_back': 'กำลังย้อนกลับ',
   'tool.go_forward': 'กำลังไปข้างหน้า',
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',

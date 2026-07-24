@@ -637,7 +637,7 @@ export default {
   'sp.plan.expired': 'Этот план больше не ожидает рассмотрения — запуск отменён.',
   'sp.plan.awaiting_review': 'Одобрите или отмените план выше, прежде чем отправлять другое сообщение.',
   'sp.plan.intent_unavailable': 'Планировщик не вернул корректный структурированный результат после одной попытки исправления. Этот ход продолжится в режиме только для чтения.',
-  'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',
+  'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',
   'tool.go_back': 'Назад',
   'tool.go_forward': 'Вперёд',
   'st.display.search.placeholder': 'Поиск в общих настройках',

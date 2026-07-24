@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': 'この計画はレビュー待ちではなくなりました — 実行はキャンセルされました。',
   'sp.plan.awaiting_review': '別のメッセージを送信する前に、上の計画を承認またはキャンセルしてください。',
   'sp.plan.intent_unavailable': 'プランナーは1回の修復後も有効な構造化出力を返せませんでした。このターンは読み取り専用モードで続行します。',
-  'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/scratchpad、/memory、/schedule --list、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',
+  'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',
   'tool.go_back': '戻る',
   'tool.go_forward': '進む',
   'st.display.search.placeholder': '一般設定を検索',

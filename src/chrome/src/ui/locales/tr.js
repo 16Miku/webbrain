@@ -642,7 +642,7 @@ export default {
   'sp.plan.expired': 'Bu plan artık inceleme beklenmiyor — çalıştırma iptal edildi.',
   'sp.plan.awaiting_review': 'Başka bir mesaj göndermeden önce yukarıdaki planı onaylayın veya iptal edin.',
   'sp.plan.intent_unavailable': 'Planlayıcı bir onarımdan sonra geçerli yapılandırılmış çıktı döndüremedi. Bu tur salt okunur modda devam ediyor.',
-  'sp.slash.busy_only_oob': 'WebBrain meşgulken mesajlar kuyruğa alınır. Yalnızca /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces ve /verbose slash komutları olarak hemen çalışabilir.',
+  'sp.slash.busy_only_oob': 'WebBrain meşgulken mesajlar kuyruğa alınır. Yalnızca /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ve /verbose slash komutları olarak hemen çalışabilir.',
   'tool.go_back': 'Geri gidiliyor',
   'tool.go_forward': 'İleri gidiliyor',
   'st.display.search.placeholder': 'Genel ayarları ara',

@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': '이 계획은 더 이상 검토 대기 중이 아닙니다 — 실행이 취소되었습니다.',
   'sp.plan.awaiting_review': '다른 메시지를 보내기 전에 위의 계획을 승인하거나 취소하세요.',
   'sp.plan.intent_unavailable': '플래너가 한 번의 복구 후에도 유효한 구조화 출력을 반환하지 못했습니다. 이 턴은 읽기 전용 모드로 계속합니다.',
-  'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',
+  'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',
   'tool.go_back': '뒤로 가기',
   'tool.go_forward': '앞으로 가기',
   'st.display.search.placeholder': '일반 설정 검색',

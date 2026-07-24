@@ -628,7 +628,7 @@ export default {
   'sp.plan.expired': 'Ten plan nie oczekuje już na przegląd — uruchomienie zostało anulowane.',
   'sp.plan.awaiting_review': 'Zatwierdź lub anuluj powyższy plan przed wysłaniem kolejnej wiadomości.',
   'sp.plan.intent_unavailable': 'Planer nie zwrócił prawidłowego ustrukturyzowanego wyniku po jednej próbie naprawy. Ta tura będzie kontynuowana w trybie tylko do odczytu.',
-  'sp.slash.busy_only_oob': 'Wiadomości są kolejkowane, gdy WebBrain jest zajęty. Tylko /help, /progress, /scratchpad, /memory, /schedule --list, /dangerously-skip-permissions, /screenshot, /export, /export --traces i /verbose mogą uruchamiać się od razu jako polecenia slash.',
+  'sp.slash.busy_only_oob': 'Wiadomości są kolejkowane, gdy WebBrain jest zajęty. Tylko /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces i /verbose mogą uruchamiać się od razu jako polecenia slash.',
   'tool.go_back': 'Cofanie',
   'tool.go_forward': 'Przechodzenie do przodu',
   'st.display.search.placeholder': 'Szukaj w ustawieniach ogólnych',
