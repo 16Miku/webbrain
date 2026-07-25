@@ -54,6 +54,8 @@ src/firefox/
 │   ├── run-ui-journal.js           # Detached-run replay + streamed-text snapshots
 │   ├── agent/
 │   │   ├── agent.js                # Core agent loop
+│   │   ├── loop-detector.js        # Browser-free loop detection, directly unit-tested
+│   │   ├── mutation-tools.js       # This build's state-change + mutating tool sets
 │   │   ├── tools.js                # Tool schemas + system prompts (incl. 4 AX tools)
 │   │   ├── skills.js               # Settings skills + dynamic skill tool manifests
 │   │   ├── planner.js              # Plan-before-Act structured planner
@@ -458,7 +460,11 @@ All job kinds (`resume`, `task`), lifecycle states, retry/deferral logic, schedu
 
 All identical to Chrome:
 
-- **Loop detection** — three detectors (general repeat, coordinate click, navigation) with the same thresholds and nudge/stop behavior
+- **Loop detection** — `agent/loop-detector.js` is inherited by `Agent` and
+  imported directly by the unit suite; it contains the three detectors
+  (general repeat, coordinate click, navigation) with the same thresholds and
+  nudge/stop behavior. It is byte-identical to the Chrome copy; the tool sets
+  it classifies against differ and live in `agent/mutation-tools.js`
 - **Context management** — auto-trim at >50 messages or >80,000 chars, LLM-powered summarization, emergency trim on context overflow, image pruning (last 4 only), tool-result cap at 8,000 chars
 - **Verbose mode** — three levels: Normal / Verbose ON / Deep verbose (Shift+click dumps the LLM-payload ring buffer to DevTools console). Deep verbose works identically; there's just no persisted trace UI to browse it from
 - **Site adapters** — same adapter set as Chrome (58 sites across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, etc.); same `getActiveAdapter(url)` matching, same mid-conversation re-injection on navigation. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count.

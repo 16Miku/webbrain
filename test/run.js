@@ -420,14 +420,37 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/agent/permission-gate.js').replace(/\\/g, '/')
 );
 
-// loop-bucket.js is pure JS — the URL-family loop-detector bucketing logic
-// lives here so both agent.js and the tests can exercise the same code.
+// Browser-free loop detection and its URL-family bucketing are imported from
+// the same production modules used by both Agent builds.
 const { resourceBucket, bucketArgsKey, URL_FAMILY_TOOLS } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/loop-bucket.js').replace(/\\/g, '/')
 );
 const { resourceBucket: resourceBucketFx, bucketArgsKey: bucketArgsKeyFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/loop-bucket.js').replace(/\\/g, '/')
 );
+const { LoopDetector: LoopDetectorCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/loop-detector.js').replace(/\\/g, '/')
+);
+const { LoopDetector: LoopDetectorFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/loop-detector.js').replace(/\\/g, '/')
+);
+// The mutating-tool surface differs per build, so it lives outside the
+// byte-identical loop-detector module. Import the real sets rather than
+// restating them here — a hand-copied list is exactly the drift this suite
+// exists to prevent.
+const { BROWSER_MUTATION_TOOLS: MUTATION_TOOLS_CH, STATE_CHANGE_TOOLS: STATE_CHANGE_TOOLS_CH } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/mutation-tools.js').replace(/\\/g, '/')
+);
+const { BROWSER_MUTATION_TOOLS: MUTATION_TOOLS_FX, STATE_CHANGE_TOOLS: STATE_CHANGE_TOOLS_FX } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/mutation-tools.js').replace(/\\/g, '/')
+);
+// The standalone detector is exercised against Chrome's tool surface, which is
+// the superset of the two builds.
+class ConfiguredLoopDetector extends LoopDetectorCh {
+  _isBrowserMutationTool(toolName) {
+    return MUTATION_TOOLS_CH.has(toolName);
+  }
+}
 const {
   detectProgressAction,
   isValidLedgerStatus,
@@ -806,382 +829,6 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/sheets-tools.js').replace(/\\/g, '/')
 );
-
-// agent.js imports tools.js and cdp-client.js (which uses chrome.*). We need
-// only the loop-detection helpers, so we extract them via a tiny standalone
-// shim that mirrors the relevant Agent methods. Keep this in sync with
-// agent.js _loopCallKey / _recordCall / _detectLoop / _checkLoop / _detectApiShortcut.
-const STATE_CHANGE_TOOLS_TEST = new Set([
-  'navigate', 'new_tab', 'go_back', 'go_forward', 'click', 'click_ax',
-  'type_text', 'type_ax', 'set_field', 'press_keys', 'scroll', 'hover',
-  'drag_drop', 'execute_js',
-]);
-
-class LoopDetectorShim {
-  constructor() {
-    this.recentCalls = new Map();
-    this.loopNudges = new Map();
-    this.healthyCallsSinceLoop = new Map();
-    this.failedActionLoops = new Map();
-    this.recentCoordClicks = new Map();
-    this.axReadStates = new Map();
-    this.noProgressScrolls = new Map();
-    this.recentNavUrls = new Map();
-  }
-  _normalizeUrl(url) {
-    if (!url) return '';
-    try {
-      const u = new URL(url);
-      return u.origin + u.pathname + u.search + u.hash;
-    } catch { return url; }
-  }
-  _noteNavArrival(tabId, url) {
-    const normalized = this._normalizeUrl(url);
-    if (!normalized) return false;
-    const seen = this.recentNavUrls.get(tabId) || [];
-    const revisited = seen.includes(normalized);
-    seen.push(normalized);
-    if (seen.length > 5) seen.shift();
-    this.recentNavUrls.set(tabId, seen);
-    return revisited;
-  }
-  _checkCoordClickLoop(tabId, x, y) {
-    const bx = Math.round(x / 5) * 5;
-    const by = Math.round(y / 5) * 5;
-    const key = `${bx},${by}`;
-    const buf = this.recentCoordClicks.get(tabId) || [];
-    buf.push({ key, ts: Date.now() });
-    if (buf.length > 12) buf.shift();
-    this.recentCoordClicks.set(tabId, buf);
-    const counts = new Map();
-    for (const e of buf) counts.set(e.key, (counts.get(e.key) || 0) + 1);
-    const n = counts.get(key) || 0;
-    if (n >= 8) return { kind: 'stop', x: bx, y: by };
-    if (n >= 5) return { kind: 'nudge', x: bx, y: by };
-    return { kind: 'none' };
-  }
-  _isToolResultErroredForLoop(name, _args, result) {
-    if (!result || typeof result !== 'object') return false;
-    if (result.error || result.success === false || result.noProgress) return true;
-    const status = Number(result.status);
-    return URL_FAMILY_TOOLS.has(name) && Number.isFinite(status) && status >= 400;
-  }
-  _fetchUsesHttpByteRange(args) {
-    if (!args?.headers || typeof args.headers !== 'object') return false;
-    for (const [name, value] of Object.entries(args.headers)) {
-      if (String(name).toLowerCase() === 'range' && /^\s*bytes\s*=/i.test(String(value || ''))) {
-        return true;
-      }
-    }
-    return false;
-  }
-  _findTextMatchLoopIdentity(result) {
-    if (result?.success !== true || result?.verified === false || !result?.rect || typeof result.rect !== 'object') return '';
-    const rect = result.rect;
-    const pageX = typeof rect.pageX === 'number' ? rect.pageX : NaN;
-    const pageY = typeof rect.pageY === 'number' ? rect.pageY : NaN;
-    const viewportX = typeof rect.x === 'number' ? rect.x : NaN;
-    const viewportY = typeof rect.y === 'number' ? rect.y : NaN;
-    const width = typeof rect.width === 'number' ? rect.width : NaN;
-    const height = typeof rect.height === 'number' ? rect.height : NaN;
-    const x = Number.isFinite(pageX) ? pageX : viewportX;
-    const y = Number.isFinite(pageY) ? pageY : viewportY;
-    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return '';
-    let selectionIdentity = 'document';
-    if (result.selectionSource === 'text_control') {
-      const selectionStart = result.selectionStart;
-      const selectionEnd = result.selectionEnd;
-      if (
-        !Number.isInteger(selectionStart)
-        || !Number.isInteger(selectionEnd)
-        || selectionStart < 0
-        || selectionEnd <= selectionStart
-      ) return '';
-      selectionIdentity = `text_control:${selectionStart}:${selectionEnd}`;
-    }
-    const rectIdentity = [x, y, width, height]
-      .map(value => Math.round(value * 2) / 2)
-      .join(',');
-    return `${selectionIdentity}|${rectIdentity}`;
-  }
-  _noteHealthyLoopCall(tabId) {
-    const healthy = (this.healthyCallsSinceLoop.get(tabId) || 0) + 1;
-    this.healthyCallsSinceLoop.set(tabId, healthy);
-    if (healthy >= 2) {
-      this.loopNudges.delete(tabId);
-      this.healthyCallsSinceLoop.delete(tabId);
-    }
-    return { kind: 'none' };
-  }
-  _loopCallKey(name, args, result) {
-    if (result?.nonRetryableScope) {
-      return `nonretryable|${String(result.nonRetryableScope).slice(0, 240)}|err`;
-    }
-    const checkboxState = result?.checkboxState;
-    if (
-      checkboxState
-      && typeof checkboxState.desiredChecked === 'boolean'
-      && typeof checkboxState.actualChecked === 'boolean'
-      && checkboxState.desiredChecked !== checkboxState.actualChecked
-    ) {
-      const identity = String(
-        checkboxState.identity
-        || result.checkboxIdentity
-        || result.ref_id
-        || '',
-      ).trim().slice(0, 240);
-      if (identity) {
-        return `checkbox|${identity}|desired:${checkboxState.desiredChecked}|actual:${checkboxState.actualChecked}`;
-      }
-    }
-    // Mirror agent.js: URL-family tools bucket by resource identity so
-    // the agent can't escape loop detection by fetching the same file
-    // via 8 different API endpoints. Falls back to exact JSON for other
-    // tools.
-    const argsHash = bucketArgsKey(name, args);
-    const errored = this._isToolResultErroredForLoop(name, args, result);
-    if (name === 'find_text' && !errored) {
-      const matchIdentity = this._findTextMatchLoopIdentity(result);
-      if (matchIdentity) return `${name}|${argsHash}|match:${matchIdentity}`;
-    }
-    return `${name}|${argsHash}|${errored ? 'err' : 'ok'}`;
-  }
-  _recordCall(tabId, name, args, result) {
-    const key = this._loopCallKey(name, args, result);
-    const buf = this.recentCalls.get(tabId) || [];
-    buf.push({ key, name, ts: Date.now() });
-    if (buf.length > 6) buf.shift();
-    this.recentCalls.set(tabId, buf);
-    return { buf, key };
-  }
-  _detectLoop(buf, activeKey = null) {
-    if (!buf || buf.length < 3) return null;
-    const counts = new Map();
-    for (const e of buf) counts.set(e.key, (counts.get(e.key) || 0) + 1);
-    for (const [key, n] of counts) {
-      if (n >= 3 && (!activeKey || key === activeKey)) return { type: 'repeat', key, name: key.split('|')[0], count: n };
-    }
-    if (buf.length >= 4) {
-      const last4 = buf.slice(-4);
-      if (
-        last4[0].key === last4[2].key &&
-        last4[1].key === last4[3].key &&
-        last4[0].key !== last4[1].key
-      ) {
-        return { type: 'oscillation', a: last4[0].name, b: last4[1].name };
-      }
-    }
-    return null;
-  }
-  _checkLoop(tabId, name, args, result) {
-    if (result?.pageUrlChanged === true && !this._noteNavArrival(tabId, result.currentUrl)) {
-      this.recentCalls.delete(tabId);
-      this.loopNudges.delete(tabId);
-      this.healthyCallsSinceLoop.delete(tabId);
-      this.failedActionLoops.delete(tabId);
-      this.recentCoordClicks.delete(tabId);
-      this.axReadStates.delete(tabId);
-      this.noProgressScrolls.delete(tabId);
-    }
-    if (
-      name === 'find_text'
-      && result?.success === true
-      && !this._findTextMatchLoopIdentity(result)
-    ) {
-      return this._noteHealthyLoopCall(tabId);
-    }
-    const { buf, key } = this._recordCall(tabId, name, args, result);
-    if (STATE_CHANGE_TOOLS_TEST.has(name)) {
-      const normalizeFailureScope = value => String(value).slice(0, 320);
-      const defaultFailureScope = normalizeFailureScope(`${name}|${bucketArgsKey(name, args)}`);
-      const failureScope = normalizeFailureScope(result?.failureScope || defaultFailureScope);
-      const equivalentFailureScopes = new Set([failureScope, defaultFailureScope]);
-      if ((name === 'set_field' || name === 'type_ax') && typeof args?.ref_id === 'string') {
-        equivalentFailureScopes.add(normalizeFailureScope(`field-value:${args.ref_id}`));
-      }
-      if (name === 'click' && typeof args?.text === 'string') {
-        equivalentFailureScopes.add(normalizeFailureScope(`ambiguous-click:${args.text.trim().toLowerCase()}`));
-      }
-      const failures = this.failedActionLoops.get(tabId) || new Map();
-      if (this._isToolResultErroredForLoop(name, args, result)) {
-        const attempts = (failures.get(failureScope) || 0) + 1;
-        failures.set(failureScope, attempts);
-        this.failedActionLoops.set(tabId, failures);
-        if (attempts >= 3) {
-          this.failedActionLoops.delete(tabId);
-          return { kind: 'stop' };
-        }
-        if (attempts === 2) return { kind: 'nudge', warning: '[FAILED ACTION LOOP]' };
-      } else if (result?.success === true && result?.verified !== false) {
-        for (const scope of equivalentFailureScopes) failures.delete(scope);
-        if (failures.size) this.failedActionLoops.set(tabId, failures);
-        else this.failedActionLoops.delete(tabId);
-      }
-    }
-    if (result?.nonRetryable) {
-      const repeats = buf.filter(entry => entry.key === key).length;
-      if (repeats >= 2) return { kind: 'stop' };
-    }
-    if (key.startsWith('checkbox|')) {
-      const repeats = buf.filter(entry => entry.key === key).length;
-      if (repeats >= 3) return { kind: 'stop' };
-      if (repeats >= 2) return { kind: 'nudge' };
-    }
-    const loop = this._detectLoop(buf, key);
-    if (loop?.type === 'oscillation' && loop.a === 'find_text' && loop.b === 'find_text') {
-      return this._noteHealthyLoopCall(tabId);
-    }
-    if (!loop) {
-      return this._noteHealthyLoopCall(tabId);
-    }
-    const method = String(args?.method || 'GET').toUpperCase();
-    if (
-      loop.type === 'repeat' &&
-      URL_FAMILY_TOOLS.has(name) &&
-      method === 'GET' &&
-      this._isToolResultErroredForLoop(name, args, result)
-    ) {
-      const rangedFetch = name === 'fetch_url' && this._fetchUsesHttpByteRange(args);
-      return {
-        kind: 'stop',
-        message: rangedFetch
-          ? 'Stopped: fetch_url failed three times while probing HTTP byte ranges. Use find, offset:nextOffset, or a partial answer.'
-          : `Stopped: ${name} failed three times for the same read-only resource.`,
-      };
-    }
-    this.healthyCallsSinceLoop.delete(tabId);
-    const nudges = (this.loopNudges.get(tabId) || 0) + 1;
-    this.loopNudges.set(tabId, nudges);
-    if (nudges >= 8) {
-      return { kind: 'stop' };
-    }
-    const rangedFetch = loop.type === 'repeat'
-      && name === 'fetch_url'
-      && method === 'GET'
-      && this._fetchUsesHttpByteRange(args);
-    return {
-      kind: 'nudge',
-      warning: rangedFetch
-        ? '[LOOP DETECTED: Use fetch_url find or offset:nextOffset; do not send another Range header.]'
-        : '[LOOP DETECTED]',
-    };
-  }
-  _checkAccessibilityReadLoop(tabId, name, args, result) {
-    if (name !== 'get_accessibility_tree') {
-      this.axReadStates.delete(tabId);
-      return { kind: 'none' };
-    }
-    const previous = this.axReadStates.get(tabId) || {
-      total: 0, suspicious: 0, nextPage: null, seenPages: new Set(), warned: false,
-    };
-    const page = Number(args?.page || 1);
-    const hasRef = typeof args?.ref_id === 'string' && args.ref_id.trim() !== '';
-    const sequentialPage = !hasRef
-      && previous.total > 0
-      && Number.isFinite(previous.nextPage)
-      && page === previous.nextPage
-      && !previous.seenPages.has(page);
-    const repeatedRootOrPage = !hasRef && previous.total > 0 && !sequentialPage;
-    const content = String(result?.pageContent || '').trim();
-    const meaningfulLines = content ? content.split(/\r?\n/).filter(line => line.trim()).length : 0;
-    const suspicious = hasRef || repeatedRootOrPage || (hasRef && meaningfulLines <= 1);
-    const state = {
-      total: previous.total + 1,
-      suspicious: previous.suspicious + (suspicious ? 1 : 0),
-      nextPage: Number.isFinite(Number(result?.nextPage)) ? Number(result.nextPage) : null,
-      seenPages: new Set(previous.seenPages),
-      warned: previous.warned,
-    };
-    state.seenPages.add(page);
-    this.axReadStates.set(tabId, state);
-    if (state.suspicious >= 6 || (state.total >= 12 && (state.suspicious > 0 || !sequentialPage))) {
-      this.axReadStates.delete(tabId);
-      return { kind: 'stop' };
-    }
-    if (!state.warned && state.suspicious >= 3) {
-      state.warned = true;
-      return { kind: 'nudge' };
-    }
-    return { kind: 'none' };
-  }
-  _noProgressScrollKey(args = {}, result = {}) {
-    const direction = String(args?.direction || '').trim().toLowerCase() || 'unspecified';
-    const refId = String(args?.ref_id || '').trim();
-    if (refId) return `${direction}|ref:${refId}`;
-    const x = Number(args?.x);
-    const y = Number(args?.y);
-    if (args?.x != null && args?.y != null && Number.isFinite(x) && Number.isFinite(y)) {
-      return `${direction}|xy:${Math.round(x)},${Math.round(y)}`;
-    }
-    const origin = result?.originElement;
-    if (origin && typeof origin === 'object') {
-      const rect = origin.rect || {};
-      const text = String(origin.text || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-      return `${direction}|origin:${String(result?.origin || '')}:${String(origin.tag || '')}:${String(origin.role || '')}:${Math.round(Number(rect.x) || 0)},${Math.round(Number(rect.y) || 0)},${Math.round(Number(rect.w) || 0)},${Math.round(Number(rect.h) || 0)}:${text}`;
-    }
-    return `${direction}|auto`;
-  }
-  _checkNoProgressScroll(tabId, name, args, result) {
-    if (name !== 'scroll') {
-      if (result?.pageUrlChanged === true) this.noProgressScrolls.delete(tabId);
-      return { kind: 'none' };
-    }
-    if (result?.moved !== false) {
-      this.noProgressScrolls.delete(tabId);
-      return { kind: 'none' };
-    }
-    const key = this._noProgressScrollKey(args, result);
-    const previous = this.noProgressScrolls.get(tabId);
-    const count = previous?.key === key ? previous.count + 1 : 1;
-    this.noProgressScrolls.set(tabId, { key, count });
-    if (count >= 3) {
-      this.noProgressScrolls.delete(tabId);
-      return { kind: 'stop' };
-    }
-    if (count >= 2) return { kind: 'nudge' };
-    return { kind: 'none' };
-  }
-  _detectApiShortcut(tabId, loop, buf) {
-    if (loop.type !== 'repeat') return null;
-    if (!['click', 'click_ax'].includes(loop.name)) return null;
-    const apiRequests = globalThis.__webbrainApiRequests?.get(tabId);
-    if (!apiRequests || apiRequests.length === 0) return null;
-
-    const clickTimes = buf.filter(e => e.key === loop.key).map(e => e.ts);
-    if (clickTimes.length < 2) return null;
-
-    const WINDOW_MS = 3000;
-    let candidate = null;
-    let matches = 0;
-    const usedRequestIndexes = new Set();
-    for (const clickTs of clickTimes) {
-      const hitIndex = apiRequests.findIndex((r, idx) =>
-        !usedRequestIndexes.has(idx) &&
-        r.ts >= clickTs && r.ts <= clickTs + WINDOW_MS &&
-        (!candidate || (r.url === candidate.url && String(r.method || '').toUpperCase() === candidate.method))
-      );
-      if (hitIndex < 0) continue;
-      const hit = apiRequests[hitIndex];
-      if (!hit) continue;
-      if (!candidate) {
-        candidate = {
-          url: hit.url,
-          method: String(hit.method || '').toUpperCase(),
-          replayRequestId: hit.replayRequestId,
-        };
-      }
-      usedRequestIndexes.add(hitIndex);
-      matches++;
-    }
-    if (!candidate || matches < 2) return null;
-    return {
-      url: candidate.url,
-      method: candidate.method,
-      occurrences: matches,
-      replayRequestId: candidate.replayRequestId,
-    };
-  }
-}
 
 // ────────────────────────────────────────────────────────────────────────
 // Test framework (one function, no deps)
@@ -3834,7 +3481,7 @@ test('trace recorders normalize done only from explicit loop error evidence', ()
 console.log('\nloop detection');
 
 test('no loop for distinct calls', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 1;
   assert.equal(d._checkLoop(tab, 'read_page', {}, { ok: true }).kind, 'none');
   assert.equal(d._checkLoop(tab, 'click', { selector: '#a' }, { success: true }).kind, 'none');
@@ -3842,7 +3489,7 @@ test('no loop for distinct calls', () => {
 });
 
 test('checkbox loop detection follows unchanged semantic state across tools and arguments', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 101;
   const unchanged = {
     success: false,
@@ -3857,7 +3504,7 @@ test('checkbox loop detection follows unchanged semantic state across tools and 
   assert.equal(d._checkLoop(tab, 'set_checked', { ref_id: 'ref_8', checked: true }, unchanged).kind, 'nudge');
   assert.equal(d._checkLoop(tab, 'click', { selector: '#firefox' }, unchanged).kind, 'stop');
 
-  const other = new LoopDetectorShim();
+  const other = new ConfiguredLoopDetector();
   assert.equal(other._checkLoop(tab, 'click_ax', { ref_id: 'ref_8' }, unchanged).kind, 'none');
   assert.equal(other._checkLoop(tab, 'set_checked', { ref_id: 'ref_9', checked: true }, {
     ...unchanged,
@@ -3866,7 +3513,7 @@ test('checkbox loop detection follows unchanged semantic state across tools and 
 });
 
 test('three identical calls trigger nudge', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 2;
   d._checkLoop(tab, 'click', { selector: '#submit' }, { success: true });
   d._checkLoop(tab, 'click', { selector: '#submit' }, { success: true });
@@ -3876,7 +3523,7 @@ test('three identical calls trigger nudge', () => {
 
 test('find_text loop detection follows match progress in both browser agents', () => {
   const implementations = [
-    ['shim', LoopDetectorShim],
+    ['standalone', ConfiguredLoopDetector],
     ['chrome', AgentCh],
     ['firefox', AgentFx],
   ];
@@ -3979,7 +3626,7 @@ test('find_text loop detection follows match progress in both browser agents', (
 });
 
 test('failed actions nudge on attempt two and stop on attempt three', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 3;
   assert.equal(d._checkLoop(tab, 'click', { selector: '#missing' }, { success: false }).kind, 'none');
   assert.equal(d._checkLoop(tab, 'click', { selector: '#missing' }, { success: false }).kind, 'nudge');
@@ -3988,7 +3635,7 @@ test('failed actions nudge on attempt two and stop on attempt three', () => {
 });
 
 test('three failed read-only URL calls stop instead of issuing eight nudges', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 31;
   const args = { url: 'https://example.com/api/items' };
   d._checkLoop(tab, 'fetch_url', args, { success: false, error: 'network failed' });
@@ -3998,7 +3645,7 @@ test('three failed read-only URL calls stop instead of issuing eight nudges', ()
 });
 
 test('ranged fetch thrashing receives source-specific recovery and eventually stops', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 35;
   let recovery = null;
   let stopped = null;
@@ -4025,7 +3672,7 @@ test('ranged fetch thrashing receives source-specific recovery and eventually st
 });
 
 test('trace ranged-fetch failure sequence stops and propagates loop_stopped status in both agents', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 36;
   const url = 'https://raw.githubusercontent.com/o/r/main/large.js';
   for (const range of [
@@ -4069,7 +3716,7 @@ test('trace ranged-fetch failure sequence stops and propagates loop_stopped stat
 });
 
 test('failed mutating URL calls retain the ordinary nudge threshold', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 32;
   const args = { url: 'https://example.com/api/items', method: 'POST' };
   d._checkLoop(tab, 'fetch_url', args, { success: false, status: 422 });
@@ -4079,7 +3726,7 @@ test('failed mutating URL calls retain the ordinary nudge threshold', () => {
 });
 
 test('a second equivalent non-retryable failure stops across tools and URL variants', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 34;
   const failure = {
     success: false,
@@ -4092,7 +3739,7 @@ test('a second equivalent non-retryable failure stops across tools and URL varia
 });
 
 test('no-progress clicks nudge on attempt two and stop on attempt three', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 33;
   assert.equal(d._checkLoop(tab, 'click', { text: 'Like' }, { success: false, noProgress: true }).kind, 'none');
   assert.equal(d._checkLoop(tab, 'click', { text: 'Like' }, { success: false, noProgress: true }).kind, 'nudge');
@@ -4101,7 +3748,7 @@ test('no-progress clicks nudge on attempt two and stop on attempt three', () => 
 });
 
 test('ambiguous click failure scope survives unrelated actions', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 331;
   const failure = {
     success: false,
@@ -4116,7 +3763,7 @@ test('ambiguous click failure scope survives unrelated actions', () => {
 });
 
 test('verified field retries clear equivalent scoped failures', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 332;
   const args = { ref_id: 'ref_7', text: 'query' };
   const failure = {
@@ -4141,15 +3788,15 @@ test('failed action counters reset on navigation and replacement-page evidence',
     error: 'Ambiguous text match for "Search"',
   };
 
-  const shim = new LoopDetectorShim();
-  const shimTab = 333;
-  assert.equal(shim._checkLoop(shimTab, 'click', { text: 'Search' }, failure).kind, 'none');
-  assert.equal(shim._checkLoop(shimTab, 'click', { text: 'Search' }, failure).kind, 'nudge');
-  assert.equal(shim._checkLoop(shimTab, 'navigate', { url: 'https://example.com/next' }, {
+  const standaloneDetector = new ConfiguredLoopDetector();
+  const standaloneTab = 333;
+  assert.equal(standaloneDetector._checkLoop(standaloneTab, 'click', { text: 'Search' }, failure).kind, 'none');
+  assert.equal(standaloneDetector._checkLoop(standaloneTab, 'click', { text: 'Search' }, failure).kind, 'nudge');
+  assert.equal(standaloneDetector._checkLoop(standaloneTab, 'navigate', { url: 'https://example.com/next' }, {
     success: true,
     pageUrlChanged: true,
   }).kind, 'none');
-  assert.equal(shim._checkLoop(shimTab, 'click', { text: 'Search' }, failure).kind, 'none');
+  assert.equal(standaloneDetector._checkLoop(standaloneTab, 'click', { text: 'Search' }, failure).kind, 'none');
 
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -4220,15 +3867,15 @@ test('revisiting a recent URL keeps loop state so navigation ping-pong is caught
     assert.equal(agent.recentCalls.get(tab)?.length, 1, `${label}: fresh-URL arrival should leave only the arriving call in the buffer`);
   }
 
-  // Shim mirror of the same arrival rule.
-  const shim = new LoopDetectorShim();
+  // Standalone production detector mirrors the same arrival rule.
+  const standaloneDetector = new ConfiguredLoopDetector();
   const tab = 338;
   const arrive = (url) => ({ success: true, pageUrlChanged: true, currentUrl: url });
-  shim._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b'));
-  shim._checkLoop(tab, 'go_back', {}, arrive('https://example.com/a'));
-  shim._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b'));
-  shim._checkLoop(tab, 'go_back', {}, arrive('https://example.com/a'));
-  assert.equal(shim._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b')).kind, 'nudge');
+  standaloneDetector._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b'));
+  standaloneDetector._checkLoop(tab, 'go_back', {}, arrive('https://example.com/a'));
+  standaloneDetector._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b'));
+  standaloneDetector._checkLoop(tab, 'go_back', {}, arrive('https://example.com/a'));
+  assert.equal(standaloneDetector._checkLoop(tab, 'click', { text: 'Next' }, arrive('https://example.com/b')).kind, 'nudge');
 });
 
 test('navigation arrival history survives intra-run resets but clears at run boundaries', () => {
@@ -4270,7 +3917,7 @@ test('navigation arrival history survives intra-run resets but clears at run bou
 
 test('errored vs successful do not collapse together', () => {
   // Two successes + one failure of the same call should NOT trigger.
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 4;
   d._checkLoop(tab, 'click', { selector: '#x' }, { success: true });
   d._checkLoop(tab, 'click', { selector: '#x' }, { success: true });
@@ -4279,7 +3926,7 @@ test('errored vs successful do not collapse together', () => {
 });
 
 test('ABAB oscillation triggers nudge', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 5;
   d._checkLoop(tab, 'click', { selector: '#next' }, { success: true });
   d._checkLoop(tab, 'click', { selector: '#prev' }, { success: true });
@@ -4289,7 +3936,7 @@ test('ABAB oscillation triggers nudge', () => {
 });
 
 test('eighth consecutive loop triggers stop', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 6;
   // First nudge (calls 1-3)
   d._checkLoop(tab, 'click', { selector: '#submit' }, { success: true });
@@ -4305,7 +3952,7 @@ test('eighth consecutive loop triggers stop', () => {
 });
 
 test('nudge counter persists across one healthy call (slow loop)', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 7;
   // Get to nudge state
   d._checkLoop(tab, 'click', { selector: '#submit' }, { success: true });
@@ -4320,7 +3967,7 @@ test('nudge counter persists across one healthy call (slow loop)', () => {
 });
 
 test('stale repeated fetch_url entries do not stop after switching tools', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 71;
   for (let i = 0; i < 9; i++) {
     const result = d._checkLoop(
@@ -4385,7 +4032,7 @@ test('Firefox protected active-tab reads can fall back to one screenshot', async
 });
 
 test('nudge counter resets after a sustained healthy streak', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 8;
   // Get to nudge state
   d._checkLoop(tab, 'click', { selector: '#a' }, { success: true });
@@ -4402,7 +4049,7 @@ test('nudge counter resets after a sustained healthy streak', () => {
 });
 
 test('tabs are isolated from each other', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   // Three identical calls on tab A should NOT affect tab B.
   d._checkLoop(10, 'click', { selector: '#x' }, { success: true });
   d._checkLoop(10, 'click', { selector: '#x' }, { success: true });
@@ -4458,12 +4105,20 @@ test('no-progress scroll is pane-, direction-, tab-, and run-scoped', () => {
 });
 
 test('no-progress scroll enforcement is wired into both agent loops', () => {
-  for (const browserName of ['chrome', 'firefox']) {
+  for (const [browserName, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
     assert.match(source, /const scrollCheck = this\._checkNoProgressScroll\(tabId, fnName, fnArgs, toolResult\)/, `${browserName}: evaluate each result`);
     assert.match(source, /scrollCheck\.kind === 'stop'/, `${browserName}: stop result must win`);
     assert.match(source, /scrollCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
-    assert.match(source, /this\.noProgressScrolls\.delete\(tabId\)/, `${browserName}: run cleanup must clear state`);
+    // Assert the cleanup behaviorally rather than by grepping agent.js: the
+    // detector state lives in loop-detector.js, so a source match would only
+    // prove where the line is written, not that run cleanup reaches it.
+    const agent = new AgentClass({});
+    const tab = `${browserName}-dead-scroll`;
+    assert.equal(agent._checkNoProgressScroll(tab, 'scroll', { direction: 'down' }, { moved: false }).kind, 'none');
+    assert.equal(agent.noProgressScrolls.has(tab), true, `${browserName}: streak must be tracked`);
+    agent._clearRunLoopState(tab);
+    assert.equal(agent.noProgressScrolls.has(tab), false, `${browserName}: run cleanup must clear state`);
   }
 });
 
@@ -4683,7 +4338,7 @@ test('Enter SPA route changes reset dead-scroll state and defer queued ref reuse
 });
 
 test('accessibility-tree ref enumeration nudges at three and stops at six', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 21;
   const root = d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { filter: 'visible' }, {
     pageContent: 'form [ref_1]\n textbox "Subject" [ref_2]',
@@ -4700,7 +4355,7 @@ test('accessibility-tree ref enumeration nudges at three and stops at six', () =
 });
 
 test('accessibility-tree nextPage pagination past the read cap is not suspicious and other tools reset it', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 22;
   for (let page = 1; page <= 15; page++) {
     const result = d._checkAccessibilityReadLoop(
@@ -4717,7 +4372,7 @@ test('accessibility-tree nextPage pagination past the read cap is not suspicious
 });
 
 test('accessibility-tree read cap still stops a non-sequential read after long pagination', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 23;
   for (let page = 1; page <= 11; page++) {
     const result = d._checkAccessibilityReadLoop(
@@ -4744,12 +4399,12 @@ test('accessibility-tree read cap still stops a non-sequential read after long p
 // ────────────────────────────────────────────────────────────────────────
 
 test('coord click: first call → none', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   assert.equal(d._checkCoordClickLoop(1, 100, 200).kind, 'none');
 });
 
 test('coord click: fourth identical → none (relaxed thresholds)', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200);
   d._checkCoordClickLoop(1, 100, 200);
   d._checkCoordClickLoop(1, 100, 200);
@@ -4757,26 +4412,26 @@ test('coord click: fourth identical → none (relaxed thresholds)', () => {
 });
 
 test('coord click: fifth identical → nudge', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   for (let i = 0; i < 4; i++) d._checkCoordClickLoop(1, 100, 200);
   assert.equal(d._checkCoordClickLoop(1, 100, 200).kind, 'nudge');
 });
 
 test('coord click: eighth identical → stop', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   for (let i = 0; i < 7; i++) d._checkCoordClickLoop(1, 100, 200);
   assert.equal(d._checkCoordClickLoop(1, 100, 200).kind, 'stop');
 });
 
 test('coord click: 5px drift collapses to same bucket', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   for (let i = 0; i < 4; i++) d._checkCoordClickLoop(1, 100, 200);
   // (102, 199) rounds to (100, 200) — fifth identical bucket → nudge
   assert.equal(d._checkCoordClickLoop(1, 102, 199).kind, 'nudge');
 });
 
 test('coord click: 10px drift = different bucket', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200);
   // (115, 200) rounds to (115, 200) — different bucket
   assert.equal(d._checkCoordClickLoop(1, 115, 200).kind, 'none');
@@ -4784,7 +4439,7 @@ test('coord click: 10px drift = different bucket', () => {
 
 test('coord click: survives interleaved noise (the failure mode this fixes)', () => {
   // Coord clicks accumulate across interleaved noise. Nudge at 5, stop at 8.
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   for (let i = 0; i < 4; i++) d._checkCoordClickLoop(1, 267, 226);
   assert.equal(d._checkCoordClickLoop(1, 267, 226).kind, 'nudge'); // 5th → nudge
   // Interleaved noise doesn't reset the count
@@ -4796,7 +4451,7 @@ test('coord click: survives interleaved noise (the failure mode this fixes)', ()
 });
 
 test('coord click: tabs are isolated', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200);
   d._checkCoordClickLoop(1, 100, 200);
   // Same coords on a different tab — should still be 'none'
@@ -4804,7 +4459,7 @@ test('coord click: tabs are isolated', () => {
 });
 
 test('coord click: window of 12 — old entries roll out', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   d._checkCoordClickLoop(1, 100, 200); // first
   // 12 distinct intervening clicks
   for (let i = 0; i < 12; i++) {
@@ -4815,7 +4470,7 @@ test('coord click: window of 12 — old entries roll out', () => {
 });
 
 test('window of 6 means a loop can fall out of the window', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tab = 11;
   // Two #a, then 5 distinct calls — by then the buffer has rolled past #a.
   d._checkLoop(tab, 'click', { selector: '#a' }, { success: true });
@@ -4836,7 +4491,7 @@ test('window of 6 means a loop can fall out of the window', () => {
 console.log('\n_detectApiShortcut');
 
 test('_detectApiShortcut: match found returns url + method + replay id', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 200;
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
@@ -4869,7 +4524,7 @@ test('_detectApiShortcut: match found returns url + method + replay id', () => {
 });
 
 test('_detectApiShortcut: one request cannot satisfy multiple click windows', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 205;
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
@@ -4900,7 +4555,7 @@ test('_detectApiShortcut: one request cannot satisfy multiple click windows', ()
 });
 
 test('_detectApiShortcut: no API requests returns null', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 201;
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
   d._recordCall(tabId, 'click', { selector: '#next' }, { success: true });
@@ -4913,7 +4568,7 @@ test('_detectApiShortcut: no API requests returns null', () => {
 });
 
 test('_detectApiShortcut: non-click tool name returns null', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 202;
   d._recordCall(tabId, 'read_page', {}, { ok: true });
   d._recordCall(tabId, 'read_page', {}, { ok: true });
@@ -4934,7 +4589,7 @@ test('_detectApiShortcut: non-click tool name returns null', () => {
 });
 
 test('_detectApiShortcut: request outside 3 s window returns null', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 203;
   d._recordCall(tabId, 'click', { selector: '#load' }, { success: true });
   d._recordCall(tabId, 'click', { selector: '#load' }, { success: true });
@@ -4960,7 +4615,7 @@ test('_detectApiShortcut: request outside 3 s window returns null', () => {
 });
 
 test('_detectApiShortcut: write-method requests remain eligible for explicit API mode', () => {
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 204;
   d._recordCall(tabId, 'click', { selector: '#delete' }, { success: true });
   d._recordCall(tabId, 'click', { selector: '#delete' }, { success: true });
@@ -4987,9 +4642,68 @@ test('_detectApiShortcut: write-method requests remain eligible for explicit API
   }
 });
 
-test('_detectApiShortcut: both chrome and firefox builds define the method', () => {
-  assert.equal(typeof AgentCh.prototype._detectApiShortcut, 'function', 'chrome Agent missing _detectApiShortcut');
-  assert.equal(typeof AgentFx.prototype._detectApiShortcut, 'function', 'firefox Agent missing _detectApiShortcut');
+test('LoopDetector is production code shared by both browser agents', () => {
+  assert.equal(typeof LoopDetectorCh.prototype._detectApiShortcut, 'function');
+  assert.equal(typeof LoopDetectorFx.prototype._detectApiShortcut, 'function');
+  assert.ok(new AgentCh({}) instanceof LoopDetectorCh, 'chrome Agent must inherit LoopDetector');
+  assert.ok(new AgentFx({}) instanceof LoopDetectorFx, 'firefox Agent must inherit LoopDetector');
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/loop-detector.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/loop-detector.js'), 'utf8'),
+    'chrome and firefox LoopDetector copies must remain byte-identical',
+  );
+  // The base class must stay browser-neutral: without a build's tool list it
+  // classifies nothing as a mutation, so an Agent that forgets to override
+  // this fails loudly here instead of silently skipping failed-action loops.
+  assert.equal(LoopDetectorCh.prototype._isBrowserMutationTool.call({}, 'click'), false);
+});
+
+test('loop detection classifies mutating tools from each build tool list, not a test copy', () => {
+  const builds = [
+    ['chrome', AgentCh, MUTATION_TOOLS_CH, STATE_CHANGE_TOOLS_CH],
+    ['firefox', AgentFx, MUTATION_TOOLS_FX, STATE_CHANGE_TOOLS_FX],
+  ];
+  for (const [label, AgentClass, mutationTools, stateChangeTools] of builds) {
+    const agent = new AgentClass({});
+    assert.equal(
+      AgentClass.STATE_CHANGE_TOOLS,
+      stateChangeTools,
+      `${label}: Agent.STATE_CHANGE_TOOLS must be the shared mutation-tools set`,
+    );
+    for (const name of mutationTools) {
+      assert.equal(agent._isBrowserMutationTool(name), true, `${label}: ${name} must count as a mutation`);
+    }
+    for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
+      assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
+    }
+    // The frame/upload tools act on the page but are not auto-screenshot
+    // state changes, so the two sets must not be collapsed into one.
+    for (const name of ['iframe_click', 'iframe_type', 'upload_file', 'solve_captcha']) {
+      assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
+      assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
+    }
+  }
+  // The standalone detector used by this suite must track Chrome exactly.
+  const standalone = new ConfiguredLoopDetector();
+  for (const name of MUTATION_TOOLS_CH) {
+    assert.equal(standalone._isBrowserMutationTool(name), true, `standalone detector missing ${name}`);
+  }
+  // Chrome-only mutating tools must reach the failed-action counters.
+  for (const name of ['execute_webmcp_tool', 'patch_element', 'highlight_element']) {
+    assert.equal(MUTATION_TOOLS_CH.has(name), true, `chrome must treat ${name} as a mutation`);
+    assert.equal(MUTATION_TOOLS_FX.has(name), false, `firefox does not ship ${name}`);
+  }
+});
+
+test('chrome-only mutating tools reach the failed-action loop counters', () => {
+  const failure = { success: false, error: 'no matching element' };
+  for (const toolName of ['execute_webmcp_tool', 'patch_element', 'highlight_element']) {
+    const agent = new AgentCh({});
+    const tab = `chrome-only-${toolName}`;
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'none');
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'nudge');
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'stop');
+  }
 });
 
 test('_detectBulkApiMutationShortcut: detects repeated same-action clicks with different refs', () => {
@@ -6670,7 +6384,7 @@ test('LOOP DETECTOR catches URL-family thrashing (the trace bug)', () => {
   // same resource via 4 different API URLs. With the old code the loop
   // detector saw 4 distinct keys and never fired. With the bucketing
   // it sees the same key 4 times → "repeat" loop on call 3.
-  const d = new LoopDetectorShim();
+  const d = new ConfiguredLoopDetector();
   const tabId = 1;
   const variants = [
     'https://raw.githubusercontent.com/o/r/main/file.json',
