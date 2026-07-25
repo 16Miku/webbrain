@@ -26,7 +26,7 @@
  * There is NO dependency on npm packages — pure Node ESM.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { copyFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,10 +40,6 @@ const TEMPLATE_PATH = path.join(BUILD_DIR, 'template.html');
 const SITE_ORIGIN = 'https://webbrain.one';
 const SOCIAL_IMAGE_URL = `${SITE_ORIGIN}/og-image.png`;
 const LOGO_IMAGE_URL = `${SITE_ORIGIN}/logo-github.png`;
-const FEATURED_HOME_PROMO = {
-  urlPath: '/blog/ollama-launch-handoff',
-  imagePath: '/assets/webbrain-ollama-heart.png',
-};
 
 // Locale config. The default locale (en) renders to web/index.html;
 // the others render to web/<code>/index.html.
@@ -71,6 +67,54 @@ const LOCALES = [
   { code: 'nl', bcp47: 'nl-NL', label: 'Nederlands', dir: 'ltr', isDefault: false },
   { code: 'de', bcp47: 'de-DE', label: 'Deutsch', dir: 'ltr', isDefault: false },
 ];
+
+// Keep the website on the same bundled 4:3 flag artwork as the extension
+// language picker. The web build copies only the flags used by web locales.
+const LANGUAGE_FLAG_CODES = {
+  en: 'us',
+  es: 'es',
+  fr: 'fr',
+  tr: 'tr',
+  zh: 'cn',
+  ru: 'ru',
+  uk: 'ua',
+  ar: 'sa',
+  ja: 'jp',
+  ko: 'kr',
+  id: 'id',
+  th: 'th',
+  ms: 'my',
+  tl: 'ph',
+  he: 'il',
+  hi: 'in',
+  pt: 'br',
+  vi: 'vn',
+  bn: 'bd',
+  fa: 'ir',
+  nl: 'nl',
+  de: 'de',
+};
+const FLAG_SOURCE_DIR = path.resolve(ROOT, '../src/chrome/icons/flags');
+const FLAG_OUTPUT_DIR = path.join(ROOT, 'assets', 'flags');
+
+async function syncLanguageFlagAssets() {
+  const missingFlagLocale = LOCALES.find((locale) => !LANGUAGE_FLAG_CODES[locale.code]);
+  if (missingFlagLocale) {
+    throw new Error(`Missing website flag mapping for locale: ${missingFlagLocale.code}`);
+  }
+
+  await mkdir(FLAG_OUTPUT_DIR, { recursive: true });
+  await Promise.all([
+    ...new Set(LOCALES.map((locale) => LANGUAGE_FLAG_CODES[locale.code])),
+  ].map((flagCode) => copyFile(
+    path.join(FLAG_SOURCE_DIR, `${flagCode}.svg`),
+    path.join(FLAG_OUTPUT_DIR, `${flagCode}.svg`),
+  )));
+  await copyFile(
+    path.join(FLAG_SOURCE_DIR, 'LICENSE.flag-icons.txt'),
+    path.join(FLAG_OUTPUT_DIR, 'LICENSE.flag-icons.txt'),
+  );
+}
 
 const FAQ_KEYS = [
   // Order matters — this is the rendered order in-page AND in JSON-LD.
@@ -103,6 +147,7 @@ const FAQ_KEYS = [
 const STRIPE_SUBSCRIBE_URL = 'https://buy.stripe.com/bJebJ13at2kc5XP7eY8g00a';
 const MASTODON_PROFILE_URL = 'https://mastoturk.org/@webbrain';
 const BLUESKY_PROFILE_URL = 'https://bsky.app/profile/webbrain-one.bsky.social';
+const DISCORD_INVITE_URL = 'https://discord.gg/cgC325ssfw';
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
@@ -281,6 +326,9 @@ function applyTemplate(template, dict, locale) {
   // Build-time placeholders first (they're fixed per locale, not per key).
   let out = template
     .replace(/\{\{locale_code\}\}/g, locale.code)
+    .replace(/\{\{locale_code_upper\}\}/g, locale.code.toUpperCase())
+    .replace(/\{\{locale_flag_code\}\}/g, LANGUAGE_FLAG_CODES[locale.code])
+    .replace(/\{\{language_flag_codes\}\}/g, JSON.stringify(LANGUAGE_FLAG_CODES))
     .replace(/\{\{locale_bcp47\}\}/g, locale.bcp47)
     .replace(/\{\{locale_dir\}\}/g, locale.dir || 'ltr')
     .replace(/\{\{locale_home_url\}\}/g, canonical)
@@ -320,6 +368,7 @@ function applyTemplate(template, dict, locale) {
 
 async function main() {
   const template = await readFile(TEMPLATE_PATH, 'utf8');
+  await syncLanguageFlagAssets();
 
   // Load English first so others can fall back for missing keys.
   const en = JSON.parse(await readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'));
@@ -342,14 +391,13 @@ async function main() {
     const shareTextWithUrl = `${shareText} ${homeUrl}`.trim();
     dict = {
       ...dict,
-      'featured_home_promo.url': `${SITE_ORIGIN}${FEATURED_HOME_PROMO.urlPath}`,
-      'featured_home_promo.image': FEATURED_HOME_PROMO.imagePath,
       'share.x_intent_url': `https://x.com/intent/post?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(homeUrl)}`,
       'share.linkedin_intent_url': `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(homeUrl)}`,
       'share.mastodon_intent_url': `https://mastoturk.org/share?text=${encodeURIComponent(shareTextWithUrl)}`,
       'share.bluesky_intent_url': `https://bsky.app/intent/compose?text=${encodeURIComponent(shareTextWithUrl)}`,
       'social.mastodon_url': MASTODON_PROFILE_URL,
       'social.bluesky_url': BLUESKY_PROFILE_URL,
+      'social.discord_url': DISCORD_INVITE_URL,
     };
 
     const { html, missing } = applyTemplate(template, dict, locale);
