@@ -17610,19 +17610,22 @@ test('selection-only model requests exclude prior conversation context', async (
   ].entries()) {
     for (const [pathIndex, streaming] of [false, true].entries()) {
       const requests = [];
+      const requestOptions = [];
       const provider = {
-        supportsTools: false,
+        supportsTools: true,
         supportsVision: false,
         promptTier: 'full',
         contextWindow: 128000,
         model: 'test-model',
         name: 'test-provider',
-        chat: async (messages) => {
+        chat: async (messages, options) => {
           requests.push(messages);
+          requestOptions.push(options);
           return { content: 'Grounded answer.', toolCalls: null };
         },
-        async *chatStream(messages) {
+        async *chatStream(messages, options) {
           requests.push(messages);
+          requestOptions.push(options);
           yield { type: 'text', content: 'Grounded answer.' };
           yield { type: 'done' };
         },
@@ -17686,6 +17689,7 @@ test('selection-only model requests exclude prior conversation context', async (
 
       assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
       assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
+      assert.equal(requestOptions[0]?.tools, undefined, `${label}: selection-only request must not advertise browser tools`);
       assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
       assert.equal(manageContextCalls, 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: compaction must not inspect prior turns`);
       assert.equal(requests[0].length, 2, `${label} ${streaming ? 'streaming' : 'non-streaming'}: model should receive only system plus current selection`);
@@ -17703,6 +17707,7 @@ test('selection-only model requests exclude prior conversation context', async (
         : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
       assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
       assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
+      assert.equal(requestOptions[1]?.tools, undefined, `${label}: grounded follow-up must remain tool-free`);
       const followUpSerialized = JSON.stringify(requests[1]);
       assert.match(followUpSerialized, /authoritative selected words/, `${label}: follow-up lost the original selection`);
       assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
@@ -17711,6 +17716,7 @@ test('selection-only model requests exclude prior conversation context', async (
       const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
       assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
       assert.equal(requests.length, 3, `${label}: Continue should make one additional model request`);
+      assert.equal(requestOptions[2]?.tools, undefined, `${label}: grounded Continue must remain tool-free`);
       const continueSerialized = JSON.stringify(requests[2]);
       assert.match(continueSerialized, /authoritative selected words/, `${label}: Continue lost the original selection`);
       assert.match(continueSerialized, /My quiz answer is B\./, `${label}: Continue lost the quiz exchange`);
@@ -17721,6 +17727,72 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
       assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
     }
+  }
+});
+
+test('selection-grounded follow-ups reject and restore attachments', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let providerCalls = 0;
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      supportsDocuments: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => {
+        providerCalls += 1;
+        return { content: 'Unexpected.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 9670 + (label === 'firefox' ? 1 : 0);
+    const anchor = { role: 'user', content: buildSelectionPrompt('quiz source', 'quiz') };
+    agent.conversationIds.set(tabId, `conv-${label}`);
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system rules' },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ]);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-${label}`,
+      anchorIndex: 1,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [],
+    });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    let manageContextCalls = 0;
+    agent._manageContext = async () => { manageContextCalls += 1; };
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+      assert.equal(history.length, 0, `${label}: attachment rejection should remain source-bound`);
+      return { role: 'user', content };
+    };
+
+    const updates = [];
+    const before = JSON.stringify(agent.conversations.get(tabId).slice(1));
+    const final = await agent.processMessage(
+      tabId,
+      'Here is my answer file.',
+      (type, data) => updates.push({ type, data }),
+      'ask',
+      [{ kind: 'text', name: 'answer.txt', textContent: 'B' }],
+    );
+
+    assert.match(final, /Attachments cannot be added while continuing a selected-text shortcut/, `${label}: attachment rejection should be explicit`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: attachment chip restoration signal missing`);
+    assert.equal(providerCalls, 0, `${label}: rejected attachment turn must not call the model`);
+    assert.equal(manageContextCalls, 0, `${label}: rejected attachment turn must not inspect unrelated history`);
+    assert.equal(JSON.stringify(agent.conversations.get(tabId).slice(1)), before, `${label}: rejected attachment turn must not alter conversation history`);
+    assert.ok(agent.selectionGroundingScopes.has(tabId), `${label}: rejected follow-up should preserve its selection scope`);
   }
 });
 

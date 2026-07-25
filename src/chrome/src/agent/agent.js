@@ -18267,6 +18267,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Validate attachments BEFORE the planner gate / trace start: an
     // unsupported attachment is a plain "tell the user" response, not an
     // agent run, and the message must never be pushed to history this way.
+    if (selectionOnly && attachments?.length) {
+      const error = 'Attachments cannot be added while continuing a selected-text shortcut. Start a new conversation before sending files.';
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this.selectionGroundingScopes.delete(tabId);
+        this._persist(tabId);
+      }
+      onUpdate('attachment_rejected', { error });
+      return (finalResponse = error);
+    }
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const canUseScratchpadTool = this._isActionMode(mode);
@@ -18354,6 +18363,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema || null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
+    // The selected text is already present in the trusted run envelope.
+    // Advertising page/network tools would let an injected selection induce a
+    // second source and defeat the selection-only boundary.
+    if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
@@ -18519,6 +18532,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema || null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
+      if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
 
       // Auto-compact mid-run when the conversation outgrows the budget — not
@@ -18533,7 +18547,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       let result;
       try {
-        const useTools = provider.supportsTools;
+        const useTools = provider.supportsTools && tools.length > 0;
         const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
         const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
         this._logDebug({ type: 'llm_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
@@ -18582,7 +18596,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
           emergencyTrimMessagesForRun();
           try {
-            const useTools = provider.supportsTools;
+            const useTools = provider.supportsTools && tools.length > 0;
             const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
             const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
@@ -18613,7 +18627,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const useTools2 = provider.supportsTools;
+            const useTools2 = provider.supportsTools && tools.length > 0;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
             result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
@@ -19057,6 +19071,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema || null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
+    // Match the non-streaming path: selection-grounded turns are tool-free so
+    // page or network content cannot be introduced after the source anchor.
+    if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
@@ -19095,6 +19112,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema || null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
+      if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
 
       // Auto-compact mid-run when the conversation outgrows the budget. The
@@ -19115,7 +19133,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let reasoningContent = '';
 
         const streamOpts = this._cloudGenerationOptions(provider, {
-          tools: provider.supportsTools ? tools : undefined,
+          tools: provider.supportsTools && tools.length > 0 ? tools : undefined,
           temperature: plannerTemperature,
           maxTokens: 4096,
         }, { tabId, generationName: 'main' });
