@@ -11,6 +11,7 @@
 //   POST /getBalance     → { balance, packages }
 
 import {
+  applyCaptchaFrameVisibility,
   captchaTypesMatch,
   detectCaptchaCandidatesInPage,
   injectCaptchaTokenInPage,
@@ -216,21 +217,36 @@ export async function detectCaptcha(tabId, constraints = {}) {
   } catch (_) {
     frames = [{ frameId: 0, url: '' }];
   }
-  if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, url: '' }];
+  if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, parentFrameId: -1, url: '' }];
   const code = `(${detectCaptchaCandidatesInPage.toString()})()`;
   const batches = await Promise.all(frames.map(async frame => {
     try {
       const results = await browser.tabs.executeScript(tabId, { code, frameId: frame.frameId });
-      return (Array.isArray(results?.[0]) ? results[0] : []).map(candidate => ({
-        ...candidate,
-        frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
-        frameUrl: candidate.frameUrl || frame.url || '',
-      }));
+      const payload = results?.[0];
+      const pageCandidates = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.candidates) ? payload.candidates : []);
+      return {
+        candidates: pageCandidates.map(candidate => ({
+          ...candidate,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+          frameUrl: candidate.frameUrl || frame.url || '',
+        })),
+        frameContext: !Array.isArray(payload) && payload?.frameContext ? {
+          ...payload.frameContext,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+        } : null,
+      };
     } catch (_) {
-      return [];
+      return { candidates: [], frameContext: null };
     }
   }));
-  return selectCaptchaCandidate(batches.flat(), constraints);
+  const candidates = batches.flatMap(batch => batch.candidates);
+  const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
+  return selectCaptchaCandidate(
+    applyCaptchaFrameVisibility(candidates, frameContexts, frames),
+    constraints,
+  );
 }
 
 export async function injectToken(tabId, {

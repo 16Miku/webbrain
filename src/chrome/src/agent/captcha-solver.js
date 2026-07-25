@@ -14,6 +14,7 @@
 // `taskTypeOverride`.
 
 import {
+  applyCaptchaFrameVisibility,
   captchaTypesMatch,
   detectCaptchaCandidatesInPage,
   injectCaptchaTokenInPage,
@@ -248,20 +249,40 @@ export async function solveCaptcha(apiKey, params) {
 // exposed it lets the caller use the correct websiteURL and injection target.
 
 export async function detectCaptcha(tabId, constraints = {}) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    func: detectCaptchaCandidatesInPage,
-  });
+  const frameTreePromise = typeof chrome.webNavigation?.getAllFrames === 'function'
+    ? chrome.webNavigation.getAllFrames({ tabId }).catch(() => [])
+    : Promise.resolve([]);
+  const [results, navigationFrames] = await Promise.all([
+    chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: detectCaptchaCandidatesInPage,
+    }),
+    frameTreePromise,
+  ]);
   const candidates = [];
+  const frameContexts = [];
   for (const entry of results || []) {
-    for (const candidate of Array.isArray(entry?.result) ? entry.result : []) {
+    const payload = entry?.result;
+    const pageCandidates = Array.isArray(payload)
+      ? payload
+      : (Array.isArray(payload?.candidates) ? payload.candidates : []);
+    for (const candidate of pageCandidates) {
       candidates.push({
         ...candidate,
         frameId: Number.isInteger(entry.frameId) ? entry.frameId : null,
       });
     }
+    if (!Array.isArray(payload) && payload?.frameContext) {
+      frameContexts.push({
+        ...payload.frameContext,
+        frameId: Number.isInteger(entry.frameId) ? entry.frameId : null,
+      });
+    }
   }
-  return selectCaptchaCandidate(candidates, constraints);
+  return selectCaptchaCandidate(
+    applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames),
+    constraints,
+  );
 }
 
 // ─── Token injection ───────────────────────────────────────────────────

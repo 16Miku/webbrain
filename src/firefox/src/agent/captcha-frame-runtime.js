@@ -48,6 +48,80 @@ export function captchaTypesMatch(left, right, leftIsEnterprise = null, rightIsE
   return normalizeCaptchaType(left) === normalizeCaptchaType(right);
 }
 
+export function applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames) {
+  const contextsByFrameId = new Map();
+  for (const context of Array.isArray(frameContexts) ? frameContexts : []) {
+    if (Number.isInteger(context?.frameId)) contextsByFrameId.set(context.frameId, context);
+  }
+  const navigationByFrameId = new Map();
+  for (const frame of Array.isArray(navigationFrames) ? navigationFrames : []) {
+    if (Number.isInteger(frame?.frameId)) navigationByFrameId.set(frame.frameId, frame);
+  }
+
+  const uniqueMatch = (items) => items.length === 1 ? items[0] : null;
+  const findEmbeddingFrame = (frameId, parentFrameId) => {
+    const parentContext = contextsByFrameId.get(parentFrameId);
+    if (!parentContext) return null;
+    const childFrames = Array.isArray(parentContext.childFrames) ? parentContext.childFrames : [];
+    if (!childFrames.length) return null;
+
+    const childContext = contextsByFrameId.get(frameId);
+    const navigation = navigationByFrameId.get(frameId);
+    const frameName = String(childContext?.frameName || '');
+    const frameUrls = new Set([
+      childContext?.frameUrl,
+      navigation?.url,
+    ].filter(Boolean).map(String));
+    const urlMatches = childFrames.filter(child =>
+      frameUrls.has(String(child?.loadedUrl || '')) || frameUrls.has(String(child?.url || ''))
+    );
+    if (frameName) {
+      const exact = uniqueMatch(urlMatches.filter(child => String(child?.name || '') === frameName));
+      if (exact) return exact;
+    }
+    const byUrl = uniqueMatch(urlMatches);
+    if (byUrl) return byUrl;
+    if (frameName) {
+      const byName = uniqueMatch(childFrames.filter(child => String(child?.name || '') === frameName));
+      if (byName) return byName;
+    }
+    return childFrames.length === 1 ? childFrames[0] : null;
+  };
+
+  const visibilityByFrameId = new Map();
+  const frameIsVisible = (frameId, visiting = new Set()) => {
+    if (visibilityByFrameId.has(frameId)) return visibilityByFrameId.get(frameId);
+    if (!Number.isInteger(frameId) || visiting.has(frameId)) return false;
+    const navigation = navigationByFrameId.get(frameId);
+    const parentFrameId = navigation?.parentFrameId;
+    if (frameId === 0 || parentFrameId === -1) {
+      visibilityByFrameId.set(frameId, true);
+      return true;
+    }
+    if (!Number.isInteger(parentFrameId)) {
+      visibilityByFrameId.set(frameId, false);
+      return false;
+    }
+    visiting.add(frameId);
+    const parentVisible = frameIsVisible(parentFrameId, visiting);
+    visiting.delete(frameId);
+    const embeddingFrame = parentVisible ? findEmbeddingFrame(frameId, parentFrameId) : null;
+    const visible = parentVisible && embeddingFrame?.visible === true;
+    visibilityByFrameId.set(frameId, visible);
+    return visible;
+  };
+
+  return (Array.isArray(candidates) ? candidates : []).map(candidate => {
+    const frameVisible = frameIsVisible(candidate?.frameId);
+    return {
+      ...candidate,
+      frameVisible,
+      visible: candidate?.visible === true && frameVisible,
+      normalCheckbox: candidate?.normalCheckbox === true && candidate?.visible === true && frameVisible,
+    };
+  });
+}
+
 function candidateSummary(candidate) {
   return {
     frameId: Number.isInteger(candidate?.frameId) ? candidate.frameId : null,
@@ -57,6 +131,7 @@ function candidateSummary(candidate) {
     visible: candidate?.visible === true,
     normalCheckbox: candidate?.normalCheckbox === true,
     challengeFrame: candidate?.challengeFrame === true,
+    frameVisible: candidate?.frameVisible !== false,
     isInvisible: candidate?.isInvisible === true,
     isEnterprise: candidate?.isEnterprise === true,
     pageAction: candidate?.pageAction || null,
@@ -70,12 +145,13 @@ function candidateScore(candidate) {
   // Priority is tiered so no combination of secondary signals can make a
   // generic visible/background integration outrank an active challenge
   // frame or visible checkbox.
-  const primary = (candidate?.normalCheckbox && candidate?.visible) || candidate?.challengeFrame;
+  const activeChallengeFrame = candidate?.challengeFrame && candidate?.frameVisible !== false;
+  const primary = (candidate?.normalCheckbox && candidate?.visible) || activeChallengeFrame;
   const tier = primary ? 3 : (candidate?.visible ? 2 : 1);
   let score = tier * 1000;
   if (candidate?.normalCheckbox && candidate?.visible) score += 120;
   else if (candidate?.visible) score += 60;
-  if (candidate?.challengeFrame) score += 35;
+  if (activeChallengeFrame) score += 35;
   if (candidate?.responseField) score += 12;
   if (candidate?.detectedVia === 'host') score += 8;
   if (candidate?.websiteKey) score += 4;
@@ -182,9 +258,9 @@ function selectedReason(candidate, constraints) {
   if (constraints.frameUrl) return 'exact frameUrl match';
   if (constraints.websiteKey) return 'exact websiteKey match';
   if (candidate.normalCheckbox && candidate.visible) return 'visible checkbox challenge';
-  if (candidate.visible && candidate.challengeFrame) return 'visible challenge frame';
+  if (candidate.visible && candidate.challengeFrame && candidate.frameVisible !== false) return 'visible challenge frame';
   if (candidate.visible) return 'visible CAPTCHA widget';
-  if (candidate.challengeFrame) return 'challenge frame candidate';
+  if (candidate.challengeFrame && candidate.frameVisible !== false) return 'challenge frame candidate';
   return 'only detected CAPTCHA candidate';
 }
 
@@ -309,7 +385,10 @@ export function detectCaptchaCandidatesInPage() {
     });
   }
 
-  const iframeElements = Array.from(document.querySelectorAll('iframe[src]'));
+  const allIframeElements = Array.from(document.querySelectorAll('iframe'));
+  const iframeElements = allIframeElements.filter(element => {
+    try { return !!element.src; } catch (_) { return false; }
+  });
   const iframeUrls = iframeElements.map(element => {
     try { return { element, url: element.src || '' }; } catch (_) { return { element, url: '' }; }
   }).filter(item => item.url);
@@ -401,7 +480,31 @@ export function detectCaptchaCandidatesInPage() {
       detectedVia: 'script',
     });
   }
-  return candidates;
+  const childFrames = allIframeElements.map((element, index) => {
+    let url = '';
+    let loadedUrl = '';
+    let name = '';
+    try { url = String(element.src || ''); } catch (_) {}
+    try { loadedUrl = String(element.contentWindow?.location?.href || ''); } catch (_) {}
+    try { name = String(element.name || element.getAttribute?.('name') || ''); } catch (_) {}
+    return {
+      index,
+      url,
+      loadedUrl,
+      name,
+      visible: visibleElement(element),
+    };
+  });
+  let frameName = '';
+  try { frameName = typeof window !== 'undefined' ? String(window.name || '') : ''; } catch (_) {}
+  return {
+    candidates,
+    frameContext: {
+      frameUrl,
+      frameName,
+      childFrames,
+    },
+  };
 }
 
 // This function is also serialized into a page context. Keep it self-contained.

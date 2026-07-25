@@ -50905,12 +50905,43 @@ test('captcha detection ranks a visible nested v2 Enterprise challenge above bac
       const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
       if (build === 'chrome') {
         globalThis.chrome = {
+          webNavigation: {
+            getAllFrames: async () => [
+              { frameId: 0, parentFrameId: -1, url: topCandidate.frameUrl },
+              { frameId: 12, parentFrameId: 0, url: activeCandidate.frameUrl },
+            ],
+          },
           scripting: {
             executeScript: async ({ target }) => {
               assert.equal(target.allFrames, true, 'Chrome detector did not scan all frames');
               return [
-                { frameId: 0, result: [topCandidate] },
-                { frameId: 12, result: [activeCandidate] },
+                {
+                  frameId: 0,
+                  result: {
+                    candidates: [topCandidate],
+                    frameContext: {
+                      frameUrl: topCandidate.frameUrl,
+                      frameName: '',
+                      childFrames: [{
+                        url: activeCandidate.frameUrl,
+                        loadedUrl: activeCandidate.frameUrl,
+                        name: 'captcha-internal',
+                        visible: true,
+                      }],
+                    },
+                  },
+                },
+                {
+                  frameId: 12,
+                  result: {
+                    candidates: [activeCandidate],
+                    frameContext: {
+                      frameUrl: activeCandidate.frameUrl,
+                      frameName: 'captcha-internal',
+                      childFrames: [],
+                    },
+                  },
+                },
               ];
             },
           },
@@ -50919,14 +50950,28 @@ test('captcha detection ranks a visible nested v2 Enterprise challenge above bac
         globalThis.browser = {
           webNavigation: {
             getAllFrames: async () => [
-              { frameId: 0, url: topCandidate.frameUrl },
-              { frameId: 12, url: activeCandidate.frameUrl },
+              { frameId: 0, parentFrameId: -1, url: topCandidate.frameUrl },
+              { frameId: 12, parentFrameId: 0, url: activeCandidate.frameUrl },
             ],
           },
           tabs: {
-            executeScript: async (_tabId, details) => [
-              details.frameId === 12 ? [activeCandidate] : [topCandidate],
-            ],
+            executeScript: async (_tabId, details) => [{
+              candidates: details.frameId === 12 ? [activeCandidate] : [topCandidate],
+              frameContext: details.frameId === 12 ? {
+                frameUrl: activeCandidate.frameUrl,
+                frameName: 'captcha-internal',
+                childFrames: [],
+              } : {
+                frameUrl: topCandidate.frameUrl,
+                frameName: '',
+                childFrames: [{
+                  url: activeCandidate.frameUrl,
+                  loadedUrl: activeCandidate.frameUrl,
+                  name: 'captcha-internal',
+                  visible: true,
+                }],
+              },
+            }],
           },
         };
       }
@@ -50943,6 +50988,93 @@ test('captcha detection ranks a visible nested v2 Enterprise challenge above bac
   } finally {
     globalThis.chrome = previous.chrome;
     globalThis.browser = previous.browser;
+  }
+});
+
+test('captcha frame visibility propagation demotes descendants of hidden embedding frames', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const visibleCandidate = {
+      frameId: 0,
+      frameUrl: 'https://example.test/form',
+      type: 'recaptcha_v2',
+      websiteKey: 'KEY_VISIBLE',
+      visible: true,
+      normalCheckbox: true,
+      detectedVia: 'host',
+    };
+    const nestedCandidate = {
+      frameId: 12,
+      frameUrl: 'https://example.test/checkpoint/challenge/captchaInternal',
+      type: 'recaptcha_v2_enterprise',
+      websiteKey: 'KEY_HIDDEN_NESTED',
+      visible: true,
+      normalCheckbox: true,
+      challengeFrame: true,
+      detectedVia: 'host',
+    };
+    const navigationFrames = [
+      { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+      { frameId: 7, parentFrameId: 0, url: 'https://example.test/hidden-wrapper' },
+      { frameId: 12, parentFrameId: 7, url: nestedCandidate.frameUrl },
+    ];
+    const frameContexts = [
+      {
+        frameId: 0,
+        frameUrl: visibleCandidate.frameUrl,
+        frameName: '',
+        childFrames: [{
+          url: 'https://example.test/hidden-wrapper',
+          loadedUrl: 'https://example.test/hidden-wrapper',
+          name: 'wrapper',
+          visible: false,
+        }],
+      },
+      {
+        frameId: 7,
+        frameUrl: 'https://example.test/hidden-wrapper',
+        frameName: 'wrapper',
+        childFrames: [{
+          url: nestedCandidate.frameUrl,
+          loadedUrl: nestedCandidate.frameUrl,
+          name: 'captcha-internal',
+          visible: true,
+        }],
+      },
+      {
+        frameId: 12,
+        frameUrl: nestedCandidate.frameUrl,
+        frameName: 'captcha-internal',
+        childFrames: [],
+      },
+    ];
+
+    const hiddenAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, nestedCandidate],
+      frameContexts,
+      navigationFrames,
+    );
+    assert.equal(hiddenAdjusted[1].frameVisible, false, `${build}: hidden ancestor was ignored`);
+    assert.equal(hiddenAdjusted[1].visible, false, `${build}: nested widget remained visible`);
+    assert.equal(hiddenAdjusted[1].normalCheckbox, false, `${build}: nested checkbox remained active`);
+    assert.equal(
+      runtime.selectCaptchaCandidate(hiddenAdjusted).selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: hidden nested CAPTCHA outranked the visible candidate`,
+    );
+
+    frameContexts[0].childFrames[0].visible = true;
+    const visibleAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, nestedCandidate],
+      frameContexts,
+      navigationFrames,
+    );
+    assert.equal(visibleAdjusted[1].frameVisible, true, `${build}: visible ancestor chain was demoted`);
+    assert.equal(
+      runtime.selectCaptchaCandidate(visibleAdjusted).selected.websiteKey,
+      'KEY_HIDDEN_NESTED',
+      `${build}: visible nested challenge was not restored`,
+    );
   }
 });
 
