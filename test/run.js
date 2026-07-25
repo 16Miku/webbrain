@@ -51034,6 +51034,196 @@ test('captcha detection ranks a visible nested v2 Enterprise challenge above bac
   }
 });
 
+test('captcha detection inherits same-key reCAPTCHA loader metadata only from ancestor frames', async () => {
+  const topUrl = 'https://example.test/signup';
+  const childUrl = 'https://example.test/captcha-widget';
+  const siblingUrl = 'https://example.test/background-integration';
+  const websiteKey = 'KEY_ANCESTOR_V3_ENTERPRISE';
+  const ancestorLoader = {
+    type: 'recaptcha_v3_enterprise',
+    websiteKey,
+    isInvisible: true,
+    isEnterprise: true,
+    visible: false,
+    normalCheckbox: false,
+    pageAction: 'ancestor-login',
+    frameUrl: topUrl,
+    detectedVia: 'script',
+  };
+  const childHost = {
+    type: 'recaptcha_v2',
+    websiteKey,
+    isInvisible: false,
+    isEnterprise: false,
+    visible: true,
+    normalCheckbox: true,
+    frameUrl: childUrl,
+    detectedVia: 'host',
+  };
+  const siblingLoader = {
+    ...ancestorLoader,
+    type: 'recaptcha_v3',
+    isEnterprise: false,
+    pageAction: 'sibling-action',
+    frameUrl: siblingUrl,
+  };
+  const navigationFrames = [
+    { frameId: 0, parentFrameId: -1, url: topUrl },
+    { frameId: 12, parentFrameId: 0, url: childUrl },
+    { frameId: 13, parentFrameId: 0, url: siblingUrl },
+  ];
+  const framePayload = frameId => {
+    if (frameId === 12) {
+      return {
+        candidates: [childHost],
+        frameContext: {
+          frameUrl: childUrl,
+          frameName: 'captcha-widget',
+          childFrames: [],
+        },
+      };
+    }
+    if (frameId === 13) {
+      return {
+        candidates: [siblingLoader],
+        frameContext: {
+          frameUrl: siblingUrl,
+          frameName: 'background-integration',
+          childFrames: [],
+        },
+      };
+    }
+    return {
+      candidates: [ancestorLoader],
+      frameContext: {
+        frameUrl: topUrl,
+        frameName: '',
+        childFrames: [
+          {
+            url: childUrl,
+            loadedUrl: childUrl,
+            name: 'captcha-widget',
+            visible: true,
+          },
+          {
+            url: siblingUrl,
+            loadedUrl: siblingUrl,
+            name: 'background-integration',
+            visible: true,
+          },
+        ],
+      },
+    };
+  };
+  const previous = { chrome: globalThis.chrome, browser: globalThis.browser };
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+      if (build === 'chrome') {
+        globalThis.chrome = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          scripting: {
+            executeScript: async () => navigationFrames.map(({ frameId }) => ({
+              frameId,
+              result: framePayload(frameId),
+            })),
+          },
+        };
+      } else {
+        globalThis.browser = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          tabs: {
+            executeScript: async (_tabId, { frameId }) => [framePayload(frameId)],
+          },
+        };
+      }
+
+      const detection = await mod.detectCaptcha(88);
+      assert.equal(detection.error, null, `${build}: ancestor metadata reconciliation failed`);
+      assert.equal(detection.selected.frameId, 12, `${build}: visible child widget was not selected`);
+      assert.equal(
+        detection.selected.type,
+        'recaptcha_v3_enterprise',
+        `${build}: ancestor v3 Enterprise type was not inherited`,
+      );
+      assert.equal(detection.selected.isEnterprise, true, `${build}: Enterprise mode was not inherited`);
+      assert.equal(detection.selected.pageAction, 'ancestor-login', `${build}: ancestor action was not inherited`);
+      assert.equal(detection.selected.normalCheckbox, false, `${build}: reconciled v3 host remained a v2 checkbox`);
+      assert.equal(detection.selected.ancestorLoaderFrameId, 0, `${build}: loader ancestry was not reported`);
+      assert.equal(
+        detection.selected.selectionReason,
+        'visible CAPTCHA widget',
+        `${build}: reconciled v3 selection reason was inaccurate`,
+      );
+
+      const runtime = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
+      ).href);
+      const inheritedChildHost = {
+        ...childHost,
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        framePath: [{ index: 1, frameUrl: 'about:srcdoc', frameName: 'captcha-child' }],
+      };
+      const inheritedSiblingLoader = {
+        ...siblingLoader,
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        framePath: [{ index: 0, frameUrl: 'about:srcdoc', frameName: 'captcha-sibling' }],
+      };
+      const inheritedSiblingAdjusted = runtime.applyCaptchaFrameVisibility(
+        [inheritedSiblingLoader, inheritedChildHost],
+        [],
+        [{ frameId: 0, parentFrameId: -1, url: topUrl }],
+      );
+      assert.equal(
+        inheritedSiblingAdjusted[1].type,
+        'recaptcha_v2',
+        `${build}: inherited-origin sibling metadata leaked into the child`,
+      );
+
+      const inheritedAncestorAdjusted = runtime.applyCaptchaFrameVisibility(
+        [{ ...ancestorLoader, frameId: 0 }, inheritedChildHost],
+        [],
+        [{ frameId: 0, parentFrameId: -1, url: topUrl }],
+      );
+      assert.equal(
+        inheritedAncestorAdjusted[1].type,
+        'recaptcha_v3_enterprise',
+        `${build}: inherited-origin child did not receive base-frame loader metadata`,
+      );
+
+      const conflictingAdjusted = runtime.applyCaptchaFrameVisibility(
+        [
+          { ...ancestorLoader, frameId: 0 },
+          { ...ancestorLoader, frameId: 0, pageAction: 'conflicting-action' },
+          { ...childHost, frameId: 12 },
+        ],
+        [],
+        navigationFrames,
+      );
+      const conflictingSelection = runtime.selectCaptchaCandidate(conflictingAdjusted);
+      assert.equal(
+        conflictingSelection.selected,
+        null,
+        `${build}: conflicting nearest ancestor loaders were selected`,
+      );
+      assert.match(
+        conflictingSelection.error || '',
+        /ancestorLoader/,
+        `${build}: conflicting ancestor loader diagnostic was missing`,
+      );
+    }
+  } finally {
+    globalThis.chrome = previous.chrome;
+    globalThis.browser = previous.browser;
+  }
+});
+
 test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its parent frame', async () => {
   const firefoxMod = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/captcha-solver.js')).href);
   const response = captchaEl('textarea', { name: 'g-recaptcha-response' });

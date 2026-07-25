@@ -122,7 +122,88 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     return visible;
   };
 
-  return (Array.isArray(candidates) ? candidates : []).map(candidate => {
+  const sourceCandidates = Array.isArray(candidates) ? candidates : [];
+  const pathIsStrictAncestor = (sourcePath, targetPath) => {
+    const source = Array.isArray(sourcePath) ? sourcePath : [];
+    const target = Array.isArray(targetPath) ? targetPath : [];
+    if (source.length >= target.length) return false;
+    return source.every((segment, index) =>
+      Number(segment?.index) === Number(target[index]?.index)
+    );
+  };
+  const ancestorDistance = (source, target) => {
+    if (!Number.isInteger(source?.frameId) || !Number.isInteger(target?.frameId)) return null;
+    const sourcePath = Array.isArray(source.framePath) ? source.framePath : [];
+    const targetPath = Array.isArray(target.framePath) ? target.framePath : [];
+    if (source.frameId === target.frameId) {
+      if (!pathIsStrictAncestor(sourcePath, targetPath)) return null;
+      return targetPath.length - sourcePath.length;
+    }
+    // A candidate reached through an inherited-origin framePath lives below
+    // its injectable frameId. Treating that base frame as its location would
+    // let metadata leak sideways into a sibling browser frame.
+    if (sourcePath.length) return null;
+    let currentFrameId = target.frameId;
+    let distance = targetPath.length;
+    const visited = new Set();
+    while (Number.isInteger(currentFrameId) && !visited.has(currentFrameId)) {
+      visited.add(currentFrameId);
+      const parentFrameId = navigationByFrameId.get(currentFrameId)?.parentFrameId;
+      if (!Number.isInteger(parentFrameId) || parentFrameId === -1) return null;
+      distance += 1;
+      if (parentFrameId === source.frameId) return distance;
+      currentFrameId = parentFrameId;
+    }
+    return null;
+  };
+  const reconcileAncestorLoader = (candidate) => {
+    if (!candidate?.websiteKey
+        || !/^recaptcha_v[23](?:_enterprise)?$/.test(String(candidate.type || ''))
+        || candidate.detectedVia === 'script') {
+      return candidate;
+    }
+    const matchingLoaders = sourceCandidates
+      .filter(source =>
+        source !== candidate
+        && source?.detectedVia === 'script'
+        && source?.websiteKey === candidate.websiteKey
+        && /^recaptcha_v3(?:_enterprise)?$/.test(String(source.type || ''))
+      )
+      .map(source => ({ source, distance: ancestorDistance(source, candidate) }))
+      .filter(entry => entry.distance != null)
+      .sort((left, right) => left.distance - right.distance);
+    if (!matchingLoaders.length) return candidate;
+    const nearestDistance = matchingLoaders[0].distance;
+    const nearest = matchingLoaders.filter(entry => entry.distance === nearestDistance);
+    const signatures = new Set(nearest.map(({ source }) => JSON.stringify([
+      source.type,
+      source.isEnterprise === true,
+      source.pageAction || null,
+    ])));
+    if (signatures.size > 1) {
+      return {
+        ...candidate,
+        parameterConflicts: [...new Set([
+          ...(Array.isArray(candidate.parameterConflicts) ? candidate.parameterConflicts : []),
+          'ancestorLoader',
+        ])],
+      };
+    }
+    const loader = nearest[0].source;
+    const pageAction = candidate.pageAction || loader.pageAction || null;
+    return {
+      ...candidate,
+      type: loader.type,
+      isEnterprise: loader.isEnterprise === true || /_enterprise$/.test(loader.type),
+      normalCheckbox: false,
+      ...(pageAction ? { pageAction } : {}),
+      ...(!pageAction && loader.note ? { note: loader.note } : {}),
+      ancestorLoaderFrameId: loader.frameId,
+    };
+  };
+
+  return sourceCandidates.map(rawCandidate => {
+    const candidate = reconcileAncestorLoader(rawCandidate);
     const frameVisible = frameIsVisible(candidate?.frameId)
       && candidate?.frameVisibleWithinAnchor !== false;
     return {
@@ -153,6 +234,9 @@ function candidateSummary(candidate) {
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
+    ancestorLoaderFrameId: Number.isInteger(candidate?.ancestorLoaderFrameId)
+      ? candidate.ancestorLoaderFrameId
+      : null,
     parameterConflicts: Array.isArray(candidate?.parameterConflicts)
       ? candidate.parameterConflicts
       : [],
