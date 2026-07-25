@@ -74,6 +74,8 @@ export default {
   'sp.mic.disabled_settings': 'Enable voice input in settings',
   'sp.mic.permission_denied': 'Microphone blocked — allow microphone access for this extension in your browser\'s site permissions',
   'sp.mic.use_allow_site': 'Please choose "Allow while visiting the site" (not "Allow this time") so the permission sticks across windows',
+  'mic.granted': 'Permission granted!',
+  'mic.denied': 'Microphone was denied. You can allow it in the extension\'s Site settings.',
   'sp.attach.remove': 'Remove attachment',
   'sp.attach.too_large': '{name} is too large to attach (max {max}).',
   'sp.attach.unsupported_type': '{name} is not a supported attachment type — only images, PDFs, JSON, TXT, and CSV files are supported.',
@@ -426,6 +428,9 @@ export default {
   'ob.btn.enabling': 'Enabling...',
   'ob.btn.done': 'Get Started',
   'ob.btn.skip': 'Skip for now',
+  'ob.cloud.body': 'WebBrain Cloud is ready with a free daily allowance. Selected Cloud conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
+  'ob.cloud.change': 'Change',
+  'ob.cloud.using': 'Using WebBrain Cloud. ',
 
   // --- Settings ----------------------------------------------------------
   'st.title': 'WebBrain Settings',

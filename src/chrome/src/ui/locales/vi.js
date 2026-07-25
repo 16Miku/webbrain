@@ -74,6 +74,8 @@ export default {
   'sp.mic.disabled_settings': "Bật tính năng nhập bằng giọng nói trong cài đặt",
   'sp.mic.permission_denied': "Micrô bị chặn — nhấp chuột phải vào biểu tượng WebBrain trên thanh công cụ → Quản lý tiện ích mở rộng → Cài đặt trang → đặt Micrô thành Cho phép",
   'sp.mic.use_allow_site': "Vui lòng chọn \"Cho phép khi truy cập trang web\" (không phải \"Cho phép lần này\") để quyền được áp dụng trên các cửa sổ",
+  'mic.granted': 'Đã cấp quyền!',
+  'mic.denied': 'Máy vi âm bị từ chối. Bạn có thể cho phép trong cài đặt trang web của tiện ích mở rộng.',
   'sp.attach.remove': "Xóa tệp đính kèm",
   'sp.attach.too_large': "{name} quá lớn để đính kèm (tối đa {max}).",
   'sp.attach.unsupported_type': "{name} không phải là loại tệp đính kèm được hỗ trợ - chỉ hỗ trợ các tệp hình ảnh, PDF, JSON, TXT và CSV.",
@@ -428,6 +430,10 @@ export default {
   'ob.btn.enabling': "Đang bật...",
   'ob.btn.done': "Bắt đầu",
   'ob.btn.skip': "Bỏ qua bây giờ",
+  'ob.btn.start': 'Bắt đầu',
+  'ob.cloud.body': 'WebBrain Cloud đã sẵn sàng với hạn ngạch hàng ngày miễn phí. Các cuộc trò chuyện Cloud được chọn có thể được giữ lại và sử dụng để cải thiện WebBrain trong khi Trợ giúp Cải thiện WebBrain được bật theo mặc định. Bạn có thể tắt nó trong Cài đặt → Chung.',
+  'ob.cloud.change': 'Thay đổi',
+  'ob.cloud.using': 'Đang sử dụng WebBrain Cloud.',
 
   // --- Settings ----------------------------------------------------------
   'st.title': "Cài đặt WebBrain",

@@ -74,6 +74,8 @@ export default {
   'sp.mic.disabled_settings': "Ative a entrada de voz nas configurações",
   'sp.mic.permission_denied': "Microfone bloqueado - clique com o botão direito no ícone WebBrain na barra de ferramentas → Gerenciar extensão → Configurações do site → defina Microfone como Permitir",
   'sp.mic.use_allow_site': "Escolha \"Permitir ao visitar o site\" (não \"Permitir desta vez\") para que a permissão permaneça nas janelas",
+  'mic.granted': 'Permissão concedida!',
+  'mic.denied': 'Microfone foi negado. Você pode permiti-lo nas configurações do site da extensão.',
   'sp.attach.remove': "Remover anexo",
   'sp.attach.too_large': "{name} é muito grande para ser conectado (máx. {max}).",
   'sp.attach.unsupported_type': "{name} não é um tipo de anexo compatível – apenas imagens, PDFs, arquivos JSON, TXT e CSV são compatíveis.",
@@ -428,6 +430,10 @@ export default {
   'ob.btn.enabling': "Habilitando...",
   'ob.btn.done': "Comece",
   'ob.btn.skip': "Pular por enquanto",
+  'ob.btn.start': 'Iniciar',
+  'ob.cloud.body': 'WebBrain Cloud está pronto com uma alocação diária gratuita. Conversas selecionadas do Cloud podem ser retidas e usadas para melhorar o WebBrain enquanto Ajuda a Melhorar o WebBrain está ativado por padrão. Você pode desativá-lo em Configurações → Geral.',
+  'ob.cloud.change': 'Alterar',
+  'ob.cloud.using': 'Usando WebBrain Cloud.',
 
   // --- Settings ----------------------------------------------------------
   'st.title': "Configurações WebBrain",

@@ -194,7 +194,7 @@ if (globalThis.browser?.storage?.onChanged) {
     cloudReady = true;
     localModelChoices = [];
     if (providerBody) {
-      providerBody.textContent = 'WebBrain Cloud is ready with a free daily allowance. Selected Cloud conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.';
+      providerBody.textContent = t('ob.cloud.body');
     }
     if (providerStatus) {
       providerStatus.textContent = '';
@@ -202,21 +202,21 @@ if (globalThis.browser?.storage?.onChanged) {
       changeLink.href = browser.runtime.getURL('src/ui/settings.html#providers');
       changeLink.target = '_blank';
       changeLink.rel = 'noopener noreferrer';
-      changeLink.textContent = 'Change';
+      changeLink.textContent = t('ob.cloud.change');
       changeLink.addEventListener('click', async (event) => {
         event.preventDefault();
         openProviderSettings();
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode('Using WebBrain Cloud. '),
+        document.createTextNode(t('ob.cloud.using')),
         changeLink,
         document.createTextNode('.')
       );
     }
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
-    settingsBtn.textContent = 'Start';
+    settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
   }
 
