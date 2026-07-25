@@ -60,6 +60,7 @@ import {
 } from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
+import { SELECTION_ONLY_SOURCE_GROUNDING } from '../context-menu-storage.js';
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
@@ -2238,8 +2239,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * mentioned earlier in the thread. The heavier screenshot context is still
    * limited to the first real user turn.
    */
-  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null) {
+  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
     // Dynamic trusted state belongs in the per-turn user context, not the
     // cache-stable system prompt. The same enriched message is passed to the
     // planner gate and the main agent loop, so neither has to guess the clock.
@@ -2248,11 +2250,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Collect URL + title via chrome.tabs (cheap, no debugger needed).
     let url = '';
     let title = '';
-    try {
-      const tab = await chrome.tabs.get(tabId);
-      url = tab?.url || '';
-      title = tab?.title || '';
-    } catch (e) { /* ignore */ }
+    if (!selectionOnly) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        url = tab?.url || '';
+        title = tab?.title || '';
+      } catch (e) { /* ignore */ }
+    }
 
     // url and title are page-controlled (document.title especially). Neutralize
     // characters that could break out of this bracketed, trusted note and
@@ -2329,7 +2333,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    if (hasPriorUserTurn) {
+    // Selected-text shortcuts have an explicit source boundary. Do not attach
+    // page title, adapter guidance, a vision description, or raw pixels that a
+    // small multimodal model could mistake for the authoritative selection.
+    if (selectionOnly || hasPriorUserTurn) {
       return { role: 'user', content: contextLine + userMessage };
     }
 
@@ -17982,7 +17989,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Trim context if it's getting too long
     await this._manageContext(tabId, messages, onUpdate, costState);
 
-    const enriched = await this._enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState);
+    const enriched = await this._enrichUserMessageWithCurrentPage(
+      tabId, messages, userMessage, costState, runOptions,
+    );
     this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
@@ -18030,9 +18039,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Validate attachments BEFORE the planner gate / trace start: an
     // unsupported attachment is a plain "tell the user" response, not an
     // agent run, and the message must never be pushed to history this way.
-    if (attachments && attachments.length) {
+    const sourceBoundAttachments = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+      ? []
+      : attachments;
+    if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const canUseScratchpadTool = this._isActionMode(mode);
-      const attachResult = await this._applyAttachments(enriched, attachments, provider, {
+      const attachResult = await this._applyAttachments(enriched, sourceBoundAttachments, provider, {
         canUseScratchpadTool,
         tabId,
         messages,
@@ -18044,7 +18056,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('attachment_rejected', { error: attachResult.error });
         return (finalResponse = attachResult.error);
       }
-      this._pinTextAttachmentMetadata(tabId, attachments, { canUseScratchpadTool });
+      this._pinTextAttachmentMetadata(tabId, sourceBoundAttachments, { canUseScratchpadTool });
     }
 
     // Everything that can throw — trace start, planner gate, run setup, and the
@@ -18682,7 +18694,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Trim context if it's getting too long
     await this._manageContext(tabId, messages, onUpdate, costState);
 
-    const enriched = await this._enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState);
+    const enriched = await this._enrichUserMessageWithCurrentPage(
+      tabId, messages, userMessage, costState, runOptions,
+    );
     this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();

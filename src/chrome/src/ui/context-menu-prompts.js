@@ -3,6 +3,8 @@
  * The Chrome and Firefox copies of this file are identical — edit both together.
  */
 
+import { SELECTION_ONLY_SOURCE_GROUNDING } from '../context-menu-storage.js';
+
 export function createContextMenuPromptHandler({
   getCurrentTabId,
   getIsProcessing,
@@ -28,7 +30,10 @@ export function createContextMenuPromptHandler({
     const id = payload?.id
       ? String(payload.id)
       : `ctx-${tabId ?? 'unknown'}-${payload?.createdAt || Date.now()}-${text.length}`;
-    return { id, tabId, text };
+    const sourceGrounding = payload?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+      ? SELECTION_ONLY_SOURCE_GROUNDING
+      : null;
+    return { id, tabId, text, ...(sourceGrounding ? { sourceGrounding } : {}) };
   }
 
   function contextMenuPromptMatchesCurrentTab(payload) {
@@ -106,7 +111,10 @@ export function createContextMenuPromptHandler({
     // consumePendingContextMenuPrompt() recovers the prompt on the next panel load.
     let accepted = false;
     try {
-      accepted = await sendMessage({ contextMenuClear: clearPayload });
+      accepted = await sendMessage({
+        contextMenuClear: clearPayload,
+        ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
+      });
     } catch { /* storage recovery can retry the prompt later */ }
     runningContextMenuPromptId = null;
     trackedContextMenuPromptIds.delete(payload.id);

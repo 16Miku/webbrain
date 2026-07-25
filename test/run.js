@@ -382,6 +382,7 @@ const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
   createContextMenuStorage: createContextMenuStorageCh,
@@ -390,6 +391,7 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
   createContextMenuStorage: createContextMenuStorageFx,
@@ -17549,6 +17551,94 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
   }
 });
 
+test('selection shortcut grounding metadata suppresses competing page images', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let activeProviderCalls = 0;
+    let visionProviderCalls = 0;
+    let screenshotCalls = 0;
+    const agent = new AgentClass({
+      getActive() {
+        activeProviderCalls += 1;
+        return { supportsVision: true };
+      },
+      async getVisionProvider() {
+        visionProviderCalls += 1;
+        return null;
+      },
+    });
+    agent._captureBudgetedAutoScreenshot = async () => {
+      screenshotCalls += 1;
+      return {
+        dataUrl: 'data:image/png;base64,AA==',
+        width: 100,
+        height: 100,
+        coordAligned: true,
+      };
+    };
+
+    const prompt = buildSelectionPrompt('authoritative selected words', 'translate', '', 'en');
+    const grounded = await agent._enrichUserMessageWithCurrentPage(
+      999,
+      [],
+      prompt,
+      null,
+      { sourceGrounding },
+    );
+    assert.equal(typeof grounded.content, 'string', `${label}: selection-only content should stay text-only`);
+    assert.match(grounded.content, /authoritative selected words/, `${label}: authoritative selection should remain present`);
+    assert.doesNotMatch(grounded.content, /Current page context|Initial viewport|SCREENSHOT/, `${label}: page-derived context should be absent`);
+    assert.equal(activeProviderCalls, 0, `${label}: selection-only enrichment should not inspect main vision capability`);
+    assert.equal(visionProviderCalls, 0, `${label}: selection-only enrichment should not invoke a vision provider`);
+    assert.equal(screenshotCalls, 0, `${label}: selection-only enrichment should not capture a screenshot`);
+
+    const ordinary = await agent._enrichUserMessageWithCurrentPage(999, [], 'What is on this page?');
+    assert.ok(Array.isArray(ordinary.content), `${label}: ordinary first-turn Ask should retain visual context`);
+    assert.equal(ordinary.content.some(block => block?.type === 'image_url'), true, `${label}: ordinary first-turn Ask should attach its screenshot`);
+    assert.equal(activeProviderCalls, 1, `${label}: ordinary Ask should inspect main vision capability`);
+    assert.equal(visionProviderCalls, 1, `${label}: ordinary Ask should inspect the dedicated vision provider`);
+    assert.equal(screenshotCalls, 1, `${label}: ordinary Ask should capture one screenshot`);
+  }
+});
+
+test('sidepanel preserves selection-only grounding across retries and attachment state', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(
+      panel,
+      /const requestedSourceGrounding = retryOptions\?\.sourceGrounding \?\? chatExtraParams\.sourceGrounding;[\s\S]*?requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: retries should retain allowlisted source grounding`,
+    );
+    assert.match(
+      panel,
+      /const attachmentsForSend = sourceGrounding\s*\? \[\]\s*: retryOptions/,
+      `${label}: selection-only runs must not inherit pending attachment chips`,
+    );
+    assert.match(
+      panel,
+      /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
+      `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
+    );
+    assert.match(
+      panel,
+      /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: rendered retry controls should preserve the selection boundary`,
+    );
+
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(
+      agent,
+      /const sourceBoundAttachments = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\? \[\]\s*: attachments;/,
+      `${label}: agent trust boundary should reject explicit attachments on selection-only runs`,
+    );
+  }
+});
+
 test('selection prompt display formatter hides untrusted wrappers from the chat UI', () => {
   for (const [label, buildSelectionPrompt, buildContextMenuPrompt, formatSelectionPromptForDisplay] of [
     ['chrome', buildSelectionPromptCh, buildContextMenuPromptCh, formatSelectionPromptForDisplayCh],
@@ -17685,6 +17775,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
+    assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
+    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?\{ sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING \}/, `${label}: only allowlisted grounding should reach agent run options`);
   }
 
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -17773,6 +17865,46 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
     setTabId(value) { currentTabId = value; },
   };
 }
+
+test('context-menu prompt transport preserves only allowlisted selection grounding', async () => {
+  for (const [label, createHandler, sourceGrounding] of [
+    ['chrome', createContextMenuPromptHandlerCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', createContextMenuPromptHandlerFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const prompt = {
+      id: `${label}-grounded`,
+      tabId: 6,
+      text: 'Translate this selection',
+      sourceGrounding,
+    };
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true);
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      h.sends[0].extra,
+      {
+        contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+        sourceGrounding,
+      },
+      `${label}: selection-only provenance should survive sidepanel transport`,
+    );
+
+    const invalidPrompt = {
+      id: `${label}-invalid-grounding`,
+      tabId: 6,
+      text: 'Ordinary prompt',
+      sourceGrounding: 'screenshot_only',
+    };
+    const invalid = createContextMenuPromptHarness(createHandler, invalidPrompt, async () => true);
+    invalid.handler.acceptContextMenuPrompt(invalidPrompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      invalid.sends[0].extra,
+      { contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id } },
+      `${label}: unknown grounding values must be dropped`,
+    );
+  }
+});
 
 test('context-menu prompt recovery retries after an unaccepted send', async () => {
   for (const [label, createHandler] of [
@@ -48985,7 +49117,7 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
     );
     assert.match(
       source,
-      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, attachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, attachments, \{ canUseScratchpadTool \}\);/,
+      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
       `${label} should gate attachment scratchpad guidance on ask vs action modes`,
     );
   }
