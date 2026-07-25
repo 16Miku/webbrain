@@ -12141,6 +12141,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 `solve_captcha: requested type "${type}" conflicts with the active detected candidate "${detected.type}" in ${detected.frameUrl}. Retry without type or use the detected type.`
               );
             }
+            const visibilityModeApplies = /^(?:recaptcha_v2(?:_enterprise)?|hcaptcha)$/.test(
+              String(detected.type || '')
+            );
+            if (visibilityModeApplies
+                && isInvisible != null
+                && detected.isInvisible != null
+                && Boolean(isInvisible) !== Boolean(detected.isInvisible)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isInvisible=${Boolean(isInvisible)} conflicts with the active detected candidate isInvisible=${Boolean(detected.isInvisible)} in ${detected.frameUrl}. Retry without isInvisible or use the detected value.`
+              );
+            }
+            if (/^recaptcha_v[23](?:_enterprise)?$/.test(String(detected.type || ''))
+                && isEnterprise != null
+                && detected.isEnterprise != null
+                && Boolean(isEnterprise) !== Boolean(detected.isEnterprise)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isEnterprise=${Boolean(isEnterprise)} conflicts with the active detected candidate isEnterprise=${Boolean(detected.isEnterprise)} in ${detected.frameUrl}. Retry without isEnterprise or use the detected value.`
+              );
+            }
             if (pageAction && detected.pageAction && String(pageAction) !== String(detected.pageAction)) {
               return noDispatchFailure(
                 `solve_captcha: requested pageAction "${pageAction}" conflicts with the active detected candidate action "${detected.pageAction}" in ${detected.frameUrl}. Retry without pageAction or use the detected action.`
@@ -12217,6 +12236,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 explicitWebsiteKey: detected.explicitWebsiteKey === true,
                 responseFieldId: detected.responseFieldId,
                 responseFieldIndex: detected.responseFieldIndex,
+                alsoResponseFieldId: detected.alsoResponseFieldId,
+                alsoResponseFieldIndex: detected.alsoResponseFieldIndex,
                 documentTimeOrigin: detected.documentTimeOrigin,
               } : null,
             });

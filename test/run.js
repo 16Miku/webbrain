@@ -50950,6 +50950,28 @@ test('captcha detection binds the selected widget to its own response field', as
     );
     assert.equal(selected.responseFieldIndex, 1, `${build}: selected response field index was not preserved`);
     assert.equal(selected.callbackName, 'onActiveCaptcha', `${build}: selected callback was not preserved`);
+
+    const hcaptchaField = captchaEl('textarea', {
+      id: 'h-captcha-response-active',
+      name: 'h-captcha-response',
+    });
+    const compatibilityField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-hcaptcha-active',
+      name: 'g-recaptcha-response',
+    });
+    const hcaptcha = await detectCaptchaOnFakePage(build, [
+      captchaEl('div', {
+        class: 'h-captcha',
+        'data-sitekey': 'HKEY_ACTIVE_WIDGET',
+      }, [hcaptchaField, compatibilityField]),
+    ]);
+    assert.equal(hcaptcha.responseFieldIndex, 0, `${build}: hCaptcha primary field index missing`);
+    assert.equal(
+      hcaptcha.alsoResponseFieldId,
+      'g-recaptcha-response-hcaptcha-active',
+      `${build}: hCaptcha compatibility field identity missing`,
+    );
+    assert.equal(hcaptcha.alsoResponseFieldIndex, 0, `${build}: hCaptcha compatibility field index missing`);
   }
 });
 
@@ -51949,6 +51971,66 @@ test('captcha token injection revalidates the selected frame and calls one match
       assert.equal(hiddenCallbackToken, null, `${build}: hidden widget callback was invoked`);
       assert.equal(modalCallbackToken, 'TOKEN_MODAL_WIDGET', `${build}: selected callback was not invoked`);
 
+      const canonicalHcaptchaResponse = makeResponse('h-captcha-response-only');
+      let createdCompatibilityResponse = null;
+      const hcaptchaHost = {
+        getAttribute: (name) => name === 'data-sitekey' ? 'HKEY_CANONICAL_ONLY' : null,
+      };
+      const hcaptchaDocument = {
+        querySelector: () => null,
+        querySelectorAll: (selector) => {
+          if (selector.includes('h-captcha-response')) return [canonicalHcaptchaResponse];
+          if (selector.includes('g-recaptcha-response')) return [];
+          if (selector.includes('[data-sitekey]')) return [hcaptchaHost];
+          return [];
+        },
+        createElement: () => makeResponse(''),
+        body: {
+          appendChild: (element) => {
+            createdCompatibilityResponse = element;
+          },
+        },
+        documentElement: { appendChild: () => {} },
+      };
+      const hcaptchaWindow = {
+        location: { href: 'https://example.test/hcaptcha' },
+        performance: { timeOrigin: 123456789 },
+        Event: globalThis.Event,
+        HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+        HTMLInputElement: globalThis.HTMLInputElement,
+      };
+      const canonicalOnlyHcaptcha = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        alsoSet: 'g-recaptcha-response',
+        token: 'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        target: {
+          frameId: 9,
+          frameUrl: hcaptchaWindow.location.href,
+          websiteKey: 'HKEY_CANONICAL_ONLY',
+          responseFieldId: 'h-captcha-response-only',
+          responseFieldIndex: 0,
+          documentTimeOrigin: 123456789,
+        },
+      }, {
+        document: hcaptchaDocument,
+        window: hcaptchaWindow,
+      });
+      assert.equal(
+        canonicalOnlyHcaptcha.success,
+        true,
+        `${build}: missing hCaptcha compatibility field aborted injection`,
+      );
+      assert.equal(
+        canonicalHcaptchaResponse.value,
+        'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        `${build}: canonical hCaptcha field was not updated`,
+      );
+      assert.equal(
+        createdCompatibilityResponse?.value,
+        'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        `${build}: missing hCaptcha compatibility field was not created`,
+      );
+
       responseFields = [response];
       captchaHosts = [host];
       const selectedFrameUrl = globalThis.location.href;
@@ -52223,6 +52305,21 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
       agent,
       /callbackHint: detected\.callbackName \|\| null,[\s\S]*?responseFieldId: detected\.responseFieldId,[\s\S]*?responseFieldIndex: detected\.responseFieldIndex/,
       `${build}: selected widget identity is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /visibilityModeApplies[\s\S]*?isInvisible != null[\s\S]*?Boolean\(isInvisible\) !== Boolean\(detected\.isInvisible\)[\s\S]*?requested isInvisible=/,
+      `${build}: explicit visibility conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /isEnterprise != null[\s\S]*?Boolean\(isEnterprise\) !== Boolean\(detected\.isEnterprise\)[\s\S]*?requested isEnterprise=/,
+      `${build}: explicit Enterprise conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /alsoResponseFieldId: detected\.alsoResponseFieldId,[\s\S]*?alsoResponseFieldIndex: detected\.alsoResponseFieldIndex/,
+      `${build}: hCaptcha compatibility field identity is not carried into injection`,
     );
   }
 });

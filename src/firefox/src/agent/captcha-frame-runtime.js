@@ -239,6 +239,10 @@ function candidateSummary(candidate) {
     responseFieldIndex: Number.isInteger(candidate?.responseFieldIndex)
       ? candidate.responseFieldIndex
       : null,
+    alsoResponseFieldId: candidate?.alsoResponseFieldId || null,
+    alsoResponseFieldIndex: Number.isInteger(candidate?.alsoResponseFieldIndex)
+      ? candidate.alsoResponseFieldIndex
+      : null,
     documentTimeOrigin: Number.isFinite(candidate?.documentTimeOrigin)
       ? candidate.documentTimeOrigin
       : null,
@@ -314,7 +318,11 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
       candidate.responseFieldId || (
         Number.isInteger(candidate.responseFieldIndex)
           ? `response-field-${candidate.responseFieldIndex}`
-          : ''
+          : (candidate.alsoResponseFieldId || (
+            Number.isInteger(candidate.alsoResponseFieldIndex)
+              ? `also-response-field-${candidate.alsoResponseFieldIndex}`
+              : ''
+          ))
       ),
     ].join('|');
     if (fingerprintIndexes.has(fingerprint)) {
@@ -550,6 +558,15 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(responseFieldIndex >= 0 ? { responseFieldIndex } : {}),
     };
   };
+  const alsoResponseFieldIdentity = (widget, name, fallbackIndex, widgetCount) => {
+    const identity = responseFieldIdentity(widget, name, fallbackIndex, widgetCount);
+    return {
+      ...(identity.responseFieldId ? { alsoResponseFieldId: identity.responseFieldId } : {}),
+      ...(Number.isInteger(identity.responseFieldIndex)
+        ? { alsoResponseFieldIndex: identity.responseFieldIndex }
+        : {}),
+    };
+  };
 
   const hcaptchaHosts = Array.from(pageDocument.querySelectorAll(
     '.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'
@@ -566,6 +583,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       normalCheckbox: visibleElement(host) && !isInvisible,
       callbackName: host.getAttribute('data-callback') || null,
       ...responseFieldIdentity(host, 'h-captcha-response', widgetIndex, hcaptchaHosts.length),
+      ...alsoResponseFieldIdentity(host, 'g-recaptcha-response', widgetIndex, hcaptchaHosts.length),
       detectedVia: 'host',
     });
   }
@@ -657,6 +675,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
           ...responseFieldIdentity(
             element,
             'h-captcha-response',
+            hcaptchaFrames.findIndex(frame => frame.element === element),
+            hcaptchaFrames.length,
+          ),
+          ...alsoResponseFieldIdentity(
+            element,
+            'g-recaptcha-response',
             hcaptchaFrames.findIndex(frame => frame.element === element),
             hcaptchaFrames.length,
           ),
@@ -903,19 +927,23 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     const fields = Array.from(frameDocument.querySelectorAll(
       `textarea[name="${name}"], input[name="${name}"]`
     ));
-    if (primary && target.responseFieldId) {
+    const selectedFieldId = primary ? target.responseFieldId : target.alsoResponseFieldId;
+    const selectedFieldIndex = primary
+      ? target.responseFieldIndex
+      : target.alsoResponseFieldIndex;
+    if (selectedFieldId) {
       const exact = fields.find(element => {
         try {
-          return String(element.id || element.getAttribute?.('id') || '') === target.responseFieldId;
+          return String(element.id || element.getAttribute?.('id') || '') === selectedFieldId;
         } catch (_) {
           return false;
         }
       });
       if (exact) return { element: exact };
     }
-    if (Number.isInteger(target.responseFieldIndex)) {
-      if (fields[target.responseFieldIndex]) {
-        return { element: fields[target.responseFieldIndex] };
+    if (Number.isInteger(selectedFieldIndex)) {
+      if (fields[selectedFieldIndex]) {
+        return { element: fields[selectedFieldIndex] };
       }
       return {
         error: 'The selected CAPTCHA response field is no longer present in the target frame.',
@@ -1075,6 +1103,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     responseFieldId: target.responseFieldId || null,
     responseFieldIndex: Number.isInteger(target.responseFieldIndex)
       ? target.responseFieldIndex
+      : null,
+    alsoResponseFieldId: target.alsoResponseFieldId || null,
+    alsoResponseFieldIndex: Number.isInteger(target.alsoResponseFieldIndex)
+      ? target.alsoResponseFieldIndex
       : null,
     calledCallback,
     callbackSource,
