@@ -147,6 +147,7 @@ function candidateSummary(candidate) {
     pageAction: candidate?.pageAction || null,
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
+    explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
     parameterConflicts: Array.isArray(candidate?.parameterConflicts)
       ? candidate.parameterConflicts
       : [],
@@ -253,6 +254,7 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
   let pool = unique;
   const requestedFrameUrl = String(constraints.frameUrl || '');
   const requestedWebsiteKey = String(constraints.websiteKey || '');
+  const requestedType = normalizeCaptchaType(constraints.type);
   if (requestedFrameUrl) {
     pool = pool.filter(candidate => candidate.frameUrl === requestedFrameUrl);
     if (!pool.length) {
@@ -265,7 +267,20 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
     }
   }
   if (requestedWebsiteKey) {
-    pool = pool.filter(candidate => candidate.websiteKey === requestedWebsiteKey);
+    const exactKeyMatches = pool.filter(candidate => candidate.websiteKey === requestedWebsiteKey);
+    const explicitTurnstileFallbacks = requestedType === 'turnstile'
+      ? pool
+        .filter(candidate =>
+          candidate.type === 'turnstile_challenge' && !candidate.websiteKey
+        )
+        .map(candidate => ({
+          ...candidate,
+          type: 'turnstile',
+          websiteKey: requestedWebsiteKey,
+          explicitWebsiteKey: true,
+        }))
+      : [];
+    pool = exactKeyMatches.length ? exactKeyMatches : explicitTurnstileFallbacks;
     if (!pool.length) {
       return {
         selected: null,
@@ -318,6 +333,7 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
 }
 
 function selectedReason(candidate, constraints) {
+  if (candidate.explicitWebsiteKey) return 'explicit site key for detected Turnstile challenge';
   if (constraints.frameUrl) return 'exact frameUrl match';
   if (constraints.websiteKey) return 'exact websiteKey match';
   if (candidate.normalCheckbox && candidate.visible) return 'visible checkbox challenge';

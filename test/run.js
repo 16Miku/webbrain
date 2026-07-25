@@ -51314,6 +51314,60 @@ test('captcha candidate deduplication rejects conflicting paid-task parameters',
   }
 });
 
+test('keyless Turnstile markers accept only an explicit Turnstile type and site key', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const keyless = {
+      frameId: 0,
+      frameUrl: 'https://example.test/challenge',
+      type: 'turnstile_challenge',
+      websiteKey: null,
+      visible: true,
+      challengeFrame: true,
+      detectedVia: 'script',
+    };
+    const explicit = runtime.selectCaptchaCandidate([keyless], {
+      type: 'turnstile',
+      websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+    });
+    assert.equal(explicit.error, null, `${build}: explicit Turnstile fallback was rejected`);
+    assert.equal(explicit.selected.type, 'turnstile', `${build}: keyless marker kept an unsupported task type`);
+    assert.equal(
+      explicit.selected.websiteKey,
+      'TURNSTILE_EXPLICIT_KEY',
+      `${build}: explicit Turnstile site key was not bound to the marker`,
+    );
+    assert.equal(explicit.selected.explicitWebsiteKey, true, `${build}: explicit-key fallback was not reported`);
+    assert.equal(
+      explicit.selected.selectionReason,
+      'explicit site key for detected Turnstile challenge',
+      `${build}: explicit-key selection reason missing`,
+    );
+
+    for (const constraints of [
+      { websiteKey: 'TURNSTILE_EXPLICIT_KEY' },
+      { type: 'hcaptcha', websiteKey: 'TURNSTILE_EXPLICIT_KEY' },
+    ]) {
+      const rejected = runtime.selectCaptchaCandidate([keyless], constraints);
+      assert.equal(rejected.selected, null, `${build}: mismatched keyless fallback was selected`);
+      assert.match(rejected.error, /supplied websiteKey/, `${build}: keyless fallback rejection was unclear`);
+    }
+
+    const keyed = {
+      ...keyless,
+      type: 'turnstile',
+      websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+      detectedVia: 'host',
+    };
+    const exactWins = runtime.selectCaptchaCandidate([keyless, keyed], {
+      type: 'turnstile',
+      websiteKey: keyed.websiteKey,
+    });
+    assert.equal(exactWins.selected.detectedVia, 'host', `${build}: exact detected site key did not win`);
+    assert.equal(exactWins.selected.explicitWebsiteKey, undefined, `${build}: exact match was mislabeled as fallback`);
+  }
+});
+
 test('captcha type compatibility combines the base type with the Enterprise flag', async () => {
   for (const build of ['chrome', 'firefox']) {
     const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
@@ -51603,7 +51657,7 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
     const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
     assert.match(
       agent,
-      /if \(type !== 'image_to_text'\) \{[\s\S]*?detectCaptcha\(tabId, \{ frameUrl, websiteKey \}\)/,
+      /if \(type !== 'image_to_text'\) \{[\s\S]*?detectCaptcha\(tabId, \{ type, frameUrl, websiteKey \}\)/,
       `${build}: solve_captcha does not run frame-aware detection when type is supplied`,
     );
     assert.match(

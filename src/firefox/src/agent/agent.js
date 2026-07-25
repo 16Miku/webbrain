@@ -12115,7 +12115,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let detectionNote = null;
         let detected = null;
         if (type !== 'image_to_text') {
-          const detection = await detectCaptcha(tabId, { frameUrl, websiteKey });
+          const detection = await detectCaptcha(tabId, { type, frameUrl, websiteKey });
           if (detection?.error) {
             const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
             const needsDetection = !type || !websiteKey || !!frameUrl;
