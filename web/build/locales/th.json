@@ -105,7 +105,7 @@
   "security.video.open_aria": "ดูวิดีโอความปลอดภัย",
   "security.video.close_aria": "ปิดวิดีโอความปลอดภัย",
   "features.label": "คุณสมบัติ",
-  "features.show_all": "แสดงคุณสมบัติทั้งหมด",
+  "features.show_more": "แสดงคุณสมบัติเพิ่มเติม",
   "features.show_less": "แสดงน้อยลง",
   "features.title": "ทุกอย่างที่ AI ในเบราว์เซอร์ควรมี",
   "features.subtitle": "AI agent เต็มรูปแบบที่อยู่ในแถบด้านข้างของเบราว์เซอร์และเข้าใจหน้าเว็บใด ๆ",

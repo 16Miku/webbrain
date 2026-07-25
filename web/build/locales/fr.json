@@ -105,7 +105,7 @@
   "security.video.open_aria": "Regarder la vidéo sur la sécurité",
   "security.video.close_aria": "Fermer la vidéo sur la sécurité",
   "features.label": "Fonctionnalités",
-  "features.show_all": "Voir toutes les fonctionnalités",
+  "features.show_more": "Voir plus de fonctionnalités",
   "features.show_less": "Voir moins",
   "features.title": "Tout ce qu'il faut pour une IA dans le navigateur",
   "features.subtitle": "Un agent IA complet qui vit dans la barre latérale du navigateur et comprend n'importe quelle page web.",

@@ -105,7 +105,7 @@
   "security.video.open_aria": "Panoorin ang video tungkol sa seguridad",
   "security.video.close_aria": "Isara ang video tungkol sa seguridad",
   "features.label": "Mga Tampok",
-  "features.show_all": "Ipakita ang lahat ng feature",
+  "features.show_more": "Magpakita ng higit pang feature",
   "features.show_less": "Magpakita ng mas kaunti",
   "features.title": "Lahat ng kailangan mo sa isang AI sa browser",
   "features.subtitle": "Isang full-featured na AI agent na nakatira sa side panel ng iyong browser at nakakaunawa sa anumang web page.",

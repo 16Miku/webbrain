@@ -105,7 +105,7 @@
   "security.video.open_aria": "Güvenlik videosunu izle",
   "security.video.close_aria": "Güvenlik videosunu kapat",
   "features.label": "Özellikler",
-  "features.show_all": "Tüm özellikleri göster",
+  "features.show_more": "Daha fazla özellik göster",
   "features.show_less": "Daha az göster",
   "features.title": "Bir tarayıcı AI'sında ihtiyacın olan her şey",
   "features.subtitle": "Tarayıcının yan panelinde yaşayan ve her web sayfasını anlayan eksiksiz bir AI ajanı.",

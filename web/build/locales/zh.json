@@ -105,7 +105,7 @@
   "security.video.open_aria": "观看安全视频",
   "security.video.close_aria": "关闭安全视频",
   "features.label": "功能",
-  "features.show_all": "显示全部功能",
+  "features.show_more": "显示更多功能",
   "features.show_less": "收起",
   "features.title": "浏览器 AI 所需的一切",
   "features.subtitle": "一个功能齐全的 AI 代理,驻扎在浏览器侧边栏,能理解任何网页。",
