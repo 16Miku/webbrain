@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "WebMCP تجريبي",
   "st.display.webmcp.desc": "اسمح لـ WebBrain باكتشاف وتشغيل الأدوات المنظمة التي تعرضها صفحات Chrome المدعومة. يؤدي التفعيل إلى إضافة أدوات WebMCP التجريبية وإرشاداتها إلى سياق النموذج. معطل افتراضيًا.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "بدأ تسجيل الشاشة/النافذة. اضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح للإيقاف، أو استخدم زر إيقاف المشاركة في Chrome.",
+  "sp.record.full_screen_started_html": "بدأ تسجيل الشاشة/النافذة. أوقفه بزر <strong>إيقاف</strong> في شريط التسجيل، أو بالضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح، أو باستخدام زر إيقاف المشاركة في Chrome. أضف <code>--hide-recording-indicator</code> لإبقاء الشريط خارج الفيديو.",
+  "sp.record.full_screen_started_hidden_html": "بدأ تسجيل الشاشة/النافذة. اضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح للإيقاف، أو استخدم زر إيقاف المشاركة في Chrome.",
   "sp.btn.attach": "إرفاق ملف",
   "sp.btn.mic": "إدخال صوتي",
   "sp.btn.mic_stop": "إيقاف الاستماع",
@@ -685,6 +686,7 @@ export default {
   "sp.queue.delete": "حذف الرسالة من قائمة الانتظار",
   "sp.slash.check_progress": "إظهار سجل التقدم الحالي",
   "sp.slash.record_full_screen": "تسجيل شاشة أو نافذة",
+  "sp.slash.record_hide_indicator": "إخفاء مؤشر التسجيل؛ اضغط Escape مرتين للإيقاف",
   "sp.progress.title_html": "<strong>سجل التقدم الحالي</strong>",
   "sp.progress.empty": "لا توجد صفوف تقدم مسجلة لهذه المحادثة بعد.",
   "sp.progress.error": "سجل التقدم غير متاح: {msg}",

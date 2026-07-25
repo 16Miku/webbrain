@@ -670,7 +670,8 @@ export default {
   "st.display.webmcp.label": "Deneysel WebMCP",
   "st.display.webmcp.desc": "WebBrain'in desteklenen Chrome sayfalarının sunduğu yapılandırılmış araçları keşfetmesine ve çalıştırmasına izin ver. Etkinleştirildiğinde deneysel WebMCP araçları ve yönlendirmesi model bağlamına eklenir. Varsayılan olarak kapalıdır.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Ekran/pencere kaydı başladı. Durdurmak için WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basın ya da Chrome’un Paylaşımı durdur denetimini kullanın.",
+  "sp.record.full_screen_started_html": "Ekran/pencere kaydı başladı. Kayıt afişindeki <strong>Durdur</strong> düğmesiyle, WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basarak ya da Chrome’un Paylaşımı durdur denetimiyle durdurabilirsiniz. Afişin videoya girmemesi için <code>--hide-recording-indicator</code> ekleyin.",
+  "sp.record.full_screen_started_hidden_html": "Ekran/pencere kaydı başladı. Durdurmak için WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basın ya da Chrome’un Paylaşımı durdur denetimini kullanın.",
   "sp.btn.attach": "Dosya ekle",
   "sp.btn.mic": "Ses girişi",
   "sp.btn.mic_stop": "Dinlemeyi durdur",
@@ -690,6 +691,7 @@ export default {
   "sp.queue.delete": "Kuyruktaki mesajı sil",
   "sp.slash.check_progress": "Geçerli ilerleme günlüğünü göster",
   "sp.slash.record_full_screen": "Bir ekranı veya pencereyi kaydet",
+  "sp.slash.record_hide_indicator": "Kayıt göstergesini gizle; durdurmak için Escape tuşuna iki kez bas",
   "sp.progress.title_html": "<strong>Geçerli ilerleme günlüğü</strong>",
   "sp.progress.empty": "Bu konuşma için henüz kaydedilmiş ilerleme satırı yok.",
   "sp.progress.error": "İlerleme günlüğü kullanılamıyor: {msg}",

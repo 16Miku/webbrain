@@ -634,11 +634,12 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/record',
-    usage: '/record [--full-screen] [--transcribe]',
+    usage: '/record [--full-screen] [--hide-recording-indicator] [--transcribe]',
     descriptionKey: 'sp.slash.record',
     action: 'tab',
     options: [
       { value: '--full-screen', descriptionKey: 'sp.slash.record_full_screen', action: 'full-screen', outOfBand: false },
+      { value: '--hide-recording-indicator', descriptionKey: 'sp.slash.record_hide_indicator', requires: '--full-screen' },
       { value: '--transcribe', descriptionKey: 'sp.slash.record_transcribe' },
     ],
   },
@@ -947,10 +948,9 @@ const SLASH_COMMAND_OPTION_ID_PREFIX = 'slash-command-option-';
 const BUSY_SLASH_NOTICE_COOLDOWN_MS = 3000;
 let placeholderRotationIndex = 0;
 let placeholderRotationTimer = null;
-// Tab Recorder (v7.4) — recording is user-driven via slash commands. The
-// `/record` tab-capture path shows this live red banner; `/record --full-screen`
-// deliberately does not, so the selected browser window is less likely to
-// include WebBrain UI in the recording.
+// Tab Recorder (v7.4) — recording is user-driven via slash commands. Both
+// capture paths show this live red banner unless full-screen recording opts out
+// with `--hide-recording-indicator`.
 const recordingBanner = document.getElementById('recording-banner');
 const recordingTimerEl = document.getElementById('recording-timer');
 const recordingStopBtn = document.getElementById('btn-recording-stop');
@@ -5661,6 +5661,13 @@ function getSlashAutocompleteContext() {
   };
 }
 
+function slashCommandSelectionIsExecutable(command, selectedValues) {
+  return [...selectedValues].every((value) => {
+    const option = slashCommandOptions(command).find((candidate) => candidate.value === value);
+    return !option?.requires || selectedValues.has(option.requires);
+  });
+}
+
 function buildSlashAutocompleteMatches(context) {
   if (!context) return [];
   const candidates = context.kind === 'command'
@@ -5678,7 +5685,9 @@ function buildSlashAutocompleteMatches(context) {
       completionStart: context.completionStart,
       completionEnd: context.completionEnd,
     }));
-  if (context.kind === 'option' && !context.query) {
+  if (context.kind === 'option'
+      && !context.query
+      && slashCommandSelectionIsExecutable(context.command, context.selected)) {
     const selectedAction = slashCommandOptions(context.command)
       .find((option) => context.selected.has(option.value) && option.action);
     matches.unshift({
@@ -6399,7 +6408,10 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/record' && action === 'full-screen') {
-    await startFullScreenRecording(tabId, { transcribeAfter: optionValues.has('--transcribe') });
+    await startFullScreenRecording(tabId, {
+      showBanner: !optionValues.has('--hide-recording-indicator'),
+      transcribeAfter: optionValues.has('--transcribe'),
+    });
     return '';
   }
 
@@ -6622,7 +6634,7 @@ async function startFullScreenRecording(tabId = currentTabId, recordOptions = {}
         video: true,
         audio: true,
         mic: true,
-        showBanner: false,
+        showBanner: recordOptions.showBanner !== false,
         transcribeAfter: !!recordOptions.transcribeAfter,
       },
     });
@@ -6632,8 +6644,13 @@ async function startFullScreenRecording(tabId = currentTabId, recordOptions = {}
       return;
     }
     recordingStartedAt = res.state?.startedAt || Date.now();
-    setRecordingUI(true, res.state || { source: 'display', showBanner: false });
-    addPersistentSlashMessage(systemHtml(t('sp.record.full_screen_started_html')));
+    setRecordingUI(true, res.state || {
+      source: 'display',
+      showBanner: recordOptions.showBanner !== false,
+    });
+    addPersistentSlashMessage(systemHtml(t(recordOptions.showBanner === false
+      ? 'sp.record.full_screen_started_hidden_html'
+      : 'sp.record.full_screen_started_html')));
     if (res.state?.hasMic === false && res.state?.micError) {
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.record.mic_unavailable', { error: res.state.micError })));
     }
@@ -6964,10 +6981,10 @@ async function sendMessage(extraChatParams = {}) {
 
 // ─── Tab Recorder (v7.4) ────────────────────────────────────────────
 // State: idle ↔ recording. Slash commands flip the panel into recording mode
-// via background broadcasts. `/record` shows the banner Stop button;
-// `/record --full-screen` stays visually quiet and relies on double Escape or
-// Chrome's Stop sharing control. The visible banner timer is driven off
-// recordingState.startedAt (received from background), so it survives remount.
+// via background broadcasts. Both capture paths show the banner Stop button by
+// default; full-screen recording can hide it explicitly. The visible banner
+// timer is driven off recordingState.startedAt (received from background), so
+// it survives remount.
 
 let recordingTimerInterval = null;
 let recordingStartedAt = null;

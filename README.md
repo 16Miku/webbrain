@@ -362,7 +362,7 @@ WebBrain accepts slash commands as the first thing on a line in the input box. T
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
 | `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Chrome only) |
-| `/record [--full-screen] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--transcribe` to save a transcript after stop |
+| `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--hide-recording-indicator` to hide the banner or `--transcribe` to save a transcript after stop |
 | `/export [--traces \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, or export a Settings snapshot with `--config` |
 | `/import <json>` | Import a Settings snapshot pasted inline |
 | `/import --file` | Choose and import a Settings snapshot JSON file |

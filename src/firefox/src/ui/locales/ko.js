@@ -654,7 +654,8 @@ export default {
   'st.display.plan_before_act.strict': '엄격한 계획',
   'st.display.plan_before_act.off': '끄기',
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "화면/창 녹화가 시작되었습니다. 중지하려면 WebBrain 또는 브라우저 페이지에서 <code>Escape</code>를 두 번 누르거나 Chrome의 공유 중지 컨트롤을 사용하세요.",
+  "sp.record.full_screen_started_html": "화면/창 녹화가 시작되었습니다. 녹화 배너의 <strong>중지</strong> 버튼, WebBrain 또는 브라우저 페이지에서 <code>Escape</code>를 두 번 누르기, 또는 Chrome의 공유 중지 컨트롤로 중지할 수 있습니다. 배너가 녹화에 나오지 않게 하려면 <code>--hide-recording-indicator</code>를 추가하세요.",
+  "sp.record.full_screen_started_hidden_html": "화면/창 녹화가 시작되었습니다. 중지하려면 WebBrain 또는 브라우저 페이지에서 <code>Escape</code>를 두 번 누르거나 Chrome의 공유 중지 컨트롤을 사용하세요.",
   "sp.btn.attach": "파일 첨부",
   "sp.btn.mic": "음성 입력",
   "sp.btn.mic_stop": "듣기 중지",

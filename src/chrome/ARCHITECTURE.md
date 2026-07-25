@@ -171,10 +171,11 @@ As an intentionally undiscoverable convenience, a normal prompt may end in
 tab recording before dispatch, and automatically stops it from the run cleanup
 path. `--save-as` supplies the Downloads filename (with `.webm` normalized).
 `/record --full-screen` opens Chrome's screen/window picker from the offscreen
-recorder context through `getDisplayMedia()`, records without showing the WebBrain
-recording banner, and can be stopped by double Escape on WebBrain or browser
-pages. Chrome's picker decides what can be captured: the user must choose the
-browser window or whole screen if they want the WebBrain panel in the video.
+recorder context through `getDisplayMedia()`, shows the WebBrain recording banner
+by default, and can be stopped by its Stop button or double Escape on WebBrain or
+browser pages. Add `--hide-recording-indicator` to hide the banner; Chrome's
+picker decides what can be captured, so the user must choose the browser window
+or whole screen if they want the WebBrain panel in the video.
 
 ### Flow
 
@@ -216,7 +217,7 @@ background.js (on recorder-stop)
               └─ chrome.downloads.download(.txt sibling)
 
 sidepanel listens for recording_update broadcast events:
-   started        → /record shows the banner; /record --full-screen stays hidden
+   started        → show the banner unless full-screen capture explicitly hid it
    stopped        → banner hides, "saved to Downloads" toast
    transcribing   → "Transcribing audio with Whisper…"
    transcribed    → "Transcript saved" + Summarize button (Phase 3)

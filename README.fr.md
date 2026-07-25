@@ -304,7 +304,7 @@ WebBrain accepte les commandes slash en tant que premier élément d'une ligne d
 | `/verbose` | Bascule l'affichage des outils verbeux/compact (identique au bouton de la barre d'outils) |
 | `/reset` | Efface la conversation et tous les indicateurs par conversation |
 | `/screenshot [--full-page]` | Capture l'onglet visible, ou la page entière avec `--full-page` (Chrome uniquement) |
-| `/record [--full-screen] [--transcribe]` | Enregistre l'onglet actuel, ou un écran/une fenêtre avec `--full-screen` (Chrome uniquement) ; `--transcribe` enregistre une transcription |
+| `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Enregistre l'onglet actuel, ou un écran/une fenêtre avec `--full-screen` (Chrome uniquement) ; `--hide-recording-indicator` masque la bannière et `--transcribe` enregistre une transcription |
 | `/export [--traces]` | Télécharge la conversation en Markdown, ou la chaîne d'outils avec `--traces` |
 | `/profile` | Bascule le remplissage automatique du profil sans ouvrir les Paramètres |
 | `/vision` | Bascule le mode vision (compréhension de captures d'écran) sur le fournisseur actif |

@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "WebMCP expérimental",
   "st.display.webmcp.desc": "Autorise WebBrain à découvrir et exécuter les outils structurés proposés par les pages Chrome compatibles. Son activation ajoute les outils WebMCP expérimentaux et leurs instructions au contexte du modèle. Désactivé par défaut.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "L’enregistrement de l’écran/la fenêtre a démarré. Appuyez deux fois sur <code>Escape</code> dans WebBrain ou dans une page du navigateur pour l’arrêter, ou utilisez le contrôle Arrêter le partage de Chrome.",
+  "sp.record.full_screen_started_html": "L’enregistrement de l’écran/la fenêtre a démarré. Arrêtez-le avec <strong>Arrêter</strong> dans la bannière d’enregistrement, en appuyant deux fois sur <code>Escape</code> dans WebBrain ou dans une page du navigateur, ou avec le contrôle Arrêter le partage de Chrome. Ajoutez <code>--hide-recording-indicator</code> pour que la bannière n’apparaisse pas dans la vidéo.",
+  "sp.record.full_screen_started_hidden_html": "L’enregistrement de l’écran/la fenêtre a démarré. Appuyez deux fois sur <code>Escape</code> dans WebBrain ou dans une page du navigateur pour l’arrêter, ou utilisez le contrôle Arrêter le partage de Chrome.",
   "sp.btn.attach": "Joindre un fichier",
   "sp.btn.mic": "Saisie vocale",
   "sp.btn.mic_stop": "Arrêter l’écoute",
@@ -685,6 +686,7 @@ export default {
   "sp.queue.delete": "Supprimer le message en file d’attente",
   "sp.slash.check_progress": "Afficher le journal de progression actuel",
   "sp.slash.record_full_screen": "Enregistrer un écran ou une fenêtre",
+  "sp.slash.record_hide_indicator": "Masquer l’indicateur d’enregistrement ; appuyez deux fois sur Échap pour arrêter",
   "sp.progress.title_html": "<strong>Journal de progression actuel</strong>",
   "sp.progress.empty": "Aucune ligne de progression n’a encore été enregistrée pour cette conversation.",
   "sp.progress.error": "Journal de progression indisponible : {msg}",

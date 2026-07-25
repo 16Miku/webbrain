@@ -656,7 +656,8 @@ export default {
   "st.display.webmcp.label": "Eksperymentalny WebMCP",
   "st.display.webmcp.desc": "Pozwala WebBrain wykrywać i uruchamiać ustrukturyzowane narzędzia udostępniane przez obsługiwane strony Chrome. Włączenie dodaje eksperymentalne narzędzia WebMCP i wskazówki do kontekstu modelu. Domyślnie wyłączone.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Rozpoczęto nagrywanie ekranu/okna. Naciśnij dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, aby zatrzymać, albo użyj kontrolki Chrome Zatrzymaj udostępnianie.",
+  "sp.record.full_screen_started_html": "Rozpoczęto nagrywanie ekranu/okna. Zatrzymaj je przyciskiem <strong>Zatrzymaj</strong> na banerze nagrywania, naciskając dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, albo kontrolką Chrome Zatrzymaj udostępnianie. Dodaj <code>--hide-recording-indicator</code>, aby baner nie pojawił się w nagraniu.",
+  "sp.record.full_screen_started_hidden_html": "Rozpoczęto nagrywanie ekranu/okna. Naciśnij dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, aby zatrzymać, albo użyj kontrolki Chrome Zatrzymaj udostępnianie.",
   "sp.btn.attach": "Dołącz plik",
   "sp.btn.mic": "Wprowadzanie głosowe",
   "sp.btn.mic_stop": "Przestań słuchać",
@@ -676,6 +677,7 @@ export default {
   "sp.queue.delete": "Usuń wiadomość z kolejki",
   "sp.slash.check_progress": "Pokaż bieżący dziennik postępu",
   "sp.slash.record_full_screen": "Nagraj ekran lub okno",
+  "sp.slash.record_hide_indicator": "Ukryj wskaźnik nagrywania; naciśnij Escape dwa razy, aby zatrzymać",
   "sp.progress.title_html": "<strong>Bieżący dziennik postępu</strong>",
   "sp.progress.empty": "Dla tej rozmowy nie zapisano jeszcze żadnych wierszy postępu.",
   "sp.progress.error": "Dziennik postępu niedostępny: {msg}",
