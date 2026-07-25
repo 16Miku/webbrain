@@ -31,7 +31,7 @@ import {
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken, captchaParamError } from './captcha-solver.js';
+import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
@@ -12097,22 +12097,111 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           websiteURL = tab?.url || '';
         } catch {}
 
-        let { type, websiteKey, isInvisible, isEnterprise, pageAction, minScore, imageBase64 } = args || {};
+        let {
+          type,
+          websiteKey,
+          frameUrl,
+          frameId,
+          framePath,
+          isInvisible,
+          isEnterprise,
+          pageAction,
+          minScore,
+          imageBase64,
+          enterprisePayload,
+          recaptchaDataSValue,
+        } = args || {};
         // Detection notes explain *why* a field is missing (e.g. a v3 widget
         // that never exposed its action name). Carry it into the failure so
         // the model gets the remedy, not just the rejection.
         let detectionNote = null;
-        if (!type) {
-          const detected = await detectCaptcha(tabId);
-          if (!detected) {
+        let detected = null;
+        if (type !== 'image_to_text') {
+          let detection = null;
+          try {
+            detection = await detectCaptcha(tabId, {
+              type,
+              frameUrl,
+              frameId,
+              framePath,
+              websiteKey,
+            });
+          } catch (detectionError) {
+            const explicitTokenOnlyFallback = args?.inject === false && !!type && !!websiteKey;
+            if (!explicitTokenOnlyFallback) {
+              return noDispatchFailure(
+                `solve_captcha: CAPTCHA frame detection failed before dispatch: ${detectionError?.message || String(detectionError)}`
+              );
+            }
+            detectionNote = `CAPTCHA frame detection was unavailable: ${detectionError?.message || String(detectionError)}`;
+          }
+          if (detection?.error) {
+            const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
+            const needsDetection = !type
+              || !websiteKey
+              || !!frameUrl
+              || Number.isInteger(frameId)
+              || Array.isArray(framePath);
+            const explicitTokenOnlyFallback = args?.inject === false
+              && !!type
+              && !!websiteKey
+              && !(detection.candidates || []).some(candidate =>
+                candidate?.websiteKey === websiteKey
+              );
+            if (!explicitTokenOnlyFallback
+                && (detection.ambiguous || hasDetectedCandidates || needsDetection)) {
+              const candidates = hasDetectedCandidates ? ` Candidates: ${JSON.stringify(detection.candidates)}` : '';
+              return noDispatchFailure(`solve_captcha: ${detection.error}${candidates}`);
+            }
+          }
+          detected = detection?.selected || null;
+          if (!detected && (!type || !websiteKey)) {
             return noDispatchFailure('No CAPTCHA detected on the page. If the captcha lives inside a cross-origin iframe or uses a non-standard widget, pass `type` and `websiteKey` explicitly.');
           }
-          type = detected.type;
-          detectionNote = detected.note || null;
-          if (!websiteKey) websiteKey = detected.websiteKey;
-          if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
-          if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
-          if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
+          if (detected) {
+            if (type && !captchaTypesMatch(type, detected.type, isEnterprise, detected.isEnterprise)) {
+              return noDispatchFailure(
+                `solve_captcha: requested type "${type}" conflicts with the active detected candidate "${detected.type}" in ${detected.frameUrl}. Retry without type or use the detected type.`
+              );
+            }
+            const visibilityModeApplies = /^(?:recaptcha_v2(?:_enterprise)?|hcaptcha)$/.test(
+              String(detected.type || '')
+            );
+            if (visibilityModeApplies
+                && isInvisible != null
+                && detected.isInvisible != null
+                && Boolean(isInvisible) !== Boolean(detected.isInvisible)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isInvisible=${Boolean(isInvisible)} conflicts with the active detected candidate isInvisible=${Boolean(detected.isInvisible)} in ${detected.frameUrl}. Retry without isInvisible or use the detected value.`
+              );
+            }
+            if (/^recaptcha_v[23](?:_enterprise)?$/.test(String(detected.type || ''))
+                && isEnterprise != null
+                && detected.isEnterprise != null
+                && Boolean(isEnterprise) !== Boolean(detected.isEnterprise)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isEnterprise=${Boolean(isEnterprise)} conflicts with the active detected candidate isEnterprise=${Boolean(detected.isEnterprise)} in ${detected.frameUrl}. Retry without isEnterprise or use the detected value.`
+              );
+            }
+            if (pageAction && detected.pageAction && String(pageAction) !== String(detected.pageAction)) {
+              return noDispatchFailure(
+                `solve_captcha: requested pageAction "${pageAction}" conflicts with the active detected candidate action "${detected.pageAction}" in ${detected.frameUrl}. Retry without pageAction or use the detected action.`
+              );
+            }
+            type = type || detected.type;
+            websiteURL = detected.websiteURL || captchaWebsiteUrl(detected.frameUrl, websiteURL);
+            frameUrl = detected.frameUrl || frameUrl;
+            detectionNote = detected.note || null;
+            if (!websiteKey) websiteKey = detected.websiteKey;
+            if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
+            if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
+            if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
+            if (!enterprisePayload && detected.enterprisePayload) enterprisePayload = detected.enterprisePayload;
+            if (!recaptchaDataSValue && detected.recaptchaDataSValue) recaptchaDataSValue = detected.recaptchaDataSValue;
+          }
+          if (!detected && args?.inject === false && frameUrl) {
+            websiteURL = captchaWebsiteUrl(frameUrl, websiteURL);
+          }
         }
 
         const params = {
@@ -12123,6 +12212,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(isEnterprise != null ? { isEnterprise } : {}),
           ...(pageAction ? { pageAction } : {}),
           ...(minScore ? { minScore } : {}),
+          ...(enterprisePayload ? { enterprisePayload } : {}),
+          ...(recaptchaDataSValue ? { recaptchaDataSValue } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),
         };
 
@@ -12141,10 +12232,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
         }
 
+        const wantInject = args?.inject !== false && type !== 'image_to_text';
+        if (wantInject && !detected) {
+          return noDispatchFailure(
+            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to CapSolver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
+          );
+        }
+
         dispatched = true;
         const result = await solveCaptcha(apiKey, params);
 
-        const wantInject = args?.inject !== false && type !== 'image_to_text';
         let injection = null;
         if (wantInject && result.fieldName && result.token) {
           try {
@@ -12152,6 +12249,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               fieldName: result.fieldName,
               alsoSet: result.alsoSet,
               token: result.token,
+              callbackHint: detected.callbackName || null,
+              target: detected ? {
+                frameId: detected.frameId,
+                framePath: detected.framePath,
+                frameUrl: detected.frameUrl,
+                websiteKey: detected.websiteKey,
+                type: detected.type,
+                explicitWebsiteKey: detected.explicitWebsiteKey === true,
+                responseFieldId: detected.responseFieldId,
+                responseFieldIndex: detected.responseFieldIndex,
+                alsoResponseFieldId: detected.alsoResponseFieldId,
+                alsoResponseFieldIndex: detected.alsoResponseFieldIndex,
+                documentTimeOrigin: detected.documentTimeOrigin,
+              } : null,
             });
           } catch (e) {
             injection = { success: false, error: e.message };
@@ -12165,11 +12276,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           taskId: result.taskId,
           token: result.token,
           tokenPreview: result.token ? `${String(result.token).slice(0, 24)}…(${String(result.token).length} chars)` : null,
+          selectedFrameId: Number.isInteger(detected?.frameId) ? detected.frameId : null,
+          selectedFramePath: Array.isArray(detected?.framePath) ? detected.framePath : null,
+          selectedFrameUrl: detected?.frameUrl || null,
+          selectionReason: detected?.selectionReason || null,
+          detectedType: detected?.type || null,
           injected: injection?.success === true,
           injection,
-          note: wantInject
-            ? 'Token was injected into the page response field. Click the form\'s submit button next; do NOT call solve_captcha again.'
-            : 'Token returned, not injected. Pass it to the form via type_text on the response field, then submit.',
+          note: !wantInject
+            ? 'Token returned without injection. Apply this token to the intended response field; do not request another paid solve for the same challenge.'
+            : injection?.success
+              ? (injection.calledCallback
+                ? 'Token was inserted into the selected frame and its callback was invoked. Wait for the page to react, then verify whether the challenge cleared.'
+                : 'Token was inserted into the selected frame, but no unique callback was invoked. Verify page progress before submitting or taking another action; do not request another paid solve.')
+              : 'CapSolver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
         };
       } catch (e) {
         const error = `solve_captcha failed: ${e.message}`;

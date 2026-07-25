@@ -10,6 +10,18 @@
 //   POST /getTaskResult  → { status: "ready"|"processing", solution? }
 //   POST /getBalance     → { balance, packages }
 
+import {
+  applyCaptchaFrameVisibility,
+  captchaWebsiteUrl,
+  captchaTypesMatch,
+  detectCaptchaCandidatesInPage,
+  injectCaptchaTokenInPage,
+  normalizeCaptchaType,
+  selectCaptchaCandidate,
+} from './captcha-frame-runtime.js';
+
+export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
+
 const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;
 const POLL_TIMEOUT_MS = 120_000;
@@ -88,10 +100,9 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
 }
 
 // We default to the "proxyless" task types so the user doesn't need to BYO
-// proxy. `enterprisePayload` is accepted but deliberately absent from the
-// solve_captcha schema (same as on the hCaptcha branch): it carries the
-// site-specific `s` token some Enterprise deployments require, which a model
-// has no way to obtain from the page.
+// proxy. `enterprisePayload` is deliberately absent from the solve_captcha
+// schema: the frame detector extracts the site-specific Enterprise `s` token
+// from the widget host or anchor URL and passes it through internally.
 
 // Type aliases the model or the detector may hand us. Kept as sets rather
 // than inline `||` chains so buildTask and captchaParamError below can't
@@ -113,7 +124,7 @@ export function captchaParamError(params) {
   return null;
 }
 
-function buildTask({ type, websiteURL, websiteKey, ...rest }) {
+export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   const t = String(type || '').toLowerCase();
   const isEnterprise = !!rest.isEnterprise || t.includes('enterprise');
   if (RECAPTCHA_V2_TYPES.has(t)) {
@@ -122,6 +133,8 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
       websiteURL,
       websiteKey,
       ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
+      ...(rest.pageAction ? { pageAction: rest.pageAction } : {}),
+      ...(rest.recaptchaDataSValue ? { recaptchaDataSValue: rest.recaptchaDataSValue } : {}),
       ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
       ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
@@ -198,246 +211,210 @@ export async function solveCaptcha(apiKey, params) {
 
 // ─── Page-side helpers (Firefox MV2 executeScript with code string) ──
 
-const DETECT_CODE = `(() => {
-  const V3_NO_ACTION_NOTE = 'reCAPTCHA v3 detected, but the page never exposed an action name. solve_captcha needs pageAction — read it from the grecaptcha.execute(...) call in the site JS, or infer it from the form (login, submit, checkout).';
-
-  // reCAPTCHA v3 puts the action name in the loader script's query string.
-  // Parse it with URL so percent-encoded action names come back decoded.
-  const getUrlAction = (urlStr) => {
-    try {
-      const u = new URL(urlStr, 'https://dummy.host');
-      const act = u.searchParams.get('action') || u.searchParams.get('pageAction') || u.searchParams.get('page_action');
-      return act ? act.trim() : null;
-    } catch (_) {}
-    return null;
-  };
-
-  const docs = [document];
-  for (const f of document.querySelectorAll('iframe')) {
-    try { if (f.contentDocument) docs.push(f.contentDocument); } catch (_) {}
+export async function detectCaptcha(tabId, constraints = {}) {
+  let frames;
+  try {
+    frames = await browser.webNavigation.getAllFrames({ tabId });
+  } catch (_) {
+    frames = [{ frameId: 0, url: '' }];
   }
-  for (const d of docs) {
-    // Order matters: check provider-specific widgets BEFORE the generic
-    // reCAPTCHA fallback. Turnstile and hCaptcha widgets carry data-sitekey
-    // too, and an earlier version of this code misclassified them as
-    // reCAPTCHA → CapSolver got the wrong task type and failed.
-    const hcap = d.querySelector('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]');
-    if (hcap) {
-      const sitekey = hcap.getAttribute('data-sitekey') || hcap.getAttribute('data-hcaptcha-sitekey');
-      if (sitekey) {
-        const size = hcap.getAttribute('data-size');
-        return { type: 'hcaptcha', websiteKey: sitekey, isInvisible: size === 'invisible' };
+  if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+  const code = `(() => {
+    const detect = ${detectCaptchaCandidatesInPage.toString()};
+    const direct = detect();
+    const inheritedCandidates = [];
+    const seenDocuments = new Set();
+    const rootDocument = typeof document !== 'undefined' ? document : null;
+    const rootWindow = typeof window !== 'undefined' ? window : globalThis;
+    const isInheritedOriginFrame = (element, childUrl) => {
+      try {
+        return element.hasAttribute?.('srcdoc')
+          || /^about:(?:blank|srcdoc)(?:[?#]|$)/i.test(childUrl)
+          || (!String(element.src || '') && childUrl === 'about:blank');
+      } catch (_) {
+        return false;
       }
-    }
-    const turn = d.querySelector('.cf-turnstile[data-sitekey], [data-turnstile-sitekey]');
-    if (turn) {
-      const sitekey = turn.getAttribute('data-sitekey') || turn.getAttribute('data-turnstile-sitekey');
-      if (sitekey) return { type: 'turnstile', websiteKey: sitekey };
-    }
-    // reCAPTCHA v2/v3, classic or Enterprise. Both selectors are
-    // reCAPTCHA-specific, so this still doesn't grab a bare data-sitekey
-    // belonging to another provider.
-    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]');
-    if (recap) {
-      const sitekey = recap.getAttribute('data-sitekey') || recap.getAttribute('data-recaptcha-sitekey');
-      if (sitekey) {
-        const size = recap.getAttribute('data-size');
-        const isInvisible = size === 'invisible';
-        const action = recap.getAttribute('data-action') || recap.getAttribute('data-recaptcha-action') || null;
-        // Script tags decide both version and edition. Look in the parent
-        // document too: when the widget lives in a same-origin iframe the
-        // loader tag usually stays in the top document.
-        const scriptSrcs = [];
-        for (const doc of (d === document ? [d] : [d, document])) {
-          for (const s of doc.querySelectorAll('script[src]')) {
-            try { if (s.src) scriptSrcs.push(s.src); } catch (_) {}
-          }
+    };
+    const visit = (currentDocument, currentWindow, currentResult, path, ancestorsVisible, depth) => {
+      if (!currentDocument || depth > 12 || seenDocuments.has(currentDocument)) return;
+      seenDocuments.add(currentDocument);
+      const elements = Array.from(currentDocument.querySelectorAll('iframe'));
+      const childFrames = Array.isArray(currentResult?.frameContext?.childFrames)
+        ? currentResult.frameContext.childFrames
+        : [];
+      elements.forEach((element, index) => {
+        let childDocument;
+        let childWindow;
+        let childUrl = '';
+        try {
+          childDocument = element.contentDocument;
+          childWindow = element.contentWindow;
+          childUrl = String(childWindow?.location?.href || '');
+        } catch (_) {
+          return;
         }
-        const hasClassicScript = scriptSrcs.some(s => s.includes('recaptcha/api.js'));
-        const hasEnterpriseScript = scriptSrcs.some(s => s.includes('recaptcha/enterprise'));
-        // data-enterprise / data-sitekey-type aren't Google attributes — they
-        // are wrapper-library conventions (django-recaptcha, some Rails and
-        // Vue helpers). Cheap to check, so we take them as hints before
-        // falling back to which loader script the page pulled in.
-        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
-          recap.getAttribute('data-sitekey-type') === 'enterprise' ||
-          recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
-          (!hasClassicScript && hasEnterpriseScript);
-        // Version, in order of reliability:
-        //   1. an explicit wrapper-set data-version / .g-recaptcha-v3 marker
-        //   2. a render=<sitekey> loader script — the v3 signature; v2 loads
-        //      the script bare or with render=explicit
-        //   3. data-action with no data-size=invisible
-        // (3) alone is not enough in either direction: v2 invisible widgets
-        // carry data-action too, and some v3 wrappers copy data-size onto
-        // their host div. Without (2) both of those land on the wrong task
-        // type and CapSolver rejects the key.
-        const version = recap.getAttribute('data-version') || (recap.classList.contains('g-recaptcha-v3') ? 'v3' : null);
-        const renderScript = scriptSrcs.find(s =>
-          /recaptcha\\/(api|enterprise)\\.js/i.test(s) && s.includes('render=' + sitekey)) || null;
-        const isV3 = version === 'v3' || !!renderScript || (!!action && !isInvisible);
-        // v3 needs an action name to solve. Fall back to the loader script's
-        // ?action= when the host element doesn't carry one, and say so
-        // explicitly when neither does — solve_captcha refuses v3 without it.
-        const pageAction = action || (isV3 && renderScript ? getUrlAction(renderScript) : null);
-        return {
-          type: isV3 ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
-          websiteKey: sitekey,
-          isInvisible,
-          isEnterprise,
-          ...(pageAction ? { pageAction } : (isV3 ? { note: V3_NO_ACTION_NOTE } : {})),
-        };
-      }
-    }
-    if (d.querySelector('script[src*="challenges.cloudflare.com/turnstile"]') ||
-        d.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
-      return { type: 'turnstile_challenge', websiteKey: null, note: 'Cloudflare interstitial detected but no sitekey was exposed in the DOM. Pass websiteKey explicitly if you have it.' };
-    }
-  }
-  // URL-string fallback — see chrome/captcha-solver.js for the full
-  // rationale. Scrapes the sitekey out of iframe.src / script.src when the
-  // widget never exposed it on a host element (hcaptcha.com/demo, some SPA
-  // mounts). Both are readable cross-origin from the parent page.
-
-  // hCaptcha and Turnstile expose the same ?sitekey= in either tag, so one
-  // matcher serves both passes below.
-  const nonRecaptchaFromUrl = (url) => {
-    if (/hcaptcha\\.com/i.test(url)) {
-      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
-    }
-    if (/challenges\\.cloudflare\\.com\\/turnstile/i.test(url)) {
-      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
-    }
-    return null;
-  };
-
-  // Split by tag type because reCAPTCHA needs both halves to classify a
-  // widget: the anchor iframe carries the sitekey, the loader script carries
-  // the version and action. Iframes are scanned first — a rendered anchor
-  // frame is a stronger signal that the widget is actually on this page than
-  // a script tag, which may just be a loader the page never used.
-  const iframeUrls = [];
-  const scriptUrls = [];
-  for (const el of document.querySelectorAll('iframe[src], script[src]')) {
-    try {
-      if (el.src) {
-        if (el.tagName.toLowerCase() === 'iframe') iframeUrls.push(el.src);
-        else scriptUrls.push(el.src);
-      }
-    } catch (_) {}
-  }
-  for (const url of iframeUrls) {
-    const other = nonRecaptchaFromUrl(url);
-    if (other) return other;
-    if (/recaptcha\\/(api2|enterprise)\\/anchor/i.test(url)) {
-      const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        const sitekey = m[1];
-        const isEnterprise = /recaptcha\\/enterprise/i.test(url);
-        const isInvisible = /[?&#]size=invisible/i.test(url);
-        // v3 renders an anchor frame too (the badge), and it always carries
-        // size=invisible — so the frame alone can't tell v3 from an invisible
-        // v2. A loader script rendering this exact sitekey settles it.
-        const matchingV3Script = scriptUrls.find(s => s.includes('render=' + sitekey));
-        if (matchingV3Script) {
-          const pageAction = getUrlAction(matchingV3Script);
-          return {
-            type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
-            websiteKey: sitekey,
-            isEnterprise,
-            ...(pageAction ? { pageAction } : { note: V3_NO_ACTION_NOTE }),
-            detectedVia: 'url',
-          };
+        if (!childDocument || !childWindow || !isInheritedOriginFrame(element, childUrl)) return;
+        const childResult = detect({ document: childDocument, window: childWindow });
+        const childContext = childResult?.frameContext || {};
+        const childVisible = ancestorsVisible && childFrames[index]?.visible === true;
+        const nextPath = [...path, {
+          index,
+          frameUrl: childContext.frameUrl || childUrl,
+          frameName: childContext.frameName || '',
+        }];
+        for (const candidate of childResult?.candidates || []) {
+          inheritedCandidates.push({
+            ...candidate,
+            framePath: nextPath,
+            frameVisibleWithinAnchor: childVisible,
+          });
         }
-        return {
-          type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
-          websiteKey: sitekey,
-          isInvisible,
-          isEnterprise,
-          detectedVia: 'url',
-        };
-      }
+        visit(childDocument, childWindow, childResult, nextPath, childVisible, depth + 1);
+      });
+    };
+    visit(rootDocument, rootWindow, direct, [], true, 0);
+    return { direct, inheritedCandidates };
+  })()`;
+  const batches = await Promise.all(frames.map(async frame => {
+    try {
+      const results = await browser.tabs.executeScript(tabId, {
+        code,
+        frameId: frame.frameId,
+        matchAboutBlank: true,
+      });
+      const response = results?.[0];
+      const payload = response?.direct || response;
+      const pageCandidates = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.candidates) ? payload.candidates : []);
+      const inheritedCandidates = Array.isArray(response?.inheritedCandidates)
+        ? response.inheritedCandidates
+        : [];
+      return {
+        directCandidates: pageCandidates.map(candidate => ({
+          ...candidate,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+          frameUrl: candidate.frameUrl || frame.url || '',
+        })),
+        inheritedCandidates: inheritedCandidates.map(candidate => ({
+          ...candidate,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+          frameUrl: candidate.frameUrl || '',
+        })),
+        frameContext: !Array.isArray(payload) && payload?.frameContext ? {
+          ...payload.frameContext,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+        } : null,
+      };
+    } catch (_) {
+      return { directCandidates: [], inheritedCandidates: [], frameContext: null };
     }
-  }
-  for (const url of scriptUrls) {
-    const other = nonRecaptchaFromUrl(url);
-    if (other) return other;
-    if (/recaptcha\\/(api\\.js|enterprise\\.js)/i.test(url)) {
-      const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
-      // render=explicit means the page renders a v2 widget by hand later —
-      // it is not a sitekey.
-      if (m && m[1] !== 'explicit') {
-        const isEnterprise = /enterprise/i.test(url);
-        const pageAction = getUrlAction(url);
-        return {
-          type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
-          websiteKey: m[1],
-          isEnterprise,
-          ...(pageAction ? { pageAction } : { note: V3_NO_ACTION_NOTE }),
-          detectedVia: 'url',
-        };
-      }
-    }
-  }
-  return null;
-})()`;
-
-export async function detectCaptcha(tabId) {
-  const results = await browser.tabs.executeScript(tabId, { code: DETECT_CODE });
-  for (const r of results || []) {
-    if (r) return r;
-  }
-  return null;
+  }));
+  const directCandidates = batches.flatMap(batch => batch.directCandidates);
+  const directSignatures = new Set(directCandidates.map(candidate =>
+    `${candidate.type || ''}\n${candidate.websiteKey || ''}\n${candidate.frameUrl || ''}`
+  ));
+  const inheritedCandidates = batches
+    .flatMap(batch => batch.inheritedCandidates)
+    .filter(candidate => !directSignatures.has(
+      `${candidate.type || ''}\n${candidate.websiteKey || ''}\n${candidate.frameUrl || ''}`
+    ));
+  const candidates = [...directCandidates, ...inheritedCandidates];
+  const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
+  return selectCaptchaCandidate(
+    applyCaptchaFrameVisibility(candidates, frameContexts, frames),
+    constraints,
+  );
 }
 
-export async function injectToken(tabId, { fieldName, alsoSet, token }) {
+export async function injectToken(tabId, {
+  fieldName,
+  alsoSet,
+  token,
+  callbackHint,
+  target = null,
+}) {
   if (!fieldName || !token) return { success: false, error: 'fieldName and token required' };
-  // Inline the params into the code string — Firefox MV2 doesn't have
-  // chrome.scripting's args[] mechanism. JSON.stringify guarantees we
-  // don't break out of the string literal.
-  const code = `(() => {
-    const fieldName = ${JSON.stringify(fieldName)};
-    const alsoSet = ${JSON.stringify(alsoSet || null)};
-    const token = ${JSON.stringify(token)};
-    const docs = [document];
-    for (const f of document.querySelectorAll('iframe')) {
-      try { if (f.contentDocument) docs.push(f.contentDocument); } catch {}
-    }
-    const setOn = (d, name) => {
-      let el = d.querySelector('textarea[name="' + name + '"]')
-            || d.querySelector('input[name="' + name + '"]');
-      if (!el) {
-        el = d.createElement('textarea');
-        el.name = name;
-        el.style.display = 'none';
-        (d.body || d.documentElement).appendChild(el);
-      }
-      el.value = token;
-      el.textContent = token;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return el;
+  if (!Number.isInteger(target?.frameId) || !target?.frameUrl || !target?.websiteKey) {
+    return {
+      success: false,
+      fieldUpdated: false,
+      targetRequired: true,
+      error: 'Token was not injected because no detected CAPTCHA frame identity, URL, and site key were selected.',
     };
-    let touched = 0;
-    for (const d of docs) {
-      setOn(d, fieldName); touched++;
-      if (alsoSet) setOn(d, alsoSet);
-    }
-    let calledCallback = false;
-    for (const d of docs) {
-      const host = d.querySelector('[data-callback]');
-      const cbName = host && host.getAttribute('data-callback');
-      if (cbName) {
-        try {
-          const fn = (typeof window !== 'undefined' && typeof window[cbName] === 'function') ? window[cbName] : null;
-          if (fn) { fn(token); calledCallback = true; }
-        } catch {}
+  }
+  const pagePayload = {
+    fieldName,
+    alsoSet,
+    token,
+    callbackHint,
+    target: target || {},
+  };
+  const code = `(() => {
+    const inject = ${injectCaptchaTokenInPage.toString()};
+    const payload = ${JSON.stringify(pagePayload)};
+    let frameDocument = typeof document !== 'undefined' ? document : null;
+    let frameWindow = typeof window !== 'undefined' ? window : globalThis;
+    for (const segment of Array.isArray(payload?.target?.framePath) ? payload.target.framePath : []) {
+      const elements = frameDocument ? Array.from(frameDocument.querySelectorAll('iframe')) : [];
+      const element = elements[segment.index];
+      if (!element) {
+        return {
+          success: false,
+          fieldUpdated: false,
+          staleTarget: true,
+          error: 'The selected inherited-origin CAPTCHA frame path is no longer present.',
+        };
+      }
+      try {
+        const nextDocument = element.contentDocument;
+        const nextWindow = element.contentWindow;
+        const nextUrl = String(nextWindow?.location?.href || '');
+        const nextName = String(nextWindow?.name || element.name || '');
+        if (!nextDocument || !nextWindow
+            || (segment.frameUrl && nextUrl !== segment.frameUrl)
+            || (segment.frameName && nextName !== segment.frameName)) {
+          return {
+            success: false,
+            fieldUpdated: false,
+            staleTarget: true,
+            error: 'The selected inherited-origin CAPTCHA frame changed before token injection.',
+            frameUrl: nextUrl,
+          };
+        }
+        frameDocument = nextDocument;
+        frameWindow = nextWindow;
+      } catch (_) {
+        return {
+          success: false,
+          fieldUpdated: false,
+          staleTarget: true,
+          error: 'The selected inherited-origin CAPTCHA frame is no longer accessible.',
+        };
       }
     }
-    return { success: true, fieldsTouched: touched, calledCallback };
+    return inject(payload, { document: frameDocument, window: frameWindow });
   })()`;
-  const results = await browser.tabs.executeScript(tabId, { code });
-  return results?.[0] || { success: false, error: 'injection script returned no result' };
+  const details = Number.isInteger(target?.frameId)
+    ? { code, frameId: target.frameId, matchAboutBlank: true }
+    : { code, ...(target?.frameUrl ? { allFrames: true } : {}) };
+  const results = await browser.tabs.executeScript(tabId, details);
+  const outputs = (results || []).filter(Boolean);
+  const successes = outputs.filter(output => output.success === true);
+  if (successes.length === 1) {
+    return {
+      ...successes[0],
+      frameId: Number.isInteger(target?.frameId) ? target.frameId : null,
+    };
+  }
+  if (successes.length > 1) {
+    return {
+      success: false,
+      ambiguousTarget: true,
+      error: 'Token injection matched more than one frame; pass an exact frameUrl.',
+      matchedFrames: successes.map(output => ({ frameUrl: output.frameUrl })),
+    };
+  }
+  return outputs.find(output => !output.skipped)
+    || { success: false, error: 'injection script returned no matching frame result' };
 }
