@@ -2139,6 +2139,12 @@ body {
   transition: none;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .mode-toggle-highlight {
+    transition: none;
+  }
+}
+
 .mode-btn {
   flex: 1;
   position: relative;

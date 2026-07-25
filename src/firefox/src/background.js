@@ -61,6 +61,7 @@ import {
   parseConfigPatchImport,
 } from './config-transfer.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX, createRunCaptureController } from './run-capture.js';
+import { playWatchAlert } from './watch-alert.js';
 import {
   getChromeWebStoreOAuthStatus,
   signOutChromeWebStoreOAuth,
@@ -99,6 +100,7 @@ const scheduler = new ScheduledJobManager({
   },
   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
   hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
+  playWatchAlert: (payload) => playWatchAlert(browser, payload),
 });
 agent.setScheduler(scheduler);
 scheduler.start();
@@ -2238,6 +2240,19 @@ async function handleMessage(msg, sender) {
         conversationId: tabId != null ? await agent.getConversationId(tabId) : null,
         args: msg.job || msg.args || {},
         source: 'user',
+        currentUrl: tab?.url || '',
+        currentTitle: tab?.title || '',
+      });
+    }
+
+    case 'create_watch_job': {
+      const tabId = msg.tabId || sender.tab?.id || null;
+      let tab = null;
+      if (tabId != null) {
+        try { tab = await browser.tabs.get(tabId); } catch {}
+      }
+      return await scheduler.createWatchJob({
+        args: msg.watch || msg.args || {},
         currentUrl: tab?.url || '',
         currentTitle: tab?.title || '',
       });

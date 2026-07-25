@@ -67,12 +67,6 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     body.temperature = options.temperature ?? 0.7;
   }
 
-  _messagesContainImage(messages) {
-    return messages.some((msg) => Array.isArray(msg?.content) && msg.content.some((block) => {
-      return block && (block.type === 'image_url' || block.type === 'image');
-    }));
-  }
-
   _shouldSendTools(messages, options) {
     if (!options.tools || options.tools.length === 0) return false;
     return !(this.config.omitToolsWhenImagesPresent && this._messagesContainImage(messages));

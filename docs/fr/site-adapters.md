@@ -1,6 +1,6 @@
 # Adaptateurs de site — Comment en écrire un
 
-Les adaptateurs de site sont la **contribution la plus recherchée n°1** (voir CONTRIBUTIONS.md). Ils injectent des conseils courts et soigneusement rédigés dans le premier message de l'agent lorsqu'il opère sur un site connu. Le but N'est PAS d'encoder chaque sélecteur (ceux-ci vieillissent mal), mais de capturer les particularités non évidentes qui coûtent à un LLM plusieurs appels d'outils infructueux pour les découvrir par lui-même.
+Les adaptateurs de site sont la **contribution la plus recherchée n°1** (voir CONTRIBUTING.md). Ils injectent des conseils courts et soigneusement rédigés dans le premier message de l'agent lorsqu'il opère sur un site connu. Le but N'est PAS d'encoder chaque sélecteur (ceux-ci vieillissent mal), mais de capturer les particularités non évidentes qui coûtent à un LLM plusieurs appels d'outils infructueux pour les découvrir par lui-même.
 
 ---
 

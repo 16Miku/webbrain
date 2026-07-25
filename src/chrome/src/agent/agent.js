@@ -801,6 +801,12 @@ export class Agent {
     this.scheduledRunPolicies.set(tabId, {
       requireConsequentialConfirmation: policy?.requireConsequentialConfirmation !== false,
       autoApprovePlanReview: policy?.autoApprovePlanReview === true,
+      watch: policy?.watch?.beep === true ? {
+        beep: true,
+        beepStyle: ['long', 'short'].includes(policy.watch.beepStyle) ? policy.watch.beepStyle : 'default',
+        lastTriggeredEventKey: String(policy.watch.lastTriggeredEventKey || '').slice(0, 200) || null,
+        armedEventKey: null,
+      } : null,
     });
   }
 
@@ -13119,11 +13125,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     try {
       if (!workflowUrlMatches(workflow.start, startUrl)) {
+        const reason = 'start page scope mismatch';
         trace.recordNote(traceRunId, 0, 'workflow_replay_start_miss', {
           workflowId: workflow.id,
           expectedOrigin: workflow.start?.origin || '',
         });
-        return finishStopped('the current page is outside the saved origin or URL family', 0);
+        traceStatus = 'workflow_fallback';
+        finalContent = 'Deterministic replay paused before step 1; continuing with the agent.';
+        return {
+          status: 'fallback',
+          reason,
+          stepIndex: 0,
+          matchedSteps,
+          prompt: workflowFallbackPrompt(workflow, 0, reason),
+        };
       }
 
       for (let index = 0; index < workflow.steps.length; index++) {
@@ -13286,6 +13301,41 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (name === 'done_json') {
       return handleDoneJson(this.cloudRunContexts.get(tabId), args);
+    }
+    if (name === 'beep') {
+      const watch = this.scheduledRunPolicies.get(tabId)?.watch;
+      if (watch?.beep !== true) {
+        return {
+          success: false,
+          denied: true,
+          armed: false,
+          error: 'beep is available only during a /watch run created with /beep.',
+        };
+      }
+      const rawEventKey = typeof args?.event_key === 'string' ? args.event_key.trim() : '';
+      if (!rawEventKey || rawEventKey.length > 200) {
+        return { success: false, armed: false, error: 'event_key must contain 1-200 characters.' };
+      }
+      if (watch.armedEventKey && rawEventKey !== watch.armedEventKey) {
+        return {
+          success: false,
+          armed: false,
+          error: `This watch run already armed event_key "${watch.armedEventKey}". Finish that event before another poll handles a different key.`,
+        };
+      }
+      const message = typeof args?.message === 'string' ? args.message.trim().slice(0, 300) : '';
+      const duplicate = rawEventKey === watch.lastTriggeredEventKey;
+      // A duplicate report also locks this run's event key so a poll that has
+      // already seen the previous event cannot go on to arm a different one.
+      watch.armedEventKey = rawEventKey;
+      return {
+        success: true,
+        armed: !duplicate,
+        duplicate,
+        eventKey: rawEventKey,
+        message: message || null,
+        beepStyle: watch.beepStyle,
+      };
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
     if (protectedFailure) return protectedFailure;
@@ -18588,6 +18638,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillTools,
       cloudRun: !!cloudRunContext,
       outputSchema: cloudRunContext?.outputSchema || null,
+      watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
@@ -18752,6 +18803,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillTools,
         cloudRun: !!cloudRunContext,
         outputSchema: cloudRunContext?.outputSchema || null,
+        watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       allowedToolNames = new Set(tools.map(t => t.function.name));
 
@@ -19248,6 +19300,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillTools,
       cloudRun: !!cloudRunContext,
       outputSchema: cloudRunContext?.outputSchema || null,
+      watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
@@ -19285,6 +19338,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillTools,
         cloudRun: !!cloudRunContext,
         outputSchema: cloudRunContext?.outputSchema || null,
+        watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       allowedToolNames = new Set(tools.map(t => t.function.name));
 

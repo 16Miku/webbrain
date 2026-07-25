@@ -342,6 +342,7 @@ WebBrain accepts slash commands as the first thing on a line in the input box. T
 | `/help` | Show the list of available commands |
 | `/schedule [prompt]` | Create a scheduled task, optionally prefilling its prompt |
 | `/schedule --list` | Show scheduled tasks |
+| `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current web page for a condition; stop after the first match unless `--keep` is set, and optionally play a background alert |
 | `/progress` | Show the current progress ledger |
 | `/scratchpad` | Show the current scratchpad |
 | `/scratchpad --append <text>` | Append text to the current scratchpad |
@@ -371,6 +372,19 @@ WebBrain accepts slash commands as the first thing on a line in the input box. T
 | `/act` | Switch to Act mode before sending |
 | `/dev` | Switch to Dev mode before sending |
 | `/plan` | Switch to Ask mode with planning intent |
+
+`/watch` performs its first check immediately and then polls every 60 seconds
+by default. Relative conditions such as “when a new commit appears” establish a
+baseline on the first check; absolute conditions such as “when CI is green” can
+match immediately. `--secs` accepts 30–120 seconds. A trailing `/beep` enables
+the watch-only alert tool; `--short` and `--long` select its tone. Alerts play
+only after a verified successful action, and `--keep` suppresses repeated
+alerts for the same stable event key. Polls run in dedicated inactive tabs, so
+leaving the initiating page does not navigate it back to the watched URL, and
+the helper tab is closed when the watch ends. Transient poll failures are
+tolerated; three consecutive failures stop the watch. If a
+model verifies the action but omits the optional alert tool, the watch records
+the warning and completes or continues without sound.
 
 Configuration snapshots use the `webbrain-config/1` schema and include all
 portable Settings values, including provider, vision, transcription, and
@@ -404,6 +418,10 @@ are not saved to the workflow, conversation, user memory, replay trace, or Agent
 fallback prompt; they are still delivered to the target page by the requested
 browser action. The original opt-in source trace remains separate and can
 contain raw tool arguments until the user deletes that trace.
+If replay starts outside the saved origin or URL family, deterministic replay
+hands control to the Agent with the sanitized start scope so normal navigation,
+permission, and verification rules can recover the workflow instead of ending
+it immediately.
 
 Portable workflow files contain the raw sanitized `webbrain-workflow/1`
 definition and are limited to 1 MiB. Export re-normalizes the definition before

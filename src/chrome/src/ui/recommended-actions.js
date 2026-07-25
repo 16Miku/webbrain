@@ -256,6 +256,12 @@ function isLongArticle(pageInfo = {}) {
   return textLen >= 1800 || (textLen >= 900 && articlePath);
 }
 
+/**
+ * Build a list of recommended actions based on page context.
+ * @param {Object} pageInfo - Page metadata from get_window_info / get_accessibility_tree.
+ * @param {Object} [options] - { mode, max, isProcessing, hasUserMessages }.
+ * @returns {Array<{label: string, prompt: string, category: string}>}
+ */
 export function buildRecommendedActions(pageInfo = {}, options = {}) {
   const max = Number.isFinite(options.max) ? options.max : 4;
   const host = hostFromUrl(pageInfo.url || '');
@@ -479,6 +485,11 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
 /**
  * Whether the suggested-action pill row should be visible. Pills live in the
  * chat body and disappear once the user has sent a message or a run is active.
+ */
+/**
+ * Whether to show the recommended actions panel.
+ * @param {Object} params - { tabId, isProcessing, hasUserMessages }.
+ * @returns {boolean}
  */
 export function shouldShowRecommendedActions({ tabId, isProcessing, hasUserMessages }) {
   if (tabId == null || isProcessing) return false;
