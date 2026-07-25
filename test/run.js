@@ -17710,10 +17710,16 @@ test('selection-only model requests exclude prior conversation context', async (
       const serialized = JSON.stringify(requests[0]);
       assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
       assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
+      assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: scoped system prompt should explain the selection boundary`);
       assert.equal(
         agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
         true,
         `${label}: source-bound request view should not delete visible conversation history`,
+      );
+      assert.doesNotMatch(
+        String(agent.conversations.get(tabId)[0]?.content),
+        /only covers their selected text/,
+        `${label}: scoped system note must not mutate the stored conversation`,
       );
 
       const followUp = streaming
@@ -17726,6 +17732,7 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.match(followUpSerialized, /authoritative selected words/, `${label}: follow-up lost the original selection`);
       assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
       assert.doesNotMatch(followUpSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded follow-up`);
+      assert.match(String(requests[1][0]?.content), /only covers their selected text/, `${label}: grounded follow-up lost the scope note`);
 
       const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
       assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
@@ -17741,6 +17748,60 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
       assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
     }
+  }
+});
+
+test('selection-only response-only phases carry the scope note', async () => {
+  for (const [label, AgentClass, sourceGrounding] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const requests = [];
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        return { content: 'Scoped answer.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    const selection = { role: 'user', content: 'selection turn' };
+    const messages = [
+      { role: 'system', content: 'system rules' },
+      { role: 'user', content: 'PRIOR SECRET' },
+      selection,
+    ];
+
+    const scoped = await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      {
+        phase: 'response_only',
+        step: 1,
+        runOptions: { sourceGrounding },
+        currentUserMessage: selection,
+        priorMessageSet: new Set([messages[0], messages[1]]),
+      },
+    );
+    assert.equal(scoped, 'Scoped answer.', `${label}: scoped response-only final mismatch`);
+    assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: response-only phase lost the scope note`);
+    assert.doesNotMatch(JSON.stringify(requests[0]), /PRIOR SECRET/, `${label}: response-only phase leaked pre-selection history`);
+
+    await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      { phase: 'response_only', step: 1 },
+    );
+    assert.doesNotMatch(String(requests[1][0]?.content), /only covers their selected text/, `${label}: ordinary response-only turn should not carry the scope note`);
+    assert.match(JSON.stringify(requests[1]), /PRIOR SECRET/, `${label}: ordinary response-only turn should keep conversation history`);
   }
 });
 
@@ -17897,6 +17958,7 @@ test('independent cloud, scheduled, and workflow runs clear inherited selection 
         `${label} ${runLabel}: independent run lost its normal tool catalog`,
       );
       assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled|workflow) task\./, `${label} ${runLabel}: task missing`);
+      assert.doesNotMatch(JSON.stringify(requests[0]), /only covers their selected text/, `${label} ${runLabel}: independent run should not carry the selection scope note`);
       assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
       assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
       assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);

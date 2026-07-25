@@ -78,6 +78,10 @@ const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
 const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
+// Appended to the system prompt of every selection-grounded model request.
+// The scope hides the page and disables tools, so the model must explain the
+// boundary instead of guessing when a follow-up reaches beyond the selection.
+const SELECTION_SCOPE_SYSTEM_NOTE = 'The text the user selected on a page is the only source available in this conversation. The current page, other tabs, files, live data, and browser tools are all unavailable. If the user asks about anything beyond the selected text and this conversation, do not guess: briefly explain, in the user\'s language, that this conversation only covers their selected text, and suggest starting a new conversation for questions about the page.';
 const BROWSER_NEW_TAB_URL_PREFIXES = ['chrome://newtab', 'edge://newtab'];
 const SET_CHECKED_VERIFY_DELAY_MS = 80;
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
@@ -6956,8 +6960,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       currentUserMessage,
       priorMessageSet,
     );
+    const selectionScoped = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    const contextSystemPrompt = this._contextOnlySystemPrompt(phase);
     const contextMessages = [
-      { role: 'system', content: this._contextOnlySystemPrompt(phase) },
+      {
+        role: 'system',
+        content: selectionScoped
+          ? `${contextSystemPrompt}\n\n${SELECTION_SCOPE_SYSTEM_NOTE}`
+          : contextSystemPrompt,
+      },
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
@@ -11867,8 +11878,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (currentUserMessage && !currentRunMessages.includes(currentUserMessage)) {
       currentRunMessages.unshift(currentUserMessage);
     }
+    // Tell the model about the boundary so an out-of-scope follow-up ("what's
+    // on this page now?") gets an honest explanation instead of a blind guess.
+    const scopedSystemMessage = systemMessage && typeof systemMessage.content === 'string'
+      ? { ...systemMessage, content: `${systemMessage.content}\n\n${SELECTION_SCOPE_SYSTEM_NOTE}` }
+      : systemMessage;
     return [
-      ...(systemMessage ? [systemMessage] : []),
+      ...(scopedSystemMessage ? [scopedSystemMessage] : []),
       // Selection shortcuts run in Ask mode and never need durable agent
       // notes. Exclude them structurally as well as by the persisted prior
       // message fingerprints, because a later note update can change its
