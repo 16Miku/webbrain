@@ -197,11 +197,13 @@ const DETECT_CODE = `(() => {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
         const action = recap.getAttribute('data-action') || recap.getAttribute('data-recaptcha-action') || null;
-        const version = recap.getAttribute('data-version') || (recap.classList.contains('g-recaptcha-v3') ? 'v3' : null);
+        const hasClassicScript = d.querySelector('script[src*="recaptcha/api.js"]') != null;
+        const hasEnterpriseScript = d.querySelector('script[src*="recaptcha/enterprise"]') != null;
         const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
           recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
-          d.querySelector('script[src*="recaptcha/enterprise"]') != null;
+          (!hasClassicScript && hasEnterpriseScript);
+        const version = recap.getAttribute('data-version') || (recap.classList.contains('g-recaptcha-v3') ? 'v3' : null);
         const isV3 = version === 'v3' || (!!action && !isInvisible);
         return {
           type: isV3 ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
@@ -239,11 +241,24 @@ const DETECT_CODE = `(() => {
     if (/recaptcha\\/(api2|enterprise)\\/anchor/i.test(url)) {
       const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
       if (m) {
+        const sitekey = m[1];
         const isEnterprise = /recaptcha\\/enterprise/i.test(url);
         const isInvisible = /[?&#]size=invisible/i.test(url);
+        const matchingV3Script = scriptUrls.find(s => s.includes('render=' + sitekey));
+        if (matchingV3Script) {
+          const actionMatch = matchingV3Script.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
+          const pageAction = actionMatch ? actionMatch[2] : null;
+          return {
+            type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
+            websiteKey: sitekey,
+            isEnterprise,
+            ...(pageAction ? { pageAction } : {}),
+            detectedVia: 'url',
+          };
+        }
         return {
           type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
-          websiteKey: m[1],
+          websiteKey: sitekey,
           isInvisible,
           isEnterprise,
           detectedVia: 'url',
