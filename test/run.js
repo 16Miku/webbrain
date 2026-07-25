@@ -17743,7 +17743,7 @@ test('selection-only model requests exclude prior conversation context', async (
   }
 });
 
-test('selection-grounded follow-ups reject and restore attachments', async () => {
+test('ordinary attachments leave selection grounding and remain usable', async () => {
   for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
     ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
@@ -17757,9 +17757,11 @@ test('selection-grounded follow-ups reject and restore attachments', async () =>
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: async (messages) => {
         providerCalls += 1;
-        return { content: 'Unexpected.', toolCalls: null };
+        assert.match(JSON.stringify(messages), /answer\.txt/, `${label}: preserved attachment name missing`);
+        assert.match(JSON.stringify(messages), /Attached file: answer\.txt/, `${label}: preserved attachment body missing`);
+        return { content: 'Attachment accepted.', toolCalls: null };
       },
     };
     const agent = new AgentClass({
@@ -17786,12 +17788,19 @@ test('selection-grounded follow-ups reject and restore attachments', async () =>
     let manageContextCalls = 0;
     agent._manageContext = async () => { manageContextCalls += 1; };
     agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
-      assert.equal(history.length, 0, `${label}: attachment rejection should remain source-bound`);
+      assert.ok(history.length >= 3, `${label}: ordinary attachment send should leave source grounding`);
       return { role: 'user', content };
     };
+    agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+      messages.push(enriched);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+    };
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => {};
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
 
     const updates = [];
-    const before = JSON.stringify(agent.conversations.get(tabId).slice(1));
     const final = await agent.processMessage(
       tabId,
       'Here is my answer file.',
@@ -17800,12 +17809,11 @@ test('selection-grounded follow-ups reject and restore attachments', async () =>
       [{ kind: 'text', name: 'answer.txt', textContent: 'B' }],
     );
 
-    assert.match(final, /Attachments cannot be added while continuing a selected-text shortcut/, `${label}: attachment rejection should be explicit`);
-    assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: attachment chip restoration signal missing`);
-    assert.equal(providerCalls, 0, `${label}: rejected attachment turn must not call the model`);
-    assert.equal(manageContextCalls, 0, `${label}: rejected attachment turn must not inspect unrelated history`);
-    assert.equal(JSON.stringify(agent.conversations.get(tabId).slice(1)), before, `${label}: rejected attachment turn must not alter conversation history`);
-    assert.ok(agent.selectionGroundingScopes.has(tabId), `${label}: rejected follow-up should preserve its selection scope`);
+    assert.equal(final, 'Attachment accepted.', `${label}: ordinary attachment send should complete`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), false, `${label}: preserved attachment should not be rejected`);
+    assert.equal(providerCalls, 1, `${label}: ordinary attachment turn should call the model once`);
+    assert.ok(manageContextCalls >= 1, `${label}: ordinary attachment turn should restore normal context management`);
+    assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label}: ordinary attachment send should end selection scope`);
   }
 });
 
@@ -42657,6 +42665,47 @@ test('manual compactConversation compacts before automatic thresholds', async ()
 
     const h = agent.persistTimers?.get?.(tabId);
     if (h) clearTimeout(h);
+  }
+});
+
+test('manual compactConversation rejects active selection-grounded conversations', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt] of [
+    ['chrome', AgentCh, buildSelectionPromptCh],
+    ['firefox', AgentFx, buildSelectionPromptFx],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = label === 'chrome' ? 93 : 94;
+    const anchor = { role: 'user', content: buildSelectionPrompt('compact source', 'quiz') };
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: `PRIOR SECRET ${'x'.repeat(1000)}` },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ];
+    agent.conversationIds.set(tabId, `conv-compact-${label}`);
+    agent.conversations.set(tabId, messages);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-compact-${label}`,
+      anchorIndex: 2,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [
+        agent._selectionGroundingMessageFingerprint(messages[1]),
+      ],
+    });
+    let manageContextCalls = 0;
+    agent._manageContext = async () => {
+      manageContextCalls += 1;
+      throw new Error('selection-scoped manual compaction must not inspect full history');
+    };
+    const before = JSON.stringify(messages);
+
+    const result = await agent.compactConversation(tabId);
+
+    assert.equal(result.compacted, false, `${label}: scoped compaction should be rejected`);
+    assert.equal(result.reason, 'selection_scoped', `${label}: scoped rejection reason missing`);
+    assert.equal(manageContextCalls, 0, `${label}: scoped compaction reached the model`);
+    assert.equal(JSON.stringify(messages), before, `${label}: scoped compaction mutated backing history`);
+
   }
 });
 

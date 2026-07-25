@@ -11412,6 +11412,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!messages || messages.length <= 1) {
       return { compacted: false, reason: 'empty', remaining: messages?.length || 0 };
     }
+    const selectionScope = this.selectionGroundingScopes.get(tabId);
+    if (
+      selectionScope?.anchorFingerprint
+      && this._selectionGroundingAnchorIndex(tabId, messages, selectionScope) >= 0
+    ) {
+      return { compacted: false, reason: 'selection_scoped', remaining: messages.length };
+    }
 
     const result = await this._manageContext(
       tabId,
@@ -18187,6 +18194,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    // An ordinary attachment send is an explicit source change. End the
+    // inherited selected-text scope before enrichment so a chip deliberately
+    // preserved by the side panel can be used without re-selecting the file.
+    if (
+      attachments?.length
+      && runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+      && this.selectionGroundingScopes.has(tabId)
+    ) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
     runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     // Scheduled resumes get the live ledger appended at fire time, so the
     // model's first turn sees current row state even if it never calls
