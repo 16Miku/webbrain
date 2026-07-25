@@ -7,6 +7,7 @@ import {
 import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
 import { listRuns } from '../trace/recorder.js';
 import { t } from './i18n.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 
 const listEl = document.getElementById('history-list');
 const mainPane = document.getElementById('main-pane');
@@ -342,16 +343,6 @@ function safeFilename(value) {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80) || 'conversation';
-}
-
-function escapeHtml(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-}
-
-function escapeAttr(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 btnRefresh.addEventListener('click', refresh);

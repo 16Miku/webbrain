@@ -13,6 +13,7 @@ import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
+import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -33,6 +34,7 @@ import {
   normalizeState as normalizeStoreReviewState,
 } from './store-review-prompt.js';
 import { providerIconUrl } from './provider-icons.js';
+import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { TAB_CHAT_PREFIX, persistTabChatToSession } from './tab-chat-persistence.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 
@@ -316,7 +318,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     cloudReady = true;
     localModelChoices = [];
     if (providerBody) {
-      providerBody.textContent = 'WebBrain Cloud is ready with a free daily allowance. Selected Cloud conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.';
+      providerBody.textContent = t('ob.cloud.body');
     }
     if (providerStatus) {
       providerStatus.textContent = '';
@@ -324,21 +326,21 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
       changeLink.href = chrome.runtime.getURL('src/ui/settings.html#providers');
       changeLink.target = '_blank';
       changeLink.rel = 'noopener noreferrer';
-      changeLink.textContent = 'Change';
+      changeLink.textContent = t('ob.cloud.change');
       changeLink.addEventListener('click', async (event) => {
         event.preventDefault();
         openProviderSettings();
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode('Using WebBrain Cloud. '),
+        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
         changeLink,
         document.createTextNode('.')
       );
     }
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
-    settingsBtn.textContent = 'Start';
+    settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
   }
 
@@ -553,6 +555,20 @@ const SLASH_COMMANDS = [
     acceptsPayload: true,
     options: [
       { value: '--list', descriptionKey: 'sp.slash.list_schedules', action: 'list', outOfBand: true, disallowPayload: true },
+    ],
+  },
+  {
+    value: '/watch',
+    usage: '/watch [--keep] [--secs <30-120>] [--long | --short] <condition and action> [/beep]',
+    descriptionKey: 'sp.slash.watch',
+    action: 'create',
+    acceptsPayload: true,
+    outOfBand: true,
+    options: [
+      { value: '--keep', descriptionKey: 'sp.slash.watch_keep' },
+      { value: '--secs', valueLabel: '<30-120>', descriptionKey: 'sp.slash.watch_secs' },
+      { value: '--long', descriptionKey: 'sp.slash.watch_long', exclusiveGroup: 'watch-beep-style' },
+      { value: '--short', descriptionKey: 'sp.slash.watch_short', exclusiveGroup: 'watch-beep-style' },
     ],
   },
   { value: '/progress', usage: '/progress', descriptionKey: 'sp.slash.check_progress', action: 'show', outOfBand: true },
@@ -2246,7 +2262,18 @@ function scheduledJobMeta(job) {
   if (job.nextRunAt && ['pending', 'queued', 'paused'].includes(job.status)) {
     parts.push(t('sp.scheduled.next', { time: formatScheduledTime(job.nextRunAt) }));
   }
-  if (job.schedule?.type === 'recurring' && job.schedule?.interval_minutes) {
+  if (job?.source === 'watch') {
+    const seconds = Number(job.watch?.intervalSeconds);
+    if (Number.isFinite(seconds)) parts.push(`${seconds}s`);
+    parts.push(job.watch?.keep ? t('sp.scheduled.watch_keep') : t('sp.scheduled.watch_once'));
+    if (job.watch?.beep) parts.push(`🔔 ${job.watch?.beepStyle || 'default'}`);
+    if (job.watch?.lastObservation && job.status !== 'completed') {
+      parts.push(truncate(String(job.watch.lastObservation), 80));
+    }
+    if (job.watch?.lastAlertWarning) {
+      parts.push(truncate(String(job.watch.lastAlertWarning), 80));
+    }
+  } else if (job.schedule?.type === 'recurring' && job.schedule?.interval_minutes) {
     parts.push(t('sp.scheduled.recurring', { minutes: job.schedule.interval_minutes }));
   }
   if (job.status === 'needs_user_input' && job.pendingClarify?.question) {
@@ -2394,6 +2421,7 @@ function renderScheduledJobs(jobs = []) {
     card.className = 'scheduled-job-card';
     card.dataset.jobId = job.id;
     card.dataset.status = job.status;
+    card.dataset.source = job.source || '';
 
     const title = document.createElement('div');
     title.className = 'scheduled-job-title';
@@ -2495,7 +2523,11 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
   if (assistantEl) {
     finalizeSteps(assistantEl);
     const textEl = assistantEl.querySelector('.message-text');
-    if (textEl && !textEl.textContent.trim() && ['completed', 'clarification_required'].includes(event) && job?.lastResult) {
+    const watchPollEvent = ['polled', 'triggered'].includes(event);
+    if (textEl && (watchPollEvent || !textEl.textContent.trim()) && (
+      ['completed', 'clarification_required'].includes(event)
+      || watchPollEvent
+    ) && job?.lastResult) {
       textEl.innerHTML = formatMarkdown(job.lastResult);
       addMessageCopyButton(assistantEl);
     }
@@ -2512,7 +2544,9 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     if (renderedTabId != null) await flushRenderedTabChat();
     await drainQueuedPromptsAfterRunSettles();
   }
-  if (event === 'completed') notifyCompletion({ success: job?.lastOutcome === 'success' });
+  if (event === 'completed' && job?.source !== 'watch') {
+    notifyCompletion({ success: job?.lastOutcome === 'success' });
+  }
 }
 
 async function handleScheduledJobEvent(data, tabId) {
@@ -2525,9 +2559,11 @@ async function handleScheduledJobEvent(data, tabId) {
   const runTabId = normalizePlanReviewTabId(tabId ?? currentTabId);
   const jobId = job?.id ? String(job.id) : '';
   const terminalScheduledEvent = ['completed', 'failed', 'clarification_required'].includes(event);
+  const watchPollEvent = ['polled', 'triggered'].includes(event);
   const crossPanelScheduledEvent = isUrlTargetScheduledJob(job) && (
     event === 'needs_user_input' ||
-    terminalScheduledEvent
+    terminalScheduledEvent ||
+    watchPollEvent
   );
   if (!sameTab && !crossPanelScheduledEvent) return;
 
@@ -2539,12 +2575,21 @@ async function handleScheduledJobEvent(data, tabId) {
     setTabProcessing(runTabId, true);
     setTabAbortRequested(runTabId, false);
     syncSendButtonState();
-    hideRecommendedActions();
-    resetChatNavigation();
-    currentAssistantEl = addMessage('assistant', '');
+    if (job?.source === 'watch') {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = ensureScheduledTerminalMessage(job);
+    } else {
+      hideRecommendedActions();
+      resetChatNavigation();
+      currentAssistantEl = addMessage('assistant', '');
+    }
     if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
     showActivity(t('sp.scheduled.running', { title }));
   } else if (event === 'completed') {
+    ensureScheduledTerminalMessage(job);
+    await settleScheduledRun(event, job, runTabId);
+  } else if (event === 'polled' || event === 'triggered') {
     ensureScheduledTerminalMessage(job);
     await settleScheduledRun(event, job, runTabId);
   } else if (event === 'failed') {
@@ -6116,6 +6161,39 @@ function requestConfigurationFile(tabId) {
  * May trigger async UI side effects (screenshot, export, etc.).
  */
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
+  if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
+    const watchArgs = parseWatchSlashCommand(text);
+    if (!watchArgs.ok) {
+      showComposerToast(t('sp.slash.invalid_usage', { usage: WATCH_COMMAND_USAGE }), { duration: 5000 });
+      return '';
+    }
+    try {
+      const res = await sendToBackground('create_watch_job', {
+        tabId,
+        watch: {
+          prompt: watchArgs.prompt,
+          keep: watchArgs.keep,
+          interval_seconds: watchArgs.intervalSeconds,
+          beep: watchArgs.beep,
+          beep_style: watchArgs.beepStyle,
+        },
+      });
+      if (res?.success === false || res?.ok === false || !res?.scheduledAt) {
+        throw new Error(res?.error || 'Could not create watch.');
+      }
+      if (currentTabId === tabId) {
+        addPersistentSlashMessage(res?.deduped
+          ? t('sp.watch.exists')
+          : t('sp.watch.created', { seconds: watchArgs.intervalSeconds }));
+        await refreshScheduledJobs({ tabId });
+      }
+    } catch (error) {
+      if (currentTabId === tabId) {
+        addPersistentSlashMessage(t('sp.watch.error', { error: error?.message || 'unknown error' }));
+      }
+    }
+    return '';
+  }
   const invocation = parseSlashInvocation(text);
   if (!invocation) return text;
   if (invocation.error || invocation.unsupported) {
@@ -9265,16 +9343,6 @@ function bindMessageCopyButton(btn) {
       setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
     });
   });
-}
-
-function escapeHtml(str) {
-  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
 }
 
 function systemHtml(html) {
