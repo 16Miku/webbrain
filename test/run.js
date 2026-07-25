@@ -13575,6 +13575,21 @@ test('slash autocomplete progressively suggests only available unused flags', ()
 
   const afterTranscribe = chrome.getContext('/record --transcribe ');
   assert.deepEqual(optionMatches(chrome, afterTranscribe), ['--full-screen', '--hide-recording-indicator']);
+  const beforeRequiredFullScreen = chrome.getContext('/record --hide-recording-indicator ');
+  assert.deepEqual(optionMatches(chrome, beforeRequiredFullScreen), ['--full-screen', '--transcribe']);
+  assert.equal(
+    chrome.getMatches(beforeRequiredFullScreen).some((match) => match.kind === 'base-action'),
+    false,
+    'an option with an unmet dependency should not expose an invalid Enter action',
+  );
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const beforeRequiredFile = runtime.getContext('/workflow --import ');
+    assert.equal(
+      runtime.getMatches(beforeRequiredFile).some((match) => match.kind === 'base-action'),
+      false,
+      `${label}: mutually required workflow flags should not expose an invalid Enter action`,
+    );
+  }
   const afterBothRecordOptions = chrome.getContext('/record --transcribe --full-screen ');
   assert.deepEqual(optionMatches(chrome, afterBothRecordOptions), ['--hide-recording-indicator']);
   const afterAllRecordOptions = chrome.getContext('/record --transcribe --full-screen --hide-recording-indicator ');

@@ -5661,6 +5661,13 @@ function getSlashAutocompleteContext() {
   };
 }
 
+function slashCommandSelectionIsExecutable(command, selectedValues) {
+  return [...selectedValues].every((value) => {
+    const option = slashCommandOptions(command).find((candidate) => candidate.value === value);
+    return !option?.requires || selectedValues.has(option.requires);
+  });
+}
+
 function buildSlashAutocompleteMatches(context) {
   if (!context) return [];
   const candidates = context.kind === 'command'
@@ -5678,7 +5685,9 @@ function buildSlashAutocompleteMatches(context) {
       completionStart: context.completionStart,
       completionEnd: context.completionEnd,
     }));
-  if (context.kind === 'option' && !context.query) {
+  if (context.kind === 'option'
+      && !context.query
+      && slashCommandSelectionIsExecutable(context.command, context.selected)) {
     const selectedAction = slashCommandOptions(context.command)
       .find((option) => context.selected.has(option.value) && option.action);
     matches.unshift({
