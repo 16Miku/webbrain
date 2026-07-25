@@ -217,11 +217,17 @@ const DETECT_CODE = `(() => {
       return { type: 'turnstile_challenge', websiteKey: null, note: 'Cloudflare interstitial detected but no sitekey was exposed in the DOM. Pass websiteKey explicitly if you have it.' };
     }
   }
-  const urlCandidates = [];
+  const iframeUrls = [];
+  const scriptUrls = [];
   for (const el of document.querySelectorAll('iframe[src], script[src]')) {
-    try { if (el.src) urlCandidates.push(el.src); } catch (_) {}
+    try {
+      if (el.src) {
+        if (el.tagName.toLowerCase() === 'iframe') iframeUrls.push(el.src);
+        else scriptUrls.push(el.src);
+      }
+    } catch (_) {}
   }
-  for (const url of urlCandidates) {
+  for (const url of iframeUrls) {
     if (/hcaptcha\\.com/i.test(url)) {
       const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
       if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
@@ -243,6 +249,16 @@ const DETECT_CODE = `(() => {
           detectedVia: 'url',
         };
       }
+    }
+  }
+  for (const url of scriptUrls) {
+    if (/hcaptcha\\.com/i.test(url)) {
+      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
+      if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
+    }
+    if (/challenges\\.cloudflare\\.com\\/turnstile/i.test(url)) {
+      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
+      if (m) return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
     }
     if (/recaptcha\\/(api\\.js|enterprise\\.js)/i.test(url)) {
       const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);

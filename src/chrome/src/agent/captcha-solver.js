@@ -284,26 +284,25 @@ function detectCaptchaInPage() {
   // Turnstile) or `?k=` (reCAPTCHA) query parameter. iframe.src and
   // script.src are readable across origins from the parent page, so we
   // can scrape them even when the widget renders cross-origin.
-  const urlCandidates = [];
+  const iframeUrls = [];
+  const scriptUrls = [];
   for (const el of document.querySelectorAll('iframe[src], script[src]')) {
-    try { if (el.src) urlCandidates.push(el.src); } catch {}
+    try {
+      if (el.src) {
+        if (el.tagName.toLowerCase() === 'iframe') iframeUrls.push(el.src);
+        else scriptUrls.push(el.src);
+      }
+    } catch {}
   }
-  for (const url of urlCandidates) {
-    // hCaptcha
+  for (const url of iframeUrls) {
     if (/hcaptcha\.com/i.test(url)) {
       const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
-      }
+      if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
     }
-    // Cloudflare Turnstile
     if (/challenges\.cloudflare\.com\/turnstile/i.test(url)) {
       const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
-      }
+      if (m) return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
     }
-    // reCAPTCHA v2 / Enterprise anchor
     if (/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) {
       const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
       if (m) {
@@ -318,7 +317,16 @@ function detectCaptchaInPage() {
         };
       }
     }
-    // reCAPTCHA api.js / enterprise.js render parameter (v3 or Enterprise)
+  }
+  for (const url of scriptUrls) {
+    if (/hcaptcha\.com/i.test(url)) {
+      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
+      if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
+    }
+    if (/challenges\.cloudflare\.com\/turnstile/i.test(url)) {
+      const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
+      if (m) return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
+    }
     if (/recaptcha\/(api\.js|enterprise\.js)/i.test(url)) {
       const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
       if (m && m[1] !== 'explicit') {
