@@ -14315,7 +14315,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         // Detect when the model didn't pre-specify a captcha type. Image-
         // to-text is a special case that needs an explicit imageBase64.
-        let { type, websiteKey, isInvisible, pageAction, minScore, imageBase64 } = args || {};
+        let { type, websiteKey, isInvisible, isEnterprise, pageAction, minScore, imageBase64 } = args || {};
         if (!type) {
           const detected = await detectCaptcha(tabId);
           if (!detected) {
@@ -14324,6 +14324,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           type = detected.type;
           if (!websiteKey) websiteKey = detected.websiteKey;
           if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
+          if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
           if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
         }
 
@@ -14341,6 +14342,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           websiteURL,
           websiteKey,
           ...(isInvisible != null ? { isInvisible } : {}),
+          ...(isEnterprise != null ? { isEnterprise } : {}),
           ...(pageAction ? { pageAction } : {}),
           ...(minScore ? { minScore } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),

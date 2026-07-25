@@ -52,9 +52,11 @@ function capsolverError(prefix, body) {
   const desc = body.errorDescription || body.errorCode || 'unknown error';
   const code = String(body.errorCode || '');
   const looksLikeDemoRejection =
-    code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
+    (code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
     code === 'ERROR_INVALID_TASK_DATA' ||
-    /don['’]?t support|not support|unsupported/i.test(desc);
+    /don['’]?t support|not support|unsupported/i.test(desc)) &&
+    !/invalid input|check captcha type/i.test(desc) &&
+    /test|demo|unsupported|don['’]?t support|not support/i.test(desc);
   if (looksLikeDemoRejection) {
     return new Error(
       `${prefix}: ${desc}. This usually means CapSolver refused the sitekey — most often because it is a public TEST/DEMO key (Google's recaptcha demo, hcaptcha.com/demo, etc.) that no captcha-solving service will farm. Try the same flow on a real production site.`
@@ -97,31 +99,28 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
 }
 
 // ─── Task builders ─────────────────────────────────────────────────────
-//
-// Each builder takes the params the agent / detector gathered from the page
-// and returns the task object CapSolver's createTask endpoint expects. We
-// default to the "proxyless" task types so the user doesn't need to BYO
-// proxy — that's the simplest path and what virtually every reCAPTCHA /
-// hCaptcha / Turnstile setup actually needs.
 
 function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2') {
+  const isEnterprise = !!rest.isEnterprise || t.includes('enterprise');
+  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v2_enterprise' || t === 'recaptcha_enterprise') {
     return {
-      type: 'ReCaptchaV2TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV2EnterpriseTaskProxyLess' : 'ReCaptchaV2TaskProxyLess',
       websiteURL,
       websiteKey,
       ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
       ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
-  if (t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (t === 'recaptcha_v3' || t === 'recaptchav3' || t === 'recaptcha_v3_enterprise') {
     return {
-      type: 'ReCaptchaV3TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV3EnterpriseTaskProxyLess' : 'ReCaptchaV3TaskProxyLess',
       websiteURL,
       websiteKey,
       pageAction: rest.pageAction || rest.action || 'verify',
       ...(rest.minScore ? { minScore: rest.minScore } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
   }
   if (t === 'hcaptcha') {
@@ -238,21 +237,20 @@ function detectCaptchaInPage() {
         return { type: 'turnstile', websiteKey: sitekey };
       }
     }
-    // reCAPTCHA v2/v3. Match only on reCAPTCHA-specific markers — the
-    // `.g-recaptcha` class or `id="g-recaptcha-..."` — so we don't
-    // accidentally grab any `data-sitekey` element from another widget.
-    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey]');
+    // reCAPTCHA v2/v3 / Enterprise host elements
+    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]');
     if (recap) {
-      const sitekey = recap.getAttribute('data-sitekey');
+      const sitekey = recap.getAttribute('data-sitekey') || recap.getAttribute('data-recaptcha-sitekey');
       if (sitekey) {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
-        // v3 widgets typically carry data-action; v2 doesn't.
         const action = recap.getAttribute('data-action') || null;
+        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' || d.querySelector('script[src*="recaptcha/enterprise"]') != null;
         return {
-          type: action ? 'recaptcha_v3' : 'recaptcha_v2',
+          type: action ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
           isInvisible,
+          isEnterprise,
           ...(action ? { pageAction: action } : {}),
         };
       }
@@ -296,14 +294,32 @@ function detectCaptchaInPage() {
         return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
       }
     }
-    // reCAPTCHA v2 — the anchor iframe carries the sitekey in `k=` and
-    // visible (checkbox) widgets are the only kind that produce this URL
-    // pattern (v3 is invisible and would have surfaced via the DOM scan
-    // above if a host element existed).
+    // reCAPTCHA v2 / Enterprise anchor
     if (/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) {
       const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
       if (m) {
-        return { type: 'recaptcha_v2', websiteKey: m[1], detectedVia: 'url' };
+        const isEnterprise = /recaptcha\/enterprise/i.test(url);
+        const isInvisible = /[?&#]size=invisible/i.test(url);
+        return {
+          type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
+          websiteKey: m[1],
+          isInvisible,
+          isEnterprise,
+          detectedVia: 'url',
+        };
+      }
+    }
+    // reCAPTCHA api.js / enterprise.js render parameter (v3 or Enterprise)
+    if (/recaptcha\/(api\.js|enterprise\.js)/i.test(url)) {
+      const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
+      if (m && m[1] !== 'explicit') {
+        const isEnterprise = /enterprise/i.test(url);
+        return {
+          type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
+          websiteKey: m[1],
+          isEnterprise,
+          detectedVia: 'url',
+        };
       }
     }
   }

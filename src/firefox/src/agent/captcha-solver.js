@@ -40,9 +40,11 @@ function capsolverError(prefix, body) {
   const desc = body.errorDescription || body.errorCode || 'unknown error';
   const code = String(body.errorCode || '');
   const looksLikeDemoRejection =
-    code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
+    (code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
     code === 'ERROR_INVALID_TASK_DATA' ||
-    /don['’]?t support|not support|unsupported/i.test(desc);
+    /don['’]?t support|not support|unsupported/i.test(desc)) &&
+    !/invalid input|check captcha type/i.test(desc) &&
+    /test|demo|unsupported|don['’]?t support|not support/i.test(desc);
   if (looksLikeDemoRejection) {
     return new Error(
       `${prefix}: ${desc}. This usually means CapSolver refused the sitekey — most often because it is a public TEST/DEMO key (Google's recaptcha demo, hcaptcha.com/demo, etc.) that no captcha-solving service will farm. Try the same flow on a real production site.`
@@ -86,22 +88,25 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
 
 function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2') {
+  const isEnterprise = !!rest.isEnterprise || t.includes('enterprise');
+  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v2_enterprise' || t === 'recaptcha_enterprise') {
     return {
-      type: 'ReCaptchaV2TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV2EnterpriseTaskProxyLess' : 'ReCaptchaV2TaskProxyLess',
       websiteURL,
       websiteKey,
       ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
       ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
-  if (t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (t === 'recaptcha_v3' || t === 'recaptchav3' || t === 'recaptcha_v3_enterprise') {
     return {
-      type: 'ReCaptchaV3TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV3EnterpriseTaskProxyLess' : 'ReCaptchaV3TaskProxyLess',
       websiteURL,
       websiteKey,
       pageAction: rest.pageAction || rest.action || 'verify',
       ...(rest.minScore ? { minScore: rest.minScore } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
   }
   if (t === 'hcaptcha') {
@@ -135,7 +140,7 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
 
 function solutionFor(type, solution) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (t.startsWith('recaptcha') || t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
     return { token: solution.gRecaptchaResponse, fieldName: 'g-recaptcha-response' };
   }
   if (t === 'hcaptcha') {
@@ -168,9 +173,6 @@ const DETECT_CODE = `(() => {
     try { if (f.contentDocument) docs.push(f.contentDocument); } catch {}
   }
   for (const d of docs) {
-    // Provider-specific widgets are checked BEFORE the generic reCAPTCHA
-    // fallback so a Turnstile/hCaptcha widget with data-sitekey + data-callback
-    // doesn't get misclassified as reCAPTCHA.
     const hcap = d.querySelector('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]');
     if (hcap) {
       const sitekey = hcap.getAttribute('data-sitekey') || hcap.getAttribute('data-hcaptcha-sitekey');
@@ -184,16 +186,19 @@ const DETECT_CODE = `(() => {
       const sitekey = turn.getAttribute('data-sitekey') || turn.getAttribute('data-turnstile-sitekey');
       if (sitekey) return { type: 'turnstile', websiteKey: sitekey };
     }
-    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey]');
+    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]');
     if (recap) {
-      const sitekey = recap.getAttribute('data-sitekey');
+      const sitekey = recap.getAttribute('data-sitekey') || recap.getAttribute('data-recaptcha-sitekey');
       if (sitekey) {
         const size = recap.getAttribute('data-size');
+        const isInvisible = size === 'invisible';
         const action = recap.getAttribute('data-action') || null;
+        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' || d.querySelector('script[src*="recaptcha/enterprise"]') != null;
         return {
-          type: action ? 'recaptcha_v3' : 'recaptcha_v2',
+          type: action ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
-          isInvisible: size === 'invisible',
+          isInvisible,
+          isEnterprise,
           ...(action ? { pageAction: action } : {}),
         };
       }
@@ -203,10 +208,6 @@ const DETECT_CODE = `(() => {
       return { type: 'turnstile_challenge', websiteKey: null, note: 'Cloudflare interstitial detected but no sitekey was exposed in the DOM. Pass websiteKey explicitly if you have it.' };
     }
   }
-  // URL-string fallback — see chrome/captcha-solver.js for the full
-  // rationale. Scrapes the sitekey out of iframe.src / script.src URLs
-  // when the widget did not expose it on a host element in the main DOM
-  // (e.g. hcaptcha.com/demo, some SPA mounts).
   const urlCandidates = [];
   for (const el of document.querySelectorAll('iframe[src], script[src]')) {
     try { if (el.src) urlCandidates.push(el.src); } catch (_) {}
@@ -222,7 +223,29 @@ const DETECT_CODE = `(() => {
     }
     if (/recaptcha\\/(api2|enterprise)\\/anchor/i.test(url)) {
       const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
-      if (m) return { type: 'recaptcha_v2', websiteKey: m[1], detectedVia: 'url' };
+      if (m) {
+        const isEnterprise = /recaptcha\\/enterprise/i.test(url);
+        const isInvisible = /[?&#]size=invisible/i.test(url);
+        return {
+          type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
+          websiteKey: m[1],
+          isInvisible,
+          isEnterprise,
+          detectedVia: 'url',
+        };
+      }
+    }
+    if (/recaptcha\\/(api\\.js|enterprise\\.js)/i.test(url)) {
+      const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
+      if (m && m[1] !== 'explicit') {
+        const isEnterprise = /enterprise/i.test(url);
+        return {
+          type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
+          websiteKey: m[1],
+          isEnterprise,
+          detectedVia: 'url',
+        };
+      }
     }
   }
   return null;
