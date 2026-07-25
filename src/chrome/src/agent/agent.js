@@ -123,6 +123,10 @@ export class Agent extends LoopDetector {
     super();
     this.providerManager = providerManager;
     this.conversations = new Map(); // tabId -> messages[]
+    // tabId -> durable selected-text boundary. Follow-up turns and Continue
+    // inherit this scope without exposing conversation history from before the
+    // selection. Cleared with the conversation or replaced by a new selection.
+    this.selectionGroundingScopes = new Map();
     this.progressLedgers = new Map(); // tabId -> structured progress rows, projected into a pinned note
     this.progressPageScopes = new Map(); // tabId -> normalized page identity for scoped progress task keys
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
@@ -5603,6 +5607,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this.progressSessions.set(tabId, entry.progressSession);
         }
         if (
+          entry.selectionGroundingScope
+          && Number.isInteger(entry.selectionGroundingScope.anchorIndex)
+          && entry.selectionGroundingScope.anchorIndex >= 1
+        ) {
+          this.selectionGroundingScopes.set(tabId, {
+            conversationId: entry.selectionGroundingScope.conversationId || null,
+            anchorIndex: entry.selectionGroundingScope.anchorIndex,
+            anchorFingerprint: typeof entry.selectionGroundingScope.anchorFingerprint === 'string'
+              ? entry.selectionGroundingScope.anchorFingerprint
+              : null,
+            excludedFingerprints: Array.isArray(entry.selectionGroundingScope.excludedFingerprints)
+              ? entry.selectionGroundingScope.excludedFingerprints.filter(value => typeof value === 'string')
+              : [],
+          });
+        }
+        if (
           entry.clarificationAuthorizationGuard?.source === 'timeout'
           && entry.clarificationAuthorizationGuard?.authorized === false
         ) {
@@ -5646,6 +5666,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       submittedRunRequestId: this.submittedRunRequestIds.get(tabId) || null,
       progressLedger: this.progressLedgers.get(tabId) || [],
       progressSession: this.progressSessions.get(tabId) || null,
+      selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
     };
   }
@@ -6329,7 +6350,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // building the digest) can never drop the just-typed message from the
     // transcript.
     const sourceBoundRun = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
-    const priorMessages = runIntent ? (sourceBoundRun ? [] : messages.slice()) : null;
+    const sourceBoundPriorMessages = sourceBoundRun
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
+    const sourceBoundPlannerMessages = sourceBoundRun
+      ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
+      : null;
+    const priorMessages = runIntent
+      ? (sourceBoundRun
+        ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
+        : messages.slice())
+      : null;
     messages.push(enriched);
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
     if (!runIntent) {
@@ -8822,6 +8853,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks?.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
+    this.selectionGroundingScopes.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
@@ -8854,6 +8886,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressLedgers.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
+    this.selectionGroundingScopes.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
@@ -11678,6 +11711,95 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && /<untrusted_page_content\b[^>]*>[\s\S]*?<\/untrusted_page_content\b[^>]*>/.test(content);
   }
 
+  _selectionGroundingMessageFingerprint(message) {
+    const content = typeof message?.content === 'string'
+      ? message.content
+      : JSON.stringify(message?.content ?? '');
+    const value = String(content ?? '');
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${message?.role || ''}:${value.length}:${hash >>> 0}`;
+  }
+
+  _selectionGroundingAnchorIndex(tabId, messages, scope) {
+    if (!scope) return -1;
+    const expectedConversationId = scope.conversationId || null;
+    const currentConversationId = this.conversationIds.get(tabId) || null;
+    if (expectedConversationId && currentConversationId && expectedConversationId !== currentConversationId) {
+      return -1;
+    }
+    if (scope.anchorFingerprint) {
+      return messages.findIndex((message, index) =>
+        index > 0 && this._selectionGroundingMessageFingerprint(message) === scope.anchorFingerprint
+      );
+    }
+    return Number.isInteger(scope.anchorIndex)
+      && scope.anchorIndex >= 1
+      && scope.anchorIndex <= messages.length
+      ? scope.anchorIndex
+      : -1;
+  }
+
+  _selectionGroundedRunOptions(tabId, messages, runOptions = {}) {
+    const explicitSelection = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    let scope = this.selectionGroundingScopes.get(tabId) || null;
+    if (explicitSelection) {
+      scope = {
+        conversationId: this.conversationIds.get(tabId) || null,
+        anchorIndex: messages.length,
+        anchorFingerprint: null,
+        excludedFingerprints: messages.slice(1).map(message =>
+          this._selectionGroundingMessageFingerprint(message)
+        ),
+      };
+      this.selectionGroundingScopes.set(tabId, scope);
+    } else if (!scope || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0) {
+      this.selectionGroundingScopes.delete(tabId);
+      return runOptions;
+    }
+    return {
+      ...runOptions,
+      sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+      selectionGroundingScopeStarted: explicitSelection,
+    };
+  }
+
+  _selectionGroundingPriorMessageSet(tabId, messages) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    const anchorIndex = this._selectionGroundingAnchorIndex(tabId, messages, scope);
+    if (anchorIndex < 0) return new Set(messages);
+
+    const priorMessages = new Set(messages.slice(0, anchorIndex));
+    const excludedCounts = new Map();
+    for (const fingerprint of scope?.excludedFingerprints || []) {
+      excludedCounts.set(fingerprint, (excludedCounts.get(fingerprint) || 0) + 1);
+    }
+    for (const message of messages) {
+      const fingerprint = this._selectionGroundingMessageFingerprint(message);
+      const remaining = excludedCounts.get(fingerprint) || 0;
+      if (remaining <= 0) continue;
+      priorMessages.add(message);
+      excludedCounts.set(fingerprint, remaining - 1);
+    }
+    return priorMessages;
+  }
+
+  _finalizeSelectionGroundingScope(tabId, messages, anchorMessage) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    if (!scope) return;
+    const anchorIndex = messages.indexOf(anchorMessage);
+    if (anchorIndex < 1) {
+      this.selectionGroundingScopes.delete(tabId);
+      return;
+    }
+    scope.anchorIndex = anchorIndex;
+    scope.anchorFingerprint = this._selectionGroundingMessageFingerprint(anchorMessage);
+    this._persist(tabId);
+  }
+
   /**
    * Return a model-facing view containing only the system prompt and messages
    * created during this source-grounded run. Keep the persisted conversation
@@ -11704,8 +11826,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     return [
       ...(systemMessage ? [systemMessage] : []),
-      ...currentRunMessages.filter(message => message !== systemMessage),
+      // Selection shortcuts run in Ask mode and never need durable agent
+      // notes. Exclude them structurally as well as by the persisted prior
+      // message fingerprints, because a later note update can change its
+      // fingerprint or move it past the selection anchor.
+      ...currentRunMessages.filter(message =>
+        message !== systemMessage && !this._isPinnedAgentStateMessage(message)
+      ),
     ];
+  }
+
+  _emergencyTrimModelCopy(messages) {
+    const modelCopy = messages.map(message => ({ ...message }));
+    this._emergencyTrim(modelCopy);
+    return modelCopy;
   }
 
   /**
@@ -18039,6 +18173,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     // Scheduled resumes get the live ledger appended at fire time, so the
     // model's first turn sees current row state even if it never calls
     // progress_read; must run before the message is enriched/pushed.
@@ -18054,13 +18189,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!selectionOnly) {
       await this._manageContext(tabId, messages, onUpdate, costState);
     }
-    const sourceBoundPriorMessages = selectionOnly ? new Set(messages) : null;
+    const sourceBoundPriorMessages = selectionOnly
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
 
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
-    const modelMessagesForRun = () =>
+    let sourceBoundTrimmedMessages = null;
+    let sourceBoundMessagesAtTrim = null;
+    const rawModelMessagesForRun = () =>
       this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    const modelMessagesForRun = () => {
+      const rawMessages = rawModelMessagesForRun();
+      if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
+        return rawMessages;
+      }
+      const appendedMessages = rawMessages.filter((message, index) =>
+        index > 0 && !sourceBoundMessagesAtTrim.has(message)
+      );
+      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+    };
+    const emergencyTrimMessagesForRun = () => {
+      if (!selectionOnly) {
+        this._emergencyTrim(messages);
+        return;
+      }
+      const rawMessages = rawModelMessagesForRun();
+      const currentModelMessages = modelMessagesForRun();
+      sourceBoundMessagesAtTrim = new Set(rawMessages);
+      sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
+    };
     if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
@@ -18148,6 +18307,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
+    if (runOptions?.selectionGroundingScopeStarted === true) {
+      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+    }
     if (!gateOutcome.proceed) {
       _traceStatus = gateOutcome.reason === 'cost_limit'
         ? 'cost_limit'
@@ -18418,7 +18580,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
-          this._emergencyTrim(messages);
+          emergencyTrimMessagesForRun();
           try {
             const useTools = provider.supportsTools;
             const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
@@ -18757,6 +18919,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     const costState = this._newCostRunState();
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
@@ -18768,13 +18931,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!selectionOnly) {
       await this._manageContext(tabId, messages, onUpdate, costState);
     }
-    const sourceBoundPriorMessages = selectionOnly ? new Set(messages) : null;
+    const sourceBoundPriorMessages = selectionOnly
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
 
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
-    const modelMessagesForRun = () =>
+    let sourceBoundTrimmedMessages = null;
+    let sourceBoundMessagesAtTrim = null;
+    const rawModelMessagesForRun = () =>
       this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    const modelMessagesForRun = () => {
+      const rawMessages = rawModelMessagesForRun();
+      if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
+        return rawMessages;
+      }
+      const appendedMessages = rawMessages.filter((message, index) =>
+        index > 0 && !sourceBoundMessagesAtTrim.has(message)
+      );
+      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+    };
+    const emergencyTrimMessagesForRun = () => {
+      if (!selectionOnly) {
+        this._emergencyTrim(messages);
+        return;
+      }
+      const rawMessages = rawModelMessagesForRun();
+      const currentModelMessages = modelMessagesForRun();
+      sourceBoundMessagesAtTrim = new Set(rawMessages);
+      sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
+    };
     if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
@@ -18826,6 +19013,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
+    if (runOptions?.selectionGroundingScopeStarted === true) {
+      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+    }
     if (!gateOutcome.proceed) {
       const status = gateOutcome.reason === 'cost_limit'
         ? 'cost_limit'
@@ -19166,7 +19356,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim and retry
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
-          this._emergencyTrim(messages);
+          emergencyTrimMessagesForRun();
           this._persist(tabId);
           continue; // retry the loop with trimmed context
         }

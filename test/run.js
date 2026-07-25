@@ -17697,6 +17697,114 @@ test('selection-only model requests exclude prior conversation context', async (
         true,
         `${label}: source-bound request view should not delete visible conversation history`,
       );
+
+      const followUp = streaming
+        ? await agent.processMessageStream(tabId, 'My quiz answer is B.', () => {}, 'ask')
+        : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
+      assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
+      assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
+      const followUpSerialized = JSON.stringify(requests[1]);
+      assert.match(followUpSerialized, /authoritative selected words/, `${label}: follow-up lost the original selection`);
+      assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
+      assert.doesNotMatch(followUpSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded follow-up`);
+
+      const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
+      assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
+      assert.equal(requests.length, 3, `${label}: Continue should make one additional model request`);
+      const continueSerialized = JSON.stringify(requests[2]);
+      assert.match(continueSerialized, /authoritative selected words/, `${label}: Continue lost the original selection`);
+      assert.match(continueSerialized, /My quiz answer is B\./, `${label}: Continue lost the quiz exchange`);
+      assert.match(continueSerialized, /Please continue from where you left off\./, `${label}: Continue prompt missing`);
+      assert.doesNotMatch(continueSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded Continue`);
+
+      const persistedScope = agent._conversationStorageEntry(tabId)?.selectionGroundingScope;
+      assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
+      assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
+    }
+  }
+});
+
+test('selection-only overflow trims only the isolated model view', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      let calls = 0;
+      const provider = {
+        supportsTools: false,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages) => {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          return { content: 'Recovered answer.', toolCalls: null };
+        },
+        async *chatStream(messages) {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          yield { type: 'text', content: 'Recovered answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9650 + (buildIndex * 10) + pathIndex;
+      const priorSecret = `PRIOR HISTORY MUST SURVIVE ${'Z'.repeat(7000)}`;
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: priorSecret },
+        { role: 'assistant', content: 'Prior answer.' },
+      ]);
+      agent.maxSteps = 3;
+      agent._hydrate = async () => {};
+      agent._manageContext = async () => {
+        throw new Error('selection-only overflow must not compact backing history');
+      };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.equal(history.length, 0, `${label}: overflow enrichment should remain source-bound`);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+        messages.push(enriched);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const selectedText = `${'A'.repeat(7000)}SELECTION_TAIL_MUST_STAY_IN_HISTORY`;
+      const prompt = buildSelectionPrompt(selectedText, 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Recovered answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: overflow retry should recover`);
+      assert.equal(requests.length, 2, `${label}: overflow should retry exactly once`);
+      assert.match(requests[0], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: initial request should contain the full selection`);
+      assert.doesNotMatch(requests[1], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: retry should use the trimmed isolated view`);
+      assert.doesNotMatch(requests[0], /PRIOR HISTORY MUST SURVIVE/, `${label}: initial request leaked prior history`);
+      assert.doesNotMatch(requests[1], /PRIOR HISTORY MUST SURVIVE/, `${label}: retry leaked prior history`);
+
+      const persistedConversation = agent.conversations.get(tabId);
+      assert.equal(persistedConversation[1].content, priorSecret, `${label}: overflow mutated unrelated persisted history`);
+      assert.match(
+        persistedConversation.find(message => typeof message.content === 'string' && message.content.includes('SELECTION_TAIL_MUST_STAY_IN_HISTORY'))?.content || '',
+        /SELECTION_TAIL_MUST_STAY_IN_HISTORY/,
+        `${label}: overflow truncated the persisted selected-text turn`,
+      );
     }
   }
 });
@@ -17750,8 +17858,8 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       agent,
-      /const priorMessages = runIntent \? \(sourceBoundRun \? \[\] : messages\.slice\(\)\) : null;/,
-      `${label}: Act planner should not receive prior conversation history for a selection-only run`,
+      /const sourceBoundPlannerMessages = sourceBoundRun[\s\S]*?_messagesForSourceGroundedRun\(messages, runOptions, null, sourceBoundPriorMessages\)[\s\S]*?sourceBoundPlannerMessages\.slice\(/,
+      `${label}: Act planner should receive only the selected-text exchange on grounded follow-ups`,
     );
   }
 });
