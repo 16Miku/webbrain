@@ -396,7 +396,7 @@ export async function injectToken(tabId, {
     return inject(payload, { document: frameDocument, window: frameWindow });
   })()`;
   const details = Number.isInteger(target?.frameId)
-    ? { code, frameId: target.frameId }
+    ? { code, frameId: target.frameId, matchAboutBlank: true }
     : { code, ...(target?.frameUrl ? { allFrames: true } : {}) };
   const results = await browser.tabs.executeScript(tabId, details);
   const outputs = (results || []).filter(Boolean);

@@ -50700,6 +50700,7 @@ async function detectCaptchaOnFakePage(build, nodes) {
         document,
         location,
         URL,
+        URLSearchParams,
         innerWidth: 1280,
         innerHeight: 720,
         getComputedStyle: globalThis.getComputedStyle,
@@ -50823,6 +50824,19 @@ test('captcha detection: reCAPTCHA version, Enterprise edition and action stay i
         captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HKEY_123456' }),
       ],
       expect: { type: 'hcaptcha', websiteKey: 'HKEY_123456' },
+    },
+    {
+      label: 'URL fallback: hCaptcha site key in iframe fragment',
+      nodes: () => [
+        captchaEl('iframe', {
+          src: 'https://newassets.hcaptcha.com/captcha/v1/checkbox/hcaptcha.html#id=widget&sitekey=HKEY_FRAGMENT_123456',
+        }),
+      ],
+      expect: {
+        type: 'hcaptcha',
+        websiteKey: 'HKEY_FRAGMENT_123456',
+        detectedVia: 'url',
+      },
     },
   ];
 
@@ -51064,6 +51078,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
             window: topWindow,
             location: topWindow.location,
             URL,
+            URLSearchParams,
             Event: PageEvent,
             HTMLTextAreaElement: topWindow.HTMLTextAreaElement,
             HTMLInputElement: topWindow.HTMLInputElement,
@@ -51636,6 +51651,7 @@ test('captcha injection wrappers target the selected frame in both builds', asyn
       target: { frameId: 11, frameUrl: 'https://example.test/captcha', websiteKey: 'KEY' },
     });
     assert.equal(firefoxCall.frameId, 11, 'Firefox injection did not target selected frameId');
+    assert.equal(firefoxCall.matchAboutBlank, true, 'Firefox injection did not enable inherited-origin matching');
     assert.equal(firefoxResult.frameId, 11, 'Firefox injection result lost frameId');
     firefoxCall = null;
     const firefoxUntargeted = await firefoxMod.injectToken(2, {

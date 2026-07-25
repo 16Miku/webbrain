@@ -370,7 +370,11 @@ export function detectCaptchaCandidatesInPage(scope = null) {
 
   const urlParam = (urlStr, name) => {
     try {
-      return new URL(urlStr, frameUrl || 'https://dummy.host').searchParams.get(name);
+      const url = new URL(urlStr, frameUrl || 'https://dummy.host');
+      const queryValue = url.searchParams.get(name);
+      if (queryValue != null) return queryValue;
+      const fragment = String(url.hash || '').replace(/^#/, '');
+      return fragment ? new URLSearchParams(fragment).get(name) : null;
     } catch (_) {
       return null;
     }
