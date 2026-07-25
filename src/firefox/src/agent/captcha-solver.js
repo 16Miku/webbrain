@@ -192,10 +192,11 @@ const DETECT_CODE = `(() => {
       if (sitekey) {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
-        const action = recap.getAttribute('data-action') || null;
+        const action = recap.getAttribute('data-action') || d.querySelector('[data-action]')?.getAttribute('data-action') || null;
         const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
-          recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null;
+          recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
+          d.querySelector('script[src*="recaptcha/enterprise"]') != null;
         return {
           type: action ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
@@ -241,11 +242,15 @@ const DETECT_CODE = `(() => {
       const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
       if (m && m[1] !== 'explicit') {
         const isEnterprise = /enterprise/i.test(url);
+        const actionMatch = url.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
+        const pageAction = actionMatch ? actionMatch[2] : (document.querySelector('[data-action]')?.getAttribute('data-action') || null);
         return {
           type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
           websiteKey: m[1],
           isEnterprise,
+          ...(pageAction ? { pageAction } : {}),
           detectedVia: 'url',
+          note: !pageAction ? 'reCAPTCHA v3 detected via script render tag without pageAction. Pass pageAction explicitly if the target site validates specific action names.' : undefined,
         };
       }
     }
