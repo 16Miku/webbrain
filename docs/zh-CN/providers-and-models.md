@@ -119,6 +119,29 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 
 以上七个均默认 `supportsVision: true`，因为 2026 年本地加载的大多数模型都是多模态的。
 
+#### Ollama 启动交接（预览）
+
+<p align="center">
+  <img src="../../web/assets/webbrain-ollama-heart.png" alt="WebBrain 喜爱 Ollama 启动交接" width="720">
+</p>
+
+WebBrain 目前通过本地 OpenAI 兼容提供商支持 Ollama。新的
+`ollama launch webbrain --model <model>` 交接还可以自动配置 WebBrain，但它尚未
+集成到上游 Ollama。目前可以从
+[`esokullu/ollama` 的 `codex/ollama-webbrain-launch-handoff` 分支](https://github.com/esokullu/ollama/tree/codex/ollama-webbrain-launch-handoff)
+试用；我们希望 Ollama 能将其上游集成。
+
+```bash
+git clone https://github.com/esokullu/ollama.git
+cd ollama
+git switch codex/ollama-webbrain-launch-handoff
+cmake -S . -B build -G Ninja -DOLLAMA_MLX_BACKENDS=
+cmake --build build --parallel 8
+
+OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ./ollama serve
+./ollama launch webbrain --model <model>
+```
+
 **上下文窗口。** 为获得可靠的智能体运行，请使用**至少 16k 令牌上下文窗口**加载本地模型 — 这是可用的最低要求。8k 在选择了 Compact 层级时可以工作；4k 太小，无法容纳系统提示 + 工具模式。智能体从 `provider.contextWindow`（`providers/base.js`）读取窗口以驱动自动压缩；当提供商配置未设置 `contextWindow` 时，本地提供商默认保守的 **16k**（云端/路由器默认 128k）。**测试连接** / **加载模型** 会为 **llama.cpp**、**Ollama** 和 **LM Studio** 在报告时自动检测（llama.cpp `GET /props` 的 `n_ctx`、Ollama `GET /api/ps` 实时上下文然后 `/api/show` 的 `num_ctx`、LM Studio `/api/v0/models` 的 `loaded_context_length`）。检测会刷新默认 16k；仅在来自实时/运行时上下文时才会缩小更大的手动覆盖（不会仅凭 Ollama `/api/show`）。Jan / vLLM / SGLang / LocalAI 尚不自动检测。仍可显式设置 `config.contextWindow`，并确保模型服务器实际以那么大的上下文启动（例如 `llama-server -c 16384`）。
 
 ### 提示/工具层级和模式
