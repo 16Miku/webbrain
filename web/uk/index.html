@@ -446,26 +446,174 @@
       transition: color 0.2s;
     }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
-    .lang-dropdown {
+    .language-picker {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      direction: ltr;
+    }
+    .language-select-native {
+      display: none;
+    }
+    .language-picker-btn {
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       background: var(--tint-soft);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 13px;
+      padding: 5px 7px;
+      font: inherit;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
     }
-    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
-    /* Windows/Linux render <option> with OS defaults — without this rule the
-       dropdown panel comes up white-on-white and the items are invisible.
-       macOS/Safari ignore option styling, so this is a no-op there. */
-    .lang-dropdown option {
-      background-color: var(--bg-card-hover);
+    .language-picker-btn:hover,
+    .language-picker-btn[aria-expanded="true"] {
+      background: var(--tint-medium);
+      border-color: var(--tint-stronger);
+    }
+    .language-picker-btn:focus-visible {
+      outline: 2px solid var(--accent-glow);
+      outline-offset: 2px;
+    }
+    .language-picker-flag,
+    .language-picker-option-flag {
+      display: block;
+      flex: 0 0 auto;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      background: var(--tint-soft);
+    }
+    .language-picker-flag {
+      width: 20px;
+      height: 15px;
+      border-radius: 3px;
+    }
+    .language-picker-code {
+      min-width: 18px;
       color: var(--text);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.45px;
+      line-height: 1;
+      text-align: center;
     }
-    .lang-dropdown option:checked,
-    .lang-dropdown option:hover {
-      background-color: var(--accent);
-      color: #fff;
+    .language-picker-caret {
+      width: 11px;
+      height: 11px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .language-picker-btn[aria-expanded="true"] .language-picker-caret {
+      transform: rotate(180deg);
+    }
+    .language-picker-menu {
+      position: absolute;
+      z-index: 110;
+      top: calc(100% + 8px);
+      right: 0;
+      width: 236px;
+      max-width: calc(100vw - 20px);
+      max-height: min(384px, 68vh);
+      overflow-y: auto;
+      padding: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 18px 45px var(--shadow-strong);
+      direction: ltr;
+    }
+    .language-picker-menu[hidden] {
+      display: none;
+    }
+    .picker-menu-highlight {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 0;
+      width: 0;
+      height: 0;
+      border-radius: 7px;
+      background: var(--accent-glow);
+      opacity: 0;
+      pointer-events: none;
+      will-change: transform, width, height;
+      transition:
+        transform 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        width 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        height 170ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 90ms ease;
+    }
+    .picker-menu-highlight.visible {
+      opacity: 1;
+    }
+    .picker-menu-highlight.instant {
+      transition: none;
+    }
+    .language-picker-option {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 24px 14px;
+      align-items: center;
+      gap: 9px;
+      min-height: 38px;
+      padding: 7px 8px;
+      background: transparent;
+      color: var(--text);
+      border: 0;
+      border-radius: 7px;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .language-picker-option:hover,
+    .language-picker-option:focus-visible {
+      background: transparent;
+      outline: none;
+    }
+    .language-picker-option:focus-visible {
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .language-picker-option[aria-selected="true"] {
+      background: transparent;
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .language-picker-option-flag {
+      width: 24px;
+      height: 18px;
+      border-radius: 3px;
+    }
+    .language-picker-option-name {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      unicode-bidi: plaintext;
+    }
+    .language-picker-option-code {
+      color: var(--text);
+      opacity: 0.55;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-align: center;
+    }
+    .language-picker-check {
+      color: var(--accent);
+      font-size: 12px;
+      opacity: 0;
+    }
+    .language-picker-option[aria-selected="true"] .language-picker-check {
+      opacity: 1;
     }
     .nav-cta {
       background: var(--accent) !important;
@@ -608,6 +756,381 @@
     }
     .btn-secondary:hover { background: var(--bg-card-hover); transform: translateY(-2px); text-decoration: none; }
     .btn svg { width: 18px; height: 18px; }
+
+    /* A video chapter card that follows the demo: show what the product does
+       first, then answer the "will it click things without asking me" objection.
+       The real presenter frame makes the interaction legible before hover. */
+    .hero-trust {
+      max-width: 940px;
+      margin: 58px auto 0;
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(190px, 226px) minmax(0, 1fr);
+      gap: 22px;
+      padding: 12px;
+      overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 48px var(--shadow-card);
+      text-align: start;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hero-trust:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 22px 58px var(--shadow-strong);
+    }
+    .hero-trust:focus-within {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .hero-trust-media {
+      position: relative;
+      min-height: 150px;
+      overflow: hidden;
+      background: #090b11;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      isolation: isolate;
+    }
+    .hero-trust-media::after {
+      content: '';
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 42%, rgba(3, 5, 10, 0.76));
+      pointer-events: none;
+    }
+    .hero-trust-thumbnail {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .hero-trust:hover .hero-trust-thumbnail {
+      transform: scale(1.035);
+    }
+    .hero-trust-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 5px 12px 5px 0;
+    }
+    [dir="rtl"] .hero-trust-copy {
+      padding: 5px 0 5px 12px;
+    }
+    .hero-trust-heading {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .hero-trust-kicker {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--accent2);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.11em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    .hero-trust-title {
+      margin: 0;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .hero-trust-shield {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      color: var(--success);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: inset 0 0 0 3px var(--tint-soft-2);
+    }
+    .hero-trust-shield .shield {
+      width: 20px;
+      height: 20px;
+    }
+    .hero-trust-play {
+      position: absolute;
+      z-index: 2;
+      inset: 50% auto auto 50%;
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: rgba(108, 99, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      border-radius: 50%;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+      transform: translate(-50%, -50%);
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+    .hero-trust-play svg {
+      width: 16px;
+      height: 16px;
+      margin-inline-start: 2px;
+    }
+    .hero-trust:hover .hero-trust-play,
+    .hero-trust:focus-within .hero-trust-play {
+      background: var(--accent);
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+    .hero-trust-watch {
+      position: absolute;
+      z-index: 2;
+      inset-inline: 10px;
+      inset-block-end: 9px;
+      overflow: hidden;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 650;
+      line-height: 1.25;
+      text-align: center;
+      text-overflow: ellipsis;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+      white-space: nowrap;
+    }
+    .hero-trust-list {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .hero-trust-list li {
+      display: flex;
+      position: relative;
+      align-items: center;
+      min-width: 0;
+      min-height: 50px;
+      /* Logical padding: the ✓ badge is placed with inset-inline-start, so a
+         physical padding-left would collide with the text in RTL locales. */
+      padding-block: 9px;
+      padding-inline: 35px 9px;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 550;
+      color: var(--text-dim);
+      line-height: 1.35;
+    }
+    .hero-trust-list li::before {
+      content: '✓';
+      position: absolute;
+      inset-inline-start: 9px;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      transform: translateY(-50%);
+      color: var(--success);
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .hero-trust-trigger {
+      position: absolute;
+      z-index: 3;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: inherit;
+      cursor: pointer;
+    }
+    .hero-trust-trigger:focus {
+      outline: 0;
+    }
+
+    /* The security explainer lives in the top layer, keeping the landing page
+       concise while preserving the richer safety story on demand. */
+    .security-video-dialog {
+      position: fixed;
+      inset: 0;
+      width: min(960px, calc(100vw - 32px));
+      max-width: none;
+      max-height: calc(100dvh - 32px);
+      margin: auto;
+      padding: 0;
+      overflow: auto;
+      color: var(--text);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 30px 100px rgba(0, 0, 0, 0.5);
+    }
+    .security-video-dialog::backdrop {
+      background: rgba(7, 9, 16, 0.78);
+      backdrop-filter: blur(10px);
+    }
+    .security-video-dialog-shell {
+      overflow: hidden;
+      border-radius: inherit;
+    }
+    .security-video-dialog-copy {
+      position: relative;
+      padding: 24px 72px 22px 26px;
+      background:
+        radial-gradient(circle at 10% 0%, var(--tint-soft-2), transparent 48%),
+        var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    [dir="rtl"] .security-video-dialog-copy {
+      padding: 24px 26px 22px 72px;
+    }
+    .security-video-dialog-kicker {
+      margin-bottom: 7px;
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    .security-video-dialog-title {
+      max-width: 720px;
+      font-size: clamp(22px, 3.4vw, 34px);
+      line-height: 1.14;
+      letter-spacing: -0.6px;
+    }
+    .security-video-dialog-description {
+      max-width: 760px;
+      margin-top: 10px;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .security-video-dialog-close {
+      position: absolute;
+      inset-block-start: 20px;
+      inset-inline-end: 20px;
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: var(--text-dim);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      cursor: pointer;
+      transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+    .security-video-dialog-close:hover {
+      color: var(--text);
+      background: var(--bg-card-hover);
+      border-color: var(--accent);
+    }
+    .security-video-dialog-close:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 3px;
+    }
+    .security-video-dialog-close svg {
+      width: 18px;
+      height: 18px;
+    }
+    .security-video-dialog-stage {
+      display: grid;
+      place-items: center;
+      background: #03050a;
+    }
+    .security-video-dialog-frame {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+    }
+    .security-video-dialog-frame video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #03050a;
+    }
+    @media (max-width: 768px) {
+      .hero-trust {
+        grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
+        margin-top: 50px;
+        gap: 16px;
+      }
+      .hero-trust-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .security-video-dialog {
+        width: calc(100vw - 20px);
+        max-height: calc(100dvh - 20px);
+        border-radius: 15px;
+      }
+      .security-video-dialog-copy {
+        padding: 20px 62px 18px 20px;
+      }
+      [dir="rtl"] .security-video-dialog-copy {
+        padding: 20px 20px 18px 62px;
+      }
+      .security-video-dialog-close {
+        inset-block-start: 16px;
+        inset-inline-end: 16px;
+        width: 36px;
+        height: 36px;
+      }
+      .security-video-dialog-frame {
+        width: min(100%, calc((100dvh - 210px) * 0.5625));
+        aspect-ratio: 9 / 16;
+      }
+    }
+    @media (max-width: 560px) {
+      .hero-trust {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        margin-top: 44px;
+        padding: 10px;
+      }
+      .hero-trust-media {
+        min-height: 0;
+        aspect-ratio: 16 / 9;
+      }
+      .hero-trust-copy,
+      [dir="rtl"] .hero-trust-copy {
+        padding: 2px 8px 8px;
+      }
+      .hero-trust-list {
+        grid-template-columns: 1fr;
+      }
+      .hero-trust-list li {
+        min-height: 42px;
+        padding-block: 9px;
+        padding-inline: 38px 10px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .picker-menu-highlight,
+      .hero-trust,
+      .hero-trust-play,
+      .hero-trust-thumbnail {
+        transition: none;
+      }
+      .hero-trust:hover {
+        transform: none;
+      }
+    }
 
     /* Hero screenshot mockup */
     .hero-visual {
@@ -1485,6 +2008,78 @@
       font-size: 14px;
       line-height: 1.6;
     }
+    /* Inline consent/permission note on powerful-capability cards, so the
+       "is this opt-in / confirmed per-action?" answer sits with the feature
+       instead of only in the security section further down. */
+    .feature-card .feature-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--text-dim);
+    }
+    .feature-card .feature-note::before {
+      content: '🔒';
+      flex: 0 0 auto;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    /* Progressive enhancement: the grid ships fully expanded, and JS collapses
+       it to the six headline capabilities. Without JS all twelve stay visible
+       and the toggle never renders. */
+    .features-grid[data-collapsed="true"] .feature-card[data-extra] {
+      display: none;
+    }
+    .features-more {
+      display: none;
+      justify-content: center;
+      margin-top: 28px;
+    }
+    .features-grid[data-collapsed] + .features-more {
+      display: flex;
+    }
+    .features-more-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 22px;
+      color: var(--text);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, transform 0.2s;
+    }
+    .features-more-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .features-more-btn:focus-visible {
+      outline: 2px solid var(--accent-glow);
+      outline-offset: 2px;
+    }
+    .features-more-btn svg {
+      width: 14px;
+      height: 14px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .features-more-btn[aria-expanded="true"] svg {
+      transform: rotate(180deg);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .features-more-btn,
+      .features-more-btn svg { transition: none; }
+      .features-more-btn:hover { transform: none; }
+    }
 
     /* ================================================================
        PROVIDERS — constellation layout
@@ -1625,65 +2220,6 @@
     .pn-bubble.gemini { background: rgba(66,133,244,0.12); color: #4285f4; border-color: rgba(66,133,244,0.25); }
     .pn-bubble.deepseek { background: rgba(72,191,255,0.12); color: #48bfff; border-color: rgba(72,191,255,0.25); }
     .pn-bubble.mistral { background: rgba(255,127,80,0.12); color: #ff7f50; border-color: rgba(255,127,80,0.25); }
-
-    .provider-promo {
-      max-width: 880px;
-      margin: 68px auto 0;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1fr);
-      align-items: stretch;
-      box-shadow: 0 16px 48px var(--shadow-card);
-    }
-    .provider-promo-media {
-      background: #090d18;
-      min-height: 220px;
-      padding: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .provider-promo-media img {
-      width: 100%;
-      height: 100%;
-      display: block;
-      object-fit: contain;
-      border-radius: 12px;
-    }
-    .provider-promo-copy {
-      padding: 30px;
-      text-align: start;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      gap: 12px;
-    }
-    .provider-promo-label {
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 1.6px;
-      text-transform: uppercase;
-    }
-    .provider-promo h3 {
-      font-size: clamp(22px, 3vw, 30px);
-      line-height: 1.15;
-      font-weight: 700;
-      letter-spacing: -0.2px;
-    }
-    .provider-promo p {
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-      max-width: 520px;
-    }
-    .provider-promo .btn {
-      width: fit-content;
-      margin-top: 6px;
-    }
 
     /* Reduced-motion: kill the float + ring pulse so users on
        prefers-reduced-motion see a static layout. */
@@ -1871,7 +2407,7 @@
       height: 19px;
     }
     /* Footer social profile icons sit just before the text links; visually a
-       small row of two glyphs that stays out of the way. */
+       small row of three glyphs that stays out of the way. */
     .footer-icon {
       display: inline-flex;
       align-items: center;
@@ -1906,7 +2442,36 @@
       flex-wrap: wrap;
       gap: 12px;
     }
-    .footer-links { display: flex; flex-wrap: wrap; gap: 12px 20px; }
+    .footer-links {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+    }
+    /* Only ever revealed by the <noscript> stylesheet in <head>. */
+    .lang-noscript {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      width: 100%;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      direction: ltr;
+    }
+    .lang-noscript > span {
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .lang-noscript a {
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    .lang-noscript a:hover { color: var(--text); }
 
     /* ================================================================
        COMPARISON TABLE
@@ -1951,6 +2516,102 @@
     }
     .compare-table tbody tr:hover {
       background: rgba(108,99,255,0.04);
+    }
+    .compare-video-card {
+      position: relative;
+      width: min(920px, 100%);
+      margin: 18px auto 0;
+      padding: 17px 18px;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      overflow: hidden;
+      color: var(--text);
+      background:
+        linear-gradient(110deg, var(--tint-soft-2), transparent 58%),
+        var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 12px 30px var(--shadow-card);
+      font: inherit;
+      text-align: start;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .compare-video-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent2), var(--success));
+    }
+    [dir="rtl"] .compare-video-card::before {
+      inset: 0 0 0 auto;
+    }
+    .compare-video-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 17px 38px var(--shadow-strong);
+    }
+    .compare-video-card:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .compare-video-card-icon {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: linear-gradient(145deg, var(--accent), var(--accent2));
+      border-radius: 15px;
+      box-shadow: 0 8px 22px var(--accent-glow);
+    }
+    .compare-video-card-icon svg {
+      width: 22px;
+      height: 22px;
+      margin-inline-start: 2px;
+    }
+    .compare-video-card-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .compare-video-card-title {
+      font-size: 15px;
+      font-weight: 720;
+      line-height: 1.35;
+      letter-spacing: -0.1px;
+    }
+    .compare-video-card-description {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .compare-video-card-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 12px;
+      color: var(--accent2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .compare-video-card-runtime {
+      padding-inline-start: 9px;
+      color: var(--text-dim);
+      border-inline-start: 1px solid var(--border);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.4px;
+    }
+    .comparison-video-dialog .security-video-dialog-kicker {
+      color: var(--accent2);
     }
 
     /* ================================================================
@@ -2018,7 +2679,7 @@
     .video-frame {
       position: relative;
       width: 100%;
-      padding-bottom: 56.25%;
+      padding-bottom: 65.625%;
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
@@ -2033,6 +2694,7 @@
       border: 0;
       display: block;
       background: #000;
+      object-fit: contain;
     }
     /* ================================================================
        RESPONSIVE
@@ -2049,7 +2711,7 @@
       .nav-links { gap: 8px; flex-shrink: 0; }
       .nav-links a:not(.nav-cta) { display: none; }
       .nav-cta { padding: 8px 14px; font-size: 12px; }
-      .lang-dropdown { max-width: 42vw; }
+      .language-picker-menu { max-width: calc(100vw - 20px); }
       .gh-stars { display: none; }
       /* The theme toggle would overflow the 24px-padded header at phone
          widths. prefers-color-scheme still auto-picks the right theme
@@ -2059,22 +2721,23 @@
       .pn-bubble { width: 46px; height: 46px; font-size: 18px; }
       .pn-label { font-size: 11px; }
       .cc-core { width: 64px; height: 64px; font-size: 28px; }
-      .provider-promo {
-        grid-template-columns: 1fr;
-        margin-top: 48px;
-      }
-      .provider-promo-media {
-        min-height: 0;
-        aspect-ratio: 1200 / 630;
-      }
-      .provider-promo-copy {
-        padding: 24px;
-      }
-      .provider-promo .btn {
-        width: 100%;
-      }
       .video-showcase { max-width: 380px; }
       .video-frame { padding-bottom: 177.78%; }
+      .compare-video-card {
+        grid-template-columns: 44px minmax(0, 1fr);
+        gap: 12px;
+        padding: 15px;
+      }
+      .compare-video-card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+      }
+      .compare-video-card-action {
+        grid-column: 1 / -1;
+        justify-content: center;
+        margin-top: 2px;
+      }
     }
     @media (max-width: 560px) {
       /* Stack the install cards on small phones — squeezing two side-by-side
@@ -2108,6 +2771,15 @@
     })();
   </script>
 
+  <!-- Progressive enhancement: the flag picker is JS-only, so without scripting
+       we hide it and reveal a real <a href> language list in the footer. -->
+  <noscript>
+    <style>
+      .language-picker { display: none !important; }
+      .lang-noscript { display: flex !important; }
+    </style>
+  </noscript>
+
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
   <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
@@ -2131,30 +2803,40 @@
       <a href="/docs/">Документація</a>
       <a href="/blog">Блог</a>
       <a href="#download" class="nav-cta">Завантажити</a>
-      <select class="lang-dropdown" id="lang-dropdown" aria-label="Обрати мову" data-current="uk">
-        <option value="en">English</option>
-        <option value="es">Español</option>
-        <option value="fr">Français</option>
-        <option value="tr">Türkçe</option>
-        <option value="zh">中文</option>
-        <option value="ru">Русский</option>
-        <option value="uk">Українська</option>
-        <option value="ar">العربية</option>
-        <option value="ja">日本語</option>
-        <option value="ko">한국어</option>
-        <option value="id">Bahasa Indonesia</option>
-        <option value="th">ไทย</option>
-        <option value="ms">Bahasa Melayu</option>
-        <option value="tl">Filipino</option>
-        <option value="he">עברית</option>
-        <option value="hi">हिन्दी</option>
-        <option value="pt">Português</option>
-        <option value="vi">Tiếng Việt</option>
-        <option value="bn">বাংলা</option>
-        <option value="fa">فارسی</option>
-        <option value="nl">Nederlands</option>
-        <option value="de">Deutsch</option>
-      </select>
+      <div class="language-picker" id="language-picker">
+        <select class="language-select-native" id="lang-dropdown" tabindex="-1" aria-hidden="true" data-current="uk">
+          <option value="en">English</option>
+          <option value="es">Español</option>
+          <option value="fr">Français</option>
+          <option value="tr">Türkçe</option>
+          <option value="zh">中文</option>
+          <option value="ru">Русский</option>
+          <option value="uk">Українська</option>
+          <option value="ar">العربية</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+          <option value="id">Bahasa Indonesia</option>
+          <option value="th">ไทย</option>
+          <option value="ms">Bahasa Melayu</option>
+          <option value="tl">Filipino</option>
+          <option value="he">עברית</option>
+          <option value="hi">हिन्दी</option>
+          <option value="pt">Português</option>
+          <option value="vi">Tiếng Việt</option>
+          <option value="bn">বাংলা</option>
+          <option value="fa">فارسی</option>
+          <option value="nl">Nederlands</option>
+          <option value="de">Deutsch</option>
+        </select>
+        <button class="language-picker-btn" type="button" id="language-picker-btn" aria-label="Обрати мову" title="Обрати мову" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-picker-menu">
+          <img class="language-picker-flag" id="language-picker-flag" src="/assets/flags/ua.svg" alt="" aria-hidden="true">
+          <span class="language-picker-code" id="language-picker-code">UK</span>
+          <svg class="language-picker-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="language-picker-menu" id="language-picker-menu" role="listbox" aria-label="Обрати мову" hidden></div>
+      </div>
       <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Перемкнути світлу / темну тему" title="Перемкнути світлу / темну тему">
         <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="4"/>
@@ -2474,7 +3156,36 @@
       <button class="scene-dot" type="button" data-scene="4" role="tab" aria-selected="false" aria-label="Демо видобутку товарів"></button>
     </div>
   </div>
+
 </section>
+
+<dialog
+  class="security-video-dialog"
+  id="security-video-dialog"
+  aria-labelledby="security-video-dialog-title"
+  aria-describedby="security-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">Безпека</div>
+      <h2 class="security-video-dialog-title" id="security-video-dialog-title">Як WebBrain залишає контроль за вами</h2>
+      <p class="security-video-dialog-description" id="security-video-dialog-description">Браузер — це місце, де відбувається реальна робота, і водночас поверхня для атак. WebBrain починає в режимі Ask лише для читання, запитує перед діями, захищається від прихованих prompt-інʼєкцій і застосовує суворіші правила до чутливих полів.</p>
+      <button
+        class="security-video-dialog-close"
+        id="security-video-close"
+        type="button"
+        aria-label="Закрити відео про безпеку"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="security-video" data-desktop-src="/assets/security-desktop.mp4" data-mobile-src="/assets/security-mobile.mp4" poster="/assets/security-poster.jpg" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <!-- DEMO VIDEO -->
 <section class="section" id="demo" style="padding-top: 30px;">
@@ -2483,8 +3194,47 @@
   <p class="section-subtitle">Подивіться, як WebBrain читає сторінки, видобуває дані та автоматизує задачі в браузері.</p>
   <div class="video-showcase">
     <div class="video-frame">
-      <video id="demo-video" data-desktop-src="/assets/demo-desktop.mp4" data-mobile-src="/assets/demo-mobile.mp4" controls preload="metadata" playsinline></video>
+      <video id="demo-video" data-desktop-src="/assets/webbrain-home-captioned.mp4" data-mobile-src="/assets/webbrain-home-vertical.mp4" data-desktop-poster="/assets/webbrain-home-poster.jpg" data-mobile-poster="/assets/webbrain-home-poster-vertical.jpg" poster="/assets/webbrain-home-poster.jpg" controls preload="metadata" playsinline></video>
     </div>
+  </div>
+
+  <!-- Objection handling sits directly after the demo: the visitor has just seen
+       what the agent does, so "will it act without asking me" is the live question.
+       The real speaker thumbnail makes the click destination clear, while the
+       promises stay readable without opening the modal. -->
+  <div class="hero-trust">
+    <div class="hero-trust-media" aria-hidden="true">
+      <img class="hero-trust-thumbnail" src="/assets/security-speaker-thumbnail.jpg" alt="" loading="lazy" decoding="async">
+      <span class="hero-trust-play">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
+      </span>
+      <span class="hero-trust-watch">Переглянути відео про безпеку · 3:10</span>
+    </div>
+    <div class="hero-trust-copy">
+      <div class="hero-trust-heading">
+        <span class="hero-trust-shield" aria-hidden="true">
+          <svg class="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+        </span>
+        <span>
+          <span class="hero-trust-kicker">Безпека</span>
+          <h2 class="hero-trust-title" id="hero-trust-title">Як WebBrain залишає контроль за вами</h2>
+        </span>
+      </div>
+      <ul class="hero-trust-list">
+        <li>За замовчуванням — режим «Запитати» лише для читання</li>
+        <li>Запитує перед важливими діями</li>
+        <li>Відкритий код, доступний для аудиту</li>
+        <li>Без телеметрії та облікових записів</li>
+      </ul>
+    </div>
+    <button
+      class="hero-trust-trigger"
+      id="security-video-open"
+      type="button"
+      aria-label="Переглянути відео про безпеку"
+      aria-haspopup="dialog"
+      aria-controls="security-video-dialog"
+    ></button>
   </div>
 </section>
 
@@ -2494,7 +3244,7 @@
   <h2 class="section-title">Усе, що потрібно від AI у браузері</h2>
   <p class="section-subtitle">Повноцінний AI-агент, який живе в бічній панелі браузера й розуміє будь-яку веб-сторінку.</p>
 
-  <div class="features-grid">
+  <div class="features-grid" id="features-grid">
     <div class="feature-card">
       <div class="feature-icon">📖</div>
       <h3>Розуміння сторінки</h3>
@@ -2504,6 +3254,7 @@
       <div class="feature-icon">🤖</div>
       <h3>Повноцінний браузерний агент</h3>
       <p>Клікає, друкує, гортає, навігує та взаємодіє зі сторінками за вас. Автоматизуйте рутинні задачі інструкціями природною мовою.</p>
+      <p class="feature-note">Запитує перед важливими діями; за замовчуванням — режим «Запитати» лише для читання.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">📊</div>
@@ -2525,49 +3276,55 @@
       <h3>Розумний контекст</h3>
       <p>Автоматичне керування контекстом не дає переповнитись вікну токенів. Розумно підрізає історію діалогу й обмежує вивід інструментів — сесія йде рівно й без зривів.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">👁️</div>
       <h3>Окрема модель для зору</h3>
       <p>Поєднайте швидку текстову модель для планування з окремою vision-моделлю для читання скриншотів. Дешевше та швидше, ніж проганяти все через одну велику мультимодальну.</p>
     </div>
 
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">👤</div>
       <h3>Автозаповнення профілю</h3>
       <p>Опціональна plain-text біографія — ім&#39;я, робочий email, компанія, одноразовий пароль — дозволяє агенту легко проходити маловажливі реєстрації, не питаючи щоразу. За замовчуванням вимкнено, усе зберігається локально.</p>
+      <p class="feature-note">За замовчуванням вимкнено. Зберігається локально у вашому браузері й ніколи не надсилається до WebBrain.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🍪</div>
       <h3>Розуміє cookie та paywall</h3>
       <p>Закриває банери згоди (OneTrust, Cookiebot, Didomi, Quantcast), перш ніж аналізувати сторінку. Розпізнає paywall і чесно повідомляє про нього, а не вигадує текст статті й не намагається його обійти.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🧩</div>
       <h3>Optional CAPTCHA Solver</h3>
       <p>Plug in a <a href="https://capsolver.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">CapSolver</a> API key and the agent will auto-solve reCAPTCHA v2/v3, hCaptcha, and Cloudflare Turnstile when they block a step — instead of stopping to ask. Off by default, BYO key, no captcha service is shipped or contacted unless you turn it on.</p>
+      <p class="feature-note">За замовчуванням вимкнено. Власний ключ: жоден сервіс CAPTCHA не використовується, доки ви його не ввімкнете.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">🌐</div>
       <h3>Багатомовний інтерфейс</h3>
       <p>Плагін доступний у English, Español, Français, Türkçe та 中文. При першому запуску автоматично визначає мову браузера; перемикайте будь-коли значком глобуса в бічній панелі. Маркетинговий сайт локалізовано відповідно.</p>
     </div>
-    <div class="feature-card">
+    <div class="feature-card" data-extra>
       <div class="feature-icon">💰</div>
       <h3>Бережемо токени</h3>
       <p>Скриншоти зменшуються за розміром та ітеративно стискаються в JPEG, перш ніж покинути вашу машину, — image-токени лишаються маленькими. Розумне підрізання контексту та обмеження виводу інструментів роблять хмарні рахунки передбачуваними — жодних сюрпризів у довгих сесіях.</p>
     </div>
   </div>
-</section>
-
-<!-- SECURITY VIDEO -->
-<section class="section" id="security" style="padding-top: 30px;">
-  <div class="section-label">Безпека</div>
-  <h2 class="section-title">Як WebBrain залишає контроль за вами</h2>
-  <p class="section-subtitle">Браузер — це місце, де відбувається реальна робота, і водночас поверхня для атак. WebBrain починає в режимі Ask лише для читання, запитує перед діями, захищається від прихованих prompt-інʼєкцій і застосовує суворіші правила до чутливих полів.</p>
-  <div class="video-showcase">
-    <div class="video-frame">
-      <video id="security-video" data-desktop-src="/assets/security-desktop.mp4" data-mobile-src="/assets/security-mobile.mp4" poster="/assets/security-poster.jpg" controls preload="none" playsinline></video>
-    </div>
+  <div class="features-more">
+    <button
+      class="features-more-btn"
+      id="features-more-btn"
+      type="button"
+      aria-expanded="false"
+      aria-controls="features-grid"
+      data-label-more="Показати всі можливості"
+      data-label-less="Згорнути"
+    >
+      <span id="features-more-label">Показати всі можливості</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
   </div>
 </section>
 
@@ -2654,17 +3411,6 @@
     </a>
   </div>
 
-  <article class="provider-promo">
-    <a class="provider-promo-media" href="https://webbrain.one/blog/ollama-launch-handoff" aria-label="Прочитати анонс">
-      <img src="/assets/webbrain-ollama-heart.png" alt="Логотип WebBrain, серце та логотип Ollama для анонсу передачі запуску" loading="lazy" decoding="async">
-    </a>
-    <div class="provider-promo-copy">
-      <div class="provider-promo-label">Передача запуску Ollama</div>
-      <h3>Виберіть модель Ollama і передайте її WebBrain</h3>
-      <p>Новий шлях запуску може налаштувати WebBrain для локальної моделі Ollama однією командою в терміналі. Він уже доступний у нашій гілці Ollama, поки ми працюємо над інтеграцією в upstream.</p>
-      <a href="https://webbrain.one/blog/ollama-launch-handoff" class="btn btn-secondary">Прочитати анонс</a>
-    </div>
-  </article>
 </section>
 
 <!-- MODES -->
@@ -2768,12 +3514,31 @@
         <tr><td>Chrome</td><td class="highlight">Так (MV3)</td><td>Так</td></tr>
         <tr><td>Firefox</td><td class="highlight">Так (MV2)</td><td>Ні</td></tr>
         <tr><td>Інтерфейс у бічній панелі</td><td class="highlight">Так</td><td>Так</td></tr>
-        <tr><td>Режими «Запитати» / «Діяти»</td><td class="highlight">Так</td><td>Схоже</td></tr>
         <tr><td>Повністю офлайн</td><td class="highlight">Так (із локальним LLM)</td><td>Ні — потрібна хмара</td></tr>
         <tr><td>Self-hosted</td><td class="highlight">Так</td><td>Ні</td></tr>
       </tbody>
     </table>
   </div>
+
+  <button
+    class="compare-video-card"
+    id="comparison-video-open"
+    type="button"
+    aria-haspopup="dialog"
+    aria-controls="comparison-video-dialog"
+  >
+    <span class="compare-video-card-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8c0-.8.9-1.3 1.6-.9l10.2 7.2a1 1 0 0 1 0 1.7L8.6 20c-.7.5-1.6 0-1.6-.9V4.8Z"/></svg>
+    </span>
+    <span class="compare-video-card-copy">
+      <span class="compare-video-card-title">Локальний WebBrain випереджає Claude у Chrome</span>
+      <span class="compare-video-card-description">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</span>
+    </span>
+    <span class="compare-video-card-action">
+      Переглянути порівняння
+      <span class="compare-video-card-runtime" aria-hidden="true">1:17</span>
+    </span>
+  </button>
 
   <!-- vs Agent Frameworks -->
   <h3 style="font-size:16px; color:var(--text-dim); margin: 40px 0 16px; text-align:center;">Порівняно з AI-фреймворками для агентів <span style="font-weight:400; font-size:13px;">(інша категорія)</span></h3>
@@ -2804,6 +3569,34 @@
     WebBrain — браузерне розширення для кінцевих користувачів, яким потрібен AI-помічник прямо під час серфінгу. Agent-фреймворки на кшталт OpenClaw — це інструменти для розробників, які будують автоматичні браузерні пайплайни. Різні інструменти під різні задачі — і їх можна використовувати разом.
   </p>
 </section>
+
+<dialog
+  class="security-video-dialog comparison-video-dialog"
+  id="comparison-video-dialog"
+  aria-labelledby="comparison-video-dialog-title"
+  aria-describedby="comparison-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">Порівняно з AI-плагінами для браузера</div>
+      <h2 class="security-video-dialog-title" id="comparison-video-dialog-title">Локальний WebBrain випереджає Claude у Chrome</h2>
+      <p class="security-video-dialog-description" id="comparison-video-dialog-description">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</p>
+      <button
+        class="security-video-dialog-close"
+        id="comparison-video-close"
+        type="button"
+        aria-label="Закрити відео з порівнянням"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="comparison-video" data-desktop-src="/assets/demo-desktop.mp4" data-mobile-src="/assets/demo-mobile.mp4" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <!-- FAQ -->
 <section class="section" id="faq">
@@ -2976,12 +3769,40 @@
       <a href="https://bsky.app/profile/webbrain-one.bsky.social" target="_blank" rel="me noopener" aria-label="WebBrain у Bluesky" title="WebBrain у Bluesky" class="footer-icon">
         <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M12 10.8c-1.1-2.1-4-6-6.8-8C2.6.9 1.6 1.3.9 1.6.1 1.9 0 3.1 0 3.8c0 .7.4 5.7.6 6.5.8 2.7 3.7 3.7 5.6 3.4-3.5.6-6.5 2-2.5 6.5 4.3 4.5 5.9-1 6.3-2.8.1-.5.2-.8.3-.8.1 0 .2.3.3.8.4 1.8 2 7.3 6.3 2.8 4-4.5 1-5.9-2.5-6.5 1.9.3 4.8-.7 5.6-3.4.2-.8.6-5.8.6-6.5 0-.7-.1-1.9-.9-2.2-.7-.3-1.7-.6-4.3 1.2-2.8 2-5.7 5.9-6.8 8Z"/></svg>
       </a>
+      <a href="https://discord.gg/cgC325ssfw" target="_blank" rel="noopener" aria-label="WebBrain у Discord" title="WebBrain у Discord" class="footer-icon">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="15" height="15" aria-hidden="true"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011c.05.069.098.137.142.207a12.471 12.471 0 0 0-3.616 0c.044-.07.093-.138.143-.207A13.207 13.207 0 0 0 3.7 2.907 13.136 13.136 0 0 0 .931 13.362a13.667 13.667 0 0 0 4.022 2.018c.33-.442.623-.907.87-1.396a8.95 8.95 0 0 1-1.37-.652c.114-.083.225-.171.33-.269a9.6 9.6 0 0 0 8.243 0c.108.09.218.18.33.269a8.923 8.923 0 0 1-1.37.652c.248.489.54.954.87 1.396a13.667 13.667 0 0 0 4.022-2.018 13.136 13.136 0 0 0-2.769-10.455zM5.106 11.275c-.788 0-1.438-.72-1.438-1.608 0-.889.625-1.608 1.438-1.608.818 0 1.451.726 1.438 1.608 0 .888-.625 1.608-1.438 1.608zm5.788 0c-.788 0-1.438-.72-1.438-1.608 0-.889.625-1.608 1.438-1.608.818 0 1.451.726 1.438 1.608 0 .888-.625 1.608-1.438 1.608z"/></svg>
+      </a>
       <a href="/blog">Блог</a>
       <a href="/docs/">Документація</a>
       <a href="/privacy">Політика конфіденційності</a>
       <a href="https://github.com/webbrain-one/webbrain/issues" target="_blank" rel="noopener">Повідомити про помилку</a>
       <a href="https://github.com/webbrain-one/webbrain/blob/main/LICENSE" target="_blank" rel="noopener">Ліцензія MIT</a>
       <a href="https://pressreleases.online/org/webbrain.one" target="_blank" rel="noopener">Прес-релізи</a>
+    </div>
+    <div class="lang-noscript">
+      <span>Обрати мову</span>
+      <a href="/" hreflang="en">English</a>
+      <a href="/es/" hreflang="es">Español</a>
+      <a href="/fr/" hreflang="fr">Français</a>
+      <a href="/tr/" hreflang="tr">Türkçe</a>
+      <a href="/zh/" hreflang="zh">中文</a>
+      <a href="/ru/" hreflang="ru">Русский</a>
+      <a href="/uk/" hreflang="uk">Українська</a>
+      <a href="/ar/" hreflang="ar">العربية</a>
+      <a href="/ja/" hreflang="ja">日本語</a>
+      <a href="/ko/" hreflang="ko">한국어</a>
+      <a href="/id/" hreflang="id">Bahasa Indonesia</a>
+      <a href="/th/" hreflang="th">ไทย</a>
+      <a href="/ms/" hreflang="ms">Bahasa Melayu</a>
+      <a href="/tl/" hreflang="tl">Filipino</a>
+      <a href="/he/" hreflang="he">עברית</a>
+      <a href="/hi/" hreflang="hi">हिन्दी</a>
+      <a href="/pt/" hreflang="pt">Português</a>
+      <a href="/vi/" hreflang="vi">Tiếng Việt</a>
+      <a href="/bn/" hreflang="bn">বাংলা</a>
+      <a href="/fa/" hreflang="fa">فارسی</a>
+      <a href="/nl/" hreflang="nl">Nederlands</a>
+      <a href="/de/" hreflang="de">Deutsch</a>
     </div>
   </div>
 </footer>
@@ -3039,7 +3860,7 @@
 <script>
   (function () {
     // Pick the right source (desktop vs mobile) for every responsive video
-    // on the page - the product demo and the security explainer.
+    // on the page - the product demo plus the security and comparison modals.
     const videos = Array.prototype.slice.call(
       document.querySelectorAll('video[data-desktop-src]')
     );
@@ -3052,6 +3873,10 @@
         ? event.matches : mobileQuery.matches;
       videos.forEach(function (video) {
         const nextSrc = isMobile ? video.dataset.mobileSrc : video.dataset.desktopSrc;
+        const nextPoster = isMobile ? video.dataset.mobilePoster : video.dataset.desktopPoster;
+        if (nextPoster && video.poster !== nextPoster) {
+          video.poster = nextPoster;
+        }
         if (nextSrc && video.src !== nextSrc) {
           video.src = nextSrc;
         }
@@ -3065,6 +3890,82 @@
     } else if (typeof mobileQuery.addListener === 'function') {
       mobileQuery.addListener(syncVideoSources);
     }
+  })();
+</script>
+
+<script>
+  (function () {
+    const trigger = document.getElementById('security-video-open');
+    const dialog = document.getElementById('security-video-dialog');
+    const closeButton = document.getElementById('security-video-close');
+    const video = document.getElementById('security-video');
+    if (!trigger || !dialog || !closeButton || !video) return;
+
+    let previousOverflow = '';
+
+    function openSecurityVideo() {
+      if (dialog.open) return;
+      previousOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      dialog.showModal();
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch(function () {});
+      }
+    }
+
+    function closeSecurityVideo() {
+      if (dialog.open) dialog.close();
+    }
+
+    trigger.addEventListener('click', openSecurityVideo);
+    closeButton.addEventListener('click', closeSecurityVideo);
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) closeSecurityVideo();
+    });
+    dialog.addEventListener('close', function () {
+      video.pause();
+      document.documentElement.style.overflow = previousOverflow;
+      trigger.focus();
+    });
+  })();
+</script>
+
+<script>
+  (function () {
+    const trigger = document.getElementById('comparison-video-open');
+    const dialog = document.getElementById('comparison-video-dialog');
+    const closeButton = document.getElementById('comparison-video-close');
+    const video = document.getElementById('comparison-video');
+    if (!trigger || !dialog || !closeButton || !video) return;
+
+    let previousOverflow = '';
+
+    function openComparisonVideo() {
+      if (dialog.open) return;
+      previousOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      dialog.showModal();
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback.catch(function () {});
+      }
+    }
+
+    function closeComparisonVideo() {
+      if (dialog.open) dialog.close();
+    }
+
+    trigger.addEventListener('click', openComparisonVideo);
+    closeButton.addEventListener('click', closeComparisonVideo);
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) closeComparisonVideo();
+    });
+    dialog.addEventListener('close', function () {
+      video.pause();
+      document.documentElement.style.overflow = previousOverflow;
+      trigger.focus();
+    });
   })();
 </script>
 
@@ -3284,27 +4185,260 @@
   })();
 </script>
 
-<!-- Path-preserving language dropdown. Strips any leading locale segment
-     from the current path, then prepends the new one so /es/foo → /fr/foo
-     instead of collapsing to the locale homepage. -->
+<!-- Feature grid collapse. The markup ships expanded so the no-JS and crawler
+     view keeps all twelve cards; this only runs to shorten the default view. -->
+<script>
+  (function () {
+    const grid = document.getElementById('features-grid');
+    const button = document.getElementById('features-more-btn');
+    const label = document.getElementById('features-more-label');
+    if (!grid || !button || !label) return;
+    if (!grid.querySelector('.feature-card[data-extra]')) return;
+
+    const moreLabel = button.dataset.labelMore || label.textContent;
+    const lessLabel = button.dataset.labelLess || moreLabel;
+
+    function setExpanded(expanded) {
+      grid.dataset.collapsed = expanded ? 'false' : 'true';
+      button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      label.textContent = expanded ? lessLabel : moreLabel;
+    }
+
+    setExpanded(false);
+
+    button.addEventListener('click', function () {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      setExpanded(!expanded);
+      if (expanded) {
+        // Collapsing can strand the viewport below the grid; pull it back to
+        // the toggle so the page does not appear to jump to a later section.
+        const top = button.getBoundingClientRect().top;
+        if (top < 0) button.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    });
+  })();
+</script>
+
+<!-- Flag-based, path-preserving language picker. The native select remains a
+     hidden value source while the visible listbox mirrors the extension UI. -->
 <script>
   (function () {
     const LOCALES = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
+    const FLAG_CODES = {"en":"us","es":"es","fr":"fr","tr":"tr","zh":"cn","ru":"ru","uk":"ua","ar":"sa","ja":"jp","ko":"kr","id":"id","th":"th","ms":"my","tl":"ph","he":"il","hi":"in","pt":"br","vi":"vn","bn":"bd","fa":"ir","nl":"nl","de":"de"};
+    const picker = document.getElementById('language-picker');
     const sel = document.getElementById('lang-dropdown');
-    if (!sel) return;
+    const trigger = document.getElementById('language-picker-btn');
+    const triggerFlag = document.getElementById('language-picker-flag');
+    const triggerCode = document.getElementById('language-picker-code');
+    const menu = document.getElementById('language-picker-menu');
+    if (!picker || !sel || !trigger || !triggerFlag || !triggerCode || !menu) return;
     const current = sel.dataset.current || 'en';
-    // Show a "switch to" hint as the visible default — Chinese on the English
-    // page, English everywhere else. When the dropdown opens we swap the value
-    // back to the page's real locale so the highlight is correct and any pick
-    // (including the previously-shown hint) fires `change`.
-    const suggested = current === 'en' ? 'zh' : 'en';
-    sel.value = suggested;
-    sel.addEventListener('focus', function () {
-      if (sel.value !== current) sel.value = current;
+    const controlLabel = trigger.getAttribute('aria-label') || 'Select language';
+    let typeahead = '';
+    let typeaheadTimer = null;
+
+    function flagSrc(code) {
+      return '/assets/flags/' + FLAG_CODES[code] + '.svg';
+    }
+
+    function options() {
+      return Array.from(menu.querySelectorAll('.language-picker-option'));
+    }
+
+    function ensureMenuHighlight() {
+      let highlight = menu.querySelector(':scope > .picker-menu-highlight');
+      if (highlight) return highlight;
+      highlight = document.createElement('div');
+      highlight.className = 'picker-menu-highlight';
+      highlight.setAttribute('aria-hidden', 'true');
+      menu.prepend(highlight);
+      return highlight;
+    }
+
+    function selectedOption() {
+      return menu.querySelector('.language-picker-option[aria-selected="true"]');
+    }
+
+    function setMenuHighlight(option, instant) {
+      const highlight = ensureMenuHighlight();
+      if (!option || !menu.contains(option)) {
+        highlight.classList.remove('visible');
+        delete highlight.dataset.targetValue;
+        return;
+      }
+      const targetValue = option.dataset.value || '';
+      if (highlight.dataset.targetValue === targetValue && highlight.classList.contains('visible')) return;
+      highlight.dataset.targetValue = targetValue;
+      if (instant) highlight.classList.add('instant');
+      highlight.style.left = option.offsetLeft + 'px';
+      highlight.style.width = option.offsetWidth + 'px';
+      highlight.style.height = option.offsetHeight + 'px';
+      highlight.style.transform = 'translate3d(0, ' + option.offsetTop + 'px, 0)';
+      highlight.classList.add('visible');
+      if (instant) requestAnimationFrame(function () {
+        highlight.classList.remove('instant');
+      });
+    }
+
+    function syncPicker() {
+      const code = sel.value || current;
+      const selected = sel.querySelector('option[value="' + code + '"]');
+      triggerFlag.src = flagSrc(code);
+      triggerCode.textContent = code.toUpperCase();
+      trigger.title = controlLabel + ': ' + (selected ? selected.textContent : code);
+      trigger.setAttribute('aria-label', trigger.title);
+      options().forEach(function (button) {
+        button.setAttribute('aria-selected', button.dataset.value === code ? 'true' : 'false');
+      });
+      if (!menu.hidden) setMenuHighlight(selectedOption(), true);
+    }
+
+    function setOpen(open) {
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        const selected = options().find(function (button) {
+          return button.getAttribute('aria-selected') === 'true';
+        }) || options()[0];
+        setMenuHighlight(selected, true);
+        if (selected) selected.focus();
+      } else {
+        setMenuHighlight(null);
+        typeahead = '';
+        if (typeaheadTimer) clearTimeout(typeaheadTimer);
+        typeaheadTimer = null;
+      }
+    }
+
+    function focusAt(index) {
+      const items = options();
+      if (!items.length) return;
+      items[(index + items.length) % items.length].focus();
+    }
+
+    function choose(code) {
+      setOpen(false);
+      trigger.focus();
+      if (code === current) return;
+      sel.value = code;
+      syncPicker();
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    Array.from(sel.options).forEach(function (option) {
+      const code = option.value;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'language-picker-option';
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', 'false');
+      button.dataset.value = code;
+      button.dataset.search = (code + ' ' + option.textContent).toLocaleLowerCase();
+
+      const flag = document.createElement('img');
+      flag.className = 'language-picker-option-flag';
+      flag.src = flagSrc(code);
+      flag.alt = '';
+      flag.setAttribute('aria-hidden', 'true');
+      button.appendChild(flag);
+
+      const name = document.createElement('span');
+      name.className = 'language-picker-option-name';
+      name.textContent = option.textContent;
+      name.dir = 'auto';
+      button.appendChild(name);
+
+      const codeLabel = document.createElement('span');
+      codeLabel.className = 'language-picker-option-code';
+      codeLabel.textContent = code.toUpperCase();
+      codeLabel.dir = 'ltr';
+      button.appendChild(codeLabel);
+
+      const check = document.createElement('span');
+      check.className = 'language-picker-check';
+      check.textContent = '✓';
+      check.setAttribute('aria-hidden', 'true');
+      button.appendChild(check);
+
+      button.addEventListener('click', function () {
+        choose(code);
+      });
+      menu.appendChild(button);
     });
-    sel.addEventListener('blur', function () {
-      if (sel.value === current) sel.value = suggested;
+
+    sel.value = current;
+    syncPicker();
+
+    menu.addEventListener('pointerover', function (event) {
+      const option = event.target.closest && event.target.closest('.language-picker-option');
+      setMenuHighlight(option && menu.contains(option) ? option : null);
     });
+    menu.addEventListener('pointerleave', function () {
+      setMenuHighlight(selectedOption());
+    });
+    menu.addEventListener('focusin', function (event) {
+      const option = event.target.closest && event.target.closest('.language-picker-option');
+      if (option && menu.contains(option)) setMenuHighlight(option);
+    });
+    menu.addEventListener('focusout', function () {
+      queueMicrotask(function () {
+        if (!menu.contains(document.activeElement)) setMenuHighlight(selectedOption());
+      });
+    });
+
+    trigger.addEventListener('click', function () {
+      setOpen(trigger.getAttribute('aria-expanded') !== 'true');
+    });
+    trigger.addEventListener('keydown', function (event) {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      setOpen(true);
+      const items = options();
+      const selectedIndex = Math.max(0, items.findIndex(function (button) {
+        return button.getAttribute('aria-selected') === 'true';
+      }));
+      focusAt(selectedIndex + (event.key === 'ArrowDown' ? 1 : -1));
+    });
+    menu.addEventListener('keydown', function (event) {
+      const items = options();
+      const index = Math.max(0, items.indexOf(document.activeElement));
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusAt(index + (event.key === 'ArrowDown' ? 1 : -1));
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        focusAt(event.key === 'Home' ? 0 : items.length - 1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (document.activeElement.dataset.value) choose(document.activeElement.dataset.value);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        trigger.focus();
+      } else if (event.key.length === 1 && event.key.trim()) {
+        typeahead += event.key.toLocaleLowerCase();
+        if (typeaheadTimer) clearTimeout(typeaheadTimer);
+        typeaheadTimer = setTimeout(function () {
+          typeahead = '';
+          typeaheadTimer = null;
+        }, 700);
+        const ordered = items.slice(index + 1).concat(items.slice(0, index + 1));
+        const match = ordered.find(function (button) {
+          return button.dataset.search.startsWith(typeahead)
+            || button.dataset.search.includes(' ' + typeahead);
+        });
+        if (match) match.focus();
+      }
+    });
+    picker.addEventListener('focusout', function () {
+      setTimeout(function () {
+        if (!picker.contains(document.activeElement)) setOpen(false);
+      }, 0);
+    });
+    document.addEventListener('pointerdown', function (event) {
+      if (!picker.contains(event.target)) setOpen(false);
+    });
+
     sel.addEventListener('change', function () {
       const target = sel.value;
       if (!LOCALES.includes(target)) return;

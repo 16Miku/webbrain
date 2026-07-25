@@ -12202,6 +12202,347 @@ test('new locales are registered in extension and web language dropdowns', () =>
   }
 });
 
+test('web landing language picker mirrors the extension flag listbox', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const expectedFlagCodes = {
+    en: 'us', es: 'es', fr: 'fr', tr: 'tr', zh: 'cn', ru: 'ru', uk: 'ua', ar: 'sa',
+    ja: 'jp', ko: 'kr', id: 'id', th: 'th', ms: 'my', tl: 'ph', he: 'il', hi: 'in',
+    pt: 'br', vi: 'vn', bn: 'bd', fa: 'ir', nl: 'nl', de: 'de',
+  };
+
+  assert.match(
+    template,
+    /id="lang-dropdown" tabindex="-1" aria-hidden="true"/,
+    'web: native language select should remain as the hidden value source',
+  );
+  assert.match(
+    template,
+    /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/,
+    'web: visible language trigger should expose listbox semantics',
+  );
+  assert.match(
+    template,
+    /id="language-picker-menu" role="listbox"[^>]+hidden/,
+    'web: language menu should be a closed accessible listbox initially',
+  );
+  assert.match(
+    template,
+    /id="language-picker-flag" src="\/assets\/flags\/\{\{locale_flag_code\}\}\.svg"/,
+    'web: closed picker should render the current locale flag',
+  );
+  assert.match(
+    template,
+    /flag\.className = 'language-picker-option-flag';[\s\S]*?flag\.setAttribute\('aria-hidden', 'true'\)/,
+    'web: every picker row should render a decorative SVG flag',
+  );
+  assert.match(
+    template,
+    /event\.key === 'ArrowDown'[\s\S]*?event\.key === 'ArrowUp'[\s\S]*?event\.key === 'Home'[\s\S]*?event\.key === 'End'[\s\S]*?event\.key === 'Enter'[\s\S]*?event\.key === 'Escape'/,
+    'web: flag listbox should support arrow, boundary, activation, and Escape keys',
+  );
+  assert.match(
+    template,
+    /\.picker-menu-highlight \{[\s\S]*?position: absolute;[\s\S]*?pointer-events: none;[\s\S]*?transform 170ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/,
+    'web: language highlight should glide between rows with the extension timing',
+  );
+  assert.match(
+    template,
+    /function setMenuHighlight\(option, instant\)[\s\S]*?option\.offsetTop[\s\S]*?menu\.addEventListener\('pointerover'[\s\S]*?menu\.addEventListener\('focusin'/,
+    'web: pointer and keyboard passage should move one shared highlight layer',
+  );
+  assert.match(
+    template,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.picker-menu-highlight,[\s\S]*?transition: none;/,
+    'web: language highlight should honor reduced-motion preferences',
+  );
+  assert.doesNotMatch(
+    template,
+    /currentOpt[\s\S]*?textContent[\s\S]*?\u{1F310}/u,
+    'web: current language should not be represented by a single globe glyph',
+  );
+  assert.match(
+    build,
+    /async function syncLanguageFlagAssets\(\)[\s\S]*?copyFile\([\s\S]*?FLAG_SOURCE_DIR[\s\S]*?FLAG_OUTPUT_DIR/,
+    'web build: extension flag artwork should be copied into website assets',
+  );
+  assert.match(
+    generated,
+    /id="language-picker-flag" src="\/assets\/flags\/us\.svg"/,
+    'web build: English landing page should render its US flag server-side',
+  );
+
+  for (const [locale, flagCode] of Object.entries(expectedFlagCodes)) {
+    assert.match(
+      build,
+      new RegExp(`\\b${locale}: '${flagCode}'`),
+      `web build: ${locale} should map to the intended representative flag`,
+    );
+    assert.ok(
+      fs.existsSync(path.join(ROOT, 'web/assets/flags', `${flagCode}.svg`)),
+      `web assets: ${flagCode}.svg should be bundled`,
+    );
+  }
+});
+
+test('homepage does not promote the unmerged Ollama launch handoff', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+
+  assert.doesNotMatch(
+    template,
+    /provider-promo|featured_home_promo/,
+    'web: the homepage template should not render or style the unmerged Ollama promo',
+  );
+  assert.doesNotMatch(
+    build,
+    /FEATURED_HOME_PROMO|featured_home_promo/,
+    'web build: the hidden homepage promo should not need generated placeholders',
+  );
+  assert.doesNotMatch(
+    generated,
+    /ollama-launch-handoff|Choose an Ollama model, then hand it to WebBrain/,
+    'web: the generated English homepage should not advertise the unmerged handoff',
+  );
+  assert.ok(
+    fs.existsSync(path.join(ROOT, 'web/blog/ollama-launch-handoff/index.html')),
+    'web: hiding the homepage card should not remove its article',
+  );
+});
+
+test('trust rail follows the demo with all four safeguards', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
+  const turkish = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/tr.json'), 'utf8'));
+  const heroVisualIndex = template.indexOf('<div class="hero-visual">');
+  const trustRailIndex = template.indexOf('<div class="hero-trust">');
+  const demoVideoIndex = template.indexOf('<video id="demo-video"');
+  const featuresIndex = template.indexOf('<!-- FEATURES -->');
+
+  assert.ok(heroVisualIndex >= 0, 'web: animated hero visual should exist');
+  // Objection handling belongs after the visitor has seen what the agent does,
+  // so the rail now closes the demo section instead of sitting in the hero.
+  assert.ok(
+    trustRailIndex > demoVideoIndex && trustRailIndex < featuresIndex,
+    'web: trust rail should follow the demo video and close the demo section',
+  );
+  assert.match(
+    template,
+    /<video id="demo-video"[\s\S]*?<\/div>\s*<\/div>\s*<!-- Objection handling sits directly after the demo[\s\S]*?<div class="hero-trust">/,
+    'web: trust rail should sit directly after the demo video showcase',
+  );
+  assert.match(
+    template,
+    /<ul class="hero-trust-list">\s*<li>\{\{t:hero\.trust\.b1\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b2\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b3\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b4\}\}<\/li>\s*<\/ul>/,
+    'web: trust rail should contain all four safeguards',
+  );
+  assert.match(
+    template,
+    /\.hero-trust-list \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/,
+    'web: the four safeguards should share one row on desktop',
+  );
+  assert.match(
+    template,
+    /\.hero-trust \{[\s\S]*?max-width: 940px;[\s\S]*?grid-template-columns:[\s\S]*?box-shadow:/,
+    'web: trust rail should be wide enough to carry four promises',
+  );
+  assert.match(
+    template,
+    /@media \(max-width: 768px\) \{[\s\S]*?\.hero-trust-list \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
+    'web: trust promises should fall to two columns on tablets',
+  );
+  assert.match(
+    template,
+    /@media \(max-width: 560px\) \{[\s\S]*?\.hero-trust-list \{[\s\S]*?grid-template-columns: 1fr;/,
+    'web: trust promises should stack on small phones',
+  );
+  // The ✓ badge is placed with inset-inline-start, so the text gutter has to be
+  // logical too or it lands under the badge in RTL locales.
+  assert.match(
+    template,
+    /\.hero-trust-list li \{[\s\S]*?padding-inline: 35px 9px;/,
+    'web: trust promise text gutter should be direction-aware',
+  );
+  assert.match(
+    template,
+    /<div class="hero-trust">[\s\S]*?<button[\s\S]*?class="hero-trust-trigger"[\s\S]*?id="security-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="security-video-dialog"/,
+    'web: the complete trust rail should be one accessible security-video trigger',
+  );
+  assert.match(
+    template,
+    /class="hero-trust-media"[\s\S]*?<img class="hero-trust-thumbnail" src="\/assets\/security-speaker-thumbnail\.jpg"[\s\S]*?class="hero-trust-play"[\s\S]*?security\.video\.open_aria/,
+    'web: the trust rail should use a real speaker thumbnail and explicit video treatment',
+  );
+  assert.ok(
+    fs.existsSync(path.join(ROOT, 'web/assets/security-speaker-thumbnail.jpg')),
+    'web assets: the security speaker thumbnail should be bundled',
+  );
+  assert.match(
+    template,
+    /\.hero-trust \{[\s\S]*?margin: 58px auto 0;[\s\S]*?\.hero-trust-media \{[\s\S]*?min-height: 150px;/,
+    'web: the video chapter should be separated from the animation and give its thumbnail presence',
+  );
+
+  assert.equal(english['security.title'], 'How WebBrain keeps you in control');
+  assert.equal(english['hero.trust.b1'], 'Read-only Ask Mode by default');
+  assert.equal(english['hero.trust.b2'], 'Asks before consequential actions');
+  assert.equal(english['hero.trust.b3'], 'Open-source & auditable');
+  assert.equal(english['hero.trust.b4'], 'No telemetry, no accounts');
+  assert.equal(english['security.video.open_aria'], 'Watch the security video');
+  assert.equal(english['security.video.close_aria'], 'Close the security video');
+  assert.equal(turkish['security.title'], 'WebBrain kontrolü sende nasıl tutar');
+  assert.equal(turkish['hero.trust.b1'], 'Varsayılan olarak salt okunur Sor kipi');
+  assert.equal(turkish['hero.trust.b2'], 'Önemli eylemlerden önce sorar');
+  assert.equal(turkish['hero.trust.b3'], 'Açık kaynak ve denetlenebilir');
+  assert.equal(turkish['hero.trust.b4'], 'Telemetri yok, hesap yok');
+  assert.equal(turkish['security.video.open_aria'], 'Güvenlik videosunu izle');
+  assert.equal(turkish['security.video.close_aria'], 'Güvenlik videosunu kapat');
+});
+
+test('web footer includes the Discord invite beside its other social icons', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const build = fs.readFileSync(path.join(ROOT, 'web/build/build.mjs'), 'utf8');
+  const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
+
+  assert.match(
+    build,
+    /const DISCORD_INVITE_URL = 'https:\/\/discord\.gg\/cgC325ssfw';[\s\S]*?'social\.discord_url': DISCORD_INVITE_URL/,
+    'web build: Discord invite should be a shared generated-page URL',
+  );
+  assert.match(
+    template,
+    /social\.mastodon_url[\s\S]*?social\.bluesky_url[\s\S]*?social\.discord_url/,
+    'web footer: Discord should sit beside Mastodon and Bluesky',
+  );
+  assert.match(
+    template,
+    /\.footer-links \{[\s\S]*?align-items: center;[\s\S]*?\}/,
+    'web footer: social icons and text links should share one vertical center',
+  );
+  assert.match(
+    template,
+    /href="\{\{t:social\.discord_url\}\}"[^>]*rel="noopener"[^>]*aria-label="\{\{t:social\.discord_label\}\}"[^>]*class="footer-icon"[\s\S]*?<svg viewBox="0 0 16 16"/,
+    'web footer: Discord invite should use the established accessible icon-link pattern',
+  );
+  assert.equal(english['social.discord_label'], 'WebBrain on Discord');
+  assert.match(
+    generated,
+    /href="https:\/\/discord\.gg\/cgC325ssfw"[^>]*aria-label="WebBrain on Discord"[^>]*class="footer-icon"/,
+    'web build: generated English footer should include the Discord invite icon',
+  );
+});
+
+test('landing demo uses the new captioned videos and keeps the old comparison in a modal', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
+  const turkish = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/tr.json'), 'utf8'));
+  const compareSectionIndex = template.indexOf('<section class="section" id="compare">');
+  const compareVideoIndex = template.indexOf('id="comparison-video-open"');
+  const frameworkComparisonIndex = template.indexOf('<!-- vs Agent Frameworks -->');
+  const comparisonDialogIndex = template.indexOf('id="comparison-video-dialog"');
+
+  for (const asset of [
+    'web/assets/webbrain-home-captioned.mp4',
+    'web/assets/webbrain-home-vertical.mp4',
+    'web/assets/webbrain-home-poster.jpg',
+    'web/assets/webbrain-home-poster-vertical.jpg',
+    'web/assets/demo-desktop.mp4',
+    'web/assets/demo-mobile.mp4',
+  ]) {
+    assert.ok(fs.existsSync(path.join(ROOT, asset)), `${asset}: video asset should exist`);
+    assert.ok(fs.statSync(path.join(ROOT, asset)).size > 100_000, `${asset}: media asset should not be empty`);
+  }
+
+  assert.match(
+    template,
+    /<video id="demo-video"[^>]*data-desktop-src="\/assets\/webbrain-home-captioned\.mp4"[^>]*data-mobile-src="\/assets\/webbrain-home-vertical\.mp4"[^>]*data-desktop-poster="\/assets\/webbrain-home-poster\.jpg"[^>]*data-mobile-poster="\/assets\/webbrain-home-poster-vertical\.jpg"/,
+    'web demo: main action video should use the new captioned desktop and vertical assets',
+  );
+  assert.match(
+    template,
+    /const nextPoster = isMobile \? video\.dataset\.mobilePoster : video\.dataset\.desktopPoster;[\s\S]*?video\.poster = nextPoster;/,
+    'web demo: responsive video selection should switch the poster with the source',
+  );
+  assert.match(
+    template,
+    /\.video-frame \{[\s\S]*?padding-bottom: 65\.625%;[\s\S]*?\}[\s\S]*?@media \(max-width: 768px\) \{[\s\S]*?\.video-frame \{ padding-bottom: 177\.78%; \}/,
+    'web demo: desktop and mobile frames should preserve the new assets’ native aspect ratios',
+  );
+  assert.ok(
+    compareVideoIndex > compareSectionIndex && compareVideoIndex < frameworkComparisonIndex,
+    'web comparison: local-vs-Claude video add-on should follow the browser-plugin table',
+  );
+  assert.ok(
+    comparisonDialogIndex > frameworkComparisonIndex,
+    'web comparison: video dialog should remain outside the table flow',
+  );
+  assert.match(
+    template,
+    /<button[\s\S]*?class="compare-video-card"[\s\S]*?id="comparison-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="comparison-video-dialog"/,
+    'web comparison: speed proof should be an accessible whole-card modal trigger',
+  );
+  assert.match(
+    template,
+    /<dialog[\s\S]*?id="comparison-video-dialog"[\s\S]*?<video id="comparison-video"[^>]*data-desktop-src="\/assets\/demo-desktop\.mp4"[^>]*data-mobile-src="\/assets\/demo-mobile\.mp4"/,
+    'web comparison: the prior Claude-vs-WebBrain pair should live in the responsive modal',
+  );
+  assert.match(
+    template,
+    /function openComparisonVideo\(\)[\s\S]*?dialog\.showModal\(\)[\s\S]*?video\.play\(\)[\s\S]*?dialog\.addEventListener\('close'[\s\S]*?video\.pause\(\)/,
+    'web comparison: opening should play while closing pauses and restores the page',
+  );
+  // The test is favorable, so the copy states the result instead of hedging.
+  assert.equal(
+    english['compare.speed_video.title'],
+    'Local WebBrain beats Claude in Chrome, side by side',
+  );
+  assert.equal(
+    english['compare.speed_video.description'],
+    'Same task, same browser. WebBrain runs Gemma 4 31B on-device and finishes first.',
+  );
+  assert.equal(english['compare.speed_video.cta'], 'Watch the comparison');
+  assert.equal(
+    turkish['compare.speed_video.title'],
+    "Yerel WebBrain, Chrome'daki Claude'u yan yana testte geçiyor",
+  );
+  assert.equal(turkish['compare.speed_video.cta'], 'Karşılaştırmayı izle');
+});
+
+test('security explainer opens in a responsive modal without a duplicate page section', () => {
+  const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
+  const videoIds = template.match(/id="security-video"/g) || [];
+
+  assert.doesNotMatch(
+    template,
+    /<section[^>]*\bid="security"/,
+    'web: the old full-height security section should be removed',
+  );
+  assert.equal(videoIds.length, 1, 'web: the security video should render exactly once');
+  assert.match(
+    template,
+    /<dialog[\s\S]*?id="security-video-dialog"[\s\S]*?aria-labelledby="security-video-dialog-title"[\s\S]*?aria-describedby="security-video-dialog-description"[\s\S]*?<video id="security-video"[^>]*data-desktop-src="\/assets\/security-desktop\.mp4"[^>]*data-mobile-src="\/assets\/security-mobile\.mp4"/,
+    'web: security video should live in a labelled native dialog with responsive sources',
+  );
+  assert.match(
+    template,
+    /\.security-video-dialog::backdrop \{[\s\S]*?backdrop-filter: blur\(10px\);[\s\S]*?\.security-video-dialog-frame \{[\s\S]*?aspect-ratio: 16 \/ 9;/,
+    'web: desktop security modal should have a polished backdrop and widescreen frame',
+  );
+  assert.match(
+    template,
+    /@media \(max-width: 768px\) \{[\s\S]*?\.security-video-dialog-frame \{[\s\S]*?aspect-ratio: 9 \/ 16;/,
+    'web: mobile security modal should use the portrait video frame',
+  );
+  assert.match(
+    template,
+    /function openSecurityVideo\(\)[\s\S]*?dialog\.showModal\(\)[\s\S]*?video\.play\(\)[\s\S]*?event\.target === dialog[\s\S]*?dialog\.addEventListener\('close'[\s\S]*?video\.pause\(\)/,
+    'web: rail click should open and play the modal, while backdrop, Escape, or close pauses it',
+  );
+});
+
 test('extension language dropdowns pin English and Chinese before alphabetical languages', async () => {
   const expectedCodes = [
     'en', 'zh',
