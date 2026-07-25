@@ -202,7 +202,7 @@ const DETECT_CODE = `(() => {
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
           recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
           d.querySelector('script[src*="recaptcha/enterprise"]') != null;
-        const isV3 = version === 'v3';
+        const isV3 = version === 'v3' || (!!action && !isInvisible);
         return {
           type: isV3 ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
