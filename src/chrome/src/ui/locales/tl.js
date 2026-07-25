@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "I-delete ang naka-queue na mensahe",
   "sp.slash.check_progress": "Ipakita ang kasalukuyang progress ledger",
   "sp.slash.record_full_screen": "Mag-record ng screen o window",
+  "sp.slash.record_hide_indicator": "Itago ang recording indicator; pindutin ang Escape nang dalawang beses para huminto",
   "sp.progress.title_html": "<strong>Kasalukuyang progress ledger</strong>",
   "sp.progress.empty": "Wala pang progress row na naitala para sa pag-uusap na ito.",
   "sp.progress.error": "Hindi available ang progress ledger: {msg}",

@@ -12642,7 +12642,7 @@ test('new locale dictionaries contain translated copy and preserve functional to
     bn: /[\u0980-\u09ff]/,
     fa: /[\u0600-\u06ff]/,
   };
-  const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|transcribe|traces|config|file))?/g;
+  const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|hide-recording-indicator|transcribe|traces|config|file))?/g;
   const extract = (value, pattern) => [...String(value).matchAll(pattern)].map((match) => match[0]).sort();
   const assertTranslated = (label, english, translated, marker) => {
     const keys = Object.keys(english);
@@ -13078,7 +13078,7 @@ test('chrome /record reports mic denial as a warning, not recording failure', ()
   assert.match(locale, /Recording started with tab audio and video only/, 'chrome: mic warning should say recording started');
 });
 
-test('chrome /record --full-screen is slash-only, Chrome-only, and hidden from the recording banner', () => {
+test('chrome /record --full-screen shows the recording banner unless explicitly hidden', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   const firefoxPanel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
   const manifest = fs.readFileSync(path.join(ROOT, 'src/chrome/manifest.json'), 'utf8');
@@ -13088,9 +13088,11 @@ test('chrome /record --full-screen is slash-only, Chrome-only, and hidden from t
   const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
 
   const slashList = panel.slice(panel.indexOf('const SLASH_COMMANDS = ['), panel.indexOf('function slashCommandIsDiscoverable'));
-  assert.match(slashList, /usage: '\/record \[--full-screen\] \[--transcribe\]'/, 'chrome: slash metadata should advertise /record flags');
+  assert.match(slashList, /usage: '\/record \[--full-screen\] \[--hide-recording-indicator\] \[--transcribe\]'/, 'chrome: slash metadata should advertise /record flags');
   assert.match(slashList, /value: '--full-screen'[\s\S]*?action: 'full-screen'/, 'chrome: slash metadata should advertise --full-screen');
+  assert.match(slashList, /value: '--hide-recording-indicator'[\s\S]*?requires: '--full-screen'/, 'chrome: hidden indicator should require full-screen capture');
   assert.match(locale, /sp\.slash\.record_full_screen/, 'chrome: missing --full-screen description');
+  assert.match(locale, /sp\.slash\.record_hide_indicator[\s\S]*?Escape[\s\S]*?twice/, 'chrome: hidden indicator help should explain double Escape');
   assert.doesNotMatch(manifest, /"desktopCapture"/, 'chrome: full-screen recording should use getDisplayMedia without desktopCapture permission');
 
   const fullScreenIdx = panel.indexOf("if (command.value === '/record' && action === 'full-screen')");
@@ -13101,7 +13103,8 @@ test('chrome /record --full-screen is slash-only, Chrome-only, and hidden from t
   const helperBody = panel.slice(helperStart, panel.indexOf('function updateApiBadge', helperStart));
   assert.match(fullScreenBody, /startFullScreenRecording\(tabId/, 'chrome: parser should route /record --full-screen through helper');
   assert.match(helperBody, /prepare_recording_host/, 'chrome: full-screen route should prepare offscreen before recording');
-  assert.match(helperBody, /start_display_recording[\s\S]*?showBanner:\s*false/, 'chrome: full-screen route should start hidden display recording');
+  assert.match(fullScreenBody, /showBanner:\s*!optionValues\.has\('--hide-recording-indicator'\)/, 'chrome: full-screen route should hide the banner only when explicitly requested');
+  assert.match(helperBody, /start_display_recording[\s\S]*?showBanner:\s*recordOptions\.showBanner !== false/, 'chrome: full-screen route should show the recording banner by default');
   assert.doesNotMatch(helperBody, /streamId/, 'chrome: sidepanel must not ferry a desktopCapture stream id to the recorder');
   assert.match(panel, /function shouldShowRecordingBanner\(state\)[\s\S]*?state\?\.showBanner !== false/, 'chrome: banner visibility should be state-driven');
   assert.match(panel, /optionValues\.has\('--transcribe'\)/, 'chrome: recording slash commands should support transcript opt-in');
@@ -13141,6 +13144,7 @@ test('canonical slash parser handles flags, values, casing, termination, and har
 
   for (const text of [
     '/record --full-screen --transcribe',
+    '/record --full-screen --hide-recording-indicator --transcribe',
     '/ReCoRd --TRANSCRIBE --FULL-SCREEN',
   ]) {
     const invocation = chrome.parseSlashInvocation(text);
@@ -13148,6 +13152,9 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.equal(invocation.optionValues.has('--full-screen'), true, `${text}: full-screen flag missing`);
     assert.equal(invocation.optionValues.has('--transcribe'), true, `${text}: transcribe flag missing`);
   }
+  const hiddenIndicator = chrome.parseSlashInvocation('/record --hide-recording-indicator --full-screen');
+  assert.equal(hiddenIndicator.action, 'full-screen', 'hidden indicator should allow flags in either order');
+  assert.equal(hiddenIndicator.optionValues.has('--hide-recording-indicator'), true, 'hidden indicator flag missing');
 
   const scheduleList = chrome.parseSlashInvocation('  /SCHEDULE   --LIST  ');
   assert.equal(scheduleList.action, 'list');
@@ -13168,6 +13175,7 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   for (const text of [
     '/record --unknown',
     '/record --transcribe --transcribe',
+    '/record --hide-recording-indicator',
     '/scratchpad --append',
     '/memory --forget',
     '/scratchpad --append --clear',
@@ -13535,7 +13543,7 @@ test('slash autocomplete progressively suggests only available unused flags', ()
 
   const initial = chrome.getContext('/record ');
   assert.equal(initial.kind, 'option');
-  assert.deepEqual(optionMatches(chrome, initial), ['--full-screen', '--transcribe', '--help']);
+  assert.deepEqual(optionMatches(chrome, initial), ['--full-screen', '--hide-recording-indicator', '--transcribe', '--help']);
   assert.deepEqual(
     chrome.getMatches(chrome.getContext('/scratchpad ')).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
     [
@@ -13554,22 +13562,25 @@ test('slash autocomplete progressively suggests only available unused flags', ()
 
   const afterFullScreen = chrome.getContext('/record --full-screen ');
   assert.deepEqual([...afterFullScreen.selected], ['--full-screen']);
-  assert.deepEqual(optionMatches(chrome, afterFullScreen), ['--transcribe']);
+  assert.deepEqual(optionMatches(chrome, afterFullScreen), ['--hide-recording-indicator', '--transcribe']);
   assert.deepEqual(
     chrome.getMatches(afterFullScreen).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
     [
       { kind: 'base-action', value: '/record', label: '↵ Enter', descriptionKey: 'sp.slash.record_full_screen' },
+      { kind: 'option', value: '--hide-recording-indicator', label: undefined, descriptionKey: 'sp.slash.record_hide_indicator' },
       { kind: 'option', value: '--transcribe', label: undefined, descriptionKey: 'sp.slash.record_transcribe' },
     ],
     'a selected first flag should keep an explicit Enter action above the next flag',
   );
 
   const afterTranscribe = chrome.getContext('/record --transcribe ');
-  assert.deepEqual(optionMatches(chrome, afterTranscribe), ['--full-screen']);
+  assert.deepEqual(optionMatches(chrome, afterTranscribe), ['--full-screen', '--hide-recording-indicator']);
   const afterBothRecordOptions = chrome.getContext('/record --transcribe --full-screen ');
-  assert.deepEqual(optionMatches(chrome, afterBothRecordOptions), []);
+  assert.deepEqual(optionMatches(chrome, afterBothRecordOptions), ['--hide-recording-indicator']);
+  const afterAllRecordOptions = chrome.getContext('/record --transcribe --full-screen --hide-recording-indicator ');
+  assert.deepEqual(optionMatches(chrome, afterAllRecordOptions), []);
   assert.deepEqual(
-    chrome.getMatches(afterBothRecordOptions).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
+    chrome.getMatches(afterAllRecordOptions).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
     [
       { kind: 'base-action', value: '/record', label: '↵ Enter', descriptionKey: 'sp.slash.record_full_screen' },
     ],

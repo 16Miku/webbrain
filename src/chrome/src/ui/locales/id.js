@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Hapus pesan antrean",
   "sp.slash.check_progress": "Tampilkan catatan progres saat ini",
   "sp.slash.record_full_screen": "Rekam layar atau jendela",
+  "sp.slash.record_hide_indicator": "Sembunyikan indikator rekaman; tekan Escape dua kali untuk berhenti",
   "sp.progress.title_html": "<strong>Catatan progres saat ini</strong>",
   "sp.progress.empty": "Belum ada baris progres yang direkam untuk percakapan ini.",
   "sp.progress.error": "Catatan progres tidak tersedia: {msg}",

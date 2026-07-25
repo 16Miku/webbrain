@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "대기 중인 메시지 삭제",
   "sp.slash.check_progress": "현재 진행 로그 표시",
   "sp.slash.record_full_screen": "화면 또는 창 녹화",
+  "sp.slash.record_hide_indicator": "녹화 표시기 숨기기; 중지하려면 Escape를 두 번 누르세요",
   "sp.progress.title_html": "<strong>현재 진행 로그</strong>",
   "sp.progress.empty": "이 대화에 아직 기록된 진행 행이 없습니다.",
   "sp.progress.error": "진행 로그를 사용할 수 없습니다: {msg}",

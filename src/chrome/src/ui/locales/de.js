@@ -128,6 +128,7 @@ export default {
   'sp.slash.screenshot': 'Aktuellen Tab erfassen',
   'sp.slash.full_page_screenshot': 'Ganze Seite erfassen',
   'sp.slash.record_full_screen': 'Bildschirm oder Fenster aufnehmen',
+  'sp.slash.record_hide_indicator': 'Aufnahmeanzeige ausblenden; zum Stoppen zweimal Escape drücken',
   'sp.slash.record': 'Aufnahme des aktuellen Tabs starten',
   'sp.slash.export': 'Dieses Gespräch als Markdown herunterladen',
   'sp.slash.profile': 'Profil-Autovervollständigung umschalten',

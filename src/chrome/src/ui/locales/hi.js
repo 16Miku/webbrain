@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': "वर्तमान टैब कैप्चर करें",
   'sp.slash.full_page_screenshot': "पूरा पेज कैप्चर करें",
   'sp.slash.record_full_screen': "एक स्क्रीन या विंडो रिकॉर्ड करें",
+  'sp.slash.record_hide_indicator': "रिकॉर्डिंग संकेतक छिपाएँ; रोकने के लिए Escape दो बार दबाएँ",
   'sp.slash.record': "वर्तमान टैब रिकॉर्ड करना प्रारंभ करें",
   'sp.slash.export': "इस वार्तालाप को मार्कडाउन के रूप में डाउनलोड करें",
   'sp.slash.profile': "प्रोफ़ाइल स्वतः-भरण टॉगल करें",

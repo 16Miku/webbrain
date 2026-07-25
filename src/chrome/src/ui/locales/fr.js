@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Supprimer le message en file d’attente",
   "sp.slash.check_progress": "Afficher le journal de progression actuel",
   "sp.slash.record_full_screen": "Enregistrer un écran ou une fenêtre",
+  "sp.slash.record_hide_indicator": "Masquer l’indicateur d’enregistrement ; appuyez deux fois sur Échap pour arrêter",
   "sp.progress.title_html": "<strong>Journal de progression actuel</strong>",
   "sp.progress.empty": "Aucune ligne de progression n’a encore été enregistrée pour cette conversation.",
   "sp.progress.error": "Journal de progression indisponible : {msg}",

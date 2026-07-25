@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "حذف الرسالة من قائمة الانتظار",
   "sp.slash.check_progress": "إظهار سجل التقدم الحالي",
   "sp.slash.record_full_screen": "تسجيل شاشة أو نافذة",
+  "sp.slash.record_hide_indicator": "إخفاء مؤشر التسجيل؛ اضغط Escape مرتين للإيقاف",
   "sp.progress.title_html": "<strong>سجل التقدم الحالي</strong>",
   "sp.progress.empty": "لا توجد صفوف تقدم مسجلة لهذه المحادثة بعد.",
   "sp.progress.error": "سجل التقدم غير متاح: {msg}",

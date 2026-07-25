@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Eliminar mensaje en cola",
   "sp.slash.check_progress": "Mostrar el registro de progreso actual",
   "sp.slash.record_full_screen": "Grabar una pantalla o ventana",
+  "sp.slash.record_hide_indicator": "Ocultar el indicador de grabación; pulsa Escape dos veces para detener",
   "sp.progress.title_html": "<strong>Registro de progreso actual</strong>",
   "sp.progress.empty": "Aún no hay filas de progreso registradas para esta conversación.",
   "sp.progress.error": "Registro de progreso no disponible: {msg}",

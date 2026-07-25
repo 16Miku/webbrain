@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': "Chụp tab hiện tại",
   'sp.slash.full_page_screenshot': "Chụp toàn bộ trang",
   'sp.slash.record_full_screen': "Ghi lại màn hình hoặc cửa sổ",
+  'sp.slash.record_hide_indicator': "Ẩn chỉ báo ghi; nhấn Escape hai lần để dừng",
   'sp.slash.record': "Bắt đầu ghi tab hiện tại",
   'sp.slash.export': "Tải xuống cuộc trò chuyện này dưới dạng Markdown",
   'sp.slash.profile': "Chuyển đổi tự động điền hồ sơ",

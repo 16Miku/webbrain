@@ -690,6 +690,7 @@ export default {
   "sp.queue.delete": "Kuyruktaki mesajı sil",
   "sp.slash.check_progress": "Geçerli ilerleme günlüğünü göster",
   "sp.slash.record_full_screen": "Bir ekranı veya pencereyi kaydet",
+  "sp.slash.record_hide_indicator": "Kayıt göstergesini gizle; durdurmak için Escape tuşuna iki kez bas",
   "sp.progress.title_html": "<strong>Geçerli ilerleme günlüğü</strong>",
   "sp.progress.empty": "Bu konuşma için henüz kaydedilmiş ilerleme satırı yok.",
   "sp.progress.error": "İlerleme günlüğü kullanılamıyor: {msg}",

@@ -131,6 +131,7 @@ export default {
   'sp.slash.screenshot': 'Maak een schermafbeelding van het huidige tabblad',
   'sp.slash.full_page_screenshot': 'Maak een schermafbeelding van de volledige pagina',
   'sp.slash.record_full_screen': 'Neem een scherm of venster op',
+  'sp.slash.record_hide_indicator': 'Verberg de opname-indicator; druk tweemaal op Escape om te stoppen',
   'sp.slash.record': 'Begin met opnemen van het huidige tabblad',
   'sp.slash.export': 'Download dit gesprek als Markdown',
   'sp.slash.profile': 'Schakel profiel auto-fill in/uit',

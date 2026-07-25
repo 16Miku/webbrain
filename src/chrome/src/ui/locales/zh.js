@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "删除排队消息",
   "sp.slash.check_progress": "显示当前进度日志",
   "sp.slash.record_full_screen": "录制屏幕或窗口",
+  "sp.slash.record_hide_indicator": "隐藏录制指示器；按两次 Escape 停止录制",
   "sp.progress.title_html": "<strong>当前进度日志</strong>",
   "sp.progress.empty": "此对话尚未记录任何进度行。",
   "sp.progress.error": "进度日志不可用：{msg}",

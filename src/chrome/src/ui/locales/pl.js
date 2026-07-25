@@ -676,6 +676,7 @@ export default {
   "sp.queue.delete": "Usuń wiadomość z kolejki",
   "sp.slash.check_progress": "Pokaż bieżący dziennik postępu",
   "sp.slash.record_full_screen": "Nagraj ekran lub okno",
+  "sp.slash.record_hide_indicator": "Ukryj wskaźnik nagrywania; naciśnij Escape dwa razy, aby zatrzymać",
   "sp.progress.title_html": "<strong>Bieżący dziennik postępu</strong>",
   "sp.progress.empty": "Dla tej rozmowy nie zapisano jeszcze żadnych wierszy postępu.",
   "sp.progress.error": "Dziennik postępu niedostępny: {msg}",

@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': "برگه فعلی را ضبط کنید",
   'sp.slash.full_page_screenshot': "صفحه کامل را ضبط کنید",
   'sp.slash.record_full_screen': "یک صفحه یا پنجره را ضبط کنید",
+  'sp.slash.record_hide_indicator': "نشانگر ضبط را پنهان کنید؛ برای توقف دو بار Escape را فشار دهید",
   'sp.slash.record': "شروع به ضبط برگه فعلی کنید",
   'sp.slash.export': "این گفتگو را به عنوان Markdown دانلود کنید",
   'sp.slash.profile': "پر کردن خودکار نمایه را تغییر دهید",

@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': "বর্তমান ট্যাব ক্যাপচার",
   'sp.slash.full_page_screenshot': "পুরো পৃষ্ঠাটি ক্যাপচার করুন",
   'sp.slash.record_full_screen': "একটি পর্দা বা উইন্ডো রেকর্ড",
+  'sp.slash.record_hide_indicator': "রেকর্ডিং সূচক লুকান; থামাতে Escape দুবার চাপুন",
   'sp.slash.record': "বর্তমান ট্যাব রেকর্ডিং শুরু করুন",
   'sp.slash.export': "মার্কডাউন হিসাবে এই কথোপকথন ডাউনলোড করুন",
   'sp.slash.profile': "প্রোফাইল অটো-ফিল টগল করুন",

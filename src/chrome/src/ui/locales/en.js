@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': 'Capture the current tab',
   'sp.slash.full_page_screenshot': 'Capture the full page',
   'sp.slash.record_full_screen': 'Record a screen or window',
+  'sp.slash.record_hide_indicator': 'Hide the recording indicator; press Escape twice to stop',
   'sp.slash.record': 'Start recording the current tab',
   'sp.slash.export': 'Download this conversation as Markdown',
   'sp.slash.profile': 'Toggle profile auto-fill',

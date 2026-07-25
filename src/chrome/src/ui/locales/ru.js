@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Удалить сообщение из очереди",
   "sp.slash.check_progress": "Показать текущий журнал прогресса",
   "sp.slash.record_full_screen": "Записать экран или окно",
+  "sp.slash.record_hide_indicator": "Скрыть индикатор записи; нажмите Escape дважды для остановки",
   "sp.progress.title_html": "<strong>Текущий журнал прогресса</strong>",
   "sp.progress.empty": "Для этого разговора пока нет записанных строк прогресса.",
   "sp.progress.error": "Журнал прогресса недоступен: {msg}",

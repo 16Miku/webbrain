@@ -135,6 +135,7 @@ export default {
   'sp.slash.screenshot': "Capture a guia atual",
   'sp.slash.full_page_screenshot': "Capture a página inteira",
   'sp.slash.record_full_screen': "Grave uma tela ou janela",
+  'sp.slash.record_hide_indicator': "Ocultar o indicador de gravação; pressione Escape duas vezes para parar",
   'sp.slash.record': "Comece a gravar a guia atual",
   'sp.slash.export': "Baixe esta conversa como Markdown",
   'sp.slash.profile': "Alternar preenchimento automático do perfil",

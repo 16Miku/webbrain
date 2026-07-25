@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "ลบข้อความในคิว",
   "sp.slash.check_progress": "แสดงบันทึกความคืบหน้าปัจจุบัน",
   "sp.slash.record_full_screen": "บันทึกหน้าจอหรือหน้าต่าง",
+  "sp.slash.record_hide_indicator": "ซ่อนตัวบ่งชี้การบันทึก กด Escape สองครั้งเพื่อหยุด",
   "sp.progress.title_html": "<strong>บันทึกความคืบหน้าปัจจุบัน</strong>",
   "sp.progress.empty": "ยังไม่มีรายการความคืบหน้าที่บันทึกไว้สำหรับการสนทนานี้",
   "sp.progress.error": "บันทึกความคืบหน้าไม่พร้อมใช้งาน: {msg}",

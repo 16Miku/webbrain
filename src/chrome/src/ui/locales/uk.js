@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Видалити повідомлення з черги",
   "sp.slash.check_progress": "Показати поточний журнал прогресу",
   "sp.slash.record_full_screen": "Записати екран або вікно",
+  "sp.slash.record_hide_indicator": "Сховати індикатор запису; натисніть Escape двічі, щоб зупинити",
   "sp.progress.title_html": "<strong>Поточний журнал прогресу</strong>",
   "sp.progress.empty": "Для цієї розмови ще не записано рядків прогресу.",
   "sp.progress.error": "Журнал прогресу недоступний: {msg}",

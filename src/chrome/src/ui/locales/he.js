@@ -123,6 +123,7 @@ export default {
   "sp.slash.screenshot": "צלם את הכרטיסייה הנוכחית",
   "sp.slash.full_page_screenshot": "תפוס את העמוד המלא",
   "sp.slash.record_full_screen": "הקלט מסך או חלון",
+  "sp.slash.record_hide_indicator": "הסתר את מחוון ההקלטה; לחץ פעמיים על Escape כדי לעצור",
   "sp.slash.record": "התחל להקליט את הכרטיסייה הנוכחית",
   "sp.slash.export": "הורד את השיחה הזו בתור Markdown",
   "sp.slash.profile": "הפעל או השבת מילוי אוטומטי של הפרופיל",

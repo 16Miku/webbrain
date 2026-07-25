@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "Padam mesej dalam baris gilir",
   "sp.slash.check_progress": "Tunjukkan lejar kemajuan semasa",
   "sp.slash.record_full_screen": "Rakam skrin atau tetingkap",
+  "sp.slash.record_hide_indicator": "Sembunyikan penunjuk rakaman; tekan Escape dua kali untuk berhenti",
   "sp.progress.title_html": "<strong>Lejar kemajuan semasa</strong>",
   "sp.progress.empty": "Tiada baris kemajuan direkodkan untuk perbualan ini lagi.",
   "sp.progress.error": "Lejar kemajuan tidak tersedia: {msg}",

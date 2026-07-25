@@ -685,6 +685,7 @@ export default {
   "sp.queue.delete": "キュー内のメッセージを削除",
   "sp.slash.check_progress": "現在の進行ログを表示",
   "sp.slash.record_full_screen": "画面またはウィンドウを録画",
+  "sp.slash.record_hide_indicator": "録画インジケーターを非表示にする（停止するには Escape を2回押す）",
   "sp.progress.title_html": "<strong>現在の進行ログ</strong>",
   "sp.progress.empty": "この会話にはまだ進行行が記録されていません。",
   "sp.progress.error": "進行ログを利用できません: {msg}",
