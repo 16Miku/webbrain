@@ -511,7 +511,7 @@ export function createCloudRunController({
             workflow,
             workflowParameters,
             publishUpdate,
-            { cloudRun: true },
+            { cloudRun: true, independentRun: true },
           );
           content = redactWorkflowValue(replay.summary || '');
           run.summary = redactWorkflowValue(replay.summary || run.summary);
@@ -522,7 +522,10 @@ export function createCloudRunController({
               reason: replay.reason,
             });
             content = redactWorkflowValue(await agent.processMessage(
-              tabId, replay.prompt, publishUpdate, 'act', [], { cloudRun: true },
+              tabId, replay.prompt, publishUpdate, 'act', [], {
+                cloudRun: true,
+                independentRun: true,
+              },
             ));
           } else if (replay.status === 'stopped') {
             run.status = 'failed';
@@ -533,6 +536,7 @@ export function createCloudRunController({
         } else {
           content = await agent.processMessage(tabId, task, publishUpdate, 'act', [], {
             cloudRun: true,
+            independentRun: true,
             outputSchema,
             onTraceStarted(traceRunId) {
               run.traceRunId = traceRunId;

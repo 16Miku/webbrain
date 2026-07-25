@@ -382,6 +382,7 @@ const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
   createContextMenuStorage: createContextMenuStorageCh,
@@ -390,6 +391,7 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
   createContextMenuStorage: createContextMenuStorageFx,
@@ -17815,6 +17817,7 @@ test('background forwards planner run options to agent chat handlers', () => {
     assert.ok(streamMatch, `${label}: chat_stream handler missing`);
     const chatBody = chatMatch[1];
     const streamBody = streamMatch[1];
+    assert.ok(chatBody.includes('...(isWorkflowRun ? { independentRun: true } : {})'), `${label}: saved workflows should be explicit independent runs`);
     assert.ok(chatBody.includes('...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {})'), `${label}: chat handler should build recommended-action run options`);
     assert.ok(chatBody.includes('locale: msg.locale'), `${label}: chat handler should forward the display locale`);
     assert.ok(chatBody.includes('intentFailureMessage: msg.intentFailureMessage'), `${label}: chat handler should forward the localized intent fallback`);
@@ -17887,6 +17890,653 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
 
     const native = buildContextMenuPrompt('native fallback');
     assert.ok(native.startsWith('Please answer about this selected text from the current page.'), `${label}: native context-menu wording should remain compatible`);
+  }
+});
+
+test('selection shortcut grounding metadata suppresses competing page images', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let activeProviderCalls = 0;
+    let visionProviderCalls = 0;
+    let screenshotCalls = 0;
+    const agent = new AgentClass({
+      getActive() {
+        activeProviderCalls += 1;
+        return { supportsVision: true };
+      },
+      async getVisionProvider() {
+        visionProviderCalls += 1;
+        return null;
+      },
+    });
+    agent._captureBudgetedAutoScreenshot = async () => {
+      screenshotCalls += 1;
+      return {
+        dataUrl: 'data:image/png;base64,AA==',
+        width: 100,
+        height: 100,
+        coordAligned: true,
+      };
+    };
+
+    const prompt = buildSelectionPrompt('authoritative selected words', 'translate', '', 'en');
+    const grounded = await agent._enrichUserMessageWithCurrentPage(
+      999,
+      [],
+      prompt,
+      null,
+      { sourceGrounding },
+    );
+    assert.equal(typeof grounded.content, 'string', `${label}: selection-only content should stay text-only`);
+    assert.match(grounded.content, /authoritative selected words/, `${label}: authoritative selection should remain present`);
+    assert.doesNotMatch(grounded.content, /Current page context|Initial viewport|SCREENSHOT/, `${label}: page-derived context should be absent`);
+    assert.equal(activeProviderCalls, 0, `${label}: selection-only enrichment should not inspect main vision capability`);
+    assert.equal(visionProviderCalls, 0, `${label}: selection-only enrichment should not invoke a vision provider`);
+    assert.equal(screenshotCalls, 0, `${label}: selection-only enrichment should not capture a screenshot`);
+
+    const ordinary = await agent._enrichUserMessageWithCurrentPage(999, [], 'What is on this page?');
+    assert.ok(Array.isArray(ordinary.content), `${label}: ordinary first-turn Ask should retain visual context`);
+    assert.equal(ordinary.content.some(block => block?.type === 'image_url'), true, `${label}: ordinary first-turn Ask should attach its screenshot`);
+    assert.equal(activeProviderCalls, 1, `${label}: ordinary Ask should inspect main vision capability`);
+    assert.equal(visionProviderCalls, 1, `${label}: ordinary Ask should inspect the dedicated vision provider`);
+    assert.equal(screenshotCalls, 1, `${label}: ordinary Ask should capture one screenshot`);
+  }
+});
+
+test('selection-only model requests exclude prior conversation context', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Grounded answer.', toolCalls: null };
+        },
+        async *chatStream(messages, options) {
+          requests.push(messages);
+          requestOptions.push(options);
+          yield { type: 'text', content: 'Grounded answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9630 + (buildIndex * 10) + pathIndex;
+      const priorImage = 'data:image/png;base64,UFJJT1I=';
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'PRIOR ATTACHMENT SECRET' },
+            { type: 'image_url', image_url: { url: priorImage } },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'UFJJT1I=' } },
+          ],
+        },
+        { role: 'assistant', content: 'Prior page answer.' },
+        { role: 'user', content: '[Agent scratchpad — PRIOR SCRATCHPAD SECRET]' },
+        { role: 'user', content: '[Current page context — PRIOR PAGE TITLE]' },
+      ]);
+      agent.maxSteps = 2;
+      agent._hydrate = async () => {};
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      const enrichmentHistoryLengths = [];
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        enrichmentHistoryLengths.push(history.length);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (
+        gateTabId,
+        messages,
+        enriched,
+        _onUpdate,
+        _mode,
+        _costState,
+        _runId,
+        _tabInfo,
+        gateRunOptions,
+      ) => {
+        messages.push(enriched);
+        if (gateRunOptions?.selectionGroundingScopeStarted === true) {
+          agent._finalizeSelectionGroundingScope(gateTabId, messages, enriched);
+        }
+        const priorScratchpadIndex = messages.findIndex(message =>
+          typeof message.content === 'string' && message.content.includes('PRIOR SCRATCHPAD SECRET')
+        );
+        const [priorScratchpad] = messages.splice(priorScratchpadIndex, 1);
+        messages.push(priorScratchpad);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._maybeReinjectAdapter = async () => {
+        throw new Error('selection-only run must not inject adapter context');
+      };
+      agent._preactivateNyTimesSkillForRun = () => {
+        throw new Error('selection-only run must not activate a page-specific skill');
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const prompt = buildSelectionPrompt('authoritative selected words', 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
+      assert.equal(requestOptions[0]?.tools, undefined, `${label}: selection-only request must not advertise browser tools`);
+      assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
+      assert.equal(manageContextCalls, 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: compaction must not inspect prior turns`);
+      assert.equal(requests[0].length, 2, `${label} ${streaming ? 'streaming' : 'non-streaming'}: model should receive only system plus current selection`);
+      const serialized = JSON.stringify(requests[0]);
+      assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
+      assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
+      assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: scoped system prompt should explain the selection boundary`);
+      assert.equal(
+        agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
+        true,
+        `${label}: source-bound request view should not delete visible conversation history`,
+      );
+      assert.doesNotMatch(
+        String(agent.conversations.get(tabId)[0]?.content),
+        /only covers their selected text/,
+        `${label}: scoped system note must not mutate the stored conversation`,
+      );
+
+      const followUp = streaming
+        ? await agent.processMessageStream(tabId, 'My quiz answer is B.', () => {}, 'ask')
+        : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
+      assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
+      assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
+      assert.equal(requestOptions[1]?.tools, undefined, `${label}: grounded follow-up must remain tool-free`);
+      const followUpSerialized = JSON.stringify(requests[1]);
+      assert.match(followUpSerialized, /authoritative selected words/, `${label}: follow-up lost the original selection`);
+      assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
+      assert.doesNotMatch(followUpSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded follow-up`);
+      assert.match(String(requests[1][0]?.content), /only covers their selected text/, `${label}: grounded follow-up lost the scope note`);
+
+      const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
+      assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
+      assert.equal(requests.length, 3, `${label}: Continue should make one additional model request`);
+      assert.equal(requestOptions[2]?.tools, undefined, `${label}: grounded Continue must remain tool-free`);
+      const continueSerialized = JSON.stringify(requests[2]);
+      assert.match(continueSerialized, /authoritative selected words/, `${label}: Continue lost the original selection`);
+      assert.match(continueSerialized, /My quiz answer is B\./, `${label}: Continue lost the quiz exchange`);
+      assert.match(continueSerialized, /Please continue from where you left off\./, `${label}: Continue prompt missing`);
+      assert.doesNotMatch(continueSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded Continue`);
+
+      const persistedScope = agent._conversationStorageEntry(tabId)?.selectionGroundingScope;
+      assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
+      assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
+    }
+  }
+});
+
+test('selection-only response-only phases carry the scope note', async () => {
+  for (const [label, AgentClass, sourceGrounding] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const requests = [];
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        return { content: 'Scoped answer.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    const selection = { role: 'user', content: 'selection turn' };
+    const messages = [
+      { role: 'system', content: 'system rules' },
+      { role: 'user', content: 'PRIOR SECRET' },
+      selection,
+    ];
+
+    const scoped = await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      {
+        phase: 'response_only',
+        step: 1,
+        runOptions: { sourceGrounding },
+        currentUserMessage: selection,
+        priorMessageSet: new Set([messages[0], messages[1]]),
+      },
+    );
+    assert.equal(scoped, 'Scoped answer.', `${label}: scoped response-only final mismatch`);
+    assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: response-only phase lost the scope note`);
+    assert.doesNotMatch(JSON.stringify(requests[0]), /PRIOR SECRET/, `${label}: response-only phase leaked pre-selection history`);
+
+    await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      { phase: 'response_only', step: 1 },
+    );
+    assert.doesNotMatch(String(requests[1][0]?.content), /only covers their selected text/, `${label}: ordinary response-only turn should not carry the scope note`);
+    assert.match(JSON.stringify(requests[1]), /PRIOR SECRET/, `${label}: ordinary response-only turn should keep conversation history`);
+  }
+});
+
+test('ordinary attachments leave selection grounding and remain usable', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let providerCalls = 0;
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      supportsDocuments: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        providerCalls += 1;
+        assert.match(JSON.stringify(messages), /answer\.txt/, `${label}: preserved attachment name missing`);
+        assert.match(JSON.stringify(messages), /Attached file: answer\.txt/, `${label}: preserved attachment body missing`);
+        return { content: 'Attachment accepted.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 9670 + (label === 'firefox' ? 1 : 0);
+    const anchor = { role: 'user', content: buildSelectionPrompt('quiz source', 'quiz') };
+    agent.conversationIds.set(tabId, `conv-${label}`);
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system rules' },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ]);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-${label}`,
+      anchorIndex: 1,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [],
+    });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    let manageContextCalls = 0;
+    agent._manageContext = async () => { manageContextCalls += 1; };
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+      assert.ok(history.length >= 3, `${label}: ordinary attachment send should leave source grounding`);
+      return { role: 'user', content };
+    };
+    agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+      messages.push(enriched);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+    };
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => {};
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+
+    const updates = [];
+    const final = await agent.processMessage(
+      tabId,
+      'Here is my answer file.',
+      (type, data) => updates.push({ type, data }),
+      'ask',
+      [{ kind: 'text', name: 'answer.txt', textContent: 'B' }],
+    );
+
+    assert.equal(final, 'Attachment accepted.', `${label}: ordinary attachment send should complete`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), false, `${label}: preserved attachment should not be rejected`);
+    assert.equal(providerCalls, 1, `${label}: ordinary attachment turn should call the model once`);
+    assert.ok(manageContextCalls >= 1, `${label}: ordinary attachment turn should restore normal context management`);
+    assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label}: ordinary attachment send should end selection scope`);
+  }
+});
+
+test('independent cloud, scheduled, and workflow runs clear inherited selection grounding', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [runIndex, [runLabel, runOptions]] of [
+      ['cloud', { cloudRun: true, sourceGrounding }],
+      ['scheduled', { scheduledRun: true, sourceGrounding }],
+      ['workflow', { independentRun: true, sourceGrounding }],
+    ].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Independent run complete.', toolCalls: null };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9674 + (buildIndex * 10) + runIndex;
+      const anchor = {
+        role: 'user',
+        content: buildSelectionPrompt('old selected source', 'quiz'),
+      };
+      agent.conversationIds.set(tabId, `conv-${label}-${runLabel}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        anchor,
+        { role: 'assistant', content: 'Old selection answer.' },
+      ]);
+      agent.selectionGroundingScopes.set(tabId, {
+        conversationId: `conv-${label}-${runLabel}`,
+        anchorIndex: 1,
+        anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+        excludedFingerprints: [],
+      });
+      agent._hydrate = async () => {};
+      let persistCalls = 0;
+      agent._persist = () => { persistCalls += 1; };
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.ok(history.length >= 3, `${label} ${runLabel}: independent run should receive normal conversation context`);
+        return { role: 'user', content };
+      };
+      agent._maybeReinjectAdapter = async () => {};
+      agent._preactivateNyTimesSkillForRun = () => {};
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const final = await agent.processMessage(
+        tabId,
+        `Run the independent ${runLabel} task.`,
+        () => {},
+        'ask',
+        [],
+        runOptions,
+      );
+
+      assert.equal(final, 'Independent run complete.', `${label} ${runLabel}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${runLabel}: expected one model request`);
+      assert.ok(
+        Array.isArray(requestOptions[0]?.tools) && requestOptions[0].tools.length > 0,
+        `${label} ${runLabel}: independent run lost its normal tool catalog`,
+      );
+      assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled|workflow) task\./, `${label} ${runLabel}: task missing`);
+      assert.doesNotMatch(JSON.stringify(requests[0]), /only covers their selected text/, `${label} ${runLabel}: independent run should not carry the selection scope note`);
+      assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
+      assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
+      assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
+    }
+  }
+});
+
+test('selection grounding discards provisional scopes on pre-anchor exits', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => ({ content: 'Unexpected.', toolCalls: null }),
+      async *chatStream() {
+        yield { type: 'text', content: 'Unexpected.' };
+        yield { type: 'done' };
+      },
+    };
+    const createAgent = (tabId) => {
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      agent.conversationIds.set(tabId, `conv-${label}-${tabId}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: 'Prior ordinary turn.' },
+      ]);
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      return agent;
+    };
+
+    const cancelledTabId = 9680 + (label === 'firefox' ? 1 : 0);
+    const cancelledAgent = createAgent(cancelledTabId);
+    cancelledAgent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({
+      role: 'user',
+      content,
+    });
+    const cancelled = await cancelledAgent.processMessage(
+      cancelledTabId,
+      buildSelectionPrompt('cancelled source', 'summarize'),
+      () => {},
+      'ask',
+      [],
+      { sourceGrounding, isDetachedStartCancelled: () => true },
+    );
+    assert.equal(cancelled, 'Stopped by user before the run started.', `${label}: detached cancellation mismatch`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: cancelled pre-anchor scope leaked`);
+
+    cancelledAgent.selectionGroundingScopes.set(cancelledTabId, {
+      conversationId: `conv-${label}-${cancelledTabId}`,
+      anchorIndex: cancelledAgent.conversations.get(cancelledTabId).length,
+      anchorFingerprint: null,
+      excludedFingerprints: [],
+    });
+    const ordinaryOptions = cancelledAgent._selectionGroundedRunOptions(
+      cancelledTabId,
+      cancelledAgent.conversations.get(cancelledTabId),
+      {},
+    );
+    assert.equal(ordinaryOptions.sourceGrounding, undefined, `${label}: unanchored hydrated scope should not be inherited`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: invalid hydrated scope should be removed`);
+
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const errorTabId = 9690 + (label === 'firefox' ? 10 : 0) + pathIndex;
+      const errorAgent = createAgent(errorTabId);
+      errorAgent._enrichUserMessageWithCurrentPage = async () => {
+        throw new Error('setup failed before anchor');
+      };
+      const run = streaming
+        ? errorAgent.processMessageStream(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            { sourceGrounding },
+          )
+        : errorAgent.processMessage(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            [],
+            { sourceGrounding },
+          );
+      await assert.rejects(run, /setup failed before anchor/, `${label}: setup error should propagate`);
+      assert.equal(errorAgent.selectionGroundingScopes.has(errorTabId), false, `${label}: setup-error provisional scope leaked`);
+    }
+  }
+});
+
+test('selection-only overflow trims only the isolated model view', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      let calls = 0;
+      const provider = {
+        supportsTools: false,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages) => {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          return { content: 'Recovered answer.', toolCalls: null };
+        },
+        async *chatStream(messages) {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          yield { type: 'text', content: 'Recovered answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9650 + (buildIndex * 10) + pathIndex;
+      const priorSecret = `PRIOR HISTORY MUST SURVIVE ${'Z'.repeat(7000)}`;
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: priorSecret },
+        { role: 'assistant', content: 'Prior answer.' },
+      ]);
+      agent.maxSteps = 3;
+      agent._hydrate = async () => {};
+      agent._manageContext = async () => {
+        throw new Error('selection-only overflow must not compact backing history');
+      };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.equal(history.length, 0, `${label}: overflow enrichment should remain source-bound`);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+        messages.push(enriched);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const selectedText = `${'A'.repeat(7000)}SELECTION_TAIL_MUST_STAY_IN_HISTORY`;
+      const prompt = buildSelectionPrompt(selectedText, 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Recovered answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: overflow retry should recover`);
+      assert.equal(requests.length, 2, `${label}: overflow should retry exactly once`);
+      assert.match(requests[0], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: initial request should contain the full selection`);
+      assert.doesNotMatch(requests[1], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: retry should use the trimmed isolated view`);
+      assert.doesNotMatch(requests[0], /PRIOR HISTORY MUST SURVIVE/, `${label}: initial request leaked prior history`);
+      assert.doesNotMatch(requests[1], /PRIOR HISTORY MUST SURVIVE/, `${label}: retry leaked prior history`);
+
+      const persistedConversation = agent.conversations.get(tabId);
+      assert.equal(persistedConversation[1].content, priorSecret, `${label}: overflow mutated unrelated persisted history`);
+      assert.match(
+        persistedConversation.find(message => typeof message.content === 'string' && message.content.includes('SELECTION_TAIL_MUST_STAY_IN_HISTORY'))?.content || '',
+        /SELECTION_TAIL_MUST_STAY_IN_HISTORY/,
+        `${label}: overflow truncated the persisted selected-text turn`,
+      );
+    }
+  }
+});
+
+test('sidepanel preserves selection-only grounding across retries and attachment state', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(
+      panel,
+      /const requestedSourceGrounding = retryOptions\?\.sourceGrounding \?\? chatExtraParams\.sourceGrounding;[\s\S]*?requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: retries should retain allowlisted source grounding`,
+    );
+    assert.match(
+      panel,
+      /const attachmentsForSend = sourceGrounding\s*\? \[\]\s*: retryOptions/,
+      `${label}: selection-only runs must not inherit pending attachment chips`,
+    );
+    assert.match(
+      panel,
+      /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
+      `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
+    );
+    assert.ok(
+      panel.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label}: unrelated in-flight attachment reads must not block selection-only runs`,
+    );
+    assert.match(
+      panel,
+      /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: rendered retry controls should preserve the selection boundary`,
+    );
+
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(
+      agent,
+      /const selectionOnly = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;[\s\S]*?const sourceBoundAttachments = selectionOnly \? \[\] : attachments;/,
+      `${label}: agent trust boundary should reject explicit attachments on selection-only runs`,
+    );
+    assert.match(
+      agent,
+      /_messagesForSourceGroundedRun\([\s\S]*?messages,[\s\S]*?runOptions = \{\},[\s\S]*?currentUserMessage = null,[\s\S]*?priorMessageSet = null,/,
+      `${label}: agent should build a source-bound model view without deleting visible history`,
+    );
+    assert.match(
+      agent,
+      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      `${label}: Act planner should not receive page URL or title for a selection-only run`,
+    );
+    assert.match(
+      agent,
+      /const sourceBoundPlannerMessages = sourceBoundRun[\s\S]*?_messagesForSourceGroundedRun\(messages, runOptions, null, sourceBoundPriorMessages\)[\s\S]*?sourceBoundPlannerMessages\.slice\(/,
+      `${label}: Act planner should receive only the selected-text exchange on grounded follow-ups`,
+    );
   }
 });
 
@@ -18026,6 +18676,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
+    assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
+    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?\{ sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING \}/, `${label}: only allowlisted grounding should reach agent run options`);
   }
 
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -18114,6 +18766,46 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
     setTabId(value) { currentTabId = value; },
   };
 }
+
+test('context-menu prompt transport preserves only allowlisted selection grounding', async () => {
+  for (const [label, createHandler, sourceGrounding] of [
+    ['chrome', createContextMenuPromptHandlerCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', createContextMenuPromptHandlerFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const prompt = {
+      id: `${label}-grounded`,
+      tabId: 6,
+      text: 'Translate this selection',
+      sourceGrounding,
+    };
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true);
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      h.sends[0].extra,
+      {
+        contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+        sourceGrounding,
+      },
+      `${label}: selection-only provenance should survive sidepanel transport`,
+    );
+
+    const invalidPrompt = {
+      id: `${label}-invalid-grounding`,
+      tabId: 6,
+      text: 'Ordinary prompt',
+      sourceGrounding: 'screenshot_only',
+    };
+    const invalid = createContextMenuPromptHarness(createHandler, invalidPrompt, async () => true);
+    invalid.handler.acceptContextMenuPrompt(invalidPrompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      invalid.sends[0].extra,
+      { contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id } },
+      `${label}: unknown grounding values must be dropped`,
+    );
+  }
+});
 
 test('context-menu prompt recovery retries after an unaccepted send', async () => {
   for (const [label, createHandler] of [
@@ -18679,6 +19371,46 @@ function makeSchedulerHarness(SchedulerMod, opts = {}) {
     alarmName: (jobId) => `${SchedulerMod.SCHEDULED_ALARM_PREFIX}${jobId}`,
   };
 }
+
+test('ScheduledJobManager marks alarm executions as independent runs', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    let processArgs = null;
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (...args) => {
+        processArgs = args;
+        args[2]('tool_result', {
+          name: 'done',
+          result: { done: true, summary: 'Scheduled task complete.', outcome: 'success' },
+        });
+        return 'Scheduled task complete.';
+      },
+    });
+    const created = await h.manager.createTaskJob({
+      tabId: 77,
+      conversationId: 'conv-selection',
+      args: {
+        title: 'Independent task',
+        prompt: 'Read the current page.',
+        schedule: { type: 'once', after_seconds: 0 },
+        target: { type: 'current_tab' },
+      },
+      currentUrl: 'https://example.com/',
+      currentTitle: 'Example',
+    });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+
+    assert.ok(processArgs, `${label}: scheduled task did not run`);
+    assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
+    assert.deepEqual(
+      processArgs[5],
+      { scheduledRun: true, independentRun: true },
+      `${label}: scheduled task must bypass interactive grounding inheritance`,
+    );
+  }
+});
 
 test('scheduler validation rejects ambiguous, too-soon, and malformed schedules', () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -42466,6 +43198,47 @@ test('manual compactConversation compacts before automatic thresholds', async ()
   }
 });
 
+test('manual compactConversation rejects active selection-grounded conversations', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt] of [
+    ['chrome', AgentCh, buildSelectionPromptCh],
+    ['firefox', AgentFx, buildSelectionPromptFx],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = label === 'chrome' ? 93 : 94;
+    const anchor = { role: 'user', content: buildSelectionPrompt('compact source', 'quiz') };
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: `PRIOR SECRET ${'x'.repeat(1000)}` },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ];
+    agent.conversationIds.set(tabId, `conv-compact-${label}`);
+    agent.conversations.set(tabId, messages);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-compact-${label}`,
+      anchorIndex: 2,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [
+        agent._selectionGroundingMessageFingerprint(messages[1]),
+      ],
+    });
+    let manageContextCalls = 0;
+    agent._manageContext = async () => {
+      manageContextCalls += 1;
+      throw new Error('selection-scoped manual compaction must not inspect full history');
+    };
+    const before = JSON.stringify(messages);
+
+    const result = await agent.compactConversation(tabId);
+
+    assert.equal(result.compacted, false, `${label}: scoped compaction should be rejected`);
+    assert.equal(result.reason, 'selection_scoped', `${label}: scoped rejection reason missing`);
+    assert.equal(manageContextCalls, 0, `${label}: scoped compaction reached the model`);
+    assert.equal(JSON.stringify(messages), before, `${label}: scoped compaction mutated backing history`);
+
+  }
+});
+
 test('context soft budgets scale with adaptive provider token budgets', async () => {
   const cases = [
     [16000, 10400, 80000, 50],
@@ -49326,7 +50099,7 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
     );
     assert.match(
       source,
-      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, attachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, attachments, \{ canUseScratchpadTool \}\);/,
+      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
       `${label} should gate attachment scratchpad guidance on ask vs action modes`,
     );
   }
@@ -49387,7 +50160,10 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
-    assert.ok(source.includes('if (!retryOptions && !isProcessing && isAttachmentReadPendingForTab(tabId))'), `${label} should block normal sends while files load without blocking retries`);
+    assert.ok(
+      source.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label} should block normal sends while files load without blocking retries or selection-only runs`,
+    );
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
@@ -50651,7 +51427,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const runtimeValue = 'runtime@example.com';
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(77, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://example.com/form';
     agent.executeTool = async (_tabId, name) => {
@@ -50690,6 +51473,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.match(serialized, /<workflow-parameter:email>/);
     assert.match(serialized, /workflow form summary redacted|workflow parameter redacted/);
     assert.equal(agent.isRunning(77), false);
+    assert.equal(agent.selectionGroundingScopes.has(77), false, `${browser}: completed replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: completed replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay fails closed before a semantic target miss`, async () => {
@@ -50741,7 +51526,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(79, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://other.example/';
     agent.executeTool = async () => { throw new Error('deterministic replay must not inspect the wrong start page'); };
@@ -50767,6 +51559,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
       `${browser}: recoverable start mismatches must not emit a terminal failure`,
     );
     assert.equal(agent.isRunning(79), false);
+    assert.equal(agent.selectionGroundingScopes.has(79), false, `${browser}: fallback replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: fallback replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay never falls back after an action with an unknown outcome`, async () => {

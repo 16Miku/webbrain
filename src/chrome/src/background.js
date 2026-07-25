@@ -30,6 +30,7 @@ import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import {
+  SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
   buildSelectionPrompt,
@@ -1192,6 +1193,7 @@ async function handleContextMenuAsk(info, tab) {
     id: `ctx-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     tabId: tab.id,
     text,
+    sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
     createdAt: Date.now(),
   };
 
@@ -1225,6 +1227,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     tabId: tab.id,
     text,
+    sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
     createdAt: Date.now(),
   };
 
@@ -2177,7 +2180,11 @@ async function handleMessage(msg, sender) {
 
         const askStreamingSettings = await chrome.storage.local.get('openaiAskStreamingEnabled').catch(() => ({}));
         const runOptions = {
+          ...(isWorkflowRun ? { independentRun: true } : {}),
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
+          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+            ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+            : {}),
           locale: msg.locale,
           intentFailureMessage: msg.intentFailureMessage,
           interactiveChat: true,
@@ -2283,6 +2290,9 @@ async function handleMessage(msg, sender) {
       try {
         const runOptions = {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
+          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+            ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+            : {}),
           locale: msg.locale,
           intentFailureMessage: msg.intentFailureMessage,
         };
