@@ -286,6 +286,15 @@ function detectCaptchaInPage() {
   // Turnstile) or `?k=` (reCAPTCHA) query parameter. iframe.src and
   // script.src are readable across origins from the parent page, so we
   // can scrape them even when the widget renders cross-origin.
+  const getUrlAction = (urlStr) => {
+    try {
+      const u = new URL(urlStr, 'https://dummy.host');
+      const act = u.searchParams.get('action') || u.searchParams.get('pageAction') || u.searchParams.get('page_action');
+      return act ? act.trim() : null;
+    } catch {}
+    return null;
+  };
+
   const iframeUrls = [];
   const scriptUrls = [];
   for (const el of document.querySelectorAll('iframe[src], script[src]')) {
@@ -313,8 +322,7 @@ function detectCaptchaInPage() {
         const isInvisible = /[?&#]size=invisible/i.test(url);
         const matchingV3Script = scriptUrls.find(s => s.includes(`render=${sitekey}`));
         if (matchingV3Script) {
-          const actionMatch = matchingV3Script.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
-          const pageAction = actionMatch ? actionMatch[2] : null;
+          const pageAction = getUrlAction(matchingV3Script);
           return {
             type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
             websiteKey: sitekey,
@@ -346,8 +354,7 @@ function detectCaptchaInPage() {
       const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
       if (m && m[1] !== 'explicit') {
         const isEnterprise = /enterprise/i.test(url);
-        const actionMatch = url.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
-        const pageAction = actionMatch ? actionMatch[2] : null;
+        const pageAction = getUrlAction(url);
         return {
           type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
           websiteKey: m[1],
