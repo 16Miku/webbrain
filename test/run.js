@@ -50917,6 +50917,42 @@ test('captcha detection: v3 without an action reports why, and solve_captcha ref
   }
 });
 
+test('captcha detection binds the selected widget to its own response field', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const hiddenField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-hidden',
+      name: 'g-recaptcha-response',
+    });
+    const activeField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-active',
+      name: 'g-recaptcha-response',
+    });
+    const hiddenHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_HIDDEN_WIDGET',
+      hidden: true,
+    }, [hiddenField]);
+    const activeHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_ACTIVE_WIDGET',
+      'data-callback': 'onActiveCaptcha',
+    }, [activeField]);
+    const selected = await detectCaptchaOnFakePage(build, [
+      hiddenHost,
+      activeHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(selected.websiteKey, 'KEY_ACTIVE_WIDGET', `${build}: active widget was not selected`);
+    assert.equal(
+      selected.responseFieldId,
+      'g-recaptcha-response-active',
+      `${build}: selected response field id was not preserved`,
+    );
+    assert.equal(selected.responseFieldIndex, 1, `${build}: selected response field index was not preserved`);
+    assert.equal(selected.callbackName, 'onActiveCaptcha', `${build}: selected callback was not preserved`);
+  }
+});
+
 test('captcha detection ranks a visible nested v2 Enterprise challenge above background v3', async () => {
   const topCandidate = {
     type: 'recaptcha_v3_enterprise',
@@ -51775,9 +51811,11 @@ test('captcha token injection revalidates the selected frame and calls one match
       let callbackToken = null;
       const response = {
         tagName: 'TEXTAREA',
+        id: 'g-recaptcha-response-only',
         value: '',
         textContent: '',
         style: {},
+        getAttribute: (name) => name === 'id' ? 'g-recaptcha-response-only' : null,
         dispatchEvent: () => true,
       };
       const host = {
@@ -51789,9 +51827,11 @@ test('captcha token injection revalidates the selected frame and calls one match
       let declaredCallbackEnabled = true;
       let turnstileChallengeMarkerEnabled = false;
       let captchaUrlElements = [];
+      let responseFields = [response];
+      let captchaHosts = [host];
       const document = {
         querySelector: (selector) => {
-          if (selector.includes('g-recaptcha-response')) return response;
+          if (selector.includes('g-recaptcha-response')) return responseFields[0] || null;
           if (turnstileChallengeMarkerEnabled
               && selector === 'script[src*="challenges.cloudflare.com/turnstile"]') {
             return {};
@@ -51799,8 +51839,11 @@ test('captcha token injection revalidates the selected frame and calls one match
           return null;
         },
         querySelectorAll: (selector) => {
-          if (selector.includes('[data-callback]')) return declaredCallbackEnabled ? [host] : [];
-          if (selector.includes('[data-sitekey]')) return [host];
+          if (selector.includes('textarea[name=') || selector.includes('input[name=')) {
+            return responseFields;
+          }
+          if (selector.includes('[data-callback]')) return declaredCallbackEnabled ? captchaHosts : [];
+          if (selector.includes('[data-sitekey]')) return captchaHosts;
           if (selector === 'iframe[src], script[src]') return captchaUrlElements;
           return [];
         },
@@ -51846,6 +51889,68 @@ test('captcha token injection revalidates the selected frame and calls one match
       assert.equal(callbackToken, 'TOKEN_123', `${build}: callback received wrong token`);
       assert.equal(response.value, 'TOKEN_123', `${build}: response field was not set`);
 
+      let hiddenCallbackToken = null;
+      let modalCallbackToken = null;
+      const makeResponse = id => ({
+        tagName: 'TEXTAREA',
+        id,
+        value: '',
+        textContent: '',
+        style: {},
+        getAttribute: (name) => name === 'id' ? id : null,
+        dispatchEvent: () => true,
+      });
+      const hiddenResponse = makeResponse('g-recaptcha-response-hidden');
+      const modalResponse = makeResponse('g-recaptcha-response-modal');
+      const makeHost = (callbackName) => ({
+        getAttribute: (name) => ({
+          'data-sitekey': 'KEY_SHARED_WIDGET',
+          'data-callback': callbackName,
+        })[name] || null,
+      });
+      responseFields = [hiddenResponse, modalResponse];
+      captchaHosts = [makeHost('onHiddenCaptcha'), makeHost('onModalCaptcha')];
+      globalThis.window.onHiddenCaptcha = token => { hiddenCallbackToken = token; };
+      globalThis.window.onModalCaptcha = token => { modalCallbackToken = token; };
+
+      const ambiguousField = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_AMBIGUOUS_FIELD',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+        },
+      });
+      assert.equal(ambiguousField.success, false, `${build}: ambiguous response field was updated`);
+      assert.equal(
+        ambiguousField.ambiguousResponseField,
+        true,
+        `${build}: ambiguous response field diagnostic missing`,
+      );
+      assert.equal(hiddenResponse.value, '', `${build}: ambiguous solve touched the hidden response field`);
+      assert.equal(modalResponse.value, '', `${build}: ambiguous solve touched the modal response field`);
+
+      const targetedField = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_MODAL_WIDGET',
+        callbackHint: 'onModalCaptcha',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+          responseFieldId: 'g-recaptcha-response-modal',
+          responseFieldIndex: 1,
+        },
+      });
+      assert.equal(targetedField.success, true, `${build}: selected response field injection failed`);
+      assert.equal(hiddenResponse.value, '', `${build}: hidden widget received the selected token`);
+      assert.equal(modalResponse.value, 'TOKEN_MODAL_WIDGET', `${build}: modal widget did not receive its token`);
+      assert.equal(hiddenCallbackToken, null, `${build}: hidden widget callback was invoked`);
+      assert.equal(modalCallbackToken, 'TOKEN_MODAL_WIDGET', `${build}: selected callback was not invoked`);
+
+      responseFields = [response];
+      captchaHosts = [host];
       const selectedFrameUrl = globalThis.location.href;
       globalThis.location.href = `${selectedFrameUrl}?step=verify#captcha`;
       response.value = '';
@@ -52108,6 +52213,16 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
       agent,
       /documentTimeOrigin: detected\.documentTimeOrigin/,
       `${build}: selected document identity is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /const explicitTokenOnlyFallback = args\?\.inject === false[\s\S]*?candidate\?\.websiteKey === websiteKey[\s\S]*?if \(!explicitTokenOnlyFallback/,
+      `${build}: unrelated candidates still block an explicit token-only solve`,
+    );
+    assert.match(
+      agent,
+      /callbackHint: detected\.callbackName \|\| null,[\s\S]*?responseFieldId: detected\.responseFieldId,[\s\S]*?responseFieldIndex: detected\.responseFieldIndex/,
+      `${build}: selected widget identity is not carried into token injection`,
     );
   }
 });

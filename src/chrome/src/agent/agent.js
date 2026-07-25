@@ -13841,7 +13841,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (detection?.error) {
             const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
             const needsDetection = !type || !websiteKey || !!frameUrl;
-            if (detection.ambiguous || hasDetectedCandidates || needsDetection) {
+            const explicitTokenOnlyFallback = args?.inject === false
+              && !!type
+              && !!websiteKey
+              && !(detection.candidates || []).some(candidate =>
+                candidate?.websiteKey === websiteKey
+              );
+            if (!explicitTokenOnlyFallback
+                && (detection.ambiguous || hasDetectedCandidates || needsDetection)) {
               const candidates = hasDetectedCandidates ? ` Candidates: ${JSON.stringify(detection.candidates)}` : '';
               return noDispatchFailure(`solve_captcha: ${detection.error}${candidates}`);
             }
@@ -13871,6 +13878,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
             if (!enterprisePayload && detected.enterprisePayload) enterprisePayload = detected.enterprisePayload;
             if (!recaptchaDataSValue && detected.recaptchaDataSValue) recaptchaDataSValue = detected.recaptchaDataSValue;
+          }
+          if (!detected && args?.inject === false && frameUrl) {
+            websiteURL = captchaWebsiteUrl(frameUrl, websiteURL);
           }
         }
 
@@ -13921,6 +13931,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               fieldName: result.fieldName,
               alsoSet: result.alsoSet,
               token: result.token,
+              callbackHint: detected.callbackName || null,
               target: detected ? {
                 frameId: detected.frameId,
                 framePath: detected.framePath,
@@ -13928,6 +13939,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 websiteKey: detected.websiteKey,
                 type: detected.type,
                 explicitWebsiteKey: detected.explicitWebsiteKey === true,
+                responseFieldId: detected.responseFieldId,
+                responseFieldIndex: detected.responseFieldIndex,
                 documentTimeOrigin: detected.documentTimeOrigin,
               } : null,
             });

@@ -234,6 +234,11 @@ function candidateSummary(candidate) {
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
+    callbackName: candidate?.callbackName || null,
+    responseFieldId: candidate?.responseFieldId || null,
+    responseFieldIndex: Number.isInteger(candidate?.responseFieldIndex)
+      ? candidate.responseFieldIndex
+      : null,
     documentTimeOrigin: Number.isFinite(candidate?.documentTimeOrigin)
       ? candidate.documentTimeOrigin
       : null,
@@ -306,6 +311,11 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
       candidate.type,
       candidate.websiteKey || '',
       stableParameterValue(Array.isArray(candidate.framePath) ? candidate.framePath : []),
+      candidate.responseFieldId || (
+        Number.isInteger(candidate.responseFieldIndex)
+          ? `response-field-${candidate.responseFieldIndex}`
+          : ''
+      ),
     ].join('|');
     if (fingerprintIndexes.has(fingerprint)) {
       const index = fingerprintIndexes.get(fingerprint);
@@ -512,8 +522,39 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const scriptUrls = scriptElements.map(element => {
     try { return element.src || ''; } catch (_) { return ''; }
   }).filter(Boolean);
+  const responseFieldIdentity = (widget, name, fallbackIndex, widgetCount) => {
+    const selector = `textarea[name="${name}"], input[name="${name}"]`;
+    const fields = Array.from(pageDocument.querySelectorAll(selector));
+    let field = null;
+    try { field = widget?.querySelector?.(selector) || null; } catch (_) {}
+    let ancestor = widget?.parentElement || null;
+    for (let depth = 0; !field && ancestor && depth < 4; depth += 1) {
+      let contained = [];
+      try { contained = Array.from(ancestor.querySelectorAll(selector)); } catch (_) {}
+      if (contained.length === 1) field = contained[0];
+      ancestor = ancestor.parentElement;
+    }
+    if (!field
+        && fields.length === widgetCount
+        && Number.isInteger(fallbackIndex)
+        && fallbackIndex >= 0
+        && fallbackIndex < fields.length) {
+      field = fields[fallbackIndex];
+    }
+    if (!field) return {};
+    const responseFieldIndex = fields.indexOf(field);
+    let responseFieldId = '';
+    try { responseFieldId = String(field.id || field.getAttribute?.('id') || ''); } catch (_) {}
+    return {
+      ...(responseFieldId ? { responseFieldId } : {}),
+      ...(responseFieldIndex >= 0 ? { responseFieldIndex } : {}),
+    };
+  };
 
-  for (const host of Array.from(pageDocument.querySelectorAll('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'))) {
+  const hcaptchaHosts = Array.from(pageDocument.querySelectorAll(
+    '.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'
+  ));
+  for (const [widgetIndex, host] of hcaptchaHosts.entries()) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-hcaptcha-sitekey');
     if (!websiteKey) continue;
     const isInvisible = host.getAttribute('data-size') === 'invisible';
@@ -524,11 +565,15 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       visible: visibleElement(host) && !isInvisible,
       normalCheckbox: visibleElement(host) && !isInvisible,
       callbackName: host.getAttribute('data-callback') || null,
+      ...responseFieldIdentity(host, 'h-captcha-response', widgetIndex, hcaptchaHosts.length),
       detectedVia: 'host',
     });
   }
 
-  for (const host of Array.from(pageDocument.querySelectorAll('.cf-turnstile[data-sitekey], [data-turnstile-sitekey]'))) {
+  const turnstileHosts = Array.from(pageDocument.querySelectorAll(
+    '.cf-turnstile[data-sitekey], [data-turnstile-sitekey]'
+  ));
+  for (const [widgetIndex, host] of turnstileHosts.entries()) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-turnstile-sitekey');
     if (!websiteKey) continue;
     add({
@@ -537,13 +582,15 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       visible: visibleElement(host),
       normalCheckbox: false,
       callbackName: host.getAttribute('data-callback') || null,
+      ...responseFieldIdentity(host, 'cf-turnstile-response', widgetIndex, turnstileHosts.length),
       detectedVia: 'host',
     });
   }
 
-  for (const host of Array.from(pageDocument.querySelectorAll(
+  const recaptchaHosts = Array.from(pageDocument.querySelectorAll(
     '.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]'
-  ))) {
+  ));
+  for (const [widgetIndex, host] of recaptchaHosts.entries()) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-recaptcha-sitekey');
     if (!websiteKey) continue;
     const isInvisible = host.getAttribute('data-size') === 'invisible';
@@ -578,6 +625,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(enterpriseS
         ? (isEnterprise ? { enterprisePayload: { s: enterpriseS } } : { recaptchaDataSValue: enterpriseS })
         : {}),
+      ...responseFieldIdentity(host, 'g-recaptcha-response', widgetIndex, recaptchaHosts.length),
       detectedVia: 'host',
     });
   }
@@ -589,6 +637,13 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const iframeUrls = iframeElements.map(element => {
     try { return { element, url: element.src || '' }; } catch (_) { return { element, url: '' }; }
   }).filter(item => item.url);
+  const hcaptchaFrames = iframeUrls.filter(({ url }) => /hcaptcha\.com/i.test(url));
+  const turnstileFrames = iframeUrls.filter(({ url }) =>
+    /challenges\.cloudflare\.com\/turnstile/i.test(url)
+  );
+  const recaptchaFrames = iframeUrls.filter(({ url }) =>
+    /recaptcha\/(api2|enterprise)\/anchor/i.test(url)
+  );
 
   for (const { element, url } of iframeUrls) {
     if (/hcaptcha\.com/i.test(url)) {
@@ -599,6 +654,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
           websiteKey,
           visible: visibleElement(element),
           normalCheckbox: visibleElement(element),
+          ...responseFieldIdentity(
+            element,
+            'h-captcha-response',
+            hcaptchaFrames.findIndex(frame => frame.element === element),
+            hcaptchaFrames.length,
+          ),
           detectedVia: 'url',
         });
       }
@@ -612,6 +673,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
           websiteKey,
           visible: visibleElement(element),
           normalCheckbox: false,
+          ...responseFieldIdentity(
+            element,
+            'cf-turnstile-response',
+            turnstileFrames.findIndex(frame => frame.element === element),
+            turnstileFrames.length,
+          ),
           detectedVia: 'url',
         });
       }
@@ -642,6 +709,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(sValue
         ? (isEnterprise ? { enterprisePayload: { s: sValue } } : { recaptchaDataSValue: sValue })
         : {}),
+      ...responseFieldIdentity(
+        element,
+        'g-recaptcha-response',
+        recaptchaFrames.findIndex(frame => frame.element === element),
+        recaptchaFrames.length,
+      ),
       detectedVia: 'url',
     });
   }
@@ -826,8 +899,60 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     };
   }
 
-  const setOn = (name) => {
-    let element = frameDocument.querySelector(`textarea[name="${name}"], input[name="${name}"]`);
+  const resolveResponseField = (name, primary) => {
+    const fields = Array.from(frameDocument.querySelectorAll(
+      `textarea[name="${name}"], input[name="${name}"]`
+    ));
+    if (primary && target.responseFieldId) {
+      const exact = fields.find(element => {
+        try {
+          return String(element.id || element.getAttribute?.('id') || '') === target.responseFieldId;
+        } catch (_) {
+          return false;
+        }
+      });
+      if (exact) return { element: exact };
+    }
+    if (Number.isInteger(target.responseFieldIndex)) {
+      if (fields[target.responseFieldIndex]) {
+        return { element: fields[target.responseFieldIndex] };
+      }
+      return {
+        error: 'The selected CAPTCHA response field is no longer present in the target frame.',
+        staleTarget: true,
+      };
+    }
+    if (fields.length === 1) return { element: fields[0] };
+    if (fields.length > 1) {
+      return {
+        error: 'Multiple CAPTCHA response fields matched without a selected widget identity.',
+        ambiguousResponseField: true,
+      };
+    }
+    return { element: null };
+  };
+  const requestedFields = [
+    { name: fieldName, primary: true },
+    ...(alsoSet ? [{ name: alsoSet, primary: false }] : []),
+  ];
+  const resolvedFields = requestedFields.map(field => ({
+    ...field,
+    ...resolveResponseField(field.name, field.primary),
+  }));
+  const unresolvedField = resolvedFields.find(field => field.error);
+  if (unresolvedField) {
+    return {
+      success: false,
+      fieldUpdated: false,
+      staleTarget: unresolvedField.staleTarget === true,
+      ambiguousResponseField: unresolvedField.ambiguousResponseField === true,
+      error: unresolvedField.error,
+      frameUrl,
+    };
+  }
+
+  const setOn = (name, existingElement) => {
+    let element = existingElement;
     if (!element) {
       element = frameDocument.createElement('textarea');
       element.name = name;
@@ -857,12 +982,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     }
     return element;
   };
-  setOn(fieldName);
-  let fieldsTouched = 1;
-  if (alsoSet) {
-    setOn(alsoSet);
-    fieldsTouched += 1;
+  for (const field of resolvedFields) {
+    setOn(field.name, field.element);
   }
+  const fieldsTouched = resolvedFields.length;
 
   const pageWindow = frameWindow.wrappedJSObject || frameWindow;
   const callbacks = [];
@@ -879,16 +1002,22 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       return null;
     }
   };
-  for (const host of Array.from(frameDocument.querySelectorAll(
-    '.g-recaptcha[data-callback], .h-captcha[data-callback], .cf-turnstile[data-callback], '
-      + '[data-recaptcha-sitekey][data-callback], [data-hcaptcha-sitekey][data-callback], '
-      + '[data-turnstile-sitekey][data-callback]'
-  ))) {
-    const hostKey = host.getAttribute('data-sitekey') || host.getAttribute('data-recaptcha-sitekey')
-      || host.getAttribute('data-hcaptcha-sitekey') || host.getAttribute('data-turnstile-sitekey');
-    if (target.websiteKey && hostKey !== target.websiteKey) continue;
-    const callbackName = host.getAttribute('data-callback');
-    addCallback(resolveNamedCallback(callbackName), `data-callback:${callbackName}`);
+  const callbackHint = payload?.callbackHint || null;
+  if (callbackHint) {
+    addCallback(resolveNamedCallback(callbackHint), `data-callback:${callbackHint}`);
+  }
+  if (!callbacks.length) {
+    for (const host of Array.from(frameDocument.querySelectorAll(
+      '.g-recaptcha[data-callback], .h-captcha[data-callback], .cf-turnstile[data-callback], '
+        + '[data-recaptcha-sitekey][data-callback], [data-hcaptcha-sitekey][data-callback], '
+        + '[data-turnstile-sitekey][data-callback]'
+    ))) {
+      const hostKey = host.getAttribute('data-sitekey') || host.getAttribute('data-recaptcha-sitekey')
+        || host.getAttribute('data-hcaptcha-sitekey') || host.getAttribute('data-turnstile-sitekey');
+      if (target.websiteKey && hostKey !== target.websiteKey) continue;
+      const callbackName = host.getAttribute('data-callback');
+      addCallback(resolveNamedCallback(callbackName), `data-callback:${callbackName}`);
+    }
   }
 
   const collectGoogleCallbacks = () => {
@@ -943,6 +1072,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     fieldUpdated: true,
     fieldsUpdated: [fieldName, ...(alsoSet ? [alsoSet] : [])],
     fieldsTouched,
+    responseFieldId: target.responseFieldId || null,
+    responseFieldIndex: Number.isInteger(target.responseFieldIndex)
+      ? target.responseFieldIndex
+      : null,
     calledCallback,
     callbackSource,
     callbackAmbiguous: callbacks.length > 1,
