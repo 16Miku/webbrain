@@ -17603,6 +17603,104 @@ test('selection shortcut grounding metadata suppresses competing page images', a
   }
 });
 
+test('selection-only model requests exclude prior conversation context', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      const provider = {
+        supportsTools: false,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages) => {
+          requests.push(messages);
+          return { content: 'Grounded answer.', toolCalls: null };
+        },
+        async *chatStream(messages) {
+          requests.push(messages);
+          yield { type: 'text', content: 'Grounded answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9630 + (buildIndex * 10) + pathIndex;
+      const priorImage = 'data:image/png;base64,UFJJT1I=';
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'PRIOR ATTACHMENT SECRET' },
+            { type: 'image_url', image_url: { url: priorImage } },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'UFJJT1I=' } },
+          ],
+        },
+        { role: 'assistant', content: 'Prior page answer.' },
+        { role: 'user', content: '[Agent scratchpad — PRIOR SCRATCHPAD SECRET]' },
+        { role: 'user', content: '[Current page context — PRIOR PAGE TITLE]' },
+      ]);
+      agent.maxSteps = 2;
+      agent._hydrate = async () => {};
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      const enrichmentHistoryLengths = [];
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        enrichmentHistoryLengths.push(history.length);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+        messages.push(enriched);
+        const priorScratchpadIndex = messages.findIndex(message =>
+          typeof message.content === 'string' && message.content.includes('PRIOR SCRATCHPAD SECRET')
+        );
+        const [priorScratchpad] = messages.splice(priorScratchpadIndex, 1);
+        messages.push(priorScratchpad);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._maybeReinjectAdapter = async () => {
+        throw new Error('selection-only run must not inject adapter context');
+      };
+      agent._preactivateNyTimesSkillForRun = () => {
+        throw new Error('selection-only run must not activate a page-specific skill');
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const prompt = buildSelectionPrompt('authoritative selected words', 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
+      assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
+      assert.equal(manageContextCalls, 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: compaction must not inspect prior turns`);
+      assert.equal(requests[0].length, 2, `${label} ${streaming ? 'streaming' : 'non-streaming'}: model should receive only system plus current selection`);
+      const serialized = JSON.stringify(requests[0]);
+      assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
+      assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
+      assert.equal(
+        agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
+        true,
+        `${label}: source-bound request view should not delete visible conversation history`,
+      );
+    }
+  }
+});
+
 test('sidepanel preserves selection-only grounding across retries and attachment state', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
@@ -17637,8 +17735,23 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(
       agent,
-      /const sourceBoundAttachments = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\? \[\]\s*: attachments;/,
+      /const selectionOnly = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;[\s\S]*?const sourceBoundAttachments = selectionOnly \? \[\] : attachments;/,
       `${label}: agent trust boundary should reject explicit attachments on selection-only runs`,
+    );
+    assert.match(
+      agent,
+      /_messagesForSourceGroundedRun\([\s\S]*?messages,[\s\S]*?runOptions = \{\},[\s\S]*?currentUserMessage = null,[\s\S]*?priorMessageSet = null,/,
+      `${label}: agent should build a source-bound model view without deleting visible history`,
+    );
+    assert.match(
+      agent,
+      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      `${label}: Act planner should not receive page URL or title for a selection-only run`,
+    );
+    assert.match(
+      agent,
+      /const priorMessages = runIntent \? \(sourceBoundRun \? \[\] : messages\.slice\(\)\) : null;/,
+      `${label}: Act planner should not receive prior conversation history for a selection-only run`,
     );
   }
 });

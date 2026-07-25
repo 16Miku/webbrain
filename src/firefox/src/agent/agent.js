@@ -5385,7 +5385,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // record the user's turn first so a planner failure (or a throw while
     // building the digest) can never drop the just-typed message from the
     // transcript.
-    const priorMessages = runIntent ? messages.slice() : null;
+    const sourceBoundRun = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    const priorMessages = runIntent ? (sourceBoundRun ? [] : messages.slice()) : null;
     messages.push(enriched);
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
     if (!runIntent) {
@@ -5963,10 +5964,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _generateContextOnlyResponse(tabId, messages, provider, costState, runId, {
     phase = 'response_only',
     step = 1,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
   } = {}) {
+    const modelMessages = this._messagesForSourceGroundedRun(
+      messages,
+      runOptions,
+      currentUserMessage,
+      priorMessageSet,
+    );
     const contextMessages = [
       { role: 'system', content: this._contextOnlySystemPrompt(phase) },
-      ...messages.slice(1),
+      ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
     const chatOpts = { temperature: 0.3, maxTokens: 4096 };
@@ -6029,7 +6039,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { content, status: 'cancelled' };
   }
 
-  async _completeResponseOnlyTurn(tabId, messages, onUpdate, provider, costState, runId) {
+  async _completeResponseOnlyTurn(
+    tabId,
+    messages,
+    onUpdate,
+    provider,
+    costState,
+    runId,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
     onUpdate('thinking', { step: 1, note: 'Preparing response…' });
@@ -6038,7 +6058,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
-        { phase: 'response_only', step: 1 },
+        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet },
       );
     } catch (error) {
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
@@ -6059,7 +6079,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { content: finalResponse, status };
   }
 
-  async _recoverLoopStoppedTurn(tabId, messages, onUpdate, provider, costState, runId, step, stopMessage, runOptions = {}) {
+  async _recoverLoopStoppedTurn(
+    tabId,
+    messages,
+    onUpdate,
+    provider,
+    costState,
+    runId,
+    step,
+    stopMessage,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
     let recovered = '';
@@ -6070,7 +6102,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         recovered = await this._generateContextOnlyResponse(
           tabId, messages, provider, costState, runId,
-          { phase: 'terminal_recovery', step },
+          { phase: 'terminal_recovery', step, runOptions, currentUserMessage, priorMessageSet },
         );
       } catch (error) {
         this._logDebug({ type: 'terminal_recovery_error', step, error: error?.message || String(error) });
@@ -10504,6 +10536,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
+   * Return a model-facing view containing only the system prompt and messages
+   * created during this source-grounded run. Keep the persisted conversation
+   * intact for the UI, but never let an earlier page, attachment, or screenshot
+   * compete with the user's authoritative selected text.
+   */
+  _messagesForSourceGroundedRun(
+    messages,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
+    if (runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING) return messages;
+
+    const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
+    const currentTurnIndex = currentUserMessage ? messages.indexOf(currentUserMessage) : -1;
+    const currentRunMessages = priorMessageSet instanceof Set
+      ? messages.filter((message, index) => index > 0 && !priorMessageSet.has(message))
+      : (currentTurnIndex >= 0
+        ? messages.slice(currentTurnIndex)
+        : (currentUserMessage ? [currentUserMessage] : []));
+    if (currentUserMessage && !currentRunMessages.includes(currentUserMessage)) {
+      currentRunMessages.unshift(currentUserMessage);
+    }
+    return [
+      ...(systemMessage ? [systemMessage] : []),
+      ...currentRunMessages.filter(message => message !== systemMessage),
+    ];
+  }
+
+  /**
    * Build a copy of `messages` for sending to the LLM that retains only the
    * `keep` most-recent screenshots. Older image_url blocks are replaced with
    * a small text placeholder, unsupported document blocks are replaced with a
@@ -13281,13 +13343,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
 
-    // Trim context if it's getting too long
-    await this._manageContext(tabId, messages, onUpdate, costState);
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    // A source-bound shortcut neither needs nor permits an internal
+    // compaction call over unrelated conversation history.
+    if (!selectionOnly) {
+      await this._manageContext(tabId, messages, onUpdate, costState);
+    }
+    const sourceBoundPriorMessages = selectionOnly ? new Set(messages) : null;
 
     const enriched = await this._enrichUserMessageWithCurrentPage(
-      tabId, messages, userMessage, costState, runOptions,
+      tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
-    this._preactivateNyTimesSkillForRun(tabId, mode);
+    const modelMessagesForRun = () =>
+      this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
 
@@ -13326,9 +13395,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Validate attachments BEFORE the planner gate / trace start: an
     // unsupported attachment is a plain "tell the user" response, not an
     // agent run, and the message must never be pushed to history this way.
-    const sourceBoundAttachments = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-      ? []
-      : attachments;
+    const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const canUseScratchpadTool = this._isActionMode(mode);
       const attachResult = await this._applyAttachments(enriched, sourceBoundAttachments, provider, {
@@ -13356,11 +13423,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // fetch / startRun payload). (#6)
     let plannerTabInfo = null;
     if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
-      // Fetch the tab url/title once and reuse it for both the trace start and
-      // the planner gate, instead of fetching the same tab twice.
-      plannerTabInfo = await this._getTabUrlTitle(tabId);
+      // Fetch once for trace metadata. The planner normally reuses it, but a
+      // source-bound selection must not receive page URL/title context.
+      const traceTabInfo = await this._getTabUrlTitle(tabId);
+      plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, plannerTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
       );
     }
 
@@ -13382,6 +13450,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
+        runOptions, enriched, sourceBoundPriorMessages,
       );
       finalResponse = responseOnly.content;
       _traceStatus = responseOnly.status;
@@ -13389,7 +13458,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
-    if (this._isActionMode(mode)) {
+    if (this._isActionMode(mode) && !selectionOnly) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
@@ -13555,7 +13624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
-      if (steps > 0) {
+      if (steps > 0 && !selectionOnly) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
 
@@ -13574,7 +13643,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Auto-compact mid-run when the conversation outgrows the budget — not
       // just between user turns. Uses the previous step's reported token count,
       // so it fires "when it's due" during long autonomous loops.
-      await this._manageContext(tabId, messages, onUpdate, costState);
+      if (!selectionOnly) {
+        await this._manageContext(tabId, messages, onUpdate, costState);
+      }
 
       steps++;
       onUpdate('thinking', { step: steps });
@@ -13583,7 +13654,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         const useTools = provider.supportsTools;
         const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-        const prunedMessages = this._pruneOldImages(messages, provider);
+        const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
         this._logDebug({ type: 'llm_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
         const _llmStart = Date.now();
         if (runId) {
@@ -13635,7 +13706,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try {
             const useTools = provider.supportsTools;
             const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-            const prunedMessages = this._pruneOldImages(messages, provider);
+            const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
             result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
@@ -13666,7 +13737,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try {
             const useTools2 = provider.supportsTools;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-            result = await chatMainTurn(this._pruneOldImages(messages, provider), chatOpts2, { tabId, generationName: 'main' });
+            result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
@@ -13750,7 +13821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (batchResult.action === 'recover') {
           const recovery = await this._recoverLoopStoppedTurn(
             tabId, messages, onUpdate, provider, costState, runId, steps,
-            batchResult.value, runOptions,
+            batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
           );
           finalResponse = recovery.content;
           _traceStatus = recovery.status;
@@ -13963,13 +14034,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
 
-    // Trim context if it's getting too long
-    await this._manageContext(tabId, messages, onUpdate, costState);
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    // Do not expose unrelated history to an internal compaction request for a
+    // source-bound shortcut.
+    if (!selectionOnly) {
+      await this._manageContext(tabId, messages, onUpdate, costState);
+    }
+    const sourceBoundPriorMessages = selectionOnly ? new Set(messages) : null;
 
     const enriched = await this._enrichUserMessageWithCurrentPage(
-      tabId, messages, userMessage, costState, runOptions,
+      tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
-    this._preactivateNyTimesSkillForRun(tabId, mode);
+    const modelMessagesForRun = () =>
+      this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
 
@@ -14002,11 +14080,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
     let plannerTabInfo = null;
     if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
-      // Fetch the tab url/title once and reuse it for both the trace start and
-      // the planner gate, instead of fetching the same tab twice.
-      plannerTabInfo = await this._getTabUrlTitle(tabId);
+      // Fetch once for trace metadata. The planner normally reuses it, but a
+      // source-bound selection must not receive page URL/title context.
+      const traceTabInfo = await this._getTabUrlTitle(tabId);
+      plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, plannerTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
       );
     }
 
@@ -14027,12 +14106,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
+        runOptions, enriched, sourceBoundPriorMessages,
       );
       return finish(responseOnly.content, responseOnly.status);
     }
     this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
-    if (this._isActionMode(mode)) {
+    if (this._isActionMode(mode) && !selectionOnly) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
@@ -14075,7 +14155,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish('[Stopped by user]', 'cancelled');
       }
 
-      if (steps > 0) {
+      if (steps > 0 && !selectionOnly) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
 
@@ -14094,7 +14174,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Auto-compact mid-run when the conversation outgrows the budget. The
       // streaming path doesn't get a per-call token count, so this leans on
       // the chars/4 estimate inside _manageContext.
-      await this._manageContext(tabId, messages, onUpdate, costState);
+      if (!selectionOnly) {
+        await this._manageContext(tabId, messages, onUpdate, costState);
+      }
 
       steps++;
       onUpdate('thinking', { step: steps });
@@ -14111,7 +14193,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           temperature: plannerTemperature,
           maxTokens: 4096,
         }, { tabId, generationName: 'main' });
-        const prunedMessages = this._pruneOldImages(messages, provider);
+        const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
         this._logDebug({ type: 'llm_stream_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: streamOpts });
         const beforeCost = await this._checkCostAllowance(provider, costState);
         if (beforeCost) {
@@ -14203,7 +14285,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (batchResult.action === 'recover') {
             const recovery = await this._recoverLoopStoppedTurn(
               tabId, messages, onUpdate, provider, costState, runId, steps,
-              batchResult.value, runOptions,
+              batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
             );
             return finish(recovery.content, recovery.status);
           }
