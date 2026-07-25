@@ -183,6 +183,11 @@ unverified state-changing action whose dispatch cannot be disproved is treated
 as outcome-unknown and is never automatically retried. Replay telemetry and UI
 events redact runtime values and fresh `ref_id` values.
 
+An initial origin/path-family mismatch is one such safe pre-action mismatch.
+Replay passes only the sanitized saved start scope to the Agent, which may
+navigate through the ordinary Act tool path; deterministic replay does not
+navigate directly or gain new authority.
+
 ---
 
 ## Firefox Differences

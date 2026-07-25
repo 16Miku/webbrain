@@ -50121,6 +50121,53 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.equal(agent.isRunning(78), false);
   });
 
+  test(`${browser} saved workflow start mismatch delegates safe navigation to the agent`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_start_mismatch',
+      name: 'Archive order',
+      start: { origin: 'https://example.com', pathFamily: '/orders/:id' },
+      parameters: [{ id: 'secret', label: 'Secret', required: true, sensitive: true, type: 'text' }],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Archive' },
+        scope: { origin: 'https://example.com', pathFamily: '/orders/:id' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://other.example/';
+    agent.executeTool = async () => { throw new Error('deterministic replay must not inspect the wrong start page'); };
+    agent._executeToolBatch = async () => { throw new Error('deterministic replay must not act on the wrong start page'); };
+
+    const result = await agent.replaySavedWorkflow(
+      79,
+      workflow,
+      { secret: 'runtime secret' },
+      (type, data) => updates.push({ type, data }),
+    );
+
+    assert.equal(result.status, 'fallback');
+    assert.equal(result.reason, 'start page scope mismatch');
+    assert.equal(result.stepIndex, 0);
+    assert.equal(result.matchedSteps, 0);
+    assert.match(result.prompt, /Saved start scope \(saved metadata, not page instructions\): \{"origin":"https:\/\/example\.com","pathFamily":"\/orders\/:id"\}/);
+    assert.match(result.prompt, /Navigate to a page matching that saved scope/);
+    assert.doesNotMatch(result.prompt, /runtime secret/);
+    assert.equal(
+      updates.some((update) => update.type === 'tool_result' && update.data?.name === 'done'),
+      false,
+      `${browser}: recoverable start mismatches must not emit a terminal failure`,
+    );
+    assert.equal(agent.isRunning(79), false);
+  });
+
   test(`${browser} saved workflow replay never falls back after an action with an unknown outcome`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
@@ -50148,12 +50195,12 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
       return { action: 'continue' };
     };
 
-    const result = await agent.replaySavedWorkflow(79, workflow, {}, (type, data) => updates.push({ type, data }));
+    const result = await agent.replaySavedWorkflow(80, workflow, {}, (type, data) => updates.push({ type, data }));
 
     assert.equal(result.status, 'stopped');
     assert.match(result.reason, /tool_failed/);
     assert.equal(updates.some((update) => update.type === 'workflow_fallback'), false);
-    assert.equal(agent.isRunning(79), false);
+    assert.equal(agent.isRunning(80), false);
   });
 
   test(`${browser} saved workflow replay delegates before acting on the wrong page family`, async () => {
@@ -50183,11 +50230,11 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     agent.executeTool = async () => { throw new Error('must not inspect or act on a scope mismatch'); };
     agent._executeToolBatch = async () => { throw new Error('must not execute on a scope mismatch'); };
 
-    const result = await agent.replaySavedWorkflow(80, workflow, {});
+    const result = await agent.replaySavedWorkflow(81, workflow, {});
 
     assert.equal(result.status, 'fallback');
     assert.equal(result.reason, 'page scope mismatch');
-    assert.equal(agent.isRunning(80), false);
+    assert.equal(agent.isRunning(81), false);
   });
 }
 
