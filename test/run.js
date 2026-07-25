@@ -50826,6 +50826,35 @@ test('captcha detection: reCAPTCHA version, Enterprise edition and action stay i
       expect: { type: 'hcaptcha', websiteKey: 'HKEY_123456' },
     },
     {
+      label: 'keyless Turnstile challenge remains visible beside background reCAPTCHA v3',
+      nodes: () => [
+        captchaEl('script', {
+          src: 'https://www.google.com/recaptcha/api.js?render=KEY_BACKGROUND&action=login',
+        }),
+        captchaEl('script', {
+          src: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+        }),
+      ],
+      expect: {
+        type: 'turnstile_challenge',
+        websiteKey: null,
+        visible: true,
+      },
+    },
+    {
+      label: 'keyed Turnstile widget does not gain a competing keyless marker',
+      nodes: () => [
+        captchaEl('div', { class: 'cf-turnstile', 'data-sitekey': 'TURNSTILE_KEYED' }),
+        captchaEl('script', {
+          src: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+        }),
+      ],
+      expect: {
+        type: 'turnstile',
+        websiteKey: 'TURNSTILE_KEYED',
+      },
+    },
+    {
       label: 'URL fallback: hCaptcha site key in iframe fragment',
       nodes: () => [
         captchaEl('iframe', {
@@ -51195,6 +51224,62 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       runtime.selectCaptchaCandidate(visibleAdjusted).selected.websiteKey,
       'KEY_HIDDEN_NESTED',
       `${build}: visible nested challenge was not restored`,
+    );
+
+    const redirectedCandidate = {
+      ...nestedCandidate,
+      frameId: 21,
+      frameUrl: 'https://captcha.vendor.test/final-challenge',
+      websiteKey: 'KEY_REDIRECTED',
+    };
+    const redirectedAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, redirectedCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: visibleCandidate.frameUrl,
+          frameName: '',
+          childFrames: [
+            {
+              url: 'https://captcha.vendor.test/start',
+              loadedUrl: '',
+              name: '',
+              visible: true,
+            },
+            {
+              url: 'https://example.test/unrelated-frame',
+              loadedUrl: '',
+              name: '',
+              visible: false,
+            },
+          ],
+        },
+        {
+          frameId: 21,
+          frameUrl: redirectedCandidate.frameUrl,
+          frameName: '',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+        { frameId: 21, parentFrameId: 0, url: redirectedCandidate.frameUrl },
+      ],
+    );
+    assert.equal(
+      redirectedAdjusted[1].frameVisible,
+      true,
+      `${build}: unmatched redirected child was treated as hidden`,
+    );
+    assert.equal(
+      redirectedAdjusted[1].visible,
+      true,
+      `${build}: redirected visible CAPTCHA was demoted`,
+    );
+    assert.equal(
+      runtime.selectCaptchaCandidate(redirectedAdjusted).selected.websiteKey,
+      'KEY_REDIRECTED',
+      `${build}: redirected visible CAPTCHA lost to another candidate`,
     );
   }
 });

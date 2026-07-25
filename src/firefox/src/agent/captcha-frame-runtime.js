@@ -112,7 +112,12 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     const parentVisible = frameIsVisible(parentFrameId, visiting);
     visiting.delete(frameId);
     const embeddingFrame = parentVisible ? findEmbeddingFrame(frameId, parentFrameId) : null;
-    const visible = parentVisible && embeddingFrame?.visible === true;
+    // A cross-origin child can redirect while its embedding iframe keeps the
+    // original src. In that case parent code cannot read loadedUrl, so a
+    // missing match means visibility is unknown rather than hidden. Only
+    // demote when a matched embedding frame is conclusively hidden.
+    const visible = parentVisible
+      && (embeddingFrame ? embeddingFrame.visible === true : true);
     visibilityByFrameId.set(frameId, visible);
     return visible;
   };
@@ -566,7 +571,8 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     });
   }
 
-  if (!candidates.length && (
+  const hasDetectedTurnstile = candidates.some(candidate => candidate.type === 'turnstile');
+  if (!hasDetectedTurnstile && (
     pageDocument.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')
     || pageDocument.querySelector('iframe[src*="challenges.cloudflare.com"]')
   )) {
