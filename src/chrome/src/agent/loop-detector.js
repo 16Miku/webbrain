@@ -3,24 +3,53 @@ import { URL_FAMILY_TOOLS, bucketArgsKey } from './loop-bucket.js';
 /**
  * Browser-free loop detection used by Agent and the unit tests.
  *
- * Subclasses may override _clearPageLoopState() to clear related page-scoped
- * state alongside the detector's own maps.
+ * Catches the agent stuck repeating an ineffective action or oscillating
+ * between two calls. Cheap, runs after every tool execution. On first
+ * detection we soft-nudge by injecting a [LOOP DETECTED] note into the
+ * tool result the model sees. On second detection within the same loop,
+ * we hard-stop the run with a clear final message.
+ *
+ * This module is deliberately browser-free so both extension builds and the
+ * unit suite exercise the same production class. Subclasses supply the
+ * browser-specific pieces: _isBrowserMutationTool() classifies tools, and
+ * _clearPageLoopState() may be extended to clear related page-scoped state
+ * alongside the detector's own maps.
  */
 export class LoopDetector {
-  constructor({ isBrowserMutationTool = () => false } = {}) {
-    this._loopMutationTool = isBrowserMutationTool;
-    this.recentCalls = new Map();
-    this.loopNudges = new Map();
-    this.healthyCallsSinceLoop = new Map();
-    this.failedActionLoops = new Map();
-    this.recentNavUrls = new Map();
-    this.axReadStates = new Map();
-    this.noProgressScrolls = new Map();
-    this.recentCoordClicks = new Map();
+  constructor() {
+    // Per-tab ring buffer of recent tool calls + nudge count.
+    this.recentCalls = new Map(); // tabId -> [{ key, name, ts }]
+    this.loopNudges = new Map();  // tabId -> consecutive-nudge counter
+    this.healthyCallsSinceLoop = new Map(); // tabId -> count of clean calls since last nudge
+    this.failedActionLoops = new Map(); // tabId -> Map(stable failure scope -> count)
+    // Last few normalized URLs each tab arrived at during the active run.
+    // Deliberately NOT cleared by _clearLoopState: it gates those intra-run
+    // resets, so it must survive them until the outer run boundary.
+    this.recentNavUrls = new Map(); // tabId -> [normalized URL, ...]
+    // A model can walk ref_1, ref_2, … forever while every call looks unique
+    // to the exact-argument loop detector. Track that semantic read pattern.
+    this.axReadStates = new Map(); // tabId -> { total, suspicious, nextPage, seenPages, warned }
+    // Scroll calls can keep returning success even when no pane moved. Track
+    // repeated dead-end attempts separately so changing the amount or
+    // interleaving reads cannot evade the generic loop detector.
+    this.noProgressScrolls = new Map(); // tabId -> { key, count }
+    // Separate buffer for coordinate-based click attempts. The general loop
+    // detector keys on JSON.stringify(args), so when the model interleaves
+    // execute_js with different code strings between clicks, the same
+    // (x,y) click never accumulates to the threshold inside its window.
+    // This buffer tracks ONLY coord clicks and survives any amount of
+    // unrelated noise between them, catching the "click missing its target,
+    // model retries forever" failure mode in 2-3 attempts instead of never.
+    this.recentCoordClicks = new Map(); // tabId -> [{ key, ts }]
   }
 
-  _isBrowserMutationTool(toolName) {
-    return this._loopMutationTool(toolName);
+  /**
+   * Whether `toolName` mutates browser/page state, which gates the stricter
+   * failed-action loop counters. Browser-neutral by default; each Agent build
+   * overrides it with that build's real tool surface.
+   */
+  _isBrowserMutationTool(_toolName) {
+    return false;
   }
 
   _isToolResultErroredForLoop(name, _args, result) {
@@ -84,6 +113,9 @@ export class LoopDetector {
 
   _loopCallKey(name, args, result) {
     if (result?.nonRetryableScope) {
+      // Definitive platform/permission failures keep one identity across
+      // tools and URL variants, so changing fetch strategies cannot evade
+      // the stop condition.
       return `nonretryable|${String(result.nonRetryableScope).slice(0, 240)}|err`;
     }
     const checkboxState = result?.checkboxState;
@@ -103,6 +135,9 @@ export class LoopDetector {
         return `checkbox|${identity}|desired:${checkboxState.desiredChecked}|actual:${checkboxState.actualChecked}`;
       }
     }
+    // URL-family tools (fetch_url, research_url, …) bucket by resource
+    // identity so the agent can't escape loop detection by fetching the
+    // same logical file via 8 different API endpoints. See loop-bucket.js.
     const errored = this._isToolResultErroredForLoop(name, args, result);
     const argsHash = bucketArgsKey(name, args);
     if (name === 'find_text' && !errored) {
@@ -123,6 +158,7 @@ export class LoopDetector {
 
   _detectLoop(buf, activeKey = null) {
     if (!buf || buf.length < 3) return null;
+    // 1. Same key 3+ times in the window.
     const counts = new Map();
     for (const e of buf) counts.set(e.key, (counts.get(e.key) || 0) + 1);
     for (const [key, n] of counts) {
@@ -130,6 +166,7 @@ export class LoopDetector {
         return { type: 'repeat', key, name: key.split('|')[0], count: n };
       }
     }
+    // 2. ABAB oscillation in the last 4.
     if (buf.length >= 4) {
       const last4 = buf.slice(-4);
       if (
@@ -143,6 +180,12 @@ export class LoopDetector {
     return null;
   }
 
+  /**
+   * Clear the state that is only meaningful for the page currently loaded in
+   * `tabId` — ref ids, coordinates, scroll surfaces, and per-target failure
+   * counters all stop describing reality once the page is replaced. Subclasses
+   * extend this (via super) to drop their own page-scoped state alongside it.
+   */
   _clearPageLoopState(tabId) {
     this.failedActionLoops.delete(tabId);
     this.axReadStates.delete(tabId);
@@ -150,6 +193,11 @@ export class LoopDetector {
     this.recentCoordClicks.delete(tabId);
   }
 
+  /**
+   * Clear everything the detector accumulated for `tabId` except the nav
+   * arrival history, which must outlive intra-run resets so navigation
+   * ping-pong is still catchable. See _clearRunLoopState for the run boundary.
+   */
   _clearLoopState(tabId) {
     this.recentCalls.delete(tabId);
     this.loopNudges.delete(tabId);
@@ -157,11 +205,20 @@ export class LoopDetector {
     this._clearPageLoopState(tabId);
   }
 
+  /**
+   * Run-boundary reset. Only here is the nav arrival history discarded, since
+   * a new run may legitimately revisit URLs the previous run already saw.
+   */
   _clearRunLoopState(tabId) {
     this.recentNavUrls.delete(tabId);
     this._clearLoopState(tabId);
   }
 
+  /**
+   * Normalize URLs for navigation-change checks. Keep query and hash so
+   * history entries that differ only by search params or anchors still count as
+   * successful back/forward movement.
+   */
   _normalizeUrl(url) {
     if (!url) return '';
     try {
@@ -170,6 +227,12 @@ export class LoopDetector {
     } catch (e) { return url; }
   }
 
+  /**
+   * Record that `tabId` arrived at `url` and report whether that URL was
+   * already seen in the last few arrivals. A first visit is page-state
+   * progress and justifies resetting loop counters; a quick revisit is the
+   * signature of a navigation loop and must leave them intact.
+   */
   _noteNavArrival(tabId, url) {
     const normalized = this._normalizeUrl(url);
     if (!normalized) return false;
@@ -221,6 +284,9 @@ export class LoopDetector {
     state.seenPages.add(page);
     this.axReadStates.set(tabId, state);
 
+    // A root read followed by the exact returned nextPage can legitimately span
+    // large applications. Keep the consecutive-read cap for every other AX
+    // pattern, but do not stop a valid sequential pagination step.
     if (state.suspicious >= 6 || (state.total >= 12 && (state.suspicious > 0 || !sequentialPage))) {
       this.axReadStates.delete(tabId);
       return {
@@ -249,6 +315,10 @@ export class LoopDetector {
       return `${direction}|xy:${Math.round(x)},${Math.round(y)}`;
     }
 
+    // For implicit scrolling, distinguish panes using the element that
+    // supplied the runtime's last-interaction origin. This avoids combining
+    // no-movement results from two different panes while deliberately
+    // ignoring `amount`, which is not a meaningful recovery at a hard edge.
     const origin = result?.originElement;
     if (origin && typeof origin === 'object') {
       const rect = origin.rect || {};
@@ -259,7 +329,13 @@ export class LoopDetector {
   }
 
   _checkNoProgressScroll(tabId, name, args, result) {
+    // Preserve a dead-scroll streak across reads or other unrelated calls;
+    // only a successful scroll or a different scroll target/direction proves
+    // that this particular recovery path changed.
     if (name !== 'scroll') {
+      // Accessibility refs and coordinate targets are document-scoped. A
+      // successful navigation can reuse the same ref_id/coordinates for a
+      // completely different page, so it must break the old scroll streak.
       if (result?.pageUrlChanged === true) this.noProgressScrolls.delete(tabId);
       return { kind: 'none' };
     }
@@ -289,6 +365,17 @@ export class LoopDetector {
     return { kind: 'none' };
   }
 
+  /**
+   * Issue #189 — mutation API observer shortcutter. When _checkLoop flags a
+   * repeated click (e.g. "Next Page" clicked 3x), check whether each click
+   * fired the same background XHR/fetch (captured by the webRequest
+   * listener in background.js). If so, surface the URL/method so the model
+   * can call fetch_url directly instead of clicking again.
+   *
+   * Strict matching only: same tab, exact url+method repeated, and request
+   * must land within WINDOW_MS after the click that triggered it. No fuzzy
+   * param-pattern matching.
+   */
   _detectApiShortcut(tabId, loop, buf) {
     if (loop.type !== 'repeat') return null;
     if (!['click', 'click_ax'].includes(loop.name)) return null;
@@ -331,6 +418,15 @@ export class LoopDetector {
     };
   }
 
+  /**
+   * Coordinate-click loop detector. Buckets to nearest 5px so a click that
+   * drifts by a pixel or two between attempts still hashes the same. Window
+   * of 8 — generous, since the goal is to survive interleaved noise like
+   * execute_js / type_text / read_page calls between coord retries.
+   *
+   * Returns 'nudge' on the 3rd repeat and 'stop' on the 5th. Gives the
+   * agent more room to retry on pages with loading states or animations.
+   */
   _checkCoordClickLoop(tabId, x, y) {
     const bx = Math.round(x / 5) * 5;
     const by = Math.round(y / 5) * 5;
@@ -348,7 +444,18 @@ export class LoopDetector {
     return { kind: 'none' };
   }
 
+  /**
+   * Run loop detection on a freshly recorded call. Returns one of:
+   *   { kind: 'none' }
+   *   { kind: 'nudge', warning: string }   // soft warning to inject into tool result
+   *   { kind: 'stop',  message: string }   // hard stop, abort the run
+   */
   _checkLoop(tabId, toolName, toolArgs, toolResult) {
+    // A navigation result is authoritative page-state evidence. Clear before
+    // recording this call so same-looking controls on the new page start at
+    // attempt one instead of inheriting an old third-strike counter. Arriving
+    // back on a recently seen URL is the exception: a click/go_back ping-pong
+    // would otherwise reset the detector on every hop and never be caught.
     if (toolResult?.pageUrlChanged === true && !this._noteNavArrival(tabId, toolResult.currentUrl)) {
       this._clearLoopState(tabId);
     }
@@ -357,6 +464,10 @@ export class LoopDetector {
       && toolResult?.success === true
       && !this._findTextMatchLoopIdentity(toolResult)
     ) {
+      // A cross-origin frame match can be selected by window.find while its
+      // range is unavailable to the top document. Successful same-query calls
+      // intentionally advance to the next match, so an unlocated match is not
+      // safe evidence of a repeat loop.
       return this._noteHealthyLoopCall(tabId);
     }
     const { buf, key } = this._recordCall(tabId, toolName, toolArgs, toolResult);
@@ -424,6 +535,7 @@ export class LoopDetector {
     }
     const loop = this._detectLoop(buf, key);
     if (loop?.type === 'oscillation' && loop.a === 'find_text' && loop.b === 'find_text') {
+      // Alternating match positions is normal when a finite page search wraps.
       return this._noteHealthyLoopCall(tabId);
     }
     if (!loop) {
@@ -447,6 +559,7 @@ export class LoopDetector {
       };
     }
 
+    // Any new loop detection resets the healthy-streak counter.
     this.healthyCallsSinceLoop.delete(tabId);
     const nudges = (this.loopNudges.get(tabId) || 0) + 1;
     this.loopNudges.set(tabId, nudges);

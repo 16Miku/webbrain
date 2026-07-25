@@ -434,18 +434,21 @@ const { LoopDetector: LoopDetectorCh } = await import(
 const { LoopDetector: LoopDetectorFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/loop-detector.js').replace(/\\/g, '/')
 );
-const LOOP_MUTATION_TOOLS_TEST = new Set([
-  'navigate', 'new_tab', 'go_back', 'go_forward', 'click', 'click_ax',
-  'set_checked', 'type_text', 'type_ax', 'set_field', 'press_keys', 'scroll',
-  'hover', 'drag_drop', 'execute_js', 'iframe_click', 'iframe_type',
-  'upload_file', 'solve_captcha',
-]);
+// The mutating-tool surface differs per build, so it lives outside the
+// byte-identical loop-detector module. Import the real sets rather than
+// restating them here — a hand-copied list is exactly the drift this suite
+// exists to prevent.
+const { BROWSER_MUTATION_TOOLS: MUTATION_TOOLS_CH, STATE_CHANGE_TOOLS: STATE_CHANGE_TOOLS_CH } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/mutation-tools.js').replace(/\\/g, '/')
+);
+const { BROWSER_MUTATION_TOOLS: MUTATION_TOOLS_FX, STATE_CHANGE_TOOLS: STATE_CHANGE_TOOLS_FX } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/mutation-tools.js').replace(/\\/g, '/')
+);
+// The standalone detector is exercised against Chrome's tool surface, which is
+// the superset of the two builds.
 class ConfiguredLoopDetector extends LoopDetectorCh {
-  constructor(options = {}) {
-    super({
-      isBrowserMutationTool: name => LOOP_MUTATION_TOOLS_TEST.has(name),
-      ...options,
-    });
+  _isBrowserMutationTool(toolName) {
+    return MUTATION_TOOLS_CH.has(toolName);
   }
 }
 const {
@@ -4102,12 +4105,20 @@ test('no-progress scroll is pane-, direction-, tab-, and run-scoped', () => {
 });
 
 test('no-progress scroll enforcement is wired into both agent loops', () => {
-  for (const browserName of ['chrome', 'firefox']) {
+  for (const [browserName, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
     assert.match(source, /const scrollCheck = this\._checkNoProgressScroll\(tabId, fnName, fnArgs, toolResult\)/, `${browserName}: evaluate each result`);
     assert.match(source, /scrollCheck\.kind === 'stop'/, `${browserName}: stop result must win`);
     assert.match(source, /scrollCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
-    assert.match(source, /this\.noProgressScrolls\.delete\(tabId\)/, `${browserName}: run cleanup must clear state`);
+    // Assert the cleanup behaviorally rather than by grepping agent.js: the
+    // detector state lives in loop-detector.js, so a source match would only
+    // prove where the line is written, not that run cleanup reaches it.
+    const agent = new AgentClass({});
+    const tab = `${browserName}-dead-scroll`;
+    assert.equal(agent._checkNoProgressScroll(tab, 'scroll', { direction: 'down' }, { moved: false }).kind, 'none');
+    assert.equal(agent.noProgressScrolls.has(tab), true, `${browserName}: streak must be tracked`);
+    agent._clearRunLoopState(tab);
+    assert.equal(agent.noProgressScrolls.has(tab), false, `${browserName}: run cleanup must clear state`);
   }
 });
 
@@ -4641,6 +4652,58 @@ test('LoopDetector is production code shared by both browser agents', () => {
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/loop-detector.js'), 'utf8'),
     'chrome and firefox LoopDetector copies must remain byte-identical',
   );
+  // The base class must stay browser-neutral: without a build's tool list it
+  // classifies nothing as a mutation, so an Agent that forgets to override
+  // this fails loudly here instead of silently skipping failed-action loops.
+  assert.equal(LoopDetectorCh.prototype._isBrowserMutationTool.call({}, 'click'), false);
+});
+
+test('loop detection classifies mutating tools from each build tool list, not a test copy', () => {
+  const builds = [
+    ['chrome', AgentCh, MUTATION_TOOLS_CH, STATE_CHANGE_TOOLS_CH],
+    ['firefox', AgentFx, MUTATION_TOOLS_FX, STATE_CHANGE_TOOLS_FX],
+  ];
+  for (const [label, AgentClass, mutationTools, stateChangeTools] of builds) {
+    const agent = new AgentClass({});
+    assert.equal(
+      AgentClass.STATE_CHANGE_TOOLS,
+      stateChangeTools,
+      `${label}: Agent.STATE_CHANGE_TOOLS must be the shared mutation-tools set`,
+    );
+    for (const name of mutationTools) {
+      assert.equal(agent._isBrowserMutationTool(name), true, `${label}: ${name} must count as a mutation`);
+    }
+    for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
+      assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
+    }
+    // The frame/upload tools act on the page but are not auto-screenshot
+    // state changes, so the two sets must not be collapsed into one.
+    for (const name of ['iframe_click', 'iframe_type', 'upload_file', 'solve_captcha']) {
+      assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
+      assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
+    }
+  }
+  // The standalone detector used by this suite must track Chrome exactly.
+  const standalone = new ConfiguredLoopDetector();
+  for (const name of MUTATION_TOOLS_CH) {
+    assert.equal(standalone._isBrowserMutationTool(name), true, `standalone detector missing ${name}`);
+  }
+  // Chrome-only mutating tools must reach the failed-action counters.
+  for (const name of ['execute_webmcp_tool', 'patch_element', 'highlight_element']) {
+    assert.equal(MUTATION_TOOLS_CH.has(name), true, `chrome must treat ${name} as a mutation`);
+    assert.equal(MUTATION_TOOLS_FX.has(name), false, `firefox does not ship ${name}`);
+  }
+});
+
+test('chrome-only mutating tools reach the failed-action loop counters', () => {
+  const failure = { success: false, error: 'no matching element' };
+  for (const toolName of ['execute_webmcp_tool', 'patch_element', 'highlight_element']) {
+    const agent = new AgentCh({});
+    const tab = `chrome-only-${toolName}`;
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'none');
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'nudge');
+    assert.equal(agent._checkLoop(tab, toolName, { ref_id: 'ref_4' }, failure).kind, 'stop');
+  }
 });
 
 test('_detectBulkApiMutationShortcut: detects repeated same-action clicks with different refs', () => {

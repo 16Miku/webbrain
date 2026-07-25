@@ -1,7 +1,7 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { handleDoneJson } from './cloud-output.js';
-import { resourceBucket, bucketArgsKey } from './loop-bucket.js';
 import { LoopDetector } from './loop-detector.js';
+import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -1441,12 +1441,14 @@ export class Agent extends LoopDetector {
     return { method, requestShape, failed };
   }
 
+  /**
+   * Extends the detector's own page-scoped cleanup with the Agent-owned state
+   * that is equally invalidated by a page replacement: the delivery-checkpoint
+   * streak and the bulk API replay bookkeeping keyed on this tab.
+   */
   _clearPageLoopState(tabId) {
-    this.failedActionLoops.delete(tabId);
-    this.axReadStates.delete(tabId);
-    this.noProgressScrolls.delete(tabId);
+    super._clearPageLoopState(tabId);
     this.deliveryObservationStreaks.delete(tabId);
-    this.recentCoordClicks.delete(tabId);
     this.bulkApiMutationClicks.delete(tabId);
     this.bulkApiMutationHints.delete(tabId);
     const replayFailurePrefix = `${tabId}|`;
@@ -1455,18 +1457,6 @@ export class Agent extends LoopDetector {
         this.failedBulkApiReplayShapes.delete(key);
       }
     }
-  }
-
-  _clearLoopState(tabId) {
-    this.recentCalls.delete(tabId);
-    this.loopNudges.delete(tabId);
-    this.healthyCallsSinceLoop.delete(tabId);
-    this._clearPageLoopState(tabId);
-  }
-
-  _clearRunLoopState(tabId) {
-    this.recentNavUrls.delete(tabId);
-    this._clearLoopState(tabId);
   }
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
@@ -2028,10 +2018,8 @@ export class Agent extends LoopDetector {
     ].filter(Boolean).join('\n\n');
   }
 
-
-
   static NAV_TOOLS = new Set(['navigate', 'new_tab', 'go_back', 'go_forward']);
-  static STATE_CHANGE_TOOLS = new Set(['navigate', 'new_tab', 'go_back', 'go_forward', 'click', 'click_ax', 'set_checked', 'type_text', 'type_ax', 'set_field', 'press_keys', 'scroll', 'hover', 'drag_drop', 'execute_js']);
+  static STATE_CHANGE_TOOLS = SHARED_STATE_CHANGE_TOOLS;
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
@@ -2122,7 +2110,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return url;
     } catch (e) { return ''; }
   }
-
 
   /**
    * Path-level URL normalization for the click side-effect navigation notice.
@@ -2317,11 +2304,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _isBrowserMutationTool(toolName) {
-    return Agent.STATE_CHANGE_TOOLS.has(toolName)
-      || toolName === 'iframe_click'
-      || toolName === 'iframe_type'
-      || toolName === 'upload_file'
-      || toolName === 'solve_captcha';
+    return BROWSER_MUTATION_TOOLS.has(toolName);
   }
 
   _browserActionFreshTurnReason(tier, toolName, toolResult) {

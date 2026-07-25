@@ -42,6 +42,7 @@ src/chrome/
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── loop-detector.js     # Browser-free loop detection, directly unit-tested
+│   │   ├── mutation-tools.js    # This build's state-change + mutating tool sets
 │   │   ├── tools.js            # Tool schemas + system prompts
 │   │   ├── skills.js           # Settings skills + dynamic skill tool manifests
 │   │   ├── planner.js          # Plan-before-Act structured planner
@@ -566,6 +567,8 @@ OpenAI format → Anthropic blocks: system → separate `system` field; `assista
 
 The browser-free implementation lives in `agent/loop-detector.js`; `Agent`
 inherits it, and the unit suite imports the same production class directly.
+That module is byte-identical across builds, so the per-build tool surface it
+classifies against lives in `agent/mutation-tools.js` instead.
 
 Three independent detectors, strongest action wins:
 
