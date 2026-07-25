@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "WebMCP eksperimental",
   "st.display.webmcp.desc": "Benarkan WebBrain menemui dan menjalankan alat berstruktur yang disediakan oleh halaman Chrome yang disokong. Mengaktifkannya menambah alat WebMCP eksperimental dan panduannya pada konteks model. Dimatikan secara lalai.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Rakaman skrin/tetingkap telah bermula. Tekan <code>Escape</code> dua kali dalam WebBrain atau halaman pelayar untuk berhenti, atau gunakan kawalan Berhenti berkongsi Chrome.",
+  "sp.record.full_screen_started_html": "Rakaman skrin/tetingkap telah bermula. Hentikannya dengan <strong>Henti</strong> pada sepanduk rakaman, dengan menekan <code>Escape</code> dua kali dalam WebBrain atau halaman pelayar, atau dengan kawalan Berhenti berkongsi Chrome. Tambah <code>--hide-recording-indicator</code> supaya sepanduk tidak masuk ke dalam rakaman.",
+  "sp.record.full_screen_started_hidden_html": "Rakaman skrin/tetingkap telah bermula. Tekan <code>Escape</code> dua kali dalam WebBrain atau halaman pelayar untuk berhenti, atau gunakan kawalan Berhenti berkongsi Chrome.",
   "sp.btn.attach": "Lampirkan fail",
   "sp.btn.mic": "Input suara",
   "sp.btn.mic_stop": "Berhenti mendengar",

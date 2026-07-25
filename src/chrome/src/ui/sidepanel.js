@@ -6648,7 +6648,9 @@ async function startFullScreenRecording(tabId = currentTabId, recordOptions = {}
       source: 'display',
       showBanner: recordOptions.showBanner !== false,
     });
-    addPersistentSlashMessage(systemHtml(t('sp.record.full_screen_started_html')));
+    addPersistentSlashMessage(systemHtml(t(recordOptions.showBanner === false
+      ? 'sp.record.full_screen_started_hidden_html'
+      : 'sp.record.full_screen_started_html')));
     if (res.state?.hasMic === false && res.state?.micError) {
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.record.mic_unavailable', { error: res.state.micError })));
     }

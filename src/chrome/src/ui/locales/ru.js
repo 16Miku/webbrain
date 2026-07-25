@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "Экспериментальный WebMCP",
   "st.display.webmcp.desc": "Разрешает WebBrain обнаруживать и запускать структурированные инструменты, предоставляемые поддерживаемыми страницами Chrome. При включении экспериментальные инструменты WebMCP и инструкции к ним добавляются в контекст модели. По умолчанию выключено.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Запись экрана/окна началась. Чтобы остановить её, дважды нажмите <code>Escape</code> в WebBrain или на странице браузера либо используйте кнопку Chrome «Остановить показ».",
+  "sp.record.full_screen_started_html": "Запись экрана/окна началась. Остановите её кнопкой <strong>Стоп</strong> на баннере записи, дважды нажав <code>Escape</code> в WebBrain или на странице браузера, либо кнопкой Chrome «Остановить показ». Добавьте <code>--hide-recording-indicator</code>, чтобы баннер не попал в видео.",
+  "sp.record.full_screen_started_hidden_html": "Запись экрана/окна началась. Чтобы остановить её, дважды нажмите <code>Escape</code> в WebBrain или на странице браузера либо используйте кнопку Chrome «Остановить показ».",
   "sp.btn.attach": "Прикрепить файл",
   "sp.btn.mic": "Голосовой ввод",
   "sp.btn.mic_stop": "Остановить прослушивание",

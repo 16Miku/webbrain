@@ -659,7 +659,8 @@ export default {
   'st.display.plan_before_act.strict': 'Katı planlama',
   'st.display.plan_before_act.off': 'Kapalı',
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Ekran/pencere kaydı başladı. Durdurmak için WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basın ya da Chrome’un Paylaşımı durdur denetimini kullanın.",
+  "sp.record.full_screen_started_html": "Ekran/pencere kaydı başladı. Kayıt afişindeki <strong>Durdur</strong> düğmesiyle, WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basarak ya da Chrome’un Paylaşımı durdur denetimiyle durdurabilirsiniz. Afişin videoya girmemesi için <code>--hide-recording-indicator</code> ekleyin.",
+  "sp.record.full_screen_started_hidden_html": "Ekran/pencere kaydı başladı. Durdurmak için WebBrain’de veya bir tarayıcı sayfasında <code>Escape</code> tuşuna iki kez basın ya da Chrome’un Paylaşımı durdur denetimini kullanın.",
   "sp.btn.attach": "Dosya ekle",
   "sp.btn.mic": "Ses girişi",
   "sp.btn.mic_stop": "Dinlemeyi durdur",

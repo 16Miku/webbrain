@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "WebMCP eksperimental",
   "st.display.webmcp.desc": "Izinkan WebBrain menemukan dan menjalankan alat terstruktur yang disediakan oleh halaman Chrome yang didukung. Mengaktifkannya menambahkan alat WebMCP eksperimental dan panduannya ke konteks model. Dinonaktifkan secara bawaan.",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Perekaman layar/jendela dimulai. Tekan <code>Escape</code> dua kali di WebBrain atau halaman browser untuk berhenti, atau gunakan kontrol Berhenti berbagi milik Chrome.",
+  "sp.record.full_screen_started_html": "Perekaman layar/jendela dimulai. Hentikan dengan <strong>Hentikan</strong> di banner perekaman, dengan menekan <code>Escape</code> dua kali di WebBrain atau halaman browser, atau dengan kontrol Berhenti berbagi milik Chrome. Tambahkan <code>--hide-recording-indicator</code> agar banner tidak ikut terekam.",
+  "sp.record.full_screen_started_hidden_html": "Perekaman layar/jendela dimulai. Tekan <code>Escape</code> dua kali di WebBrain atau halaman browser untuk berhenti, atau gunakan kontrol Berhenti berbagi milik Chrome.",
   "sp.btn.attach": "Lampirkan file",
   "sp.btn.mic": "Input suara",
   "sp.btn.mic_stop": "Berhenti mendengarkan",

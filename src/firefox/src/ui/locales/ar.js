@@ -654,7 +654,8 @@ export default {
   'st.display.plan_before_act.strict': 'تخطيط صارم',
   'st.display.plan_before_act.off': 'معطل',
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "بدأ تسجيل الشاشة/النافذة. اضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح للإيقاف، أو استخدم زر إيقاف المشاركة في Chrome.",
+  "sp.record.full_screen_started_html": "بدأ تسجيل الشاشة/النافذة. أوقفه بزر <strong>إيقاف</strong> في شريط التسجيل، أو بالضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح، أو باستخدام زر إيقاف المشاركة في Chrome. أضف <code>--hide-recording-indicator</code> لإبقاء الشريط خارج الفيديو.",
+  "sp.record.full_screen_started_hidden_html": "بدأ تسجيل الشاشة/النافذة. اضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح للإيقاف، أو استخدم زر إيقاف المشاركة في Chrome.",
   "sp.btn.attach": "إرفاق ملف",
   "sp.btn.mic": "إدخال صوتي",
   "sp.btn.mic_stop": "إيقاف الاستماع",

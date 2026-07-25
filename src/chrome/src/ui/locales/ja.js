@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "試験的な WebMCP",
   "st.display.webmcp.desc": "対応する Chrome ページが公開する構造化ツールを WebBrain が検出して実行できるようにします。有効にすると、試験的な WebMCP ツールとガイダンスがモデルのコンテキストに追加されます。既定ではオフです。",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "画面/ウィンドウの録画を開始しました。停止するには、WebBrain またはブラウザページで <code>Escape</code> を 2 回押すか、Chrome の共有停止コントロールを使用してください。",
+  "sp.record.full_screen_started_html": "画面/ウィンドウの録画を開始しました。録画バナーの<strong>停止</strong>ボタン、WebBrain またはブラウザページで <code>Escape</code> を 2 回押す操作、または Chrome の共有停止コントロールで停止できます。バナーを録画に含めたくない場合は <code>--hide-recording-indicator</code> を追加してください。",
+  "sp.record.full_screen_started_hidden_html": "画面/ウィンドウの録画を開始しました。停止するには、WebBrain またはブラウザページで <code>Escape</code> を 2 回押すか、Chrome の共有停止コントロールを使用してください。",
   "sp.btn.attach": "ファイルを添付",
   "sp.btn.mic": "音声入力",
   "sp.btn.mic_stop": "聞き取りを停止",

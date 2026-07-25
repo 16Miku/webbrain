@@ -13093,6 +13093,12 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.match(slashList, /value: '--hide-recording-indicator'[\s\S]*?requires: '--full-screen'/, 'chrome: hidden indicator should require full-screen capture');
   assert.match(locale, /sp\.slash\.record_full_screen/, 'chrome: missing --full-screen description');
   assert.match(locale, /sp\.slash\.record_hide_indicator[\s\S]*?Escape[\s\S]*?twice/, 'chrome: hidden indicator help should explain double Escape');
+  const startedShown = locale.match(/'sp\.record\.full_screen_started_html': '([\s\S]*?)',\n/)?.[1] || '';
+  const startedHidden = locale.match(/'sp\.record\.full_screen_started_hidden_html': '([\s\S]*?)',\n/)?.[1] || '';
+  assert.match(startedShown, /<strong>Stop<\/strong>[\s\S]*?recording banner/, 'chrome: the default start message should point at the banner Stop button');
+  assert.match(startedShown, /<code>--hide-recording-indicator<\/code>/, 'chrome: the default start message should offer the banner opt-out');
+  assert.match(startedHidden, /<code>Escape<\/code>[\s\S]*?twice/, 'chrome: the hidden start message should still explain double Escape');
+  assert.doesNotMatch(startedHidden, /banner/i, 'chrome: the hidden start message must not reference a banner the user cannot see');
   assert.doesNotMatch(manifest, /"desktopCapture"/, 'chrome: full-screen recording should use getDisplayMedia without desktopCapture permission');
 
   const fullScreenIdx = panel.indexOf("if (command.value === '/record' && action === 'full-screen')");
@@ -13105,6 +13111,7 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.match(helperBody, /prepare_recording_host/, 'chrome: full-screen route should prepare offscreen before recording');
   assert.match(fullScreenBody, /showBanner:\s*!optionValues\.has\('--hide-recording-indicator'\)/, 'chrome: full-screen route should hide the banner only when explicitly requested');
   assert.match(helperBody, /start_display_recording[\s\S]*?showBanner:\s*recordOptions\.showBanner !== false/, 'chrome: full-screen route should show the recording banner by default');
+  assert.match(helperBody, /recordOptions\.showBanner === false\s*\?\s*'sp\.record\.full_screen_started_hidden_html'\s*:\s*'sp\.record\.full_screen_started_html'/, 'chrome: the start message should match whether the banner is actually shown');
   assert.doesNotMatch(helperBody, /streamId/, 'chrome: sidepanel must not ferry a desktopCapture stream id to the recorder');
   assert.match(panel, /function shouldShowRecordingBanner\(state\)[\s\S]*?state\?\.showBanner !== false/, 'chrome: banner visibility should be state-driven');
   assert.match(panel, /optionValues\.has\('--transcribe'\)/, 'chrome: recording slash commands should support transcript opt-in');

@@ -654,7 +654,8 @@ export default {
   'st.display.plan_before_act.strict': '严格规划',
   'st.display.plan_before_act.off': '关闭',
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "屏幕/窗口录制已开始。要停止，请在 WebBrain 或浏览器页面中按两次 <code>Escape</code>，或使用 Chrome 的停止共享控件。",
+  "sp.record.full_screen_started_html": "屏幕/窗口录制已开始。可点击录制横幅上的<strong>停止</strong>按钮、在 WebBrain 或浏览器页面中按两次 <code>Escape</code>，或使用 Chrome 的停止共享控件来停止。添加 <code>--hide-recording-indicator</code> 可让横幅不出现在录制内容中。",
+  "sp.record.full_screen_started_hidden_html": "屏幕/窗口录制已开始。要停止，请在 WebBrain 或浏览器页面中按两次 <code>Escape</code>，或使用 Chrome 的停止共享控件。",
   "sp.btn.attach": "附加文件",
   "sp.btn.mic": "语音输入",
   "sp.btn.mic_stop": "停止聆听",

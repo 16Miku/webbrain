@@ -665,7 +665,8 @@ export default {
   "st.display.webmcp.label": "WebMCP รุ่นทดลอง",
   "st.display.webmcp.desc": "อนุญาตให้ WebBrain ค้นหาและเรียกใช้เครื่องมือแบบมีโครงสร้างที่หน้า Chrome ที่รองรับเปิดให้ใช้ การเปิดใช้งานจะเพิ่มเครื่องมือ WebMCP รุ่นทดลองและคำแนะนำลงในบริบทของโมเดล ปิดไว้เป็นค่าเริ่มต้น",
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "เริ่มบันทึกหน้าจอ/หน้าต่างแล้ว กด <code>Escape</code> สองครั้งใน WebBrain หรือหน้าเบราว์เซอร์เพื่อหยุด หรือใช้ปุ่มหยุดแชร์ของ Chrome",
+  "sp.record.full_screen_started_html": "เริ่มบันทึกหน้าจอ/หน้าต่างแล้ว หยุดได้ด้วยปุ่ม <strong>หยุด</strong> บนแบนเนอร์การบันทึก กด <code>Escape</code> สองครั้งใน WebBrain หรือหน้าเบราว์เซอร์ หรือใช้ปุ่มหยุดแชร์ของ Chrome เพิ่ม <code>--hide-recording-indicator</code> เพื่อไม่ให้แบนเนอร์ติดอยู่ในวิดีโอ",
+  "sp.record.full_screen_started_hidden_html": "เริ่มบันทึกหน้าจอ/หน้าต่างแล้ว กด <code>Escape</code> สองครั้งใน WebBrain หรือหน้าเบราว์เซอร์เพื่อหยุด หรือใช้ปุ่มหยุดแชร์ของ Chrome",
   "sp.btn.attach": "แนบไฟล์",
   "sp.btn.mic": "ป้อนด้วยเสียง",
   "sp.btn.mic_stop": "หยุดฟัง",

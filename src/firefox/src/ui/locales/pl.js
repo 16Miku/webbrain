@@ -645,7 +645,8 @@ export default {
   'st.display.plan_before_act.strict': 'Ścisłe planowanie',
   'st.display.plan_before_act.off': 'Wyłączone',
   // --- Recording, attachments, queue, progress, and voice input ---
-  "sp.record.full_screen_started_html": "Rozpoczęto nagrywanie ekranu/okna. Naciśnij dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, aby zatrzymać, albo użyj kontrolki Chrome Zatrzymaj udostępnianie.",
+  "sp.record.full_screen_started_html": "Rozpoczęto nagrywanie ekranu/okna. Zatrzymaj je przyciskiem <strong>Zatrzymaj</strong> na banerze nagrywania, naciskając dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, albo kontrolką Chrome Zatrzymaj udostępnianie. Dodaj <code>--hide-recording-indicator</code>, aby baner nie pojawił się w nagraniu.",
+  "sp.record.full_screen_started_hidden_html": "Rozpoczęto nagrywanie ekranu/okna. Naciśnij dwa razy <code>Escape</code> w WebBrain lub na stronie przeglądarki, aby zatrzymać, albo użyj kontrolki Chrome Zatrzymaj udostępnianie.",
   "sp.btn.attach": "Dołącz plik",
   "sp.btn.mic": "Wprowadzanie głosowe",
   "sp.btn.mic_stop": "Przestań słuchać",
