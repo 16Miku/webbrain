@@ -51236,26 +51236,45 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
     const byKey = runtime.selectCaptchaCandidate(candidates, { websiteKey: 'KEY_A' });
     assert.equal(byKey.selected.frameId, 4, `${build}: exact websiteKey did not select candidate`);
 
+    const hiddenChallenge = {
+      frameId: 7,
+      frameUrl: 'https://example.test/checkpoint/challenge',
+      type: 'recaptcha_v3',
+      websiteKey: 'KEY_HIDDEN',
+      visible: false,
+      challengeFrame: true,
+      responseField: true,
+      detectedVia: 'script',
+    };
+    const visibleTurnstile = {
+      frameId: 0,
+      frameUrl: 'https://example.test/',
+      type: 'turnstile',
+      websiteKey: 'KEY_VISIBLE',
+      visible: true,
+      normalCheckbox: false,
+      challengeFrame: false,
+      detectedVia: 'host',
+    };
+    const hiddenChallengeResult = runtime.selectCaptchaCandidate([
+      hiddenChallenge,
+      visibleTurnstile,
+    ]);
+    assert.equal(
+      hiddenChallengeResult.selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: hidden challenge-frame integration outranked a visible widget`,
+    );
+
     const activeChallenge = runtime.selectCaptchaCandidate([
       {
-        frameId: 7,
-        frameUrl: 'https://example.test/checkpoint/challenge',
+        ...hiddenChallenge,
         type: 'recaptcha_v2_enterprise',
         websiteKey: 'KEY_ACTIVE',
-        visible: false,
-        challengeFrame: true,
-        responseField: true,
+        visible: true,
         detectedVia: 'url',
       },
-      {
-        frameId: 0,
-        frameUrl: 'https://example.test/',
-        type: 'turnstile',
-        websiteKey: 'KEY_BACKGROUND',
-        visible: true,
-        challengeFrame: false,
-        detectedVia: 'host',
-      },
+      visibleTurnstile,
     ]);
     assert.equal(
       activeChallenge.selected.websiteKey,

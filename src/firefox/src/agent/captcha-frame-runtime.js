@@ -159,7 +159,9 @@ function candidateScore(candidate) {
   // Priority is tiered so no combination of secondary signals can make a
   // generic visible/background integration outrank an active challenge
   // frame or visible checkbox.
-  const activeChallengeFrame = candidate?.challengeFrame && candidate?.frameVisible !== false;
+  const activeChallengeFrame = candidate?.challengeFrame
+    && candidate?.visible === true
+    && candidate?.frameVisible !== false;
   const primary = (candidate?.normalCheckbox && candidate?.visible) || activeChallengeFrame;
   const tier = primary ? 3 : (candidate?.visible ? 2 : 1);
   let score = tier * 1000;
