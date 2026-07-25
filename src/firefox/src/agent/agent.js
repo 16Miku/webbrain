@@ -12567,6 +12567,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         } else if (!websiteKey) {
           return noDispatchFailure(`solve_captcha: ${type} requires a websiteKey (data-sitekey). Auto-detection didn't find one — pass it explicitly.`);
+        } else if ((type === 'recaptcha_v3' || type === 'recaptchav3' || type === 'recaptcha_v3_enterprise') && !pageAction) {
+          return noDispatchFailure(`solve_captcha: ${type} requires a \`pageAction\` (e.g. "login", "submit"). Auto-detection found a v3 sitekey but no action name — pass \`pageAction\` explicitly.`);
         }
 
         dispatched = true;

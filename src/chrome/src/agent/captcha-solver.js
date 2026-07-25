@@ -114,11 +114,15 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
     };
   }
   if (t === 'recaptcha_v3' || t === 'recaptchav3' || t === 'recaptcha_v3_enterprise') {
+    const pageAction = rest.pageAction || rest.action;
+    if (!pageAction) {
+      throw new Error(`solve_captcha: ${type} requires a pageAction (e.g. "login", "submit").`);
+    }
     return {
       type: isEnterprise ? 'ReCaptchaV3EnterpriseTaskProxyLess' : 'ReCaptchaV3TaskProxyLess',
       websiteURL,
       websiteKey,
-      pageAction: rest.pageAction || rest.action || 'verify',
+      pageAction,
       ...(rest.minScore ? { minScore: rest.minScore } : {}),
       ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
@@ -249,8 +253,10 @@ function detectCaptchaInPage() {
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
           recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
           d.querySelector('script[src*="recaptcha/enterprise"]') != null;
+        const version = recap.getAttribute('data-version') || (recap.classList.contains('g-recaptcha-v3') ? 'v3' : null);
+        const isV3 = version === 'v3';
         return {
-          type: action ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
+          type: isV3 ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
           isInvisible,
           isEnterprise,
