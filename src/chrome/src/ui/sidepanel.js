@@ -2264,7 +2264,7 @@ function scheduledJobMeta(job) {
   if (job?.source === 'watch') {
     const seconds = Number(job.watch?.intervalSeconds);
     if (Number.isFinite(seconds)) parts.push(`${seconds}s`);
-    parts.push(job.watch?.keep ? t('sp.slash.watch_keep') : t('sp.scheduled.watch_once'));
+    parts.push(job.watch?.keep ? t('sp.scheduled.watch_keep') : t('sp.scheduled.watch_once'));
     if (job.watch?.beep) parts.push(`🔔 ${job.watch?.beepStyle || 'default'}`);
     if (job.watch?.lastObservation && job.status !== 'completed') {
       parts.push(truncate(String(job.watch.lastObservation), 80));
@@ -6181,7 +6181,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         throw new Error(res?.error || 'Could not create watch.');
       }
       if (currentTabId === tabId) {
-        addPersistentSlashMessage(t('sp.watch.created', { seconds: watchArgs.intervalSeconds }));
+        addPersistentSlashMessage(res?.deduped
+          ? t('sp.watch.exists')
+          : t('sp.watch.created', { seconds: watchArgs.intervalSeconds }));
         await refreshScheduledJobs({ tabId });
       }
     } catch (error) {

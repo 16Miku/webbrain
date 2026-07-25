@@ -2568,7 +2568,6 @@ async function handleMessage(msg, sender) {
         try { tab = await chrome.tabs.get(tabId); } catch {}
       }
       return await scheduler.createWatchJob({
-        tabId,
         args: msg.watch || msg.args || {},
         currentUrl: tab?.url || '',
         currentTitle: tab?.title || '',

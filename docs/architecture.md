@@ -569,8 +569,10 @@ first check immediately. Each poll carries the previous observation inside an
 untrusted-content boundary. A `partial` outcome records that observation as the
 next baseline and schedules another poll. A successful one-shot watch
 completes; `--keep` schedules another poll only for future distinct events. A
-failed check/action or a run without an explicit `done` outcome stops the watch
-rather than looping silently.
+failed check/action, a run without an explicit `done` outcome, or a poll that
+throws is tolerated as transient — a failed poll never overwrites the baseline
+observation — but three consecutive failures stop the watch rather than
+looping silently.
 
 The optional trailing `/beep` flag exposes a scoped
 `beep({event_key, message?})` tool only during that watch. It arms an alert
@@ -581,7 +583,9 @@ Chrome offscreen document or Firefox background page generate the selected
 default, short, or long tone. If a model verifies success but omits `beep`, the
 scheduler records a warning and completes or continues the watch without audio
 instead of discarding the successful action. Watch helper tabs are never forced
-back to the URL after they diverge; the next poll creates a fresh inactive helper.
+back to the URL after they diverge; the next poll closes the diverged helper
+and creates a fresh inactive one, and the helper is also closed when the watch
+completes, fails, or is cancelled or deleted.
 Playback follows the existing `notifySound` setting.
 
 **Persistence**

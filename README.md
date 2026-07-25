@@ -380,7 +380,9 @@ match immediately. `--secs` accepts 30–120 seconds. A trailing `/beep` enables
 the watch-only alert tool; `--short` and `--long` select its tone. Alerts play
 only after a verified successful action, and `--keep` suppresses repeated
 alerts for the same stable event key. Polls run in dedicated inactive tabs, so
-leaving the initiating page does not navigate it back to the watched URL. If a
+leaving the initiating page does not navigate it back to the watched URL, and
+the helper tab is closed when the watch ends. Transient poll failures are
+tolerated; three consecutive failures stop the watch. If a
 model verifies the action but omits the optional alert tool, the watch records
 the warning and completes or continues without sound.
 

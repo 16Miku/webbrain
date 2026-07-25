@@ -13,6 +13,7 @@ export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 525600; // one year
 export const MIN_WATCH_INTERVAL_SECONDS = 30;
 export const MAX_WATCH_INTERVAL_SECONDS = 120;
+export const MAX_WATCH_CONSECUTIVE_FAILURES = 3;
 const LIVE_SCHEDULED_STATUSES = new Set(['pending', 'queued', 'running', 'needs_user_input']);
 const DUPLICATE_COALESCED_ERROR = 'Duplicate scheduled job coalesced into an existing live job.';
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
@@ -142,10 +143,18 @@ function doneOutcomeFromUpdate(type, data) {
 }
 
 export function wrapWatchObservation(value) {
-  const nonce = Math.random().toString(36).slice(2, 10);
+  const bytes = new Uint8Array(8);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   const safe = String(value || '')
     .replace(/<\/?untrusted_page_content\b[^>]*>/gi, '[markup stripped]')
     .slice(0, 2000);
+  // These delimiters are prompt boundaries, not HTML: the nonce id on the
+  // closing tag is deliberate so stripped page text cannot forge either end.
   return `<untrusted_page_content id="${nonce}">\n${safe}\n</untrusted_page_content id="${nonce}">`;
 }
 
@@ -840,7 +849,7 @@ export class ScheduledJobManager {
     };
   }
 
-  async createWatchJob({ tabId = null, args, currentUrl = '', currentTitle = '' }) {
+  async createWatchJob({ args, currentUrl = '', currentTitle = '' }) {
     const parsed = validateWatchArgs(args, currentUrl);
     if (!parsed.ok) return { success: false, error: parsed.error };
     const createdAt = iso(this.now());
@@ -874,6 +883,7 @@ export class ScheduledJobManager {
         lastAlertWarning: null,
         lastTriggeredEventKey: null,
         lastTriggeredAt: null,
+        consecutiveFailures: 0,
       },
       scheduledAt: createdAt,
       nextRunAt: iso(this.now() + 1000),
@@ -916,7 +926,10 @@ export class ScheduledJobManager {
     const job = await this._updateJobIf(jobId, (prev) => (
       ['pending', 'queued', 'paused', 'running', 'needs_user_input'].includes(prev.status)
     ), () => ({ status: 'cancelled', lastError: reason, pendingClarify: null }));
-    if (job) this._emit(job, 'cancelled');
+    if (job) {
+      this._emit(job, 'cancelled');
+      await this._closeWatchHelperTab(job);
+    }
     return { ok: !!job, job: summarizeScheduledJob(job) };
   }
 
@@ -936,6 +949,7 @@ export class ScheduledJobManager {
         try { this.agent.abort(tabId); } catch {}
       }
     }
+    if (removed) await this._closeWatchHelperTab(existing);
     return { ok: removed };
   }
 
@@ -1107,6 +1121,10 @@ export class ScheduledJobManager {
   }
 
   async _markFailed(job, error) {
+    if (job.source === 'watch') {
+      await this._failWatchPoll(job, String(error || 'Watch poll failed.'));
+      return;
+    }
     const failed = await this._updateJobIf(job.id, (prev) => (
       ['pending', 'queued', 'running', 'needs_user_input'].includes(prev.status)
     ), () => ({
@@ -1116,6 +1134,48 @@ export class ScheduledJobManager {
       pendingClarify: null,
     }));
     if (failed) this._emit(failed, 'failed');
+  }
+
+  async _closeWatchHelperTab(job) {
+    if (job?.source !== 'watch') return;
+    const helperTabId = job.target?.tabId;
+    if (helperTabId == null) return;
+    try { await this.api.tabs.remove(helperTabId); } catch { /* already closed */ }
+  }
+
+  // A transient poll failure (flaky page, provider error, missing outcome)
+  // keeps the watch alive; only MAX_WATCH_CONSECUTIVE_FAILURES in a row stop
+  // it. A failed poll never becomes the next baseline observation.
+  async _failWatchPoll(job, lastError, { observation = null, lastOutcome = null } = {}) {
+    const failures = Number(job.watch?.consecutiveFailures || 0) + 1;
+    const updated = await this._updateJobIf(job.id, (prev) => (
+      ['pending', 'queued', 'running', 'needs_user_input'].includes(prev.status)
+    ), (prev) => {
+      const nextRunAt = failures < MAX_WATCH_CONSECUTIVE_FAILURES
+        ? computeNextRunAt(prev, this.now())
+        : null;
+      return {
+        status: nextRunAt ? 'pending' : 'failed',
+        ...(nextRunAt ? { nextRunAt, scheduledAt: nextRunAt, immediate: false, queueDeferrals: 0 } : {}),
+        runCount: Number(prev.runCount || 0) + 1,
+        lastRunAt: iso(this.now()),
+        lastResult: observation || null,
+        lastOutcome: lastOutcome || null,
+        lastError,
+        clarificationAuthorizationRequired: false,
+        clarificationRequired: false,
+        pendingClarify: null,
+        watch: { ...prev.watch, consecutiveFailures: failures },
+      };
+    });
+    if (!updated) return;
+    if (updated.status === 'failed') {
+      this._emit(updated, 'failed');
+      await this._closeWatchHelperTab(updated);
+      return;
+    }
+    await this._setAlarm(updated);
+    this._emit(updated, 'polled');
   }
 
   async _requeue(job, reason) {
@@ -1180,6 +1240,11 @@ export class ScheduledJobManager {
               await this.api.tabs.update(job.target.tabId, { url: job.target.url, active: true });
               return job.target.tabId;
             } catch { /* create a fresh tab below */ }
+          } else {
+            // A diverged helper is watch-owned and inactive; close it instead
+            // of leaking one abandoned tab per poll on pages that redirect or
+            // rewrite their URL on load.
+            try { await this.api.tabs.remove(job.target.tabId); } catch { /* already closed */ }
           }
         } catch { /* create a fresh tab below */ }
       }
@@ -1257,20 +1322,10 @@ export class ScheduledJobManager {
       const lastError = lastOutcome === 'failed'
         ? (observation || 'Watch reported a failed check or action.')
         : 'Watch run ended without an explicit done outcome.';
-      const failed = await this._updateJobIf(job.id, (prev) => (
-        ['running', 'needs_user_input'].includes(prev.status)
-      ), (prev) => ({
-        status: 'failed',
-        runCount: Number(prev.runCount || 0) + 1,
-        lastRunAt: iso(this.now()),
-        lastResult: observation || null,
+      await this._failWatchPoll(job, lastError, {
+        observation: observation || null,
         lastOutcome: lastOutcome || null,
-        lastError,
-        clarificationAuthorizationRequired: false,
-        clarificationRequired: false,
-        pendingClarify: null,
-      }));
-      if (failed) this._emit(failed, 'failed');
+      });
       return;
     }
 
@@ -1300,6 +1355,7 @@ export class ScheduledJobManager {
             baselineEstablished: true,
             lastObservation: observation,
             lastAlertWarning: alertWarning,
+            consecutiveFailures: 0,
             ...(effectiveOutcome === 'success' ? { lastTriggeredAt: iso(this.now()) } : {}),
             ...(freshAlert ? { lastTriggeredEventKey: eventKey } : {}),
           },
@@ -1308,6 +1364,7 @@ export class ScheduledJobManager {
       if (!updated) return;
       if (updated.status === 'failed') {
         this._emit(updated, 'failed');
+        await this._closeWatchHelperTab(updated);
         return;
       }
       await this._setAlarm(updated);
@@ -1345,12 +1402,14 @@ export class ScheduledJobManager {
         baselineEstablished: true,
         lastObservation: observation,
         lastAlertWarning: alertWarning,
+        consecutiveFailures: 0,
         ...(freshAlert ? { lastTriggeredEventKey: eventKey } : {}),
         lastTriggeredAt: iso(this.now()),
       },
     }));
     if (completed) {
       this._emit(completed, 'completed');
+      await this._closeWatchHelperTab(completed);
       if (freshAlert) {
         try {
           await this.playWatchAlert({

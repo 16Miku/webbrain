@@ -11661,7 +11661,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const message = typeof args?.message === 'string' ? args.message.trim().slice(0, 300) : '';
       const duplicate = rawEventKey === watch.lastTriggeredEventKey;
-      if (!duplicate) watch.armedEventKey = rawEventKey;
+      // A duplicate report also locks this run's event key so a poll that has
+      // already seen the previous event cannot go on to arm a different one.
+      watch.armedEventKey = rawEventKey;
       return {
         success: true,
         armed: !duplicate,
