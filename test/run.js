@@ -51529,6 +51529,62 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       'KEY_REDIRECTED',
       `${build}: redirected visible CAPTCHA lost to another candidate`,
     );
+
+    const unmatchedOpaqueCandidate = {
+      ...nestedCandidate,
+      frameId: 31,
+      frameUrl: 'about:blank',
+      websiteKey: 'KEY_UNMATCHED_OPAQUE',
+    };
+    const unmatchedOpaqueAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, unmatchedOpaqueCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: visibleCandidate.frameUrl,
+          frameName: '',
+          childFrames: [
+            {
+              url: 'about:blank',
+              loadedUrl: 'about:blank',
+              name: '',
+              visible: true,
+            },
+            {
+              url: 'about:blank',
+              loadedUrl: 'about:blank',
+              name: '',
+              visible: false,
+            },
+          ],
+        },
+        {
+          frameId: 31,
+          frameUrl: 'about:blank',
+          frameName: '',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+        { frameId: 31, parentFrameId: 0, url: 'about:blank' },
+      ],
+    );
+    assert.equal(
+      unmatchedOpaqueAdjusted[1].frameVisible,
+      false,
+      `${build}: unmatched opaque child was promoted to visible`,
+    );
+    assert.equal(
+      unmatchedOpaqueAdjusted[1].visible,
+      false,
+      `${build}: unmatched opaque CAPTCHA remained active`,
+    );
+    assert.equal(
+      runtime.selectCaptchaCandidate(unmatchedOpaqueAdjusted).selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: unmatched opaque CAPTCHA displaced the proven visible widget`,
+    );
   }
 });
 

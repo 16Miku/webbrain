@@ -65,6 +65,14 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
   }
 
   const uniqueMatch = (items) => items.length === 1 ? items[0] : null;
+  const httpOrigin = (value) => {
+    try {
+      const parsed = new URL(String(value || ''));
+      return /^https?:$/.test(parsed.protocol) ? parsed.origin : '';
+    } catch (_) {
+      return '';
+    }
+  };
   const findEmbeddingFrame = (frameId, parentFrameId) => {
     const parentContext = contextsByFrameId.get(parentFrameId);
     if (!parentContext) return null;
@@ -91,6 +99,13 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
       const byName = uniqueMatch(childFrames.filter(child => String(child?.name || '') === frameName));
       if (byName) return byName;
     }
+    const frameOrigins = new Set([...frameUrls].map(httpOrigin).filter(Boolean));
+    if (frameOrigins.size) {
+      const byOrigin = uniqueMatch(childFrames.filter(child =>
+        [child?.loadedUrl, child?.url].some(url => frameOrigins.has(httpOrigin(url)))
+      ));
+      if (byOrigin) return byOrigin;
+    }
     return childFrames.length === 1 ? childFrames[0] : null;
   };
 
@@ -112,12 +127,13 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     const parentVisible = frameIsVisible(parentFrameId, visiting);
     visiting.delete(frameId);
     const embeddingFrame = parentVisible ? findEmbeddingFrame(frameId, parentFrameId) : null;
-    // A cross-origin child can redirect while its embedding iframe keeps the
-    // original src. In that case parent code cannot read loadedUrl, so a
-    // missing match means visibility is unknown rather than hidden. Only
-    // demote when a matched embedding frame is conclusively hidden.
+    // A unique origin match covers common cross-origin redirects whose iframe
+    // keeps its original src. When multiple embedding elements are still
+    // indistinguishable, visibility is unknown; fail closed so an internally
+    // visible widget inside a hidden iframe is not promoted into the paid-task
+    // ranking tier.
     const visible = parentVisible
-      && (embeddingFrame ? embeddingFrame.visible === true : true);
+      && embeddingFrame?.visible === true;
     visibilityByFrameId.set(frameId, visible);
     return visible;
   };
