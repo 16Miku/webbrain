@@ -51250,6 +51250,70 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
   }
 });
 
+test('captcha candidate deduplication rejects conflicting paid-task parameters', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const base = {
+      frameId: 4,
+      frameUrl: 'https://example.test/form',
+      type: 'recaptcha_v2_enterprise',
+      websiteKey: 'KEY_SHARED',
+      visible: true,
+      normalCheckbox: true,
+    };
+    const conflicts = [
+      ['pageAction', 'signup', 'checkout'],
+      ['recaptchaDataSValue', 'classic-s-old', 'classic-s-new'],
+      ['enterprisePayload', { s: 'enterprise-s-old' }, { s: 'enterprise-s-new' }],
+      ['isInvisible', false, true],
+    ];
+    for (const [field, first, second] of conflicts) {
+      const result = runtime.selectCaptchaCandidate([
+        { ...base, [field]: first, detectedVia: 'host' },
+        { ...base, [field]: second, detectedVia: 'url' },
+      ]);
+      assert.equal(result.selected, null, `${build}: conflicting ${field} candidate was selected`);
+      assert.equal(result.ambiguous, true, `${build}: conflicting ${field} was not marked ambiguous`);
+      assert.match(result.error, new RegExp(field), `${build}: conflicting ${field} diagnostic missing`);
+      assert.deepEqual(
+        result.candidates[0].parameterConflicts,
+        [field],
+        `${build}: conflicting ${field} was not exposed in candidate diagnostics`,
+      );
+    }
+
+    const consistent = runtime.selectCaptchaCandidate([
+      {
+        ...base,
+        pageAction: 'signup',
+        enterprisePayload: { s: 'enterprise-s', extra: 'value' },
+        detectedVia: 'host',
+      },
+      {
+        ...base,
+        pageAction: 'signup',
+        enterprisePayload: { extra: 'value', s: 'enterprise-s' },
+        detectedVia: 'url',
+      },
+    ]);
+    assert.equal(consistent.error, null, `${build}: equivalent task parameters were treated as conflicting`);
+    assert.equal(consistent.selected.pageAction, 'signup', `${build}: consistent action was lost`);
+    assert.deepEqual(
+      consistent.selected.enterprisePayload,
+      { s: 'enterprise-s', extra: 'value' },
+      `${build}: consistent Enterprise payload was lost`,
+    );
+
+    const inheritedFrameTie = runtime.selectCaptchaCandidate([
+      { ...base, frameId: 0, frameUrl: 'about:srcdoc', framePath: [{ index: 0 }] },
+      { ...base, frameId: 0, frameUrl: 'about:srcdoc', framePath: [{ index: 1 }] },
+    ]);
+    assert.equal(inheritedFrameTie.selected, null, `${build}: distinct inherited frames were deduplicated`);
+    assert.equal(inheritedFrameTie.ambiguous, true, `${build}: inherited-frame tie was not preserved`);
+    assert.equal(inheritedFrameTie.candidates.length, 2, `${build}: inherited frame identities collapsed`);
+  }
+});
+
 test('captcha type compatibility combines the base type with the Enterprise flag', async () => {
   for (const build of ['chrome', 'firefox']) {
     const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);

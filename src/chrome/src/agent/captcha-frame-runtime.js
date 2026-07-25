@@ -147,6 +147,9 @@ function candidateSummary(candidate) {
     pageAction: candidate?.pageAction || null,
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
+    parameterConflicts: Array.isArray(candidate?.parameterConflicts)
+      ? candidate.parameterConflicts
+      : [],
     detectedVia: candidate?.detectedVia || null,
   };
 }
@@ -172,6 +175,28 @@ function candidateScore(candidate) {
 export function selectCaptchaCandidate(candidates, constraints = {}) {
   const unique = [];
   const fingerprintIndexes = new Map();
+  const taskParameterFields = [
+    'isInvisible',
+    'isEnterprise',
+    'pageAction',
+    'enterprisePayload',
+    'recaptchaDataSValue',
+  ];
+  const hasParameterValue = value =>
+    value !== undefined && value !== null && value !== '';
+  const taskParameterApplies = (field, type) =>
+    field !== 'isInvisible' || !/^recaptcha_v3(?:_|$)/.test(type);
+  const stableParameterValue = value => {
+    if (Array.isArray(value)) {
+      return `[${value.map(stableParameterValue).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map(key =>
+        `${JSON.stringify(key)}:${stableParameterValue(value[key])}`
+      ).join(',')}}`;
+    }
+    return JSON.stringify(value);
+  };
   for (const raw of Array.isArray(candidates) ? candidates : []) {
     if (!raw?.type) continue;
     const candidate = {
@@ -185,23 +210,40 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
       candidate.frameUrl,
       candidate.type,
       candidate.websiteKey || '',
+      stableParameterValue(Array.isArray(candidate.framePath) ? candidate.framePath : []),
     ].join('|');
     if (fingerprintIndexes.has(fingerprint)) {
       const index = fingerprintIndexes.get(fingerprint);
       const previous = unique[index];
       const preferred = candidateScore(candidate) > candidateScore(previous) ? candidate : previous;
       const fallback = preferred === candidate ? previous : candidate;
-      unique[index] = {
+      const parameterConflicts = new Set([
+        ...(Array.isArray(previous.parameterConflicts) ? previous.parameterConflicts : []),
+        ...(Array.isArray(candidate.parameterConflicts) ? candidate.parameterConflicts : []),
+      ]);
+      const merged = {
         ...fallback,
         ...preferred,
         visible: previous.visible === true || candidate.visible === true,
         normalCheckbox: previous.normalCheckbox === true || candidate.normalCheckbox === true,
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
         responseField: previous.responseField === true || candidate.responseField === true,
-        pageAction: previous.pageAction || candidate.pageAction || null,
-        enterprisePayload: previous.enterprisePayload || candidate.enterprisePayload || null,
-        recaptchaDataSValue: previous.recaptchaDataSValue || candidate.recaptchaDataSValue || null,
       };
+      for (const field of taskParameterFields) {
+        const previousValue = previous[field];
+        const candidateValue = candidate[field];
+        if (taskParameterApplies(field, candidate.type)
+            && hasParameterValue(previousValue)
+            && hasParameterValue(candidateValue)
+            && stableParameterValue(previousValue) !== stableParameterValue(candidateValue)) {
+          parameterConflicts.add(field);
+        }
+        merged[field] = hasParameterValue(previousValue)
+          ? previousValue
+          : (hasParameterValue(candidateValue) ? candidateValue : null);
+      }
+      merged.parameterConflicts = [...parameterConflicts].sort();
+      unique[index] = merged;
       continue;
     }
     fingerprintIndexes.set(fingerprint, unique.length);
@@ -248,6 +290,17 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
       ambiguous: true,
       error: 'Multiple CAPTCHA candidates are equally active. Pass an exact frameUrl or websiteKey to select one.',
       candidates: top.map(entry => candidateSummary(entry.candidate)),
+    };
+  }
+  const selectedConflicts = Array.isArray(top[0].candidate.parameterConflicts)
+    ? top[0].candidate.parameterConflicts
+    : [];
+  if (selectedConflicts.length) {
+    return {
+      selected: null,
+      ambiguous: true,
+      error: `Conflicting CAPTCHA task parameters were detected for the same frame, type, and site key: ${selectedConflicts.join(', ')}. Wait for the stale widget to disappear or reload the page before retrying.`,
+      candidates: [candidateSummary(top[0].candidate)],
     };
   }
 
