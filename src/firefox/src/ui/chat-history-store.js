@@ -111,6 +111,11 @@ function normalizeRecord(input, existing = null) {
   return record;
 }
 
+/**
+ * Save or update a chat history record in IndexedDB.
+ * @param {Object} input - Record with at least { id, messages }.
+ * @returns {Promise<Object|null>} Saved record or null if invalid.
+ */
 export async function saveChatHistoryRecord(input) {
   if (!input?.id) return null;
   const db = await openDB();
@@ -121,6 +126,11 @@ export async function saveChatHistoryRecord(input) {
   return record;
 }
 
+/**
+ * List chat history records, newest first.
+ * @param {Object} [params] - { limit }.
+ * @returns {Promise<Array<Object>>} Array of history records.
+ */
 export async function listChatHistoryRecords({ limit = 500 } = {}) {
   const db = await openDB();
   const index = tx(db).objectStore(STORE_NAME).index('updatedAt');
@@ -138,18 +148,32 @@ export async function listChatHistoryRecords({ limit = 500 } = {}) {
   return out;
 }
 
+/**
+ * Get a single chat history record by ID.
+ * @param {string} id - Record ID.
+ * @returns {Promise<Object|null>} Record or null if not found.
+ */
 export async function getChatHistoryRecord(id) {
   if (!id) return null;
   const db = await openDB();
   return promisifyReq(tx(db).objectStore(STORE_NAME).get(String(id)));
 }
 
+/**
+ * Delete a chat history record by ID.
+ * @param {string} id - Record ID to delete.
+ * @returns {Promise<void>}
+ */
 export async function deleteChatHistoryRecord(id) {
   if (!id) return;
   const db = await openDB();
   await promisifyReq(tx(db, 'readwrite').objectStore(STORE_NAME).delete(String(id)));
 }
 
+/**
+ * Delete all chat history records.
+ * @returns {Promise<void>}
+ */
 export async function clearChatHistoryRecords() {
   const db = await openDB();
   await promisifyReq(tx(db, 'readwrite').objectStore(STORE_NAME).clear());

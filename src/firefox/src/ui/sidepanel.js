@@ -13,6 +13,7 @@ import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
+import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -8905,16 +8906,6 @@ function bindMessageCopyButton(btn) {
       setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
     });
   });
-}
-
-function escapeHtml(str) {
-  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
 }
 
 function systemHtml(html) {

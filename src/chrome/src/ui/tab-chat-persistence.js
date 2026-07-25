@@ -1,3 +1,5 @@
+import { escapeHtml } from './utils.js';
+
 export const TAB_CHAT_PREFIX = 'tabChat:';
 export const TAB_CHAT_PERSIST_BUDGET = 7 * 1024 * 1024;
 const TAB_CHAT_QUOTA_RETRY_BUDGET = 256 * 1024;
@@ -10,8 +12,6 @@ export function stripImagePayloadsForPersist(html) {
     TRANSPARENT_PIXEL_PNG_DATA_URL,
   );
 }
-
-import { escapeHtml } from './utils.js';
 
 function findHtmlTagEnd(source, start) {
   let quote = '';

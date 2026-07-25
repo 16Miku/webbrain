@@ -73,7 +73,7 @@ export default {
   'sp.mic.unsupported': 'Spracheingabe wird in diesem Browser nicht unterstützt',
   'sp.mic.disabled_settings': 'Aktivieren Sie die Spracheingabe in den Einstellungen',
   'sp.mic.permission_denied': 'Mikrofon blockiert — klicken Sie mit der rechten Maustaste auf das WebBrain-Symbol in der Werkzeugleiste → Erweiterung verwalten → Website-Einstellungen → setzen Sie Mikrofon auf Erlauben',
-  'sp.mic.use_allow_site': 'Wählen Sie „Beim Besuch der Website erlauben" (nicht „Dieses Mal erlauben"), damit die Berechtigung über Fenster hinweg besteht bleibt',
+  'sp.mic.use_allow_site': 'Wählen Sie „Beim Besuch der Website erlauben" (nicht „Dieses Mal erlauben"), damit die Berechtigung über Fenster hinweg bestehen bleibt',
   "mic.granted": "Berechtigung erteilt!",
   "mic.denied": "Mikrofon wurde verweigert. Sie können es in den Site-Einstellungen der Erweiterung zulassen.",
   'sp.attach.remove': 'Anhang entfernen',
