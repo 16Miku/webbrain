@@ -1628,7 +1628,14 @@ export class ScheduledJobManager {
       if (running.clarificationAuthorizationRequired === true) {
         await this.agent.requireExplicitClarificationAuthorization(tabId);
       }
-      const result = await this.agent.processMessage(tabId, this._messageForJob(running), onUpdate, running.mode || 'act');
+      const result = await this.agent.processMessage(
+        tabId,
+        this._messageForJob(running),
+        onUpdate,
+        running.mode || 'act',
+        [],
+        { scheduledRun: true },
+      );
       this._waitingForInput.delete(job.id);
       if (runStatus === 'clarification_required') {
         await this._markClarificationRequired(running, result);

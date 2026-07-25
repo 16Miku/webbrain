@@ -10623,6 +10623,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
       };
       this.selectionGroundingScopes.set(tabId, scope);
+    } else if (runOptions?.cloudRun === true || runOptions?.scheduledRun === true) {
+      // Cloud and scheduled jobs are independent runs, not interactive
+      // follow-ups to whatever the user last discussed on the target tab.
+      // End any durable selection boundary so these jobs keep normal page
+      // context and tools, and so later interactive turns cannot revive it.
+      if (scope) {
+        this.selectionGroundingScopes.delete(tabId);
+        this._persist(tabId);
+      }
+      return runOptions;
     } else if (
       !scope?.anchorFingerprint
       || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0

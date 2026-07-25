@@ -17817,6 +17817,91 @@ test('ordinary attachments leave selection grounding and remain usable', async (
   }
 });
 
+test('independent cloud and scheduled runs clear inherited selection grounding', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh],
+    ['firefox', AgentFx, buildSelectionPromptFx],
+  ].entries()) {
+    for (const [runIndex, [runLabel, runOptions]] of [
+      ['cloud', { cloudRun: true }],
+      ['scheduled', { scheduledRun: true }],
+    ].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Independent run complete.', toolCalls: null };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9674 + (buildIndex * 10) + runIndex;
+      const anchor = {
+        role: 'user',
+        content: buildSelectionPrompt('old selected source', 'quiz'),
+      };
+      agent.conversationIds.set(tabId, `conv-${label}-${runLabel}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        anchor,
+        { role: 'assistant', content: 'Old selection answer.' },
+      ]);
+      agent.selectionGroundingScopes.set(tabId, {
+        conversationId: `conv-${label}-${runLabel}`,
+        anchorIndex: 1,
+        anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+        excludedFingerprints: [],
+      });
+      agent._hydrate = async () => {};
+      let persistCalls = 0;
+      agent._persist = () => { persistCalls += 1; };
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.ok(history.length >= 3, `${label} ${runLabel}: independent run should receive normal conversation context`);
+        return { role: 'user', content };
+      };
+      agent._maybeReinjectAdapter = async () => {};
+      agent._preactivateNyTimesSkillForRun = () => {};
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const final = await agent.processMessage(
+        tabId,
+        `Run the independent ${runLabel} task.`,
+        () => {},
+        'ask',
+        [],
+        runOptions,
+      );
+
+      assert.equal(final, 'Independent run complete.', `${label} ${runLabel}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${runLabel}: expected one model request`);
+      assert.ok(
+        Array.isArray(requestOptions[0]?.tools) && requestOptions[0].tools.length > 0,
+        `${label} ${runLabel}: independent run lost its normal tool catalog`,
+      );
+      assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled) task\./, `${label} ${runLabel}: task missing`);
+      assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
+      assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
+      assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
+    }
+  }
+});
+
 test('selection grounding discards provisional scopes on pre-anchor exits', async () => {
   for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
@@ -18881,6 +18966,42 @@ function makeSchedulerHarness(SchedulerMod, opts = {}) {
     alarmName: (jobId) => `${SchedulerMod.SCHEDULED_ALARM_PREFIX}${jobId}`,
   };
 }
+
+test('ScheduledJobManager marks alarm executions as independent runs', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    let processArgs = null;
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (...args) => {
+        processArgs = args;
+        args[2]('tool_result', {
+          name: 'done',
+          result: { done: true, summary: 'Scheduled task complete.', outcome: 'success' },
+        });
+        return 'Scheduled task complete.';
+      },
+    });
+    const created = await h.manager.createTaskJob({
+      tabId: 77,
+      conversationId: 'conv-selection',
+      args: {
+        title: 'Independent task',
+        prompt: 'Read the current page.',
+        schedule: { type: 'once', after_seconds: 0 },
+        target: { type: 'current_tab' },
+      },
+      currentUrl: 'https://example.com/',
+      currentTitle: 'Example',
+    });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+
+    assert.ok(processArgs, `${label}: scheduled task did not run`);
+    assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
+    assert.deepEqual(processArgs[5], { scheduledRun: true }, `${label}: scheduled task must bypass interactive grounding inheritance`);
+  }
+});
 
 test('scheduler validation rejects ambiguous, too-soon, and malformed schedules', () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
