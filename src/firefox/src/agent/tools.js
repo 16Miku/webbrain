@@ -911,12 +911,13 @@ export const AGENT_TOOLS = [
         properties: {
           type: {
             type: 'string',
-            enum: ['recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'turnstile', 'image_to_text'],
+            enum: ['recaptcha_v2', 'recaptcha_v3', 'recaptcha_v2_enterprise', 'recaptcha_v3_enterprise', 'hcaptcha', 'turnstile', 'image_to_text'],
             description: 'CAPTCHA type. Omit to auto-detect from the page DOM.',
           },
           websiteKey: { type: 'string', description: 'Site key from the captcha widget\'s data-sitekey attribute. Auto-detected when omitted.' },
           isInvisible: { type: 'boolean', description: 'reCAPTCHA v2 / hCaptcha only — true when the widget uses invisible mode (no visible checkbox). Auto-detected when omitted.' },
-          pageAction: { type: 'string', description: 'reCAPTCHA v3 only — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action when present.' },
+          isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 only — true when the widget uses Google reCAPTCHA Enterprise. Auto-detected when omitted.' },
+          pageAction: { type: 'string', description: 'Required for reCAPTCHA v3 — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action or the loader script when present; pass it explicitly if detection reports it missing.' },
           minScore: { type: 'number', description: 'reCAPTCHA v3 only — minimum score requested (0.3 is the usual lower bound, 0.7+ is hard).' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
           inject: { type: 'boolean', description: 'After solving, inject the token into the page\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true. Set false to get just the token back.' },
