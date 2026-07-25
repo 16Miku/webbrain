@@ -13921,6 +13921,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 frameUrl: detected.frameUrl,
                 websiteKey: detected.websiteKey,
                 type: detected.type,
+                explicitWebsiteKey: detected.explicitWebsiteKey === true,
               } : null,
             });
           } catch (e) {

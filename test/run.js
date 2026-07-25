@@ -51483,6 +51483,7 @@ test('captcha token injection revalidates the selected frame and calls one match
         tagName: 'TEXTAREA',
         value: '',
         textContent: '',
+        style: {},
         dispatchEvent: () => true,
       };
       const host = {
@@ -51492,12 +51493,21 @@ test('captcha token injection revalidates the selected frame and calls one match
         })[name] || null,
       };
       let declaredCallbackEnabled = true;
+      let turnstileChallengeMarkerEnabled = false;
+      let captchaUrlElements = [];
       const document = {
-        querySelector: (selector) => selector.includes('g-recaptcha-response') ? response : null,
+        querySelector: (selector) => {
+          if (selector.includes('g-recaptcha-response')) return response;
+          if (turnstileChallengeMarkerEnabled
+              && selector === 'script[src*="challenges.cloudflare.com/turnstile"]') {
+            return {};
+          }
+          return null;
+        },
         querySelectorAll: (selector) => {
           if (selector.includes('[data-callback]')) return declaredCallbackEnabled ? [host] : [];
           if (selector.includes('[data-sitekey]')) return [host];
-          if (selector === 'iframe[src], script[src]') return [];
+          if (selector === 'iframe[src], script[src]') return captchaUrlElements;
           return [];
         },
         createElement: () => response,
@@ -51581,6 +51591,62 @@ test('captcha token injection revalidates the selected frame and calls one match
       assert.equal(stale.fieldUpdated, false, `${build}: stale field status was inaccurate`);
       assert.equal(stale.staleTarget, true, `${build}: stale target marker missing`);
       assert.equal(response.value, '', `${build}: stale token touched the field`);
+
+      captchaUrlElements = [{
+        src: 'https://newassets.hcaptcha.com/captcha/v1/hcaptcha.html#frame=checkbox&sitekey=KEY_FRAGMENT',
+      }];
+      const fragmentKey = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        token: 'TOKEN_FRAGMENT_KEY',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_FRAGMENT',
+          type: 'hcaptcha',
+        },
+      });
+      assert.equal(fragmentKey.success, true, `${build}: fragment site key injection failed`);
+      assert.equal(fragmentKey.siteKeyMatched, true, `${build}: fragment site key was not revalidated`);
+      assert.equal(response.value, 'TOKEN_FRAGMENT_KEY', `${build}: fragment-key token was not injected`);
+      captchaUrlElements = [];
+      response.value = '';
+
+      turnstileChallengeMarkerEnabled = true;
+      const explicitTurnstile = runtime.injectCaptchaTokenInPage({
+        fieldName: 'cf-turnstile-response',
+        token: 'TOKEN_TURNSTILE',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+          type: 'turnstile',
+          explicitWebsiteKey: true,
+        },
+      });
+      assert.equal(explicitTurnstile.success, true, `${build}: explicit-key Turnstile injection failed`);
+      assert.equal(explicitTurnstile.siteKeyMatched, false, `${build}: absent explicit key was reported as matched`);
+      assert.equal(
+        explicitTurnstile.challengeMarkerMatched,
+        true,
+        `${build}: keyless Turnstile marker was not revalidated`,
+      );
+      assert.equal(response.value, 'TOKEN_TURNSTILE', `${build}: Turnstile token was not injected`);
+      turnstileChallengeMarkerEnabled = false;
+      response.value = '';
+      const staleExplicitTurnstile = runtime.injectCaptchaTokenInPage({
+        fieldName: 'cf-turnstile-response',
+        token: 'TOKEN_TURNSTILE_STALE',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+          type: 'turnstile',
+          explicitWebsiteKey: true,
+        },
+      });
+      assert.equal(staleExplicitTurnstile.success, false, `${build}: stale keyless Turnstile target was injected`);
+      assert.equal(staleExplicitTurnstile.staleTarget, true, `${build}: stale Turnstile marker missing`);
+      assert.equal(response.value, '', `${build}: stale Turnstile token touched the field`);
 
       const wrongFrame = runtime.injectCaptchaTokenInPage({
         fieldName: 'g-recaptcha-response',
@@ -51695,6 +51761,11 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
       agent,
       /target: detected \? \{[\s\S]*?frameId: detected\.frameId,[\s\S]*?frameUrl: detected\.frameUrl/,
       `${build}: selected frame is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /explicitWebsiteKey: detected\.explicitWebsiteKey === true/,
+      `${build}: explicit Turnstile key marker is not carried into token injection`,
     );
   }
 });

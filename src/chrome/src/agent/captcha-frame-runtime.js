@@ -639,7 +639,11 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
   const urlHasKey = (urlStr, key) => {
     try {
       const url = new URL(urlStr, frameUrl || 'https://dummy.host');
-      return ['k', 'render', 'sitekey'].some(name => url.searchParams.get(name) === key);
+      const fragment = String(url.hash || '').replace(/^#/, '');
+      const fragmentParams = fragment ? new URLSearchParams(fragment) : null;
+      return ['k', 'render', 'sitekey'].some(name =>
+        url.searchParams.get(name) === key || fragmentParams?.get(name) === key
+      );
     } catch (_) {
       return false;
     }
@@ -661,12 +665,21 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     }
     return false;
   };
-  if (!frameHasSiteKey(target.websiteKey)) {
+  const siteKeyMatched = frameHasSiteKey(target.websiteKey);
+  const explicitTurnstileTarget = target.explicitWebsiteKey === true
+    && target.type === 'turnstile';
+  const challengeMarkerMatched = explicitTurnstileTarget && !!(
+    frameDocument.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')
+    || frameDocument.querySelector('iframe[src*="challenges.cloudflare.com"]')
+  );
+  if (!siteKeyMatched && !challengeMarkerMatched) {
     return {
       success: false,
       fieldUpdated: false,
       staleTarget: true,
-      error: 'The selected CAPTCHA site key is no longer present in the target frame.',
+      error: explicitTurnstileTarget
+        ? 'The selected Turnstile challenge marker is no longer present in the target frame.'
+        : 'The selected CAPTCHA site key is no longer present in the target frame.',
       frameUrl,
     };
   }
@@ -793,7 +806,8 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     callbackAmbiguous: callbacks.length > 1,
     callbackCandidates: callbacks.length,
     callbackError,
-    siteKeyMatched: true,
+    siteKeyMatched,
+    challengeMarkerMatched,
     frameUrl,
   };
 }
