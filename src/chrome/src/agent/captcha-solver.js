@@ -245,7 +245,9 @@ function detectCaptchaInPage() {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
         const action = recap.getAttribute('data-action') || null;
-        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' || d.querySelector('script[src*="recaptcha/enterprise"]') != null;
+        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
+          recap.getAttribute('data-sitekey-type') === 'enterprise' ||
+          recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null;
         return {
           type: action ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
