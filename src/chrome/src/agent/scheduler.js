@@ -1634,7 +1634,7 @@ export class ScheduledJobManager {
         onUpdate,
         running.mode || 'act',
         [],
-        { scheduledRun: true },
+        { scheduledRun: true, independentRun: true },
       );
       this._waitingForInput.delete(job.id);
       if (runStatus === 'clarification_required') {

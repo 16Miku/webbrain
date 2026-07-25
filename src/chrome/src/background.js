@@ -2180,6 +2180,7 @@ async function handleMessage(msg, sender) {
 
         const askStreamingSettings = await chrome.storage.local.get('openaiAskStreamingEnabled').catch(() => ({}));
         const runOptions = {
+          ...(isWorkflowRun ? { independentRun: true } : {}),
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
             ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }

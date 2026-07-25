@@ -17476,6 +17476,7 @@ test('background forwards planner run options to agent chat handlers', () => {
     assert.ok(streamMatch, `${label}: chat_stream handler missing`);
     const chatBody = chatMatch[1];
     const streamBody = streamMatch[1];
+    assert.ok(chatBody.includes('...(isWorkflowRun ? { independentRun: true } : {})'), `${label}: saved workflows should be explicit independent runs`);
     assert.ok(chatBody.includes('...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {})'), `${label}: chat handler should build recommended-action run options`);
     assert.ok(chatBody.includes('locale: msg.locale'), `${label}: chat handler should forward the display locale`);
     assert.ok(chatBody.includes('intentFailureMessage: msg.intentFailureMessage'), `${label}: chat handler should forward the localized intent fallback`);
@@ -17817,14 +17818,15 @@ test('ordinary attachments leave selection grounding and remain usable', async (
   }
 });
 
-test('independent cloud and scheduled runs clear inherited selection grounding', async () => {
-  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt]] of [
-    ['chrome', AgentCh, buildSelectionPromptCh],
-    ['firefox', AgentFx, buildSelectionPromptFx],
+test('independent cloud, scheduled, and workflow runs clear inherited selection grounding', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
   ].entries()) {
     for (const [runIndex, [runLabel, runOptions]] of [
-      ['cloud', { cloudRun: true }],
-      ['scheduled', { scheduledRun: true }],
+      ['cloud', { cloudRun: true, sourceGrounding }],
+      ['scheduled', { scheduledRun: true, sourceGrounding }],
+      ['workflow', { independentRun: true, sourceGrounding }],
     ].entries()) {
       const requests = [];
       const requestOptions = [];
@@ -17894,7 +17896,7 @@ test('independent cloud and scheduled runs clear inherited selection grounding',
         Array.isArray(requestOptions[0]?.tools) && requestOptions[0].tools.length > 0,
         `${label} ${runLabel}: independent run lost its normal tool catalog`,
       );
-      assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled) task\./, `${label} ${runLabel}: task missing`);
+      assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled|workflow) task\./, `${label} ${runLabel}: task missing`);
       assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
       assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
       assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
@@ -18999,7 +19001,11 @@ test('ScheduledJobManager marks alarm executions as independent runs', async () 
 
     assert.ok(processArgs, `${label}: scheduled task did not run`);
     assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
-    assert.deepEqual(processArgs[5], { scheduledRun: true }, `${label}: scheduled task must bypass interactive grounding inheritance`);
+    assert.deepEqual(
+      processArgs[5],
+      { scheduledRun: true, independentRun: true },
+      `${label}: scheduled task must bypass interactive grounding inheritance`,
+    );
   }
 });
 
@@ -51018,7 +51024,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const runtimeValue = 'runtime@example.com';
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(77, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://example.com/form';
     agent.executeTool = async (_tabId, name) => {
@@ -51057,6 +51070,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.match(serialized, /<workflow-parameter:email>/);
     assert.match(serialized, /workflow form summary redacted|workflow parameter redacted/);
     assert.equal(agent.isRunning(77), false);
+    assert.equal(agent.selectionGroundingScopes.has(77), false, `${browser}: completed replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: completed replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay fails closed before a semantic target miss`, async () => {
@@ -51108,7 +51123,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(79, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://other.example/';
     agent.executeTool = async () => { throw new Error('deterministic replay must not inspect the wrong start page'); };
@@ -51134,6 +51156,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
       `${browser}: recoverable start mismatches must not emit a terminal failure`,
     );
     assert.equal(agent.isRunning(79), false);
+    assert.equal(agent.selectionGroundingScopes.has(79), false, `${browser}: fallback replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: fallback replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay never falls back after an action with an unknown outcome`, async () => {

@@ -10610,7 +10610,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : -1;
   }
 
+  _clearSelectionGroundingForIndependentRun(tabId, runOptions = {}) {
+    const independentRun = runOptions?.independentRun === true
+      || runOptions?.cloudRun === true
+      || runOptions?.scheduledRun === true;
+    if (!independentRun) return false;
+    if (this.selectionGroundingScopes.has(tabId)) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
+    return true;
+  }
+
   _selectionGroundedRunOptions(tabId, messages, runOptions = {}) {
+    if (this._clearSelectionGroundingForIndependentRun(tabId, runOptions)) {
+      // Independent jobs are not interactive follow-ups to whatever the user
+      // last discussed on the target tab. Strip any stale/contradictory
+      // selected-text marker as well as ending the durable boundary.
+      const {
+        sourceGrounding: _sourceGrounding,
+        selectionGroundingScopeStarted: _scopeStarted,
+        ...independentOptions
+      } = runOptions;
+      return independentOptions;
+    }
     const explicitSelection = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
     let scope = this.selectionGroundingScopes.get(tabId) || null;
     if (explicitSelection) {
@@ -10623,16 +10646,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
       };
       this.selectionGroundingScopes.set(tabId, scope);
-    } else if (runOptions?.cloudRun === true || runOptions?.scheduledRun === true) {
-      // Cloud and scheduled jobs are independent runs, not interactive
-      // follow-ups to whatever the user last discussed on the target tab.
-      // End any durable selection boundary so these jobs keep normal page
-      // context and tools, and so later interactive turns cannot revive it.
-      if (scope) {
-        this.selectionGroundingScopes.delete(tabId);
-        this._persist(tabId);
-      }
-      return runOptions;
     } else if (
       !scope?.anchorFingerprint
       || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0
@@ -11164,6 +11177,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw new Error('Saved workflow is missing or invalid.');
     }
     await this._hydrate(tabId);
+    // Deterministic workflow replay is an independent task even when it never
+    // falls back to processMessage. Clear stale selected-text grounding before
+    // any replay action so a successful replay cannot poison the next turn.
+    this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
     // Align pre-run cleanup with processMessage so a prior Act turn cannot
     // leak plan guards or active-skill state into deterministic replay (or
     // the reverse on the next turn). Chrome-only CDP fallback state is
