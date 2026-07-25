@@ -51558,7 +51558,7 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
     const tied = runtime.selectCaptchaCandidate(candidates);
     assert.equal(tied.selected, null, `${build}: tied candidates were auto-selected`);
     assert.equal(tied.ambiguous, true, `${build}: tie was not marked ambiguous`);
-    assert.match(tied.error, /exact frameUrl or websiteKey/, `${build}: tie remedy missing`);
+    assert.match(tied.error, /exact .*frameUrl.*websiteKey/, `${build}: tie remedy missing`);
     assert.equal(tied.candidates[0].pageAction, 'signup', `${build}: candidate action diagnostic missing`);
     assert.equal(tied.candidates[0].recaptchaDataSValue, 'classic-s', `${build}: candidate s diagnostic missing`);
 
@@ -51568,6 +51568,75 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
 
     const byKey = runtime.selectCaptchaCandidate(candidates, { websiteKey: 'KEY_A' });
     assert.equal(byKey.selected.frameId, 4, `${build}: exact websiteKey did not select candidate`);
+
+    const repeatedFrameCandidates = [
+      {
+        ...candidates[0],
+        frameId: 21,
+        frameUrl: 'https://example.test/repeated-frame',
+        websiteKey: 'KEY_REPEATED',
+        responseFieldId: 'response-repeated-a',
+      },
+      {
+        ...candidates[0],
+        frameId: 22,
+        frameUrl: 'https://example.test/repeated-frame',
+        websiteKey: 'KEY_REPEATED',
+        responseFieldId: 'response-repeated-b',
+      },
+    ];
+    const repeatedFrameTie = runtime.selectCaptchaCandidate(repeatedFrameCandidates);
+    assert.match(
+      repeatedFrameTie.error,
+      /exact frameId/,
+      `${build}: same-URL same-key tie did not offer frameId`,
+    );
+    assert.doesNotMatch(
+      repeatedFrameTie.error,
+      /exact frameUrl|exact websiteKey/,
+      `${build}: tie suggested a non-unique URL or key`,
+    );
+    const byFrameId = runtime.selectCaptchaCandidate(repeatedFrameCandidates, { frameId: 22 });
+    assert.equal(byFrameId.selected.frameId, 22, `${build}: exact frameId did not select candidate`);
+    assert.equal(byFrameId.selected.selectionReason, 'exact frameId match', `${build}: frameId reason missing`);
+
+    const inheritedCandidates = [
+      {
+        ...candidates[0],
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        websiteKey: 'KEY_INHERITED_REPEAT',
+        framePath: [{ index: 0, frameUrl: 'about:srcdoc' }],
+      },
+      {
+        ...candidates[0],
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        websiteKey: 'KEY_INHERITED_REPEAT',
+        framePath: [{ index: 1, frameUrl: 'about:srcdoc' }],
+      },
+    ];
+    const inheritedTie = runtime.selectCaptchaCandidate(inheritedCandidates);
+    assert.match(inheritedTie.error, /exact framePath/, `${build}: inherited tie did not offer framePath`);
+    assert.deepEqual(
+      inheritedTie.candidates.map(candidate => candidate.framePathIndexes),
+      [[0], [1]],
+      `${build}: framePath index diagnostics missing`,
+    );
+    const byFramePath = runtime.selectCaptchaCandidate(inheritedCandidates, {
+      frameId: 0,
+      framePath: [1],
+    });
+    assert.deepEqual(
+      byFramePath.selected.framePath,
+      inheritedCandidates[1].framePath,
+      `${build}: exact framePath did not select candidate`,
+    );
+    assert.equal(
+      byFramePath.selected.selectionReason,
+      'exact framePath match',
+      `${build}: combined frame identity reason was not deterministic`,
+    );
 
     const hiddenChallenge = {
       frameId: 7,
@@ -51796,9 +51865,10 @@ test('captcha task builders propagate frame URL and optional reCAPTCHA parameter
   }
 });
 
-test('captcha website URL uses only HTTP(S) frame URLs and otherwise keeps the top-level URL', async () => {
+test('captcha website URL uses the selected HTTP frame or nearest HTTP ancestor', async () => {
   for (const build of ['chrome', 'firefox']) {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
     const topLevelUrl = 'https://example.test/form';
     assert.equal(
       mod.captchaWebsiteUrl('https://example.test/checkpoint/captcha', topLevelUrl),
@@ -51814,6 +51884,57 @@ test('captcha website URL uses only HTTP(S) frame URLs and otherwise keeps the t
       mod.captchaWebsiteUrl('about:srcdoc', topLevelUrl),
       topLevelUrl,
       `${build}: about:srcdoc replaced the usable website URL`,
+    );
+    const challengeUrl = 'https://captcha.vendor.test/challenge';
+    const opaqueCandidate = {
+      frameId: 12,
+      frameUrl: 'about:srcdoc',
+      type: 'recaptcha_v2',
+      websiteKey: 'KEY_OPAQUE_NESTED',
+      visible: true,
+      normalCheckbox: true,
+    };
+    const opaqueAdjusted = runtime.applyCaptchaFrameVisibility(
+      [opaqueCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: topLevelUrl,
+          childFrames: [{
+            url: challengeUrl,
+            loadedUrl: challengeUrl,
+            name: 'challenge',
+            visible: true,
+          }],
+        },
+        {
+          frameId: 7,
+          frameUrl: challengeUrl,
+          frameName: 'challenge',
+          childFrames: [{
+            url: 'about:srcdoc',
+            loadedUrl: 'about:srcdoc',
+            name: 'opaque',
+            visible: true,
+          }],
+        },
+        {
+          frameId: 12,
+          frameUrl: 'about:srcdoc',
+          frameName: 'opaque',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: topLevelUrl },
+        { frameId: 7, parentFrameId: 0, url: challengeUrl },
+        { frameId: 12, parentFrameId: 7, url: 'about:srcdoc' },
+      ],
+    );
+    assert.equal(
+      opaqueAdjusted[0].websiteURL,
+      challengeUrl,
+      `${build}: opaque frame did not inherit its nearest HTTP ancestor URL`,
     );
   }
 });
@@ -52258,7 +52379,7 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
     const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
     assert.match(
       agent,
-      /if \(type !== 'image_to_text'\) \{[\s\S]*?detectCaptcha\(tabId, \{ type, frameUrl, websiteKey \}\)/,
+      /if \(type !== 'image_to_text'\) \{[\s\S]*?detectCaptcha\(tabId, \{\s*type,\s*frameUrl,\s*frameId,\s*framePath,\s*websiteKey,/,
       `${build}: solve_captcha does not run frame-aware detection when type is supplied`,
     );
     assert.match(
@@ -52303,8 +52424,13 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
     );
     assert.match(
       agent,
-      /try \{\s*detection = await detectCaptcha\(tabId, \{ type, frameUrl, websiteKey \}\);[\s\S]*?catch \(detectionError\) \{[\s\S]*?args\?\.inject === false && !!type && !!websiteKey[\s\S]*?CAPTCHA frame detection failed before dispatch/,
+      /try \{\s*detection = await detectCaptcha\(tabId, \{[\s\S]*?frameId,[\s\S]*?framePath,[\s\S]*?websiteKey,[\s\S]*?\}\);[\s\S]*?catch \(detectionError\) \{[\s\S]*?args\?\.inject === false && !!type && !!websiteKey[\s\S]*?CAPTCHA frame detection failed before dispatch/,
       `${build}: a detection exception still blocks a fully explicit token-only solve`,
+    );
+    assert.match(
+      agent,
+      /websiteURL = detected\.websiteURL \|\| captchaWebsiteUrl\(detected\.frameUrl, websiteURL\)/,
+      `${build}: nearest HTTP ancestor URL is not used for opaque selected frames`,
     );
     assert.match(
       agent,

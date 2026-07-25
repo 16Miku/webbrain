@@ -201,6 +201,29 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
       ancestorLoaderFrameId: loader.frameId,
     };
   };
+  const isHttpUrl = value => /^https?:\/\//i.test(String(value || ''));
+  const nearestHttpUrl = (candidate) => {
+    if (isHttpUrl(candidate?.frameUrl)) return String(candidate.frameUrl);
+    const framePath = Array.isArray(candidate?.framePath) ? candidate.framePath : [];
+    for (let index = framePath.length - 2; index >= 0; index -= 1) {
+      if (isHttpUrl(framePath[index]?.frameUrl)) return String(framePath[index].frameUrl);
+    }
+    const baseFrameUrl = contextsByFrameId.get(candidate?.frameId)?.frameUrl
+      || navigationByFrameId.get(candidate?.frameId)?.url;
+    if (isHttpUrl(baseFrameUrl)) return String(baseFrameUrl);
+    let currentFrameId = candidate?.frameId;
+    const visited = new Set();
+    while (Number.isInteger(currentFrameId) && !visited.has(currentFrameId)) {
+      visited.add(currentFrameId);
+      const parentFrameId = navigationByFrameId.get(currentFrameId)?.parentFrameId;
+      if (!Number.isInteger(parentFrameId) || parentFrameId === -1) break;
+      const parentUrl = contextsByFrameId.get(parentFrameId)?.frameUrl
+        || navigationByFrameId.get(parentFrameId)?.url;
+      if (isHttpUrl(parentUrl)) return String(parentUrl);
+      currentFrameId = parentFrameId;
+    }
+    return null;
+  };
 
   return sourceCandidates.map(rawCandidate => {
     const candidate = reconcileAncestorLoader(rawCandidate);
@@ -209,6 +232,7 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     return {
       ...candidate,
       frameVisible,
+      websiteURL: nearestHttpUrl(candidate),
       visible: candidate?.visible === true && frameVisible,
       normalCheckbox: candidate?.normalCheckbox === true && candidate?.visible === true && frameVisible,
     };
@@ -221,7 +245,11 @@ function candidateSummary(candidate) {
     ...(Array.isArray(candidate?.framePath) && candidate.framePath.length
       ? { framePath: candidate.framePath }
       : {}),
+    framePathIndexes: Array.isArray(candidate?.framePath)
+      ? candidate.framePath.map(segment => Number(segment?.index))
+      : [],
     frameUrl: candidate?.frameUrl || '',
+    websiteURL: candidate?.websiteURL || null,
     type: candidate?.type || '',
     websiteKey: candidate?.websiteKey || null,
     visible: candidate?.visible === true,
@@ -364,6 +392,47 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
   }
 
   let pool = unique;
+  const requestedFrameId = Number.isInteger(constraints.frameId) ? constraints.frameId : null;
+  if (requestedFrameId != null) {
+    pool = pool.filter(candidate => candidate.frameId === requestedFrameId);
+    if (!pool.length) {
+      return {
+        selected: null,
+        ambiguous: false,
+        error: `No CAPTCHA candidate was found in frameId ${requestedFrameId}.`,
+        candidates: unique.map(candidateSummary),
+      };
+    }
+  }
+  const hasRequestedFramePath = Array.isArray(constraints.framePath);
+  const requestedFramePath = hasRequestedFramePath
+    ? constraints.framePath.map(value => Number(value))
+    : [];
+  if (hasRequestedFramePath) {
+    if (requestedFramePath.some(value => !Number.isInteger(value) || value < 0)) {
+      return {
+        selected: null,
+        ambiguous: false,
+        error: 'framePath must be an array of non-negative iframe indexes.',
+        candidates: unique.map(candidateSummary),
+      };
+    }
+    pool = pool.filter(candidate => {
+      const candidatePath = Array.isArray(candidate.framePath)
+        ? candidate.framePath.map(segment => Number(segment?.index))
+        : [];
+      return candidatePath.length === requestedFramePath.length
+        && candidatePath.every((value, index) => value === requestedFramePath[index]);
+    });
+    if (!pool.length) {
+      return {
+        selected: null,
+        ambiguous: false,
+        error: `No CAPTCHA candidate was found at framePath [${requestedFramePath.join(', ')}].`,
+        candidates: unique.map(candidateSummary),
+      };
+    }
+  }
   const requestedFrameUrl = String(constraints.frameUrl || '');
   const requestedWebsiteKey = String(constraints.websiteKey || '');
   const requestedType = normalizeCaptchaType(constraints.type);
@@ -412,11 +481,30 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
   const topScore = ranked[0].score;
   const top = ranked.filter(entry => entry.score === topScore);
   if (top.length > 1) {
+    const summaries = top.map(entry => candidateSummary(entry.candidate));
+    const uniqueCount = selector => new Set(summaries.map(selector)).size;
+    const discriminators = [];
+    if (uniqueCount(candidate => candidate.frameUrl) > 1) discriminators.push('frameUrl');
+    if (uniqueCount(candidate => candidate.websiteKey) > 1) discriminators.push('websiteKey');
+    if (uniqueCount(candidate => candidate.frameId) > 1) discriminators.push('frameId');
+    if (uniqueCount(candidate => JSON.stringify(candidate.framePathIndexes)) > 1) {
+      discriminators.push('framePath');
+    }
+    const finalDiscriminator = discriminators.pop();
+    const discriminatorText = finalDiscriminator
+      ? discriminators.length === 0
+        ? finalDiscriminator
+        : discriminators.length === 1
+          ? `${discriminators[0]} or ${finalDiscriminator}`
+          : `${discriminators.join(', ')}, or ${finalDiscriminator}`
+      : null;
     return {
       selected: null,
       ambiguous: true,
-      error: 'Multiple CAPTCHA candidates are equally active. Pass an exact frameUrl or websiteKey to select one.',
-      candidates: top.map(entry => candidateSummary(entry.candidate)),
+      error: discriminatorText
+        ? `Multiple CAPTCHA candidates are equally active. Pass an exact ${discriminatorText} from the candidates to select one.`
+        : 'Multiple CAPTCHA candidates are equally active and expose no unique frame discriminator. Wait for one widget to become inactive before retrying.',
+      candidates: summaries,
     };
   }
   const selectedConflicts = Array.isArray(top[0].candidate.parameterConflicts)
@@ -446,6 +534,8 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
 
 function selectedReason(candidate, constraints) {
   if (candidate.explicitWebsiteKey) return 'explicit site key for detected Turnstile challenge';
+  if (Array.isArray(constraints.framePath)) return 'exact framePath match';
+  if (Number.isInteger(constraints.frameId)) return 'exact frameId match';
   if (constraints.frameUrl) return 'exact frameUrl match';
   if (constraints.websiteKey) return 'exact websiteKey match';
   if (candidate.normalCheckbox && candidate.visible) return 'visible checkbox challenge';

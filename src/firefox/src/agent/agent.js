@@ -12101,6 +12101,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           type,
           websiteKey,
           frameUrl,
+          frameId,
+          framePath,
           isInvisible,
           isEnterprise,
           pageAction,
@@ -12117,7 +12119,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (type !== 'image_to_text') {
           let detection = null;
           try {
-            detection = await detectCaptcha(tabId, { type, frameUrl, websiteKey });
+            detection = await detectCaptcha(tabId, {
+              type,
+              frameUrl,
+              frameId,
+              framePath,
+              websiteKey,
+            });
           } catch (detectionError) {
             const explicitTokenOnlyFallback = args?.inject === false && !!type && !!websiteKey;
             if (!explicitTokenOnlyFallback) {
@@ -12129,7 +12137,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           if (detection?.error) {
             const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
-            const needsDetection = !type || !websiteKey || !!frameUrl;
+            const needsDetection = !type
+              || !websiteKey
+              || !!frameUrl
+              || Number.isInteger(frameId)
+              || Array.isArray(framePath);
             const explicitTokenOnlyFallback = args?.inject === false
               && !!type
               && !!websiteKey
@@ -12177,7 +12189,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               );
             }
             type = type || detected.type;
-            websiteURL = captchaWebsiteUrl(detected.frameUrl, websiteURL);
+            websiteURL = detected.websiteURL || captchaWebsiteUrl(detected.frameUrl, websiteURL);
             frameUrl = detected.frameUrl || frameUrl;
             detectionNote = detected.note || null;
             if (!websiteKey) websiteKey = detected.websiteKey;
