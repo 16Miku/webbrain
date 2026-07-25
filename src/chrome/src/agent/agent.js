@@ -28,7 +28,7 @@ import {
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken } from './captcha-solver.js';
+import { solveCaptcha, detectCaptcha, injectToken, captchaParamError } from './captcha-solver.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
@@ -14365,17 +14365,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         // Detect when the model didn't pre-specify a captcha type. Image-
         // to-text is a special case that needs an explicit imageBase64.
-        let { type, websiteKey, isInvisible, pageAction, minScore, imageBase64 } = args || {};
+        let { type, websiteKey, isInvisible, isEnterprise, pageAction, minScore, imageBase64 } = args || {};
+        // Detection notes explain *why* a field is missing (e.g. a v3 widget
+        // that never exposed its action name). Carry it into the failure so
+        // the model gets the remedy, not just the rejection.
+        let detectionNote = null;
         if (!type) {
           const detected = await detectCaptcha(tabId);
           if (!detected) {
             return noDispatchFailure('No CAPTCHA detected on the page. If the captcha lives inside a cross-origin iframe or uses a non-standard widget, pass `type` and `websiteKey` explicitly.');
           }
           type = detected.type;
+          detectionNote = detected.note || null;
           if (!websiteKey) websiteKey = detected.websiteKey;
           if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
+          if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
           if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
         }
+
+        const params = {
+          type,
+          websiteURL,
+          websiteKey,
+          ...(isInvisible != null ? { isInvisible } : {}),
+          ...(isEnterprise != null ? { isEnterprise } : {}),
+          ...(pageAction ? { pageAction } : {}),
+          ...(minScore ? { minScore } : {}),
+          ...(imageBase64 ? { body: imageBase64 } : {}),
+        };
 
         if (type === 'image_to_text') {
           if (!imageBase64) {
@@ -14384,17 +14401,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } else if (!websiteKey) {
           return noDispatchFailure(`solve_captcha: ${type} requires a websiteKey (data-sitekey). Auto-detection didn't find one — pass it explicitly.`);
         }
+        // Everything CapSolver would reject on argument grounds is checked
+        // here, before `dispatched` flips — a bad argument must not be
+        // reported as an external side effect that already happened.
+        const paramError = captchaParamError(params);
+        if (paramError) {
+          return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
+        }
 
         dispatched = true;
-        const result = await solveCaptcha(apiKey, {
-          type,
-          websiteURL,
-          websiteKey,
-          ...(isInvisible != null ? { isInvisible } : {}),
-          ...(pageAction ? { pageAction } : {}),
-          ...(minScore ? { minScore } : {}),
-          ...(imageBase64 ? { body: imageBase64 } : {}),
-        });
+        const result = await solveCaptcha(apiKey, params);
 
         // For non-image types, push the token into the page response field
         // unless the caller explicitly opted out.

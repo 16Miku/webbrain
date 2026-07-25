@@ -6,11 +6,12 @@
 //   POST /getTaskResult  → { status: "ready"|"processing", solution? }
 //   POST /getBalance     → { balance, packages }
 //
-// Coverage today: reCAPTCHA v2 (checkbox/invisible), reCAPTCHA v3, hCaptcha,
-// Cloudflare Turnstile, plain image-to-text. Other types CapSolver supports
-// (FunCaptcha, AWS WAF, GeeTest, datadome) are not auto-detected here yet —
-// the agent can still drive them by passing an explicit `type` to
-// solve_captcha and the right `taskTypeOverride`.
+// Coverage today: reCAPTCHA v2 (checkbox/invisible), reCAPTCHA v3, both of
+// those in their Enterprise flavour, hCaptcha, Cloudflare Turnstile, plain
+// image-to-text. Other types CapSolver supports (FunCaptcha, AWS WAF,
+// GeeTest, datadome) are not auto-detected here yet — the agent can still
+// drive them by passing an explicit `type` to solve_captcha and the right
+// `taskTypeOverride`.
 
 const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;
@@ -36,26 +37,35 @@ async function postJson(path, body) {
 
 // Wrap a CapSolver error response in a friendlier message.
 //
-// CapSolver returns several different error codes when it refuses a sitekey
-// it considers a public TEST/DEMO key (Google's recaptcha demo, the
-// hcaptcha.com demo, etc.). Two we've actually hit in the wild:
+// Two failure classes look nearly identical on the wire but need opposite
+// responses from the model, so we key off the *description* rather than the
+// error code — CapSolver reuses ERROR_INVALID_TASK_DATA and
+// ERROR_WRONG_CAPTCHA_TYPE for both:
 //
-//   ERROR_WRONG_CAPTCHA_TYPE  ("wrong captcha type")
-//   ERROR_INVALID_TASK_DATA   ("We don't support this service.")
+//   1. Refused sitekey. CapSolver won't farm public TEST/DEMO keys (Google's
+//      recaptcha demo, hcaptcha.com/demo) because no genuine token would come
+//      back. Description reads like "We don't support this service." The fix
+//      is to try the flow on a real production site.
+//   2. Bad task configuration. Description reads like "Invalid input: check
+//      captcha type or parameters" — you get this when the task type doesn't
+//      match the widget, e.g. a plain ReCaptchaV2TaskProxyLess against an
+//      Enterprise sitekey. The fix is to correct `type`/`isEnterprise`.
 //
-// Both translate, in practice, to "this is a public test sitekey, real
-// captcha solvers won't farm it because no genuine token would come back".
-// The vendor-side description on its own is opaque, so we tack on a one-
-// liner pointing the model (and the user, via the trace) at the real
-// remedy: try on a production site.
+// Blaming (2) on a demo key is actively harmful: the model gives up and moves
+// to another site instead of retrying with the right task type. Match the
+// demo phrasing narrowly for the same reason — an earlier bare /test/ matched
+// the "test" inside "latest" and mislabelled ordinary parameter errors.
+const CAPSOLVER_TASK_CONFIG_RE = /invalid input|check captcha type|wrong captcha type/i;
+const CAPSOLVER_DEMO_KEY_RE = /\btest\s*(?:site\s*)?key\b|\bdemo\b|unsupported|don['’]?t[\s_]support|not[\s_]support/i;
+
 function capsolverError(prefix, body) {
   const desc = body.errorDescription || body.errorCode || 'unknown error';
-  const code = String(body.errorCode || '');
-  const looksLikeDemoRejection =
-    code === 'ERROR_WRONG_CAPTCHA_TYPE' ||
-    code === 'ERROR_INVALID_TASK_DATA' ||
-    /don['’]?t support|not support|unsupported/i.test(desc);
-  if (looksLikeDemoRejection) {
+  if (CAPSOLVER_TASK_CONFIG_RE.test(desc)) {
+    return new Error(
+      `${prefix}: ${desc}. CapSolver rejected the task configuration, not the sitekey — most often the task type doesn't match the widget (a plain reCAPTCHA task against an Enterprise sitekey, or a v2 task against a v3 key). Re-check the detected type and pass \`type\` / \`isEnterprise\` explicitly.`
+    );
+  }
+  if (CAPSOLVER_DEMO_KEY_RE.test(desc)) {
     return new Error(
       `${prefix}: ${desc}. This usually means CapSolver refused the sitekey — most often because it is a public TEST/DEMO key (Google's recaptcha demo, hcaptcha.com/demo, etc.) that no captcha-solving service will farm. Try the same flow on a real production site.`
     );
@@ -103,25 +113,55 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
 // default to the "proxyless" task types so the user doesn't need to BYO
 // proxy — that's the simplest path and what virtually every reCAPTCHA /
 // hCaptcha / Turnstile setup actually needs.
+//
+// `enterprisePayload` is accepted but deliberately absent from the
+// solve_captcha schema (same as on the hCaptcha branch): it carries the
+// site-specific `s` token some Enterprise deployments require, which a model
+// has no way to obtain from the page. It stays here so callers that do have
+// one can pass it through.
+
+// Type aliases the model or the detector may hand us. Kept as sets rather
+// than inline `||` chains so buildTask and captchaParamError below can't
+// drift apart on which spellings count as v3.
+const RECAPTCHA_V2_TYPES = new Set(['recaptcha_v2', 'recaptchav2', 'recaptcha_v2_enterprise', 'recaptcha_enterprise']);
+const RECAPTCHA_V3_TYPES = new Set(['recaptcha_v3', 'recaptchav3', 'recaptcha_v3_enterprise']);
+
+// Validate the params CapSolver would reject before we spend a request on
+// them. Exported so agent.js can run it *before* it flags the tool call as
+// dispatched — a missing pageAction is a local argument error, not an
+// external side effect. Returns an error string, or null when the params
+// are usable.
+export function captchaParamError(params) {
+  const t = String(params?.type || '').toLowerCase();
+  if (!t) return 'solve_captcha: type is required.';
+  if (RECAPTCHA_V3_TYPES.has(t) && !(params.pageAction || params.action)) {
+    return `solve_captcha: ${params.type} requires a \`pageAction\` (e.g. "login", "submit"). reCAPTCHA v3 scores the action name, so CapSolver cannot mint a usable token without it — pass \`pageAction\` explicitly.`;
+  }
+  return null;
+}
 
 function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2') {
+  const isEnterprise = !!rest.isEnterprise || t.includes('enterprise');
+  if (RECAPTCHA_V2_TYPES.has(t)) {
     return {
-      type: 'ReCaptchaV2TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV2EnterpriseTaskProxyLess' : 'ReCaptchaV2TaskProxyLess',
       websiteURL,
       websiteKey,
       ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
       ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
-  if (t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (RECAPTCHA_V3_TYPES.has(t)) {
+    const pageAction = rest.pageAction || rest.action;
     return {
-      type: 'ReCaptchaV3TaskProxyLess',
+      type: isEnterprise ? 'ReCaptchaV3EnterpriseTaskProxyLess' : 'ReCaptchaV3TaskProxyLess',
       websiteURL,
       websiteKey,
-      pageAction: rest.pageAction || rest.action || 'verify',
+      pageAction,
       ...(rest.minScore ? { minScore: rest.minScore } : {}),
+      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
   }
   if (t === 'hcaptcha') {
@@ -157,7 +197,10 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
 // type. The DOM convention is well-documented for the ones we auto-handle.
 function solutionFor(type, solution) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
+  // Covers every reCAPTCHA spelling — v2/v3, snake or camel, Enterprise or
+  // not. They all return the token under the same solution key and inject
+  // into the same field.
+  if (t.startsWith('recaptcha')) {
     return { token: solution.gRecaptchaResponse, fieldName: 'g-recaptcha-response' };
   }
   if (t === 'hcaptcha') {
@@ -178,7 +221,8 @@ function solutionFor(type, solution) {
 
 export async function solveCaptcha(apiKey, params) {
   if (!apiKey) throw new Error('No CapSolver API key configured.');
-  if (!params?.type) throw new Error('solve_captcha: type is required.');
+  const paramError = captchaParamError(params);
+  if (paramError) throw new Error(paramError);
   const task = buildTask(params);
   const taskId = await createTask(apiKey, task);
   const solution = await pollTaskResult(apiKey, taskId);
@@ -198,6 +242,22 @@ export async function solveCaptcha(apiKey, params) {
 // page's light DOM, even if its UI lives inside a same-origin iframe.
 
 function detectCaptchaInPage() {
+  // Helpers are declared inside the function, not at module scope: this whole
+  // body is serialised into the page world by chrome.scripting.executeScript,
+  // so it cannot close over anything outside itself.
+  const V3_NO_ACTION_NOTE = 'reCAPTCHA v3 detected, but the page never exposed an action name. solve_captcha needs pageAction — read it from the grecaptcha.execute(...) call in the site JS, or infer it from the form (login, submit, checkout).';
+
+  // reCAPTCHA v3 puts the action name in the loader script's query string.
+  // Parse it with URL so percent-encoded action names come back decoded.
+  const getUrlAction = (urlStr) => {
+    try {
+      const u = new URL(urlStr, 'https://dummy.host');
+      const act = u.searchParams.get('action') || u.searchParams.get('pageAction') || u.searchParams.get('page_action');
+      return act ? act.trim() : null;
+    } catch {}
+    return null;
+  };
+
   // Helper: visit same-origin iframes too, since reCAPTCHA on many sites
   // is rendered inside a same-origin wrapper. Cross-origin frames are
   // skipped (their .contentDocument throws on access).
@@ -238,22 +298,59 @@ function detectCaptchaInPage() {
         return { type: 'turnstile', websiteKey: sitekey };
       }
     }
-    // reCAPTCHA v2/v3. Match only on reCAPTCHA-specific markers — the
-    // `.g-recaptcha` class or `id="g-recaptcha-..."` — so we don't
-    // accidentally grab any `data-sitekey` element from another widget.
-    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey]');
+    // reCAPTCHA v2/v3, classic or Enterprise. `.g-recaptcha` is the documented
+    // host class; `data-recaptcha-sitekey` is a wrapper convention several
+    // form libraries use. Both are reCAPTCHA-specific, so this still doesn't
+    // grab a bare `data-sitekey` belonging to another provider.
+    const recap = d.querySelector('.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]');
     if (recap) {
-      const sitekey = recap.getAttribute('data-sitekey');
+      const sitekey = recap.getAttribute('data-sitekey') || recap.getAttribute('data-recaptcha-sitekey');
       if (sitekey) {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
-        // v3 widgets typically carry data-action; v2 doesn't.
-        const action = recap.getAttribute('data-action') || null;
+        const action = recap.getAttribute('data-action') || recap.getAttribute('data-recaptcha-action') || null;
+        // Script tags decide both version and edition. Look in the parent
+        // document too: when the widget lives in a same-origin iframe the
+        // loader tag usually stays in the top document.
+        const scriptSrcs = [];
+        for (const doc of (d === document ? [d] : [d, document])) {
+          for (const s of doc.querySelectorAll('script[src]')) {
+            try { if (s.src) scriptSrcs.push(s.src); } catch {}
+          }
+        }
+        const hasClassicScript = scriptSrcs.some(s => s.includes('recaptcha/api.js'));
+        const hasEnterpriseScript = scriptSrcs.some(s => s.includes('recaptcha/enterprise'));
+        // data-enterprise / data-sitekey-type aren't Google attributes — they
+        // are wrapper-library conventions (django-recaptcha, some Rails and
+        // Vue helpers). Cheap to check, so we take them as hints before
+        // falling back to which loader script the page pulled in.
+        const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
+          recap.getAttribute('data-sitekey-type') === 'enterprise' ||
+          recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
+          (!hasClassicScript && hasEnterpriseScript);
+        // Version, in order of reliability:
+        //   1. an explicit wrapper-set data-version / .g-recaptcha-v3 marker
+        //   2. a `render=<sitekey>` loader script — the v3 signature; v2 loads
+        //      the script bare or with render=explicit
+        //   3. data-action with no data-size=invisible
+        // (3) alone is not enough in either direction: v2 invisible widgets
+        // carry data-action too, and some v3 wrappers copy data-size onto
+        // their host div. Without (2) both of those land on the wrong task
+        // type and CapSolver rejects the key.
+        const version = recap.getAttribute('data-version') || (recap.classList.contains('g-recaptcha-v3') ? 'v3' : null);
+        const renderScript = scriptSrcs.find(s =>
+          /recaptcha\/(api|enterprise)\.js/i.test(s) && s.includes(`render=${sitekey}`)) || null;
+        const isV3 = version === 'v3' || !!renderScript || (!!action && !isInvisible);
+        // v3 needs an action name to solve. Fall back to the loader script's
+        // ?action= when the host element doesn't carry one, and say so
+        // explicitly when neither does — solve_captcha refuses v3 without it.
+        const pageAction = action || (isV3 && renderScript ? getUrlAction(renderScript) : null);
         return {
-          type: action ? 'recaptcha_v3' : 'recaptcha_v2',
+          type: isV3 ? (isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3') : (isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2'),
           websiteKey: sitekey,
           isInvisible,
-          ...(action ? { pageAction: action } : {}),
+          isEnterprise,
+          ...(pageAction ? { pageAction } : (isV3 ? { note: V3_NO_ACTION_NOTE } : {})),
         };
       }
     }
@@ -277,33 +374,85 @@ function detectCaptchaInPage() {
   // Turnstile) or `?k=` (reCAPTCHA) query parameter. iframe.src and
   // script.src are readable across origins from the parent page, so we
   // can scrape them even when the widget renders cross-origin.
-  const urlCandidates = [];
-  for (const el of document.querySelectorAll('iframe[src], script[src]')) {
-    try { if (el.src) urlCandidates.push(el.src); } catch {}
-  }
-  for (const url of urlCandidates) {
-    // hCaptcha
+  // hCaptcha and Turnstile expose the same `?sitekey=` in either tag, so one
+  // matcher serves both passes below.
+  const nonRecaptchaFromUrl = (url) => {
     if (/hcaptcha\.com/i.test(url)) {
       const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
-      }
+      if (m) return { type: 'hcaptcha', websiteKey: m[1], detectedVia: 'url' };
     }
-    // Cloudflare Turnstile
     if (/challenges\.cloudflare\.com\/turnstile/i.test(url)) {
       const m = url.match(/[?&#][^?&#]*?sitekey=([a-zA-Z0-9_-]{6,})/);
-      if (m) {
-        return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
-      }
+      if (m) return { type: 'turnstile', websiteKey: m[1], detectedVia: 'url' };
     }
-    // reCAPTCHA v2 — the anchor iframe carries the sitekey in `k=` and
-    // visible (checkbox) widgets are the only kind that produce this URL
-    // pattern (v3 is invisible and would have surfaced via the DOM scan
-    // above if a host element existed).
+    return null;
+  };
+
+  // Split by tag type because reCAPTCHA needs both halves to classify a
+  // widget: the anchor iframe carries the sitekey, the loader script carries
+  // the version and action. Iframes are scanned first — a rendered anchor
+  // frame is a stronger signal that the widget is actually on this page than
+  // a script tag, which may just be a loader the page never used.
+  const iframeUrls = [];
+  const scriptUrls = [];
+  for (const el of document.querySelectorAll('iframe[src], script[src]')) {
+    try {
+      if (el.src) {
+        if (el.tagName.toLowerCase() === 'iframe') iframeUrls.push(el.src);
+        else scriptUrls.push(el.src);
+      }
+    } catch {}
+  }
+  for (const url of iframeUrls) {
+    const other = nonRecaptchaFromUrl(url);
+    if (other) return other;
     if (/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) {
       const m = url.match(/[?&#]k=([a-zA-Z0-9_-]{6,})/);
       if (m) {
-        return { type: 'recaptcha_v2', websiteKey: m[1], detectedVia: 'url' };
+        const sitekey = m[1];
+        const isEnterprise = /recaptcha\/enterprise/i.test(url);
+        const isInvisible = /[?&#]size=invisible/i.test(url);
+        // v3 renders an anchor frame too (the badge), and it always carries
+        // size=invisible — so the frame alone can't tell v3 from an invisible
+        // v2. A loader script rendering this exact sitekey settles it.
+        const matchingV3Script = scriptUrls.find(s => s.includes(`render=${sitekey}`));
+        if (matchingV3Script) {
+          const pageAction = getUrlAction(matchingV3Script);
+          return {
+            type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
+            websiteKey: sitekey,
+            isEnterprise,
+            ...(pageAction ? { pageAction } : { note: V3_NO_ACTION_NOTE }),
+            detectedVia: 'url',
+          };
+        }
+        return {
+          type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
+          websiteKey: sitekey,
+          isInvisible,
+          isEnterprise,
+          detectedVia: 'url',
+        };
+      }
+    }
+  }
+  for (const url of scriptUrls) {
+    const other = nonRecaptchaFromUrl(url);
+    if (other) return other;
+    if (/recaptcha\/(api\.js|enterprise\.js)/i.test(url)) {
+      const m = url.match(/[?&#]render=([a-zA-Z0-9_-]{6,})/);
+      // render=explicit means the page renders a v2 widget by hand later —
+      // it is not a sitekey.
+      if (m && m[1] !== 'explicit') {
+        const isEnterprise = /enterprise/i.test(url);
+        const pageAction = getUrlAction(url);
+        return {
+          type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
+          websiteKey: m[1],
+          isEnterprise,
+          ...(pageAction ? { pageAction } : { note: V3_NO_ACTION_NOTE }),
+          detectedVia: 'url',
+        };
       }
     }
   }
