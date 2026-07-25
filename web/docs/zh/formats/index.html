@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>导出与已保存工作流 — WebBrain 用户指南</title><meta name="description" content="选择合适的 WebBrain 导出格式，了解文件内容，并安全迁移已保存的工作流。">
+  <link rel="canonical" href="https://webbrain.one/docs/zh/formats/"><link rel="alternate" hreflang="en" href="https://webbrain.one/docs/formats/"><link rel="alternate" hreflang="zh" href="https://webbrain.one/docs/zh/formats/"><link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/formats/"><link rel="icon" href="/favicon.png"><script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script><link rel="stylesheet" href="/docs/assets/docs.css">
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+</head>
+<body class="doc-page">
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/"><img src="/logo-github.png" alt=""><span>WebBrain</span><span class="brand-docs">用户指南</span></a><nav class="top-nav" aria-label="主导航"><a href="/docs/zh/" aria-current="page">文档</a><a href="/blog/">博客</a><a href="https://github.com/webbrain-one/webbrain">GitHub</a></nav><div class="header-tools"><a class="lang-switch" href="/docs/formats/" aria-label="Read in English"><span>EN</span><span class="active">中文</span></a><button class="icon-button" type="button" data-theme-toggle aria-label="切换主题">☀</button><button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-label="打开文档菜单">☰</button></div></div></header>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" aria-label="文档目录"><div class="sidebar-group"><div class="sidebar-label">从这里开始</div><nav><a href="/docs/zh/">概览</a></nav></div><div class="sidebar-group"><div class="sidebar-label">使用 WebBrain</div><nav><a href="/docs/zh/settings/">设置说明</a><a href="/docs/zh/providers/">提供商与模型</a><a href="/docs/zh/safety/">模式、安全与隐私</a><a href="/docs/zh/formats/" aria-current="page">导出与工作流</a></nav></div><div class="sidebar-group"><div class="sidebar-label">开发者</div><nav><a href="https://github.com/webbrain-one/webbrain/blob/main/docs/export-and-workflow-formats.md">格式参考（英文）↗</a></nav></div><div class="sidebar-group"><div class="sidebar-label">社区</div><nav><a href="https://discord.gg/cgC325ssfw">Discord 支持</a></nav></div></aside>
+    <main class="doc-main" id="main">
+      <div class="breadcrumb"><a href="/docs/zh/">文档</a> / 导出与已保存工作流</div>
+      <section class="doc-hero"><div class="eyebrow">可迁移，也有边界</div><h1>根据需要迁移的内容选择导出格式。</h1><p class="lede">可读对话、诊断轨迹、设置备份和可复用工作流是四种不同文件。最安全的选择，是只导出完成目标所需的最少内容。</p></section>
+
+      <section class="doc-section" id="choose"><h2>应该使用哪种导出？</h2><div class="table-wrap"><table><thead><tr><th>目标</th><th>命令</th><th>结果</th></tr></thead><tbody><tr><td>保存侧边栏中可见的对话</td><td><code>/export</code></td><td>便于阅读的 Markdown 对话记录。</td></tr><tr><td>调试已记录的代理运行</td><td><code>/export --traces</code></td><td>包含模型回复、工具调用、参数和结果的 Markdown。</td></tr><tr><td>备份或迁移设置</td><td><code>/export --config</code></td><td><code>webbrain-config/1</code> JSON 快照。</td></tr><tr><td>迁移一个可复用自动化</td><td><code>/workflow --export &lt;id&gt;</code></td><td>经过清理的 <code>webbrain-workflow/1</code> JSON 定义。</td></tr></tbody></table></div><div class="callout warning"><strong class="callout-title">配置导出包含明文密钥</strong><p>设置快照可能包含提供商 API 密钥、个人资料、用户记忆、自定义技能和权限选择。请像密码备份一样保存，切勿将其附加到公开 issue。</p></div></section>
+
+      <section class="doc-section" id="conversation"><h2>对话与轨迹 Markdown</h2><p><code>/export</code> 会保存侧边栏当前显示的消息，并记录导出时的 WebBrain 版本。该文件用于阅读，不能导回 WebBrain。</p><p><code>/export --traces</code> 使用当前对话的本地轨迹记录，可能包含提示词、模型输出、URL、工具参数和工具结果。此 Markdown 文件不包含截图。如果某次运行时没有开启轨迹记录，之后无法补建该次轨迹。</p><div class="callout tip"><strong class="callout-title">准备提交错误报告？</strong><p>优先使用对话导出。只有在需要工具级细节时才使用轨迹导出；分享前都应检查个人信息。</p></div></section>
+
+      <section class="doc-section" id="config"><h2>备份设置</h2><ol><li>输入 <code>/export --config</code>。</li><li>安全保存下载的 <code>webbrain-config-….json</code>。</li><li>使用 <code>/import --file</code> 恢复，或把 JSON 粘贴在 <code>/import</code> 后。</li></ol><p>快照包含可迁移的设置值，但不包含对话、轨迹、计划任务、用量计数、累计支出，也不包含绑定设备的 Cloud Sync 会话和设备 ID。</p><p><code>schema</code> 字段用于识别兼容性。WebBrain 当前导出并接受 <code>webbrain-config/1</code>。</p></section>
+
+      <section class="doc-section" id="workflow"><h2>迁移已保存工作流</h2><ol><li>开启轨迹记录并成功完成任务。</li><li>用 <code>/workflow --save &lt;名称&gt;</code> 保存。</li><li>运行 <code>/workflow</code> 查找 ID。</li><li>用 <code>/workflow --export &lt;id&gt;</code> 下载。</li><li>在另一套 WebBrain 中使用 <code>/workflow --import --file</code>。</li></ol><p>可移植工作流不是原始轨迹。WebBrain 会删除旧元素引用、CSS 选择器、点击坐标、URL 查询字符串和片段，以及曾经输入的字段值。输入值会变成参数，在每次运行时于本地重新收集。</p><p>文件保留语义化目标描述、来源站点和路径范围，因此 WebBrain 可以重新查找当前元素，并在匹配不明确时安全停止。正常的执行模式权限、提交确认和结果验证仍然生效。</p><div class="callout"><strong class="callout-title">导入会创建副本</strong><p>WebBrain 会分配新的本地 ID 和时间戳，不会覆盖现有工作流。可移植工作流文件上限为 1 MiB。</p></div></section>
+
+      <section class="doc-section" id="sharing"><h2>分享前检查</h2><div class="table-wrap"><table><thead><tr><th>文件</th><th>至少检查</th></tr></thead><tbody><tr><td>对话 Markdown</td><td>消息和系统提示。</td></tr><tr><td>轨迹 Markdown 或轨迹页 JSON</td><td>提示词、URL、参数、结果及内嵌截图。</td></tr><tr><td>设置 JSON</td><td>除非主动删除了所有密钥和隐私值，否则不要分享。</td></tr><tr><td>工作流 JSON</td><td>名称、来源元数据、网站来源和路径范围、目标标签及步骤意图。</td></tr></tbody></table></div><p>完整字段和兼容规则见<a href="https://github.com/webbrain-one/webbrain/blob/main/docs/export-and-workflow-formats.md">技术格式参考（英文）</a>。</p></section>
+
+      <nav class="next-links" aria-label="后续指南"><a href="/docs/zh/safety/"><span>相关内容</span>← 模式、安全与隐私</a><a href="/docs/zh/"><span>回到开始</span>指南概览 →</a></nav>
+    </main>
+    <aside class="on-this-page" aria-label="本页内容"><h2>本页内容</h2><a href="#choose">选择导出</a><a href="#conversation">对话与轨迹</a><a href="#config">设置备份</a><a href="#workflow">已保存工作流</a><a href="#sharing">安全分享</a></aside>
+  </div>
+  <footer class="site-footer"><div class="footer-inner"><span>WebBrain 用户指南</span><div class="footer-links"><a href="/privacy">隐私</a><a href="https://github.com/webbrain-one/webbrain/issues">报告问题</a></div></div></footer><script src="/docs/assets/docs.js"></script>
+</body></html>
