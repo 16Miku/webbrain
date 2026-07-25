@@ -156,7 +156,7 @@ function buildTask({ type, websiteURL, websiteKey, ...rest }) {
 // type. The DOM convention is well-documented for the ones we auto-handle.
 function solutionFor(type, solution) {
   const t = String(type || '').toLowerCase();
-  if (t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
+  if (t.startsWith('recaptcha') || t === 'recaptcha_v2' || t === 'recaptchav2' || t === 'recaptcha_v3' || t === 'recaptchav3') {
     return { token: solution.gRecaptchaResponse, fieldName: 'g-recaptcha-response' };
   }
   if (t === 'hcaptcha') {
@@ -244,7 +244,7 @@ function detectCaptchaInPage() {
       if (sitekey) {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
-        const action = recap.getAttribute('data-action') || d.querySelector('[data-action]')?.getAttribute('data-action') || null;
+        const action = recap.getAttribute('data-action') || recap.getAttribute('data-recaptcha-action') || null;
         const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
           recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
@@ -318,7 +318,7 @@ function detectCaptchaInPage() {
       if (m && m[1] !== 'explicit') {
         const isEnterprise = /enterprise/i.test(url);
         const actionMatch = url.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
-        const pageAction = actionMatch ? actionMatch[2] : (document.querySelector('[data-action]')?.getAttribute('data-action') || null);
+        const pageAction = actionMatch ? actionMatch[2] : null;
         return {
           type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
           websiteKey: m[1],

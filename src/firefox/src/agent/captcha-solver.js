@@ -192,7 +192,7 @@ const DETECT_CODE = `(() => {
       if (sitekey) {
         const size = recap.getAttribute('data-size');
         const isInvisible = size === 'invisible';
-        const action = recap.getAttribute('data-action') || d.querySelector('[data-action]')?.getAttribute('data-action') || null;
+        const action = recap.getAttribute('data-action') || recap.getAttribute('data-recaptcha-action') || null;
         const isEnterprise = recap.getAttribute('data-enterprise') === 'true' ||
           recap.getAttribute('data-sitekey-type') === 'enterprise' ||
           recap.querySelector('iframe[src*="recaptcha/enterprise"]') != null ||
@@ -243,7 +243,7 @@ const DETECT_CODE = `(() => {
       if (m && m[1] !== 'explicit') {
         const isEnterprise = /enterprise/i.test(url);
         const actionMatch = url.match(/[?&#](action|pageAction)=([a-zA-Z0-9_-]+)/i);
-        const pageAction = actionMatch ? actionMatch[2] : (document.querySelector('[data-action]')?.getAttribute('data-action') || null);
+        const pageAction = actionMatch ? actionMatch[2] : null;
         return {
           type: isEnterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3',
           websiteKey: m[1],
