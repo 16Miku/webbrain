@@ -13837,7 +13837,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let detectionNote = null;
         let detected = null;
         if (type !== 'image_to_text') {
-          const detection = await detectCaptcha(tabId, { type, frameUrl, websiteKey });
+          let detection = null;
+          try {
+            detection = await detectCaptcha(tabId, { type, frameUrl, websiteKey });
+          } catch (detectionError) {
+            const explicitTokenOnlyFallback = args?.inject === false && !!type && !!websiteKey;
+            if (!explicitTokenOnlyFallback) {
+              return noDispatchFailure(
+                `solve_captcha: CAPTCHA frame detection failed before dispatch: ${detectionError?.message || String(detectionError)}`
+              );
+            }
+            detectionNote = `CAPTCHA frame detection was unavailable: ${detectionError?.message || String(detectionError)}`;
+          }
           if (detection?.error) {
             const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
             const needsDetection = !type || !websiteKey || !!frameUrl;

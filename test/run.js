@@ -52303,6 +52303,11 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
     );
     assert.match(
       agent,
+      /try \{\s*detection = await detectCaptcha\(tabId, \{ type, frameUrl, websiteKey \}\);[\s\S]*?catch \(detectionError\) \{[\s\S]*?args\?\.inject === false && !!type && !!websiteKey[\s\S]*?CAPTCHA frame detection failed before dispatch/,
+      `${build}: a detection exception still blocks a fully explicit token-only solve`,
+    );
+    assert.match(
+      agent,
       /callbackHint: detected\.callbackName \|\| null,[\s\S]*?responseFieldId: detected\.responseFieldId,[\s\S]*?responseFieldIndex: detected\.responseFieldIndex/,
       `${build}: selected widget identity is not carried into token injection`,
     );
