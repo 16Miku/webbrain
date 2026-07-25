@@ -921,7 +921,7 @@ export const AGENT_TOOLS = [
           pageAction: { type: 'string', description: 'Required for reCAPTCHA v3 — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action or the loader script when present; pass it explicitly if detection reports it missing.' },
           minScore: { type: 'number', description: 'reCAPTCHA v3 only — minimum score requested (0.3 is the usual lower bound, 0.7+ is hard).' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
-          inject: { type: 'boolean', description: 'After solving, inject the token into the page\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true. Set false to get just the token back.' },
+          inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to get only the token without page injection.' },
         },
         required: [],
       },

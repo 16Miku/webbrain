@@ -51812,6 +51812,7 @@ test('captcha token injection revalidates the selected frame and calls one match
       globalThis.location = { href: 'https://example.test/checkpoint/captcha' };
       globalThis.window = {
         onCaptchaSolved: (token) => { callbackToken = token; },
+        performance: { timeOrigin: 123456789 },
       };
       globalThis.Event = class {
         constructor(type, options) { this.type = type; this.bubbles = options?.bubbles; }
@@ -51844,6 +51845,43 @@ test('captcha token injection revalidates the selected frame and calls one match
       assert.equal(injected.calledCallback, true, `${build}: unique callback was not invoked`);
       assert.equal(callbackToken, 'TOKEN_123', `${build}: callback received wrong token`);
       assert.equal(response.value, 'TOKEN_123', `${build}: response field was not set`);
+
+      const selectedFrameUrl = globalThis.location.href;
+      globalThis.location.href = `${selectedFrameUrl}?step=verify#captcha`;
+      response.value = '';
+      const sameDocumentUrlChange = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_SPA_URL',
+        target: {
+          frameId: 9,
+          frameUrl: selectedFrameUrl,
+          websiteKey: 'KEY_ACTIVE',
+          documentTimeOrigin: 123456789,
+        },
+      });
+      assert.equal(
+        sameDocumentUrlChange.success,
+        true,
+        `${build}: same-document query/hash change blocked injection`,
+      );
+      assert.equal(response.value, 'TOKEN_SPA_URL', `${build}: SPA token was not injected`);
+
+      response.value = '';
+      globalThis.window.performance.timeOrigin = 987654321;
+      const replacedDocument = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_REPLACED_DOCUMENT',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_ACTIVE',
+          documentTimeOrigin: 123456789,
+        },
+      });
+      assert.equal(replacedDocument.success, false, `${build}: replacement document accepted a stale token`);
+      assert.equal(replacedDocument.staleTarget, true, `${build}: replacement document was not marked stale`);
+      assert.equal(response.value, '', `${build}: stale document token touched the field`);
+      globalThis.window.performance.timeOrigin = 123456789;
 
       declaredCallbackEnabled = false;
       callbackToken = null;
@@ -52060,6 +52098,16 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
       agent,
       /explicitWebsiteKey: detected\.explicitWebsiteKey === true/,
       `${build}: explicit Turnstile key marker is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /const wantInject = args\?\.inject !== false && type !== 'image_to_text';[\s\S]*?if \(wantInject && !detected\) \{[\s\S]*?no safe injection target could be verified[\s\S]*?\}[\s\S]*?dispatched = true;/,
+      `${build}: targetless default injection is not rejected before paid dispatch`,
+    );
+    assert.match(
+      agent,
+      /documentTimeOrigin: detected\.documentTimeOrigin/,
+      `${build}: selected document identity is not carried into token injection`,
     );
   }
 });

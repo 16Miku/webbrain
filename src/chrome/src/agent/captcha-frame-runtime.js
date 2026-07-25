@@ -234,6 +234,9 @@ function candidateSummary(candidate) {
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
+    documentTimeOrigin: Number.isFinite(candidate?.documentTimeOrigin)
+      ? candidate.documentTimeOrigin
+      : null,
     ancestorLoaderFrameId: Number.isInteger(candidate?.ancestorLoaderFrameId)
       ? candidate.ancestorLoaderFrameId
       : null,
@@ -458,6 +461,11 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       + 'textarea[name="cf-turnstile-response"], input[name="cf-turnstile-response"]'
   );
   const V3_NO_ACTION_NOTE = 'reCAPTCHA v3 detected, but the page never exposed an action name. solve_captcha needs pageAction — read it from the grecaptcha.execute(...) call in the site JS, or infer it from the form (login, submit, checkout).';
+  let documentTimeOrigin = null;
+  try {
+    const value = Number(pageWindow?.performance?.timeOrigin);
+    if (Number.isFinite(value) && value > 0) documentTimeOrigin = value;
+  } catch (_) {}
 
   const urlParam = (urlStr, name) => {
     try {
@@ -497,6 +505,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       frameUrl,
       challengeFrame,
       responseField,
+      documentTimeOrigin,
     });
   };
   const scriptElements = Array.from(pageDocument.querySelectorAll('script[src]'));
@@ -724,8 +733,49 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       frameUrl,
     };
   }
-  if (target.frameUrl && frameUrl !== target.frameUrl) {
-    return { success: false, fieldUpdated: false, skipped: true, error: 'frame URL did not match target', frameUrl };
+  let currentDocumentTimeOrigin = null;
+  try {
+    const value = Number(frameWindow.performance?.timeOrigin);
+    if (Number.isFinite(value) && value > 0) currentDocumentTimeOrigin = value;
+  } catch (_) {}
+  const targetHasDocumentIdentity = Number.isFinite(target.documentTimeOrigin);
+  const currentHasDocumentIdentity = Number.isFinite(currentDocumentTimeOrigin);
+  if (targetHasDocumentIdentity
+      && currentHasDocumentIdentity
+      && target.documentTimeOrigin !== currentDocumentTimeOrigin) {
+    return {
+      success: false,
+      fieldUpdated: false,
+      skipped: true,
+      staleTarget: true,
+      error: 'target frame navigated to a different document',
+      frameUrl,
+    };
+  }
+  const sameStableUrl = (left, right) => {
+    try {
+      const leftUrl = new URL(left);
+      const rightUrl = new URL(right);
+      return leftUrl.origin === rightUrl.origin && leftUrl.pathname === rightUrl.pathname;
+    } catch (_) {
+      return false;
+    }
+  };
+  const sameDocumentIdentity = targetHasDocumentIdentity
+    && currentHasDocumentIdentity
+    && target.documentTimeOrigin === currentDocumentTimeOrigin;
+  if (target.frameUrl
+      && frameUrl !== target.frameUrl
+      && !sameDocumentIdentity
+      && !sameStableUrl(frameUrl, target.frameUrl)) {
+    return {
+      success: false,
+      fieldUpdated: false,
+      skipped: true,
+      staleTarget: true,
+      error: 'frame URL did not match target document',
+      frameUrl,
+    };
   }
 
   const urlHasKey = (urlStr, key) => {

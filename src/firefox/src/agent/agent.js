@@ -12180,10 +12180,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
         }
 
+        const wantInject = args?.inject !== false && type !== 'image_to_text';
+        if (wantInject && !detected) {
+          return noDispatchFailure(
+            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to CapSolver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
+          );
+        }
+
         dispatched = true;
         const result = await solveCaptcha(apiKey, params);
 
-        const wantInject = args?.inject !== false && type !== 'image_to_text';
         let injection = null;
         if (wantInject && result.fieldName && result.token) {
           try {
@@ -12198,6 +12204,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 websiteKey: detected.websiteKey,
                 type: detected.type,
                 explicitWebsiteKey: detected.explicitWebsiteKey === true,
+                documentTimeOrigin: detected.documentTimeOrigin,
               } : null,
             });
           } catch (e) {
