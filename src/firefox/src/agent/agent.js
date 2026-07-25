@@ -31,7 +31,7 @@ import {
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken, captchaParamError } from './captcha-solver.js';
+import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
@@ -61,6 +61,7 @@ import {
 } from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
+import { SELECTION_ONLY_SOURCE_GROUNDING } from '../context-menu-storage.js';
 import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 import { resolveSavedDownload } from '../download-result.js';
@@ -79,6 +80,10 @@ const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
 const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
+// Appended to the system prompt of every selection-grounded model request.
+// The scope hides the page and disables tools, so the model must explain the
+// boundary instead of guessing when a follow-up reaches beyond the selection.
+const SELECTION_SCOPE_SYSTEM_NOTE = 'The text the user selected on a page is the only source available in this conversation. The current page, other tabs, files, live data, and browser tools are all unavailable. If the user asks about anything beyond the selected text and this conversation, do not guess: briefly explain, in the user\'s language, that this conversation only covers their selected text, and suggest starting a new conversation for questions about the page.';
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'get_accessibility_tree',
   'read_page',
@@ -117,6 +122,10 @@ export class Agent extends LoopDetector {
     super();
     this.providerManager = providerManager;
     this.conversations = new Map(); // tabId -> messages[]
+    // tabId -> durable selected-text boundary. Follow-up turns and Continue
+    // inherit this scope without exposing conversation history from before the
+    // selection. Cleared with the conversation or replaced by a new selection.
+    this.selectionGroundingScopes = new Map();
     this.progressLedgers = new Map(); // tabId -> structured progress rows, projected into a pinned note
     this.progressPageScopes = new Map(); // tabId -> normalized page identity for scoped progress task keys
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
@@ -664,6 +673,22 @@ export class Agent extends LoopDetector {
           this.progressSessions.set(tabId, entry.progressSession);
         }
         if (
+          entry.selectionGroundingScope
+          && Number.isInteger(entry.selectionGroundingScope.anchorIndex)
+          && entry.selectionGroundingScope.anchorIndex >= 1
+        ) {
+          this.selectionGroundingScopes.set(tabId, {
+            conversationId: entry.selectionGroundingScope.conversationId || null,
+            anchorIndex: entry.selectionGroundingScope.anchorIndex,
+            anchorFingerprint: typeof entry.selectionGroundingScope.anchorFingerprint === 'string'
+              ? entry.selectionGroundingScope.anchorFingerprint
+              : null,
+            excludedFingerprints: Array.isArray(entry.selectionGroundingScope.excludedFingerprints)
+              ? entry.selectionGroundingScope.excludedFingerprints.filter(value => typeof value === 'string')
+              : [],
+          });
+        }
+        if (
           entry.clarificationAuthorizationGuard?.source === 'timeout'
           && entry.clarificationAuthorizationGuard?.authorized === false
         ) {
@@ -707,6 +732,7 @@ export class Agent extends LoopDetector {
       submittedRunRequestId: this.submittedRunRequestIds.get(tabId) || null,
       progressLedger: this.progressLedgers.get(tabId) || [],
       progressSession: this.progressSessions.get(tabId) || null,
+      selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
     };
   }
@@ -4639,19 +4665,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * mentioned earlier in the thread. The heavier screenshot context is still
    * limited to the first real user turn.
    */
-  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null) {
+  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
     // Dynamic trusted state belongs in the per-turn user context, not the
     // cache-stable system prompt. The same enriched message is passed to the
     // planner gate and the main agent loop, so neither has to guess the clock.
     let contextLine = `${buildTrustedRuntimeContext()}\n\n`;
 
     let url = '', title = '';
-    try {
-      const tab = await browser.tabs.get(tabId);
-      url = tab?.url || '';
-      title = tab?.title || '';
-    } catch (e) { /* ignore */ }
+    if (!selectionOnly) {
+      try {
+        const tab = await browser.tabs.get(tabId);
+        url = tab?.url || '';
+        title = tab?.title || '';
+      } catch (e) { /* ignore */ }
+    }
 
     // url and title are page-controlled (document.title especially). Neutralize
     // characters that could break out of this bracketed, trusted note and
@@ -4684,7 +4713,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    if (hasPriorUserTurn) return { role: 'user', content: contextLine + userMessage };
+    // Selected-text shortcuts have an explicit source boundary. Do not attach
+    // page title, adapter guidance, a vision description, or raw pixels that a
+    // small multimodal model could mistake for the authoritative selection.
+    if (selectionOnly || hasPriorUserTurn) {
+      return { role: 'user', content: contextLine + userMessage };
+    }
 
     // Determine vision capability: either a dedicated vision model is
     // configured (routes screenshots there, text to main), or the main
@@ -5376,8 +5410,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // record the user's turn first so a planner failure (or a throw while
     // building the digest) can never drop the just-typed message from the
     // transcript.
-    const priorMessages = runIntent ? messages.slice() : null;
+    const sourceBoundRun = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    const sourceBoundPriorMessages = sourceBoundRun
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
+    const sourceBoundPlannerMessages = sourceBoundRun
+      ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
+      : null;
+    const priorMessages = runIntent
+      ? (sourceBoundRun
+        ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
+        : messages.slice())
+      : null;
     messages.push(enriched);
+    if (runOptions?.selectionGroundingScopeStarted === true) {
+      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+    }
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
     if (!runIntent) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -5954,10 +6002,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _generateContextOnlyResponse(tabId, messages, provider, costState, runId, {
     phase = 'response_only',
     step = 1,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
   } = {}) {
+    const modelMessages = this._messagesForSourceGroundedRun(
+      messages,
+      runOptions,
+      currentUserMessage,
+      priorMessageSet,
+    );
+    const selectionScoped = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    const contextSystemPrompt = this._contextOnlySystemPrompt(phase);
     const contextMessages = [
-      { role: 'system', content: this._contextOnlySystemPrompt(phase) },
-      ...messages.slice(1),
+      {
+        role: 'system',
+        content: selectionScoped
+          ? `${contextSystemPrompt}\n\n${SELECTION_SCOPE_SYSTEM_NOTE}`
+          : contextSystemPrompt,
+      },
+      ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
     const chatOpts = { temperature: 0.3, maxTokens: 4096 };
@@ -6020,7 +6084,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { content, status: 'cancelled' };
   }
 
-  async _completeResponseOnlyTurn(tabId, messages, onUpdate, provider, costState, runId) {
+  async _completeResponseOnlyTurn(
+    tabId,
+    messages,
+    onUpdate,
+    provider,
+    costState,
+    runId,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
     onUpdate('thinking', { step: 1, note: 'Preparing response…' });
@@ -6029,7 +6103,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
-        { phase: 'response_only', step: 1 },
+        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet },
       );
     } catch (error) {
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
@@ -6050,7 +6124,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { content: finalResponse, status };
   }
 
-  async _recoverLoopStoppedTurn(tabId, messages, onUpdate, provider, costState, runId, step, stopMessage, runOptions = {}) {
+  async _recoverLoopStoppedTurn(
+    tabId,
+    messages,
+    onUpdate,
+    provider,
+    costState,
+    runId,
+    step,
+    stopMessage,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
     let recovered = '';
@@ -6061,7 +6147,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         recovered = await this._generateContextOnlyResponse(
           tabId, messages, provider, costState, runId,
-          { phase: 'terminal_recovery', step },
+          { phase: 'terminal_recovery', step, runOptions, currentUserMessage, priorMessageSet },
         );
       } catch (error) {
         this._logDebug({ type: 'terminal_recovery_error', step, error: error?.message || String(error) });
@@ -7659,6 +7745,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressLedgers.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
+    this.selectionGroundingScopes.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
@@ -7683,6 +7770,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._isPdfTabCache.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
+    this.selectionGroundingScopes.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
@@ -10193,6 +10281,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!messages || messages.length <= 1) {
       return { compacted: false, reason: 'empty', remaining: messages?.length || 0 };
     }
+    const selectionScope = this.selectionGroundingScopes.get(tabId);
+    if (
+      selectionScope?.anchorFingerprint
+      && this._selectionGroundingAnchorIndex(tabId, messages, selectionScope) >= 0
+    ) {
+      return { compacted: false, reason: 'selection_scoped', remaining: messages.length };
+    }
 
     const result = await this._manageContext(
       tabId,
@@ -10492,6 +10587,175 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch {
       return this._truncate(String(raw), 140);
     }
+  }
+
+  _selectionGroundingMessageFingerprint(message) {
+    const content = typeof message?.content === 'string'
+      ? message.content
+      : JSON.stringify(message?.content ?? '');
+    const value = String(content ?? '');
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${message?.role || ''}:${value.length}:${hash >>> 0}`;
+  }
+
+  _selectionGroundingAnchorIndex(tabId, messages, scope) {
+    if (!scope) return -1;
+    const expectedConversationId = scope.conversationId || null;
+    const currentConversationId = this.conversationIds.get(tabId) || null;
+    if (expectedConversationId && currentConversationId && expectedConversationId !== currentConversationId) {
+      return -1;
+    }
+    if (scope.anchorFingerprint) {
+      return messages.findIndex((message, index) =>
+        index > 0 && this._selectionGroundingMessageFingerprint(message) === scope.anchorFingerprint
+      );
+    }
+    return Number.isInteger(scope.anchorIndex)
+      && scope.anchorIndex >= 1
+      && scope.anchorIndex <= messages.length
+      ? scope.anchorIndex
+      : -1;
+  }
+
+  _clearSelectionGroundingForIndependentRun(tabId, runOptions = {}) {
+    const independentRun = runOptions?.independentRun === true
+      || runOptions?.cloudRun === true
+      || runOptions?.scheduledRun === true;
+    if (!independentRun) return false;
+    if (this.selectionGroundingScopes.has(tabId)) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
+    return true;
+  }
+
+  _selectionGroundedRunOptions(tabId, messages, runOptions = {}) {
+    if (this._clearSelectionGroundingForIndependentRun(tabId, runOptions)) {
+      // Independent jobs are not interactive follow-ups to whatever the user
+      // last discussed on the target tab. Strip any stale/contradictory
+      // selected-text marker as well as ending the durable boundary.
+      const {
+        sourceGrounding: _sourceGrounding,
+        selectionGroundingScopeStarted: _scopeStarted,
+        ...independentOptions
+      } = runOptions;
+      return independentOptions;
+    }
+    const explicitSelection = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    let scope = this.selectionGroundingScopes.get(tabId) || null;
+    if (explicitSelection) {
+      scope = {
+        conversationId: this.conversationIds.get(tabId) || null,
+        anchorIndex: messages.length,
+        anchorFingerprint: null,
+        excludedFingerprints: messages.slice(1).map(message =>
+          this._selectionGroundingMessageFingerprint(message)
+        ),
+      };
+      this.selectionGroundingScopes.set(tabId, scope);
+    } else if (
+      !scope?.anchorFingerprint
+      || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0
+    ) {
+      this.selectionGroundingScopes.delete(tabId);
+      return runOptions;
+    }
+    return {
+      ...runOptions,
+      sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+      selectionGroundingScopeStarted: explicitSelection,
+    };
+  }
+
+  _selectionGroundingPriorMessageSet(tabId, messages) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    const anchorIndex = this._selectionGroundingAnchorIndex(tabId, messages, scope);
+    if (anchorIndex < 0) return new Set(messages);
+
+    const priorMessages = new Set(messages.slice(0, anchorIndex));
+    const excludedCounts = new Map();
+    for (const fingerprint of scope?.excludedFingerprints || []) {
+      excludedCounts.set(fingerprint, (excludedCounts.get(fingerprint) || 0) + 1);
+    }
+    for (const message of messages) {
+      const fingerprint = this._selectionGroundingMessageFingerprint(message);
+      const remaining = excludedCounts.get(fingerprint) || 0;
+      if (remaining <= 0) continue;
+      priorMessages.add(message);
+      excludedCounts.set(fingerprint, remaining - 1);
+    }
+    return priorMessages;
+  }
+
+  _finalizeSelectionGroundingScope(tabId, messages, anchorMessage) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    if (!scope) return;
+    const anchorIndex = messages.indexOf(anchorMessage);
+    if (anchorIndex < 1) {
+      this.selectionGroundingScopes.delete(tabId);
+      return;
+    }
+    scope.anchorIndex = anchorIndex;
+    scope.anchorFingerprint = this._selectionGroundingMessageFingerprint(anchorMessage);
+    this._persist(tabId);
+  }
+
+  _discardProvisionalSelectionGroundingScope(tabId) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    if (!scope || scope.anchorFingerprint) return;
+    this.selectionGroundingScopes.delete(tabId);
+    this._persist(tabId);
+  }
+
+  /**
+   * Return a model-facing view containing only the system prompt and messages
+   * created during this source-grounded run. Keep the persisted conversation
+   * intact for the UI, but never let an earlier page, attachment, or screenshot
+   * compete with the user's authoritative selected text.
+   */
+  _messagesForSourceGroundedRun(
+    messages,
+    runOptions = {},
+    currentUserMessage = null,
+    priorMessageSet = null,
+  ) {
+    if (runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING) return messages;
+
+    const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
+    const currentTurnIndex = currentUserMessage ? messages.indexOf(currentUserMessage) : -1;
+    const currentRunMessages = priorMessageSet instanceof Set
+      ? messages.filter((message, index) => index > 0 && !priorMessageSet.has(message))
+      : (currentTurnIndex >= 0
+        ? messages.slice(currentTurnIndex)
+        : (currentUserMessage ? [currentUserMessage] : []));
+    if (currentUserMessage && !currentRunMessages.includes(currentUserMessage)) {
+      currentRunMessages.unshift(currentUserMessage);
+    }
+    // Tell the model about the boundary so an out-of-scope follow-up ("what's
+    // on this page now?") gets an honest explanation instead of a blind guess.
+    const scopedSystemMessage = systemMessage && typeof systemMessage.content === 'string'
+      ? { ...systemMessage, content: `${systemMessage.content}\n\n${SELECTION_SCOPE_SYSTEM_NOTE}` }
+      : systemMessage;
+    return [
+      ...(scopedSystemMessage ? [scopedSystemMessage] : []),
+      // Selection shortcuts run in Ask mode and never need durable agent
+      // notes. Exclude them structurally as well as by the persisted prior
+      // message fingerprints, because a later note update can change its
+      // fingerprint or move it past the selection anchor.
+      ...currentRunMessages.filter(message =>
+        message !== systemMessage && !this._isPinnedAgentStateMessage(message)
+      ),
+    ];
+  }
+
+  _emergencyTrimModelCopy(messages) {
+    const modelCopy = messages.map(message => ({ ...message }));
+    this._emergencyTrim(modelCopy);
+    return modelCopy;
   }
 
   /**
@@ -10929,6 +11193,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw new Error('Saved workflow is missing or invalid.');
     }
     await this._hydrate(tabId);
+    // Deterministic workflow replay is an independent task even when it never
+    // falls back to processMessage. Clear stale selected-text grounding before
+    // any replay action so a successful replay cannot poison the next turn.
+    this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
     // Align pre-run cleanup with processMessage so a prior Act turn cannot
     // leak plan guards or active-skill state into deterministic replay (or
     // the reverse on the next turn). Chrome-only CDP fallback state is
@@ -12097,22 +12365,111 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           websiteURL = tab?.url || '';
         } catch {}
 
-        let { type, websiteKey, isInvisible, isEnterprise, pageAction, minScore, imageBase64 } = args || {};
+        let {
+          type,
+          websiteKey,
+          frameUrl,
+          frameId,
+          framePath,
+          isInvisible,
+          isEnterprise,
+          pageAction,
+          minScore,
+          imageBase64,
+          enterprisePayload,
+          recaptchaDataSValue,
+        } = args || {};
         // Detection notes explain *why* a field is missing (e.g. a v3 widget
         // that never exposed its action name). Carry it into the failure so
         // the model gets the remedy, not just the rejection.
         let detectionNote = null;
-        if (!type) {
-          const detected = await detectCaptcha(tabId);
-          if (!detected) {
+        let detected = null;
+        if (type !== 'image_to_text') {
+          let detection = null;
+          try {
+            detection = await detectCaptcha(tabId, {
+              type,
+              frameUrl,
+              frameId,
+              framePath,
+              websiteKey,
+            });
+          } catch (detectionError) {
+            const explicitTokenOnlyFallback = args?.inject === false && !!type && !!websiteKey;
+            if (!explicitTokenOnlyFallback) {
+              return noDispatchFailure(
+                `solve_captcha: CAPTCHA frame detection failed before dispatch: ${detectionError?.message || String(detectionError)}`
+              );
+            }
+            detectionNote = `CAPTCHA frame detection was unavailable: ${detectionError?.message || String(detectionError)}`;
+          }
+          if (detection?.error) {
+            const hasDetectedCandidates = Array.isArray(detection.candidates) && detection.candidates.length > 0;
+            const needsDetection = !type
+              || !websiteKey
+              || !!frameUrl
+              || Number.isInteger(frameId)
+              || Array.isArray(framePath);
+            const explicitTokenOnlyFallback = args?.inject === false
+              && !!type
+              && !!websiteKey
+              && !(detection.candidates || []).some(candidate =>
+                candidate?.websiteKey === websiteKey
+              );
+            if (!explicitTokenOnlyFallback
+                && (detection.ambiguous || hasDetectedCandidates || needsDetection)) {
+              const candidates = hasDetectedCandidates ? ` Candidates: ${JSON.stringify(detection.candidates)}` : '';
+              return noDispatchFailure(`solve_captcha: ${detection.error}${candidates}`);
+            }
+          }
+          detected = detection?.selected || null;
+          if (!detected && (!type || !websiteKey)) {
             return noDispatchFailure('No CAPTCHA detected on the page. If the captcha lives inside a cross-origin iframe or uses a non-standard widget, pass `type` and `websiteKey` explicitly.');
           }
-          type = detected.type;
-          detectionNote = detected.note || null;
-          if (!websiteKey) websiteKey = detected.websiteKey;
-          if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
-          if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
-          if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
+          if (detected) {
+            if (type && !captchaTypesMatch(type, detected.type, isEnterprise, detected.isEnterprise)) {
+              return noDispatchFailure(
+                `solve_captcha: requested type "${type}" conflicts with the active detected candidate "${detected.type}" in ${detected.frameUrl}. Retry without type or use the detected type.`
+              );
+            }
+            const visibilityModeApplies = /^(?:recaptcha_v2(?:_enterprise)?|hcaptcha)$/.test(
+              String(detected.type || '')
+            );
+            if (visibilityModeApplies
+                && isInvisible != null
+                && detected.isInvisible != null
+                && Boolean(isInvisible) !== Boolean(detected.isInvisible)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isInvisible=${Boolean(isInvisible)} conflicts with the active detected candidate isInvisible=${Boolean(detected.isInvisible)} in ${detected.frameUrl}. Retry without isInvisible or use the detected value.`
+              );
+            }
+            if (/^recaptcha_v[23](?:_enterprise)?$/.test(String(detected.type || ''))
+                && isEnterprise != null
+                && detected.isEnterprise != null
+                && Boolean(isEnterprise) !== Boolean(detected.isEnterprise)) {
+              return noDispatchFailure(
+                `solve_captcha: requested isEnterprise=${Boolean(isEnterprise)} conflicts with the active detected candidate isEnterprise=${Boolean(detected.isEnterprise)} in ${detected.frameUrl}. Retry without isEnterprise or use the detected value.`
+              );
+            }
+            if (pageAction && detected.pageAction && String(pageAction) !== String(detected.pageAction)) {
+              return noDispatchFailure(
+                `solve_captcha: requested pageAction "${pageAction}" conflicts with the active detected candidate action "${detected.pageAction}" in ${detected.frameUrl}. Retry without pageAction or use the detected action.`
+              );
+            }
+            type = type || detected.type;
+            websiteURL = detected.websiteURL || captchaWebsiteUrl(detected.frameUrl, websiteURL);
+            frameUrl = detected.frameUrl || frameUrl;
+            detectionNote = detected.note || null;
+            if (!websiteKey) websiteKey = detected.websiteKey;
+            if (isInvisible == null && detected.isInvisible != null) isInvisible = detected.isInvisible;
+            if (isEnterprise == null && detected.isEnterprise != null) isEnterprise = detected.isEnterprise;
+            if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
+            if (!enterprisePayload && detected.enterprisePayload) enterprisePayload = detected.enterprisePayload;
+            if (!recaptchaDataSValue && detected.recaptchaDataSValue) recaptchaDataSValue = detected.recaptchaDataSValue;
+          }
+          if (!detected && args?.inject === false && frameUrl) {
+            websiteURL = captchaWebsiteUrl(frameUrl, websiteURL);
+          }
         }
 
         const params = {
@@ -12123,6 +12480,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(isEnterprise != null ? { isEnterprise } : {}),
           ...(pageAction ? { pageAction } : {}),
           ...(minScore ? { minScore } : {}),
+          ...(enterprisePayload ? { enterprisePayload } : {}),
+          ...(recaptchaDataSValue ? { recaptchaDataSValue } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),
         };
 
@@ -12141,10 +12500,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
         }
 
+        const wantInject = args?.inject !== false && type !== 'image_to_text';
+        if (wantInject && !detected) {
+          return noDispatchFailure(
+            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to CapSolver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
+          );
+        }
+
         dispatched = true;
         const result = await solveCaptcha(apiKey, params);
 
-        const wantInject = args?.inject !== false && type !== 'image_to_text';
         let injection = null;
         if (wantInject && result.fieldName && result.token) {
           try {
@@ -12152,6 +12517,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               fieldName: result.fieldName,
               alsoSet: result.alsoSet,
               token: result.token,
+              callbackHint: detected.callbackName || null,
+              target: detected ? {
+                frameId: detected.frameId,
+                framePath: detected.framePath,
+                frameUrl: detected.frameUrl,
+                websiteKey: detected.websiteKey,
+                type: detected.type,
+                explicitWebsiteKey: detected.explicitWebsiteKey === true,
+                responseFieldId: detected.responseFieldId,
+                responseFieldIndex: detected.responseFieldIndex,
+                alsoResponseFieldId: detected.alsoResponseFieldId,
+                alsoResponseFieldIndex: detected.alsoResponseFieldIndex,
+                documentTimeOrigin: detected.documentTimeOrigin,
+              } : null,
             });
           } catch (e) {
             injection = { success: false, error: e.message };
@@ -12165,11 +12544,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           taskId: result.taskId,
           token: result.token,
           tokenPreview: result.token ? `${String(result.token).slice(0, 24)}…(${String(result.token).length} chars)` : null,
+          selectedFrameId: Number.isInteger(detected?.frameId) ? detected.frameId : null,
+          selectedFramePath: Array.isArray(detected?.framePath) ? detected.framePath : null,
+          selectedFrameUrl: detected?.frameUrl || null,
+          selectionReason: detected?.selectionReason || null,
+          detectedType: detected?.type || null,
           injected: injection?.success === true,
           injection,
-          note: wantInject
-            ? 'Token was injected into the page response field. Click the form\'s submit button next; do NOT call solve_captcha again.'
-            : 'Token returned, not injected. Pass it to the form via type_text on the response field, then submit.',
+          note: !wantInject
+            ? 'Token returned without injection. Apply this token to the intended response field; do not request another paid solve for the same challenge.'
+            : injection?.success
+              ? (injection.calledCallback
+                ? 'Token was inserted into the selected frame and its callback was invoked. Wait for the page to react, then verify whether the challenge cleared.'
+                : 'Token was inserted into the selected frame, but no unique callback was invoked. Verify page progress before submitting or taking another action; do not request another paid solve.')
+              : 'CapSolver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
         };
       } catch (e) {
         const error = `solve_captcha failed: ${e.message}`;
@@ -13181,6 +13569,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
     } finally {
       this.currentCostState.delete(tabId);
+      this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
@@ -13263,6 +13652,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    // An ordinary attachment send is an explicit source change. End the
+    // inherited selected-text scope before enrichment so a chip deliberately
+    // preserved by the side panel can be used without re-selecting the file.
+    if (
+      attachments?.length
+      && runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+      && this.selectionGroundingScopes.has(tabId)
+    ) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
+    runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     // Scheduled resumes get the live ledger appended at fire time, so the
     // model's first turn sees current row state even if it never calls
     // progress_read; must run before the message is enriched/pushed.
@@ -13272,11 +13673,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
 
-    // Trim context if it's getting too long
-    await this._manageContext(tabId, messages, onUpdate, costState);
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    // A source-bound shortcut neither needs nor permits an internal
+    // compaction call over unrelated conversation history.
+    if (!selectionOnly) {
+      await this._manageContext(tabId, messages, onUpdate, costState);
+    }
+    const sourceBoundPriorMessages = selectionOnly
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
 
-    const enriched = await this._enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState);
-    this._preactivateNyTimesSkillForRun(tabId, mode);
+    const enriched = await this._enrichUserMessageWithCurrentPage(
+      tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
+    );
+    let sourceBoundTrimmedMessages = null;
+    let sourceBoundMessagesAtTrim = null;
+    const rawModelMessagesForRun = () =>
+      this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    const modelMessagesForRun = () => {
+      const rawMessages = rawModelMessagesForRun();
+      if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
+        return rawMessages;
+      }
+      const appendedMessages = rawMessages.filter((message, index) =>
+        index > 0 && !sourceBoundMessagesAtTrim.has(message)
+      );
+      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+    };
+    const emergencyTrimMessagesForRun = () => {
+      if (!selectionOnly) {
+        this._emergencyTrim(messages);
+        return;
+      }
+      const rawMessages = rawModelMessagesForRun();
+      const currentModelMessages = modelMessagesForRun();
+      sourceBoundMessagesAtTrim = new Set(rawMessages);
+      sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
+    };
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
 
@@ -13306,6 +13740,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
       messages.push(enriched);
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+      }
       messages.push({ role: 'assistant', content: msg });
       await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
       onUpdate('warning', { message: msg });
@@ -13315,9 +13752,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Validate attachments BEFORE the planner gate / trace start: an
     // unsupported attachment is a plain "tell the user" response, not an
     // agent run, and the message must never be pushed to history this way.
-    if (attachments && attachments.length) {
+    if (selectionOnly && attachments?.length) {
+      const error = 'Attachments cannot be added while continuing a selected-text shortcut. Start a new conversation before sending files.';
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this.selectionGroundingScopes.delete(tabId);
+        this._persist(tabId);
+      }
+      onUpdate('attachment_rejected', { error });
+      return (finalResponse = error);
+    }
+    const sourceBoundAttachments = selectionOnly ? [] : attachments;
+    if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const canUseScratchpadTool = this._isActionMode(mode);
-      const attachResult = await this._applyAttachments(enriched, attachments, provider, {
+      const attachResult = await this._applyAttachments(enriched, sourceBoundAttachments, provider, {
         canUseScratchpadTool,
         tabId,
         messages,
@@ -13329,7 +13776,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('attachment_rejected', { error: attachResult.error });
         return (finalResponse = attachResult.error);
       }
-      this._pinTextAttachmentMetadata(tabId, attachments, { canUseScratchpadTool });
+      this._pinTextAttachmentMetadata(tabId, sourceBoundAttachments, { canUseScratchpadTool });
     }
 
     // Everything that can throw — trace start, planner gate, run setup, and the
@@ -13342,11 +13789,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // fetch / startRun payload). (#6)
     let plannerTabInfo = null;
     if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
-      // Fetch the tab url/title once and reuse it for both the trace start and
-      // the planner gate, instead of fetching the same tab twice.
-      plannerTabInfo = await this._getTabUrlTitle(tabId);
+      // Fetch once for trace metadata. The planner normally reuses it, but a
+      // source-bound selection must not receive page URL/title context.
+      const traceTabInfo = await this._getTabUrlTitle(tabId);
+      plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, plannerTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
       );
     }
 
@@ -13368,6 +13816,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
+        runOptions, enriched, sourceBoundPriorMessages,
       );
       finalResponse = responseOnly.content;
       _traceStatus = responseOnly.status;
@@ -13375,7 +13824,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
-    if (this._isActionMode(mode)) {
+    if (this._isActionMode(mode) && !selectionOnly) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
@@ -13395,6 +13844,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema || null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
+    // The selected text is already present in the trusted run envelope.
+    // Advertising page/network tools would let an injected selection induce a
+    // second source and defeat the selection-only boundary.
+    if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
@@ -13541,7 +13994,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
-      if (steps > 0) {
+      if (steps > 0 && !selectionOnly) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
 
@@ -13555,21 +14008,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema || null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
+      if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
 
       // Auto-compact mid-run when the conversation outgrows the budget — not
       // just between user turns. Uses the previous step's reported token count,
       // so it fires "when it's due" during long autonomous loops.
-      await this._manageContext(tabId, messages, onUpdate, costState);
+      if (!selectionOnly) {
+        await this._manageContext(tabId, messages, onUpdate, costState);
+      }
 
       steps++;
       onUpdate('thinking', { step: steps });
 
       let result;
       try {
-        const useTools = provider.supportsTools;
+        const useTools = provider.supportsTools && tools.length > 0;
         const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-        const prunedMessages = this._pruneOldImages(messages, provider);
+        const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
         this._logDebug({ type: 'llm_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
         const _llmStart = Date.now();
         if (runId) {
@@ -13617,11 +14073,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
-          this._emergencyTrim(messages);
+          emergencyTrimMessagesForRun();
           try {
-            const useTools = provider.supportsTools;
+            const useTools = provider.supportsTools && tools.length > 0;
             const chatOpts = { tools: useTools ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-            const prunedMessages = this._pruneOldImages(messages, provider);
+            const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
             this._logDebug({ type: 'llm_request_retry', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: chatOpts });
             result = await chatMainTurn(prunedMessages, chatOpts, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
@@ -13650,9 +14106,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const useTools2 = provider.supportsTools;
+            const useTools2 = provider.supportsTools && tools.length > 0;
             const chatOpts2 = { tools: useTools2 ? tools : undefined, temperature: plannerTemperature, maxTokens: 4096 };
-            result = await chatMainTurn(this._pruneOldImages(messages, provider), chatOpts2, { tabId, generationName: 'main' });
+            result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
           } catch (e2) {
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
@@ -13736,7 +14192,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (batchResult.action === 'recover') {
           const recovery = await this._recoverLoopStoppedTurn(
             tabId, messages, onUpdate, provider, costState, runId, steps,
-            batchResult.value, runOptions,
+            batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
           );
           finalResponse = recovery.content;
           _traceStatus = recovery.status;
@@ -13922,6 +14378,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
     } finally {
       this.currentCostState.delete(tabId);
+      this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
@@ -13944,16 +14401,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     const costState = this._newCostRunState();
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
 
-    // Trim context if it's getting too long
-    await this._manageContext(tabId, messages, onUpdate, costState);
+    const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    // Do not expose unrelated history to an internal compaction request for a
+    // source-bound shortcut.
+    if (!selectionOnly) {
+      await this._manageContext(tabId, messages, onUpdate, costState);
+    }
+    const sourceBoundPriorMessages = selectionOnly
+      ? this._selectionGroundingPriorMessageSet(tabId, messages)
+      : null;
 
-    const enriched = await this._enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState);
-    this._preactivateNyTimesSkillForRun(tabId, mode);
+    const enriched = await this._enrichUserMessageWithCurrentPage(
+      tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
+    );
+    let sourceBoundTrimmedMessages = null;
+    let sourceBoundMessagesAtTrim = null;
+    const rawModelMessagesForRun = () =>
+      this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
+    const modelMessagesForRun = () => {
+      const rawMessages = rawModelMessagesForRun();
+      if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
+        return rawMessages;
+      }
+      const appendedMessages = rawMessages.filter((message, index) =>
+        index > 0 && !sourceBoundMessagesAtTrim.has(message)
+      );
+      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+    };
+    const emergencyTrimMessagesForRun = () => {
+      if (!selectionOnly) {
+        this._emergencyTrim(messages);
+        return;
+      }
+      const rawMessages = rawModelMessagesForRun();
+      const currentModelMessages = modelMessagesForRun();
+      sourceBoundMessagesAtTrim = new Set(rawMessages);
+      sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
+    };
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
 
     const provider = this.providerManager.getActive();
 
@@ -13974,6 +14465,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
       messages.push(enriched);
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+      }
       messages.push({ role: 'assistant', content: msg });
       this._persist(tabId);
       onUpdate('warning', { message: msg });
@@ -13986,11 +14480,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
     let plannerTabInfo = null;
     if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
-      // Fetch the tab url/title once and reuse it for both the trace start and
-      // the planner gate, instead of fetching the same tab twice.
-      plannerTabInfo = await this._getTabUrlTitle(tabId);
+      // Fetch once for trace metadata. The planner normally reuses it, but a
+      // source-bound selection must not receive page URL/title context.
+      const traceTabInfo = await this._getTabUrlTitle(tabId);
+      plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, plannerTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
       );
     }
 
@@ -14011,12 +14506,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
+        runOptions, enriched, sourceBoundPriorMessages,
       );
       return finish(responseOnly.content, responseOnly.status);
     }
     this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
-    if (this._isActionMode(mode)) {
+    if (this._isActionMode(mode) && !selectionOnly) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
@@ -14036,6 +14532,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema || null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
+    // Match the non-streaming path: selection-grounded turns are tool-free so
+    // page or network content cannot be introduced after the source anchor.
+    if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
@@ -14059,7 +14558,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish('[Stopped by user]', 'cancelled');
       }
 
-      if (steps > 0) {
+      if (steps > 0 && !selectionOnly) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
 
@@ -14073,12 +14572,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema || null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
+      if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
 
       // Auto-compact mid-run when the conversation outgrows the budget. The
       // streaming path doesn't get a per-call token count, so this leans on
       // the chars/4 estimate inside _manageContext.
-      await this._manageContext(tabId, messages, onUpdate, costState);
+      if (!selectionOnly) {
+        await this._manageContext(tabId, messages, onUpdate, costState);
+      }
 
       steps++;
       onUpdate('thinking', { step: steps });
@@ -14091,11 +14593,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let reasoningContent = '';
 
         const streamOpts = this._cloudGenerationOptions(provider, {
-          tools: provider.supportsTools ? tools : undefined,
+          tools: provider.supportsTools && tools.length > 0 ? tools : undefined,
           temperature: plannerTemperature,
           maxTokens: 4096,
         }, { tabId, generationName: 'main' });
-        const prunedMessages = this._pruneOldImages(messages, provider);
+        const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
         this._logDebug({ type: 'llm_stream_request', step: steps, provider: provider.constructor.name, messages: prunedMessages, options: streamOpts });
         const beforeCost = await this._checkCostAllowance(provider, costState);
         if (beforeCost) {
@@ -14187,7 +14689,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (batchResult.action === 'recover') {
             const recovery = await this._recoverLoopStoppedTurn(
               tabId, messages, onUpdate, provider, costState, runId, steps,
-              batchResult.value, runOptions,
+              batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
             );
             return finish(recovery.content, recovery.status);
           }
@@ -14330,7 +14832,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // If context overflow, trim and retry
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
-          this._emergencyTrim(messages);
+          emergencyTrimMessagesForRun();
           this._persist(tabId);
           continue; // retry the loop with trimmed context
         }

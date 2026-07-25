@@ -9,7 +9,10 @@ import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './mark
 import { applyMode, loadMode, watch } from './theme.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
-import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
+import {
+  formatSelectionPromptForDisplay,
+  SELECTION_ONLY_SOURCE_GROUNDING,
+} from '../context-menu-storage.js';
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
@@ -5021,6 +5024,9 @@ function retryPayloadFromButton(btn) {
     text,
     mode,
     apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
+    ...(btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+      ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+      : {}),
     attachments,
     missingAttachments: attachmentCount > 0 && attachments.length === 0,
   };
@@ -5052,6 +5058,7 @@ function bindErrorRetryButton(btn) {
       __retry: {
         mode: payload.mode,
         apiMutationsAllowed: payload.apiMutationsAllowed,
+        ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         attachments: payload.attachments,
       },
     });
@@ -5089,6 +5096,9 @@ function retryPayloadForRunAssistant(assistantEl) {
       ? assistantEl.dataset.runMode
       : agentMode,
     apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
+    ...(assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+      ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+      : {}),
     attachments: [],
     attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
   };
@@ -6682,6 +6692,12 @@ async function sendMessage(extraChatParams = {}) {
   const chatExtraParams = { ...(extraChatParams || {}) };
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
+  const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
+  const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : null;
+  delete chatExtraParams.sourceGrounding;
+  if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
   stopListening();
   let text = inputEl.value.trim();
   if (!text) return;
@@ -6696,7 +6712,7 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  if (!retryOptions && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+  if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
     syncSendButtonState();
     return false;
   }
@@ -6792,13 +6808,18 @@ async function sendMessage(extraChatParams = {}) {
 
   let userEl = null;
   let assistantEl = null;
-  const attachmentsForSend = retryOptions
-    ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
-    : getPendingAttachmentsForTab(tabId, { create: false }).slice();
+  // A selection-only shortcut must not inherit unrelated attachment chips
+  // that the user was preparing for a later ordinary chat turn.
+  const attachmentsForSend = sourceGrounding
+    ? []
+    : retryOptions
+      ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
+      : getPendingAttachmentsForTab(tabId, { create: false }).slice();
   const retryPayload = {
     text,
     mode: modeForSend,
     apiMutationsAllowed: apiMutationsAllowedForSend,
+    ...(sourceGrounding ? { sourceGrounding } : {}),
     attachments: attachmentsForSend,
   };
   if (renderToCurrentTab) {
@@ -6806,7 +6827,7 @@ async function sendMessage(extraChatParams = {}) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    if (!retryOptions) {
+    if (!retryOptions && !sourceGrounding) {
       clearPendingAttachmentsForTab(tabId);
       renderAttachmentPreviews();
     }
@@ -6817,6 +6838,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
     assistantEl.dataset.retryApiMutationsAllowed = apiMutationsAllowedForSend ? 'true' : 'false';
+    assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
@@ -8597,6 +8619,9 @@ function configureRetryButton(btn, retryPayload) {
   btn.dataset.retryText = String(retryPayload.text || '');
   btn.dataset.retryMode = retryPayload.mode || 'ask';
   btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
+  btn.dataset.retrySourceGrounding = retryPayload.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : '';
   const attachmentCount = Number.isFinite(Number(retryPayload.attachmentCount))
     ? Math.max(0, Number(retryPayload.attachmentCount))
     : attachments.length;

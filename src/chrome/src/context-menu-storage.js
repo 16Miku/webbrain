@@ -10,6 +10,11 @@ export const SELECTION_SHORTCUT_ACTIONS = Object.freeze({
   proofread: 'Proofread this selected text. Identify errors and provide a corrected version while preserving its meaning and tone.',
 });
 
+// Structured provenance for selected-text shortcuts. Keep this independent
+// from localized/user-visible prompt wording so downstream code never has to
+// infer the source boundary with regexes or language-specific keywords.
+export const SELECTION_ONLY_SOURCE_GROUNDING = 'selection_only';
+
 export const SELECTION_TRANSLATION_LANGUAGES = Object.freeze({
   en: 'English',
   es: 'Spanish',

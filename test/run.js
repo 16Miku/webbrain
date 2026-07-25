@@ -382,6 +382,7 @@ const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
   createContextMenuStorage: createContextMenuStorageCh,
@@ -390,6 +391,7 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
+  SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
   createContextMenuStorage: createContextMenuStorageFx,
@@ -17815,6 +17817,7 @@ test('background forwards planner run options to agent chat handlers', () => {
     assert.ok(streamMatch, `${label}: chat_stream handler missing`);
     const chatBody = chatMatch[1];
     const streamBody = streamMatch[1];
+    assert.ok(chatBody.includes('...(isWorkflowRun ? { independentRun: true } : {})'), `${label}: saved workflows should be explicit independent runs`);
     assert.ok(chatBody.includes('...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {})'), `${label}: chat handler should build recommended-action run options`);
     assert.ok(chatBody.includes('locale: msg.locale'), `${label}: chat handler should forward the display locale`);
     assert.ok(chatBody.includes('intentFailureMessage: msg.intentFailureMessage'), `${label}: chat handler should forward the localized intent fallback`);
@@ -17887,6 +17890,653 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
 
     const native = buildContextMenuPrompt('native fallback');
     assert.ok(native.startsWith('Please answer about this selected text from the current page.'), `${label}: native context-menu wording should remain compatible`);
+  }
+});
+
+test('selection shortcut grounding metadata suppresses competing page images', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let activeProviderCalls = 0;
+    let visionProviderCalls = 0;
+    let screenshotCalls = 0;
+    const agent = new AgentClass({
+      getActive() {
+        activeProviderCalls += 1;
+        return { supportsVision: true };
+      },
+      async getVisionProvider() {
+        visionProviderCalls += 1;
+        return null;
+      },
+    });
+    agent._captureBudgetedAutoScreenshot = async () => {
+      screenshotCalls += 1;
+      return {
+        dataUrl: 'data:image/png;base64,AA==',
+        width: 100,
+        height: 100,
+        coordAligned: true,
+      };
+    };
+
+    const prompt = buildSelectionPrompt('authoritative selected words', 'translate', '', 'en');
+    const grounded = await agent._enrichUserMessageWithCurrentPage(
+      999,
+      [],
+      prompt,
+      null,
+      { sourceGrounding },
+    );
+    assert.equal(typeof grounded.content, 'string', `${label}: selection-only content should stay text-only`);
+    assert.match(grounded.content, /authoritative selected words/, `${label}: authoritative selection should remain present`);
+    assert.doesNotMatch(grounded.content, /Current page context|Initial viewport|SCREENSHOT/, `${label}: page-derived context should be absent`);
+    assert.equal(activeProviderCalls, 0, `${label}: selection-only enrichment should not inspect main vision capability`);
+    assert.equal(visionProviderCalls, 0, `${label}: selection-only enrichment should not invoke a vision provider`);
+    assert.equal(screenshotCalls, 0, `${label}: selection-only enrichment should not capture a screenshot`);
+
+    const ordinary = await agent._enrichUserMessageWithCurrentPage(999, [], 'What is on this page?');
+    assert.ok(Array.isArray(ordinary.content), `${label}: ordinary first-turn Ask should retain visual context`);
+    assert.equal(ordinary.content.some(block => block?.type === 'image_url'), true, `${label}: ordinary first-turn Ask should attach its screenshot`);
+    assert.equal(activeProviderCalls, 1, `${label}: ordinary Ask should inspect main vision capability`);
+    assert.equal(visionProviderCalls, 1, `${label}: ordinary Ask should inspect the dedicated vision provider`);
+    assert.equal(screenshotCalls, 1, `${label}: ordinary Ask should capture one screenshot`);
+  }
+});
+
+test('selection-only model requests exclude prior conversation context', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Grounded answer.', toolCalls: null };
+        },
+        async *chatStream(messages, options) {
+          requests.push(messages);
+          requestOptions.push(options);
+          yield { type: 'text', content: 'Grounded answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9630 + (buildIndex * 10) + pathIndex;
+      const priorImage = 'data:image/png;base64,UFJJT1I=';
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'PRIOR ATTACHMENT SECRET' },
+            { type: 'image_url', image_url: { url: priorImage } },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'UFJJT1I=' } },
+          ],
+        },
+        { role: 'assistant', content: 'Prior page answer.' },
+        { role: 'user', content: '[Agent scratchpad — PRIOR SCRATCHPAD SECRET]' },
+        { role: 'user', content: '[Current page context — PRIOR PAGE TITLE]' },
+      ]);
+      agent.maxSteps = 2;
+      agent._hydrate = async () => {};
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      const enrichmentHistoryLengths = [];
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        enrichmentHistoryLengths.push(history.length);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (
+        gateTabId,
+        messages,
+        enriched,
+        _onUpdate,
+        _mode,
+        _costState,
+        _runId,
+        _tabInfo,
+        gateRunOptions,
+      ) => {
+        messages.push(enriched);
+        if (gateRunOptions?.selectionGroundingScopeStarted === true) {
+          agent._finalizeSelectionGroundingScope(gateTabId, messages, enriched);
+        }
+        const priorScratchpadIndex = messages.findIndex(message =>
+          typeof message.content === 'string' && message.content.includes('PRIOR SCRATCHPAD SECRET')
+        );
+        const [priorScratchpad] = messages.splice(priorScratchpadIndex, 1);
+        messages.push(priorScratchpad);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._maybeReinjectAdapter = async () => {
+        throw new Error('selection-only run must not inject adapter context');
+      };
+      agent._preactivateNyTimesSkillForRun = () => {
+        throw new Error('selection-only run must not activate a page-specific skill');
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const prompt = buildSelectionPrompt('authoritative selected words', 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
+      assert.equal(requestOptions[0]?.tools, undefined, `${label}: selection-only request must not advertise browser tools`);
+      assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
+      assert.equal(manageContextCalls, 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: compaction must not inspect prior turns`);
+      assert.equal(requests[0].length, 2, `${label} ${streaming ? 'streaming' : 'non-streaming'}: model should receive only system plus current selection`);
+      const serialized = JSON.stringify(requests[0]);
+      assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
+      assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
+      assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: scoped system prompt should explain the selection boundary`);
+      assert.equal(
+        agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
+        true,
+        `${label}: source-bound request view should not delete visible conversation history`,
+      );
+      assert.doesNotMatch(
+        String(agent.conversations.get(tabId)[0]?.content),
+        /only covers their selected text/,
+        `${label}: scoped system note must not mutate the stored conversation`,
+      );
+
+      const followUp = streaming
+        ? await agent.processMessageStream(tabId, 'My quiz answer is B.', () => {}, 'ask')
+        : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
+      assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
+      assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
+      assert.equal(requestOptions[1]?.tools, undefined, `${label}: grounded follow-up must remain tool-free`);
+      const followUpSerialized = JSON.stringify(requests[1]);
+      assert.match(followUpSerialized, /authoritative selected words/, `${label}: follow-up lost the original selection`);
+      assert.match(followUpSerialized, /My quiz answer is B\./, `${label}: follow-up answer missing`);
+      assert.doesNotMatch(followUpSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded follow-up`);
+      assert.match(String(requests[1][0]?.content), /only covers their selected text/, `${label}: grounded follow-up lost the scope note`);
+
+      const continued = await agent.continueProcessing(tabId, () => {}, 'ask');
+      assert.equal(continued, 'Grounded answer.', `${label}: grounded Continue final mismatch`);
+      assert.equal(requests.length, 3, `${label}: Continue should make one additional model request`);
+      assert.equal(requestOptions[2]?.tools, undefined, `${label}: grounded Continue must remain tool-free`);
+      const continueSerialized = JSON.stringify(requests[2]);
+      assert.match(continueSerialized, /authoritative selected words/, `${label}: Continue lost the original selection`);
+      assert.match(continueSerialized, /My quiz answer is B\./, `${label}: Continue lost the quiz exchange`);
+      assert.match(continueSerialized, /Please continue from where you left off\./, `${label}: Continue prompt missing`);
+      assert.doesNotMatch(continueSerialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into grounded Continue`);
+
+      const persistedScope = agent._conversationStorageEntry(tabId)?.selectionGroundingScope;
+      assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
+      assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
+    }
+  }
+});
+
+test('selection-only response-only phases carry the scope note', async () => {
+  for (const [label, AgentClass, sourceGrounding] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const requests = [];
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        return { content: 'Scoped answer.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    const selection = { role: 'user', content: 'selection turn' };
+    const messages = [
+      { role: 'system', content: 'system rules' },
+      { role: 'user', content: 'PRIOR SECRET' },
+      selection,
+    ];
+
+    const scoped = await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      {
+        phase: 'response_only',
+        step: 1,
+        runOptions: { sourceGrounding },
+        currentUserMessage: selection,
+        priorMessageSet: new Set([messages[0], messages[1]]),
+      },
+    );
+    assert.equal(scoped, 'Scoped answer.', `${label}: scoped response-only final mismatch`);
+    assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: response-only phase lost the scope note`);
+    assert.doesNotMatch(JSON.stringify(requests[0]), /PRIOR SECRET/, `${label}: response-only phase leaked pre-selection history`);
+
+    await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null,
+      { phase: 'response_only', step: 1 },
+    );
+    assert.doesNotMatch(String(requests[1][0]?.content), /only covers their selected text/, `${label}: ordinary response-only turn should not carry the scope note`);
+    assert.match(JSON.stringify(requests[1]), /PRIOR SECRET/, `${label}: ordinary response-only turn should keep conversation history`);
+  }
+});
+
+test('ordinary attachments leave selection grounding and remain usable', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    let providerCalls = 0;
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      supportsDocuments: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        providerCalls += 1;
+        assert.match(JSON.stringify(messages), /answer\.txt/, `${label}: preserved attachment name missing`);
+        assert.match(JSON.stringify(messages), /Attached file: answer\.txt/, `${label}: preserved attachment body missing`);
+        return { content: 'Attachment accepted.', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 9670 + (label === 'firefox' ? 1 : 0);
+    const anchor = { role: 'user', content: buildSelectionPrompt('quiz source', 'quiz') };
+    agent.conversationIds.set(tabId, `conv-${label}`);
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system rules' },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ]);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-${label}`,
+      anchorIndex: 1,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [],
+    });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    let manageContextCalls = 0;
+    agent._manageContext = async () => { manageContextCalls += 1; };
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+      assert.ok(history.length >= 3, `${label}: ordinary attachment send should leave source grounding`);
+      return { role: 'user', content };
+    };
+    agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+      messages.push(enriched);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+    };
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => {};
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+
+    const updates = [];
+    const final = await agent.processMessage(
+      tabId,
+      'Here is my answer file.',
+      (type, data) => updates.push({ type, data }),
+      'ask',
+      [{ kind: 'text', name: 'answer.txt', textContent: 'B' }],
+    );
+
+    assert.equal(final, 'Attachment accepted.', `${label}: ordinary attachment send should complete`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), false, `${label}: preserved attachment should not be rejected`);
+    assert.equal(providerCalls, 1, `${label}: ordinary attachment turn should call the model once`);
+    assert.ok(manageContextCalls >= 1, `${label}: ordinary attachment turn should restore normal context management`);
+    assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label}: ordinary attachment send should end selection scope`);
+  }
+});
+
+test('independent cloud, scheduled, and workflow runs clear inherited selection grounding', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [runIndex, [runLabel, runOptions]] of [
+      ['cloud', { cloudRun: true, sourceGrounding }],
+      ['scheduled', { scheduledRun: true, sourceGrounding }],
+      ['workflow', { independentRun: true, sourceGrounding }],
+    ].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Independent run complete.', toolCalls: null };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9674 + (buildIndex * 10) + runIndex;
+      const anchor = {
+        role: 'user',
+        content: buildSelectionPrompt('old selected source', 'quiz'),
+      };
+      agent.conversationIds.set(tabId, `conv-${label}-${runLabel}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        anchor,
+        { role: 'assistant', content: 'Old selection answer.' },
+      ]);
+      agent.selectionGroundingScopes.set(tabId, {
+        conversationId: `conv-${label}-${runLabel}`,
+        anchorIndex: 1,
+        anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+        excludedFingerprints: [],
+      });
+      agent._hydrate = async () => {};
+      let persistCalls = 0;
+      agent._persist = () => { persistCalls += 1; };
+      let manageContextCalls = 0;
+      agent._manageContext = async () => { manageContextCalls += 1; };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.ok(history.length >= 3, `${label} ${runLabel}: independent run should receive normal conversation context`);
+        return { role: 'user', content };
+      };
+      agent._maybeReinjectAdapter = async () => {};
+      agent._preactivateNyTimesSkillForRun = () => {};
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const final = await agent.processMessage(
+        tabId,
+        `Run the independent ${runLabel} task.`,
+        () => {},
+        'ask',
+        [],
+        runOptions,
+      );
+
+      assert.equal(final, 'Independent run complete.', `${label} ${runLabel}: final mismatch`);
+      assert.equal(requests.length, 1, `${label} ${runLabel}: expected one model request`);
+      assert.ok(
+        Array.isArray(requestOptions[0]?.tools) && requestOptions[0].tools.length > 0,
+        `${label} ${runLabel}: independent run lost its normal tool catalog`,
+      );
+      assert.match(JSON.stringify(requests[0]), /Run the independent (cloud|scheduled|workflow) task\./, `${label} ${runLabel}: task missing`);
+      assert.doesNotMatch(JSON.stringify(requests[0]), /only covers their selected text/, `${label} ${runLabel}: independent run should not carry the selection scope note`);
+      assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
+      assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
+      assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
+    }
+  }
+});
+
+test('selection grounding discards provisional scopes on pre-anchor exits', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => ({ content: 'Unexpected.', toolCalls: null }),
+      async *chatStream() {
+        yield { type: 'text', content: 'Unexpected.' };
+        yield { type: 'done' };
+      },
+    };
+    const createAgent = (tabId) => {
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      agent.conversationIds.set(tabId, `conv-${label}-${tabId}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: 'Prior ordinary turn.' },
+      ]);
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      return agent;
+    };
+
+    const cancelledTabId = 9680 + (label === 'firefox' ? 1 : 0);
+    const cancelledAgent = createAgent(cancelledTabId);
+    cancelledAgent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({
+      role: 'user',
+      content,
+    });
+    const cancelled = await cancelledAgent.processMessage(
+      cancelledTabId,
+      buildSelectionPrompt('cancelled source', 'summarize'),
+      () => {},
+      'ask',
+      [],
+      { sourceGrounding, isDetachedStartCancelled: () => true },
+    );
+    assert.equal(cancelled, 'Stopped by user before the run started.', `${label}: detached cancellation mismatch`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: cancelled pre-anchor scope leaked`);
+
+    cancelledAgent.selectionGroundingScopes.set(cancelledTabId, {
+      conversationId: `conv-${label}-${cancelledTabId}`,
+      anchorIndex: cancelledAgent.conversations.get(cancelledTabId).length,
+      anchorFingerprint: null,
+      excludedFingerprints: [],
+    });
+    const ordinaryOptions = cancelledAgent._selectionGroundedRunOptions(
+      cancelledTabId,
+      cancelledAgent.conversations.get(cancelledTabId),
+      {},
+    );
+    assert.equal(ordinaryOptions.sourceGrounding, undefined, `${label}: unanchored hydrated scope should not be inherited`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: invalid hydrated scope should be removed`);
+
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const errorTabId = 9690 + (label === 'firefox' ? 10 : 0) + pathIndex;
+      const errorAgent = createAgent(errorTabId);
+      errorAgent._enrichUserMessageWithCurrentPage = async () => {
+        throw new Error('setup failed before anchor');
+      };
+      const run = streaming
+        ? errorAgent.processMessageStream(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            { sourceGrounding },
+          )
+        : errorAgent.processMessage(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            [],
+            { sourceGrounding },
+          );
+      await assert.rejects(run, /setup failed before anchor/, `${label}: setup error should propagate`);
+      assert.equal(errorAgent.selectionGroundingScopes.has(errorTabId), false, `${label}: setup-error provisional scope leaked`);
+    }
+  }
+});
+
+test('selection-only overflow trims only the isolated model view', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      let calls = 0;
+      const provider = {
+        supportsTools: false,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages) => {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          return { content: 'Recovered answer.', toolCalls: null };
+        },
+        async *chatStream(messages) {
+          requests.push(JSON.stringify(messages));
+          calls += 1;
+          if (calls === 1) throw new Error('context length exceeded');
+          yield { type: 'text', content: 'Recovered answer.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 9650 + (buildIndex * 10) + pathIndex;
+      const priorSecret = `PRIOR HISTORY MUST SURVIVE ${'Z'.repeat(7000)}`;
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: priorSecret },
+        { role: 'assistant', content: 'Prior answer.' },
+      ]);
+      agent.maxSteps = 3;
+      agent._hydrate = async () => {};
+      agent._manageContext = async () => {
+        throw new Error('selection-only overflow must not compact backing history');
+      };
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
+        assert.equal(history.length, 0, `${label}: overflow enrichment should remain source-bound`);
+        return { role: 'user', content };
+      };
+      agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+        messages.push(enriched);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const selectedText = `${'A'.repeat(7000)}SELECTION_TAIL_MUST_STAY_IN_HISTORY`;
+      const prompt = buildSelectionPrompt(selectedText, 'summarize');
+      const runOptions = { sourceGrounding };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+
+      assert.equal(final, 'Recovered answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: overflow retry should recover`);
+      assert.equal(requests.length, 2, `${label}: overflow should retry exactly once`);
+      assert.match(requests[0], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: initial request should contain the full selection`);
+      assert.doesNotMatch(requests[1], /SELECTION_TAIL_MUST_STAY_IN_HISTORY/, `${label}: retry should use the trimmed isolated view`);
+      assert.doesNotMatch(requests[0], /PRIOR HISTORY MUST SURVIVE/, `${label}: initial request leaked prior history`);
+      assert.doesNotMatch(requests[1], /PRIOR HISTORY MUST SURVIVE/, `${label}: retry leaked prior history`);
+
+      const persistedConversation = agent.conversations.get(tabId);
+      assert.equal(persistedConversation[1].content, priorSecret, `${label}: overflow mutated unrelated persisted history`);
+      assert.match(
+        persistedConversation.find(message => typeof message.content === 'string' && message.content.includes('SELECTION_TAIL_MUST_STAY_IN_HISTORY'))?.content || '',
+        /SELECTION_TAIL_MUST_STAY_IN_HISTORY/,
+        `${label}: overflow truncated the persisted selected-text turn`,
+      );
+    }
+  }
+});
+
+test('sidepanel preserves selection-only grounding across retries and attachment state', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(
+      panel,
+      /const requestedSourceGrounding = retryOptions\?\.sourceGrounding \?\? chatExtraParams\.sourceGrounding;[\s\S]*?requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: retries should retain allowlisted source grounding`,
+    );
+    assert.match(
+      panel,
+      /const attachmentsForSend = sourceGrounding\s*\? \[\]\s*: retryOptions/,
+      `${label}: selection-only runs must not inherit pending attachment chips`,
+    );
+    assert.match(
+      panel,
+      /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
+      `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
+    );
+    assert.ok(
+      panel.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label}: unrelated in-flight attachment reads must not block selection-only runs`,
+    );
+    assert.match(
+      panel,
+      /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
+      `${label}: rendered retry controls should preserve the selection boundary`,
+    );
+
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(
+      agent,
+      /const selectionOnly = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;[\s\S]*?const sourceBoundAttachments = selectionOnly \? \[\] : attachments;/,
+      `${label}: agent trust boundary should reject explicit attachments on selection-only runs`,
+    );
+    assert.match(
+      agent,
+      /_messagesForSourceGroundedRun\([\s\S]*?messages,[\s\S]*?runOptions = \{\},[\s\S]*?currentUserMessage = null,[\s\S]*?priorMessageSet = null,/,
+      `${label}: agent should build a source-bound model view without deleting visible history`,
+    );
+    assert.match(
+      agent,
+      /plannerTabInfo = selectionOnly \? \{ tabUrl: '', tabTitle: '' \} : traceTabInfo;/,
+      `${label}: Act planner should not receive page URL or title for a selection-only run`,
+    );
+    assert.match(
+      agent,
+      /const sourceBoundPlannerMessages = sourceBoundRun[\s\S]*?_messagesForSourceGroundedRun\(messages, runOptions, null, sourceBoundPriorMessages\)[\s\S]*?sourceBoundPlannerMessages\.slice\(/,
+      `${label}: Act planner should receive only the selected-text exchange on grounded follow-ups`,
+    );
   }
 });
 
@@ -18026,6 +18676,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
+    assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
+    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?\{ sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING \}/, `${label}: only allowlisted grounding should reach agent run options`);
   }
 
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -18114,6 +18766,46 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
     setTabId(value) { currentTabId = value; },
   };
 }
+
+test('context-menu prompt transport preserves only allowlisted selection grounding', async () => {
+  for (const [label, createHandler, sourceGrounding] of [
+    ['chrome', createContextMenuPromptHandlerCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', createContextMenuPromptHandlerFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const prompt = {
+      id: `${label}-grounded`,
+      tabId: 6,
+      text: 'Translate this selection',
+      sourceGrounding,
+    };
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true);
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      h.sends[0].extra,
+      {
+        contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+        sourceGrounding,
+      },
+      `${label}: selection-only provenance should survive sidepanel transport`,
+    );
+
+    const invalidPrompt = {
+      id: `${label}-invalid-grounding`,
+      tabId: 6,
+      text: 'Ordinary prompt',
+      sourceGrounding: 'screenshot_only',
+    };
+    const invalid = createContextMenuPromptHarness(createHandler, invalidPrompt, async () => true);
+    invalid.handler.acceptContextMenuPrompt(invalidPrompt);
+    await waitMicrotasks(3);
+    assert.deepEqual(
+      invalid.sends[0].extra,
+      { contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id } },
+      `${label}: unknown grounding values must be dropped`,
+    );
+  }
+});
 
 test('context-menu prompt recovery retries after an unaccepted send', async () => {
   for (const [label, createHandler] of [
@@ -18679,6 +19371,46 @@ function makeSchedulerHarness(SchedulerMod, opts = {}) {
     alarmName: (jobId) => `${SchedulerMod.SCHEDULED_ALARM_PREFIX}${jobId}`,
   };
 }
+
+test('ScheduledJobManager marks alarm executions as independent runs', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    let processArgs = null;
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (...args) => {
+        processArgs = args;
+        args[2]('tool_result', {
+          name: 'done',
+          result: { done: true, summary: 'Scheduled task complete.', outcome: 'success' },
+        });
+        return 'Scheduled task complete.';
+      },
+    });
+    const created = await h.manager.createTaskJob({
+      tabId: 77,
+      conversationId: 'conv-selection',
+      args: {
+        title: 'Independent task',
+        prompt: 'Read the current page.',
+        schedule: { type: 'once', after_seconds: 0 },
+        target: { type: 'current_tab' },
+      },
+      currentUrl: 'https://example.com/',
+      currentTitle: 'Example',
+    });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+
+    assert.ok(processArgs, `${label}: scheduled task did not run`);
+    assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
+    assert.deepEqual(
+      processArgs[5],
+      { scheduledRun: true, independentRun: true },
+      `${label}: scheduled task must bypass interactive grounding inheritance`,
+    );
+  }
+});
 
 test('scheduler validation rejects ambiguous, too-soon, and malformed schedules', () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -42466,6 +43198,47 @@ test('manual compactConversation compacts before automatic thresholds', async ()
   }
 });
 
+test('manual compactConversation rejects active selection-grounded conversations', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt] of [
+    ['chrome', AgentCh, buildSelectionPromptCh],
+    ['firefox', AgentFx, buildSelectionPromptFx],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = label === 'chrome' ? 93 : 94;
+    const anchor = { role: 'user', content: buildSelectionPrompt('compact source', 'quiz') };
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: `PRIOR SECRET ${'x'.repeat(1000)}` },
+      anchor,
+      { role: 'assistant', content: 'Question one?' },
+    ];
+    agent.conversationIds.set(tabId, `conv-compact-${label}`);
+    agent.conversations.set(tabId, messages);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `conv-compact-${label}`,
+      anchorIndex: 2,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [
+        agent._selectionGroundingMessageFingerprint(messages[1]),
+      ],
+    });
+    let manageContextCalls = 0;
+    agent._manageContext = async () => {
+      manageContextCalls += 1;
+      throw new Error('selection-scoped manual compaction must not inspect full history');
+    };
+    const before = JSON.stringify(messages);
+
+    const result = await agent.compactConversation(tabId);
+
+    assert.equal(result.compacted, false, `${label}: scoped compaction should be rejected`);
+    assert.equal(result.reason, 'selection_scoped', `${label}: scoped rejection reason missing`);
+    assert.equal(manageContextCalls, 0, `${label}: scoped compaction reached the model`);
+    assert.equal(JSON.stringify(messages), before, `${label}: scoped compaction mutated backing history`);
+
+  }
+});
+
 test('context soft budgets scale with adaptive provider token budgets', async () => {
   const cases = [
     [16000, 10400, 80000, 50],
@@ -49326,7 +50099,7 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
     );
     assert.match(
       source,
-      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, attachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, attachments, \{ canUseScratchpadTool \}\);/,
+      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
       `${label} should gate attachment scratchpad guidance on ask vs action modes`,
     );
   }
@@ -49387,7 +50160,10 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
-    assert.ok(source.includes('if (!retryOptions && !isProcessing && isAttachmentReadPendingForTab(tabId))'), `${label} should block normal sends while files load without blocking retries`);
+    assert.ok(
+      source.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label} should block normal sends while files load without blocking retries or selection-only runs`,
+    );
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
@@ -50651,7 +51427,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const runtimeValue = 'runtime@example.com';
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(77, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://example.com/form';
     agent.executeTool = async (_tabId, name) => {
@@ -50690,6 +51473,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.match(serialized, /<workflow-parameter:email>/);
     assert.match(serialized, /workflow form summary redacted|workflow parameter redacted/);
     assert.equal(agent.isRunning(77), false);
+    assert.equal(agent.selectionGroundingScopes.has(77), false, `${browser}: completed replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: completed replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay fails closed before a semantic target miss`, async () => {
@@ -50741,7 +51526,14 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
     const updates = [];
     agent._hydrate = async () => {};
-    agent._persist = () => {};
+    let persistCalls = 0;
+    agent._persist = () => { persistCalls += 1; };
+    agent.selectionGroundingScopes.set(79, {
+      conversationId: 'selection-conversation',
+      anchorIndex: 1,
+      anchorFingerprint: 'user:1:1',
+      excludedFingerprints: [],
+    });
     agent.ensureConversationId = async () => 'conversation_test';
     agent._currentUrl = async () => 'https://other.example/';
     agent.executeTool = async () => { throw new Error('deterministic replay must not inspect the wrong start page'); };
@@ -50767,6 +51559,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
       `${browser}: recoverable start mismatches must not emit a terminal failure`,
     );
     assert.equal(agent.isRunning(79), false);
+    assert.equal(agent.selectionGroundingScopes.has(79), false, `${browser}: fallback replay kept stale selection scope`);
+    assert.ok(persistCalls >= 1, `${browser}: fallback replay did not persist selection-scope removal`);
   });
 
   test(`${browser} saved workflow replay never falls back after an action with an unknown outcome`, async () => {
@@ -50951,12 +51745,17 @@ test('linkedin shadow-dom reachability: pierce, overlay hoist, placeholder match
 // string is parsed and run exactly as the browser would.
 
 function captchaEl(tag, attrs = {}, children = []) {
+  const rect = attrs.rect || { left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 };
   const el = {
     tagName: tag.toUpperCase(),
     children,
     src: attrs.src,
+    hidden: attrs.hidden === true,
+    style: {},
     classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
     getAttribute: (n) => (n in attrs ? attrs[n] : null),
+    getBoundingClientRect: () => rect,
+    dispatchEvent: () => true,
     querySelector: (sel) => captchaMatchAll(children, sel)[0] || null,
     querySelectorAll: (sel) => captchaMatchAll(children, sel),
   };
@@ -51005,27 +51804,55 @@ async function detectCaptchaOnFakePage(build, nodes) {
     document: globalThis.document,
     chrome: globalThis.chrome,
     browser: globalThis.browser,
+    location: globalThis.location,
+    innerWidth: globalThis.innerWidth,
+    innerHeight: globalThis.innerHeight,
+    getComputedStyle: globalThis.getComputedStyle,
   };
+  const location = { href: 'https://example.test/form' };
   globalThis.document = document;
+  globalThis.location = location;
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 720;
+  globalThis.getComputedStyle = (element) => ({
+    display: element.hidden ? 'none' : 'block',
+    visibility: 'visible',
+    opacity: '1',
+  });
   // The detector reaches for the extension API by name; give each build the
   // executeScript shape it expects and run the payload in-process.
   globalThis.chrome = {
     scripting: {
-      executeScript: async ({ func }) => [{ result: func() }],
+      executeScript: async ({ func }) => [{ frameId: 0, result: func() }],
     },
   };
   globalThis.browser = {
+    webNavigation: {
+      getAllFrames: async () => [{ frameId: 0, url: location.href }],
+    },
     tabs: {
-      executeScript: async (_tabId, { code }) => [vm.runInNewContext(code, { document, URL })],
+      executeScript: async (_tabId, { code }) => [vm.runInNewContext(code, {
+        document,
+        location,
+        URL,
+        URLSearchParams,
+        innerWidth: 1280,
+        innerHeight: 720,
+        getComputedStyle: globalThis.getComputedStyle,
+      })],
     },
   };
   try {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return await mod.detectCaptcha(1);
+    return (await mod.detectCaptcha(1)).selected;
   } finally {
     globalThis.document = previous.document;
     globalThis.chrome = previous.chrome;
     globalThis.browser = previous.browser;
+    globalThis.location = previous.location;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.getComputedStyle = previous.getComputedStyle;
   }
 }
 
@@ -51093,6 +51920,33 @@ test('captcha detection: reCAPTCHA version, Enterprise edition and action stay i
       expect: { type: 'recaptcha_v2_enterprise', websiteKey: 'KEY_URL_ENT', isEnterprise: true, detectedVia: 'url' },
     },
     {
+      label: 'URL fallback: Enterprise anchor carries sa and s parameters',
+      nodes: () => [
+        captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=KEY_URL_ENT_PARAMS&sa=signup&s=ENTERPRISE_S',
+        }),
+      ],
+      expect: {
+        type: 'recaptcha_v2_enterprise',
+        websiteKey: 'KEY_URL_ENT_PARAMS',
+        pageAction: 'signup',
+        enterprisePayload: { s: 'ENTERPRISE_S' },
+      },
+    },
+    {
+      label: 'URL fallback: classic anchor carries recaptchaDataSValue',
+      nodes: () => [
+        captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/api2/anchor?ar=1&k=KEY_URL_CLASSIC_PARAMS&s=CLASSIC_S',
+        }),
+      ],
+      expect: {
+        type: 'recaptcha_v2',
+        websiteKey: 'KEY_URL_CLASSIC_PARAMS',
+        recaptchaDataSValue: 'CLASSIC_S',
+      },
+    },
+    {
       label: 'URL fallback: render=explicit is not a sitekey',
       nodes: () => [
         captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js?render=explicit' }),
@@ -51100,12 +51954,53 @@ test('captcha detection: reCAPTCHA version, Enterprise edition and action stay i
       expect: null,
     },
     {
-      label: 'provider-specific widgets still win over the reCAPTCHA scan',
+      label: 'provider-specific hCaptcha is not misclassified as reCAPTCHA',
       nodes: () => [
         captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HKEY_123456' }),
-        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V2' }),
       ],
       expect: { type: 'hcaptcha', websiteKey: 'HKEY_123456' },
+    },
+    {
+      label: 'keyless Turnstile challenge remains visible beside background reCAPTCHA v3',
+      nodes: () => [
+        captchaEl('script', {
+          src: 'https://www.google.com/recaptcha/api.js?render=KEY_BACKGROUND&action=login',
+        }),
+        captchaEl('script', {
+          src: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+        }),
+      ],
+      expect: {
+        type: 'turnstile_challenge',
+        websiteKey: null,
+        visible: true,
+      },
+    },
+    {
+      label: 'keyed Turnstile widget does not gain a competing keyless marker',
+      nodes: () => [
+        captchaEl('div', { class: 'cf-turnstile', 'data-sitekey': 'TURNSTILE_KEYED' }),
+        captchaEl('script', {
+          src: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+        }),
+      ],
+      expect: {
+        type: 'turnstile',
+        websiteKey: 'TURNSTILE_KEYED',
+      },
+    },
+    {
+      label: 'URL fallback: hCaptcha site key in iframe fragment',
+      nodes: () => [
+        captchaEl('iframe', {
+          src: 'https://newassets.hcaptcha.com/captcha/v1/checkbox/hcaptcha.html#id=widget&sitekey=HKEY_FRAGMENT_123456',
+        }),
+      ],
+      expect: {
+        type: 'hcaptcha',
+        websiteKey: 'HKEY_FRAGMENT_123456',
+        detectedVia: 'url',
+      },
     },
   ];
 
@@ -51122,7 +52017,7 @@ test('captcha detection: reCAPTCHA version, Enterprise edition and action stay i
       continue;
     }
     for (const [key, value] of Object.entries(expect)) {
-      assert.equal(chromeResult?.[key], value, `${label}: ${key}`);
+      assert.deepEqual(chromeResult?.[key], value, `${label}: ${key}`);
     }
   }
 });
@@ -51153,6 +52048,1669 @@ test('captcha detection: v3 without an action reports why, and solve_captcha ref
       mod.captchaParamError({ type: 'recaptcha_v2_enterprise', websiteKey: 'KEY' }),
       null,
       `${build}: v2 does not need a pageAction`,
+    );
+  }
+});
+
+test('captcha detection binds the selected widget to its own response field', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const hiddenField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-hidden',
+      name: 'g-recaptcha-response',
+    });
+    const activeField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-active',
+      name: 'g-recaptcha-response',
+    });
+    const hiddenHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_HIDDEN_WIDGET',
+      hidden: true,
+    }, [hiddenField]);
+    const activeHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_ACTIVE_WIDGET',
+      'data-callback': 'onActiveCaptcha',
+    }, [activeField]);
+    const selected = await detectCaptchaOnFakePage(build, [
+      hiddenHost,
+      activeHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(selected.websiteKey, 'KEY_ACTIVE_WIDGET', `${build}: active widget was not selected`);
+    assert.equal(
+      selected.responseFieldId,
+      'g-recaptcha-response-active',
+      `${build}: selected response field id was not preserved`,
+    );
+    assert.equal(selected.responseFieldIndex, 1, `${build}: selected response field index was not preserved`);
+    assert.equal(selected.callbackName, 'onActiveCaptcha', `${build}: selected callback was not preserved`);
+
+    const hcaptchaField = captchaEl('textarea', {
+      id: 'h-captcha-response-active',
+      name: 'h-captcha-response',
+    });
+    const compatibilityField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-hcaptcha-active',
+      name: 'g-recaptcha-response',
+    });
+    const hcaptcha = await detectCaptchaOnFakePage(build, [
+      captchaEl('div', {
+        class: 'h-captcha',
+        'data-sitekey': 'HKEY_ACTIVE_WIDGET',
+      }, [hcaptchaField, compatibilityField]),
+    ]);
+    assert.equal(hcaptcha.responseFieldIndex, 0, `${build}: hCaptcha primary field index missing`);
+    assert.equal(
+      hcaptcha.alsoResponseFieldId,
+      'g-recaptcha-response-hcaptcha-active',
+      `${build}: hCaptcha compatibility field identity missing`,
+    );
+    assert.equal(hcaptcha.alsoResponseFieldIndex, 0, `${build}: hCaptcha compatibility field index missing`);
+  }
+});
+
+test('captcha detection ranks a visible nested v2 Enterprise challenge above background v3', async () => {
+  const topCandidate = {
+    type: 'recaptcha_v3_enterprise',
+    websiteKey: 'KEY_BACKGROUND_V3',
+    isInvisible: true,
+    isEnterprise: true,
+    visible: false,
+    normalCheckbox: false,
+    frameUrl: 'https://www.linkedin.com/signup',
+    detectedVia: 'script',
+  };
+  const activeCandidate = {
+    type: 'recaptcha_v2_enterprise',
+    websiteKey: 'KEY_ACTIVE_V2',
+    isInvisible: false,
+    isEnterprise: true,
+    visible: true,
+    normalCheckbox: true,
+    challengeFrame: true,
+    responseField: true,
+    frameUrl: 'https://www.linkedin.com/checkpoint/challenge/captchaInternal',
+    enterprisePayload: { s: 'enterprise-s' },
+    pageAction: 'signup',
+    detectedVia: 'url',
+  };
+  const previous = { chrome: globalThis.chrome, browser: globalThis.browser };
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+      if (build === 'chrome') {
+        globalThis.chrome = {
+          webNavigation: {
+            getAllFrames: async () => [
+              { frameId: 0, parentFrameId: -1, url: topCandidate.frameUrl },
+              { frameId: 12, parentFrameId: 0, url: activeCandidate.frameUrl },
+            ],
+          },
+          scripting: {
+            executeScript: async ({ target }) => {
+              assert.equal(target.allFrames, true, 'Chrome detector did not scan all frames');
+              return [
+                {
+                  frameId: 0,
+                  result: {
+                    candidates: [topCandidate],
+                    frameContext: {
+                      frameUrl: topCandidate.frameUrl,
+                      frameName: '',
+                      childFrames: [{
+                        url: activeCandidate.frameUrl,
+                        loadedUrl: activeCandidate.frameUrl,
+                        name: 'captcha-internal',
+                        visible: true,
+                      }],
+                    },
+                  },
+                },
+                {
+                  frameId: 12,
+                  result: {
+                    candidates: [activeCandidate],
+                    frameContext: {
+                      frameUrl: activeCandidate.frameUrl,
+                      frameName: 'captcha-internal',
+                      childFrames: [],
+                    },
+                  },
+                },
+              ];
+            },
+          },
+        };
+      } else {
+        globalThis.browser = {
+          webNavigation: {
+            getAllFrames: async () => [
+              { frameId: 0, parentFrameId: -1, url: topCandidate.frameUrl },
+              { frameId: 12, parentFrameId: 0, url: activeCandidate.frameUrl },
+            ],
+          },
+          tabs: {
+            executeScript: async (_tabId, details) => [{
+              candidates: details.frameId === 12 ? [activeCandidate] : [topCandidate],
+              frameContext: details.frameId === 12 ? {
+                frameUrl: activeCandidate.frameUrl,
+                frameName: 'captcha-internal',
+                childFrames: [],
+              } : {
+                frameUrl: topCandidate.frameUrl,
+                frameName: '',
+                childFrames: [{
+                  url: activeCandidate.frameUrl,
+                  loadedUrl: activeCandidate.frameUrl,
+                  name: 'captcha-internal',
+                  visible: true,
+                }],
+              },
+            }],
+          },
+        };
+      }
+      const detection = await mod.detectCaptcha(77);
+      assert.equal(detection.error, null, `${build}: nested selection unexpectedly failed`);
+      assert.equal(detection.selected.type, 'recaptcha_v2_enterprise', `${build}: background v3 won`);
+      assert.equal(detection.selected.websiteKey, 'KEY_ACTIVE_V2', `${build}: wrong site key`);
+      assert.equal(detection.selected.frameId, 12, `${build}: selected frame identity was lost`);
+      assert.equal(detection.selected.frameUrl, activeCandidate.frameUrl, `${build}: wrong websiteURL source`);
+      assert.equal(detection.selected.pageAction, 'signup', `${build}: v2 sa/pageAction was lost`);
+      assert.deepEqual(detection.selected.enterprisePayload, { s: 'enterprise-s' }, `${build}: Enterprise s payload was lost`);
+      assert.equal(detection.selected.selectionReason, 'visible checkbox challenge', `${build}: selection reason`);
+    }
+  } finally {
+    globalThis.chrome = previous.chrome;
+    globalThis.browser = previous.browser;
+  }
+});
+
+test('captcha detection inherits same-key reCAPTCHA loader metadata only from ancestor frames', async () => {
+  const topUrl = 'https://example.test/signup';
+  const childUrl = 'https://example.test/captcha-widget';
+  const siblingUrl = 'https://example.test/background-integration';
+  const websiteKey = 'KEY_ANCESTOR_V3_ENTERPRISE';
+  const ancestorLoader = {
+    type: 'recaptcha_v3_enterprise',
+    websiteKey,
+    isInvisible: true,
+    isEnterprise: true,
+    visible: false,
+    normalCheckbox: false,
+    pageAction: 'ancestor-login',
+    frameUrl: topUrl,
+    detectedVia: 'script',
+  };
+  const childHost = {
+    type: 'recaptcha_v2',
+    websiteKey,
+    isInvisible: false,
+    isEnterprise: false,
+    visible: true,
+    normalCheckbox: true,
+    frameUrl: childUrl,
+    detectedVia: 'host',
+  };
+  const siblingLoader = {
+    ...ancestorLoader,
+    type: 'recaptcha_v3',
+    isEnterprise: false,
+    pageAction: 'sibling-action',
+    frameUrl: siblingUrl,
+  };
+  const navigationFrames = [
+    { frameId: 0, parentFrameId: -1, url: topUrl },
+    { frameId: 12, parentFrameId: 0, url: childUrl },
+    { frameId: 13, parentFrameId: 0, url: siblingUrl },
+  ];
+  const framePayload = frameId => {
+    if (frameId === 12) {
+      return {
+        candidates: [childHost],
+        frameContext: {
+          frameUrl: childUrl,
+          frameName: 'captcha-widget',
+          childFrames: [],
+        },
+      };
+    }
+    if (frameId === 13) {
+      return {
+        candidates: [siblingLoader],
+        frameContext: {
+          frameUrl: siblingUrl,
+          frameName: 'background-integration',
+          childFrames: [],
+        },
+      };
+    }
+    return {
+      candidates: [ancestorLoader],
+      frameContext: {
+        frameUrl: topUrl,
+        frameName: '',
+        childFrames: [
+          {
+            url: childUrl,
+            loadedUrl: childUrl,
+            name: 'captcha-widget',
+            visible: true,
+          },
+          {
+            url: siblingUrl,
+            loadedUrl: siblingUrl,
+            name: 'background-integration',
+            visible: true,
+          },
+        ],
+      },
+    };
+  };
+  const previous = { chrome: globalThis.chrome, browser: globalThis.browser };
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+      if (build === 'chrome') {
+        globalThis.chrome = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          scripting: {
+            executeScript: async () => navigationFrames.map(({ frameId }) => ({
+              frameId,
+              result: framePayload(frameId),
+            })),
+          },
+        };
+      } else {
+        globalThis.browser = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          tabs: {
+            executeScript: async (_tabId, { frameId }) => [framePayload(frameId)],
+          },
+        };
+      }
+
+      const detection = await mod.detectCaptcha(88);
+      assert.equal(detection.error, null, `${build}: ancestor metadata reconciliation failed`);
+      assert.equal(detection.selected.frameId, 12, `${build}: visible child widget was not selected`);
+      assert.equal(
+        detection.selected.type,
+        'recaptcha_v3_enterprise',
+        `${build}: ancestor v3 Enterprise type was not inherited`,
+      );
+      assert.equal(detection.selected.isEnterprise, true, `${build}: Enterprise mode was not inherited`);
+      assert.equal(detection.selected.pageAction, 'ancestor-login', `${build}: ancestor action was not inherited`);
+      assert.equal(detection.selected.normalCheckbox, false, `${build}: reconciled v3 host remained a v2 checkbox`);
+      assert.equal(detection.selected.ancestorLoaderFrameId, 0, `${build}: loader ancestry was not reported`);
+      assert.equal(
+        detection.selected.selectionReason,
+        'visible CAPTCHA widget',
+        `${build}: reconciled v3 selection reason was inaccurate`,
+      );
+
+      const runtime = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
+      ).href);
+      const inheritedChildHost = {
+        ...childHost,
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        framePath: [{ index: 1, frameUrl: 'about:srcdoc', frameName: 'captcha-child' }],
+      };
+      const inheritedSiblingLoader = {
+        ...siblingLoader,
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        framePath: [{ index: 0, frameUrl: 'about:srcdoc', frameName: 'captcha-sibling' }],
+      };
+      const inheritedSiblingAdjusted = runtime.applyCaptchaFrameVisibility(
+        [inheritedSiblingLoader, inheritedChildHost],
+        [],
+        [{ frameId: 0, parentFrameId: -1, url: topUrl }],
+      );
+      assert.equal(
+        inheritedSiblingAdjusted[1].type,
+        'recaptcha_v2',
+        `${build}: inherited-origin sibling metadata leaked into the child`,
+      );
+
+      const inheritedAncestorAdjusted = runtime.applyCaptchaFrameVisibility(
+        [{ ...ancestorLoader, frameId: 0 }, inheritedChildHost],
+        [],
+        [{ frameId: 0, parentFrameId: -1, url: topUrl }],
+      );
+      assert.equal(
+        inheritedAncestorAdjusted[1].type,
+        'recaptcha_v3_enterprise',
+        `${build}: inherited-origin child did not receive base-frame loader metadata`,
+      );
+
+      const conflictingAdjusted = runtime.applyCaptchaFrameVisibility(
+        [
+          { ...ancestorLoader, frameId: 0 },
+          { ...ancestorLoader, frameId: 0, pageAction: 'conflicting-action' },
+          { ...childHost, frameId: 12 },
+        ],
+        [],
+        navigationFrames,
+      );
+      const conflictingSelection = runtime.selectCaptchaCandidate(conflictingAdjusted);
+      assert.equal(
+        conflictingSelection.selected,
+        null,
+        `${build}: conflicting nearest ancestor loaders were selected`,
+      );
+      assert.match(
+        conflictingSelection.error || '',
+        /ancestorLoader/,
+        `${build}: conflicting ancestor loader diagnostic was missing`,
+      );
+    }
+  } finally {
+    globalThis.chrome = previous.chrome;
+    globalThis.browser = previous.browser;
+  }
+});
+
+test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its parent frame', async () => {
+  const firefoxMod = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/captcha-solver.js')).href);
+  const response = captchaEl('textarea', { name: 'g-recaptcha-response' });
+  response.value = '';
+  response.textContent = '';
+  const childNodes = [
+    captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_SRCDOC' }),
+    captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    response,
+  ];
+  const makeDocument = (nodes) => ({
+    querySelector: (selector) => captchaMatchAll(nodes, selector)[0] || null,
+    querySelectorAll: (selector) => captchaMatchAll(nodes, selector),
+    createElement: () => captchaEl('textarea'),
+    body: { appendChild: () => {} },
+    documentElement: { appendChild: () => {} },
+  });
+  const childDocument = makeDocument(childNodes);
+  const PageEvent = class {
+    constructor(type, options) {
+      this.type = type;
+      this.bubbles = options?.bubbles;
+    }
+  };
+  const childWindow = {
+    location: { href: 'about:srcdoc' },
+    name: 'captcha-srcdoc',
+    innerWidth: 800,
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    Event: PageEvent,
+    HTMLTextAreaElement: class {},
+    HTMLInputElement: class {},
+  };
+  const iframe = captchaEl('iframe', {
+    srcdoc: '<div class="g-recaptcha"></div>',
+    name: 'captcha-srcdoc',
+  });
+  iframe.name = 'captcha-srcdoc';
+  iframe.hasAttribute = (name) => name === 'srcdoc';
+  iframe.contentDocument = childDocument;
+  iframe.contentWindow = childWindow;
+
+  const topDocument = makeDocument([iframe]);
+  const topWindow = {
+    location: { href: 'https://example.test/form' },
+    name: '',
+    innerWidth: 1280,
+    innerHeight: 720,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    Event: PageEvent,
+    HTMLTextAreaElement: class {},
+    HTMLInputElement: class {},
+  };
+  const previousBrowser = globalThis.browser;
+  let sawBlankMatching = false;
+  try {
+    globalThis.browser = {
+      webNavigation: {
+        getAllFrames: async () => [
+          { frameId: 0, parentFrameId: -1, url: topWindow.location.href },
+          { frameId: 7, parentFrameId: 0, url: 'about:srcdoc' },
+        ],
+      },
+      tabs: {
+        executeScript: async (_tabId, details) => {
+          if (details.matchAboutBlank) sawBlankMatching = true;
+          if (details.frameId === 7) throw new Error('Firefox cannot inject directly into srcdoc');
+          return [vm.runInNewContext(details.code, {
+            document: topDocument,
+            window: topWindow,
+            location: topWindow.location,
+            URL,
+            URLSearchParams,
+            Event: PageEvent,
+            HTMLTextAreaElement: topWindow.HTMLTextAreaElement,
+            HTMLInputElement: topWindow.HTMLInputElement,
+          })];
+        },
+      },
+    };
+
+    const detection = await firefoxMod.detectCaptcha(91);
+    assert.equal(sawBlankMatching, true, 'Firefox detector did not request about:blank matching');
+    assert.equal(detection.error, null, 'srcdoc CAPTCHA detection failed');
+    assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');
+    assert.equal(detection.selected.frameUrl, 'about:srcdoc', 'srcdoc frame URL was lost');
+    assert.equal(detection.selected.frameId, 0, 'srcdoc fallback did not retain its injectable parent frame');
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(detection.selected.framePath)),
+      [{ index: 0, frameUrl: 'about:srcdoc', frameName: 'captcha-srcdoc' }],
+      'srcdoc frame path was not retained',
+    );
+
+    const injection = await firefoxMod.injectToken(91, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN_SRCDOC',
+      target: detection.selected,
+    });
+    assert.equal(injection.success, true, 'srcdoc token injection through the parent failed');
+    assert.equal(injection.frameUrl, 'about:srcdoc', 'srcdoc injection ran in the wrong frame');
+    assert.equal(response.value, 'TOKEN_SRCDOC', 'srcdoc response field was not updated');
+  } finally {
+    globalThis.browser = previousBrowser;
+  }
+});
+
+test('captcha frame visibility propagation demotes descendants of hidden embedding frames', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const visibleCandidate = {
+      frameId: 0,
+      frameUrl: 'https://example.test/form',
+      type: 'recaptcha_v2',
+      websiteKey: 'KEY_VISIBLE',
+      visible: true,
+      normalCheckbox: true,
+      detectedVia: 'host',
+    };
+    const nestedCandidate = {
+      frameId: 12,
+      frameUrl: 'https://example.test/checkpoint/challenge/captchaInternal',
+      type: 'recaptcha_v2_enterprise',
+      websiteKey: 'KEY_HIDDEN_NESTED',
+      visible: true,
+      normalCheckbox: true,
+      challengeFrame: true,
+      detectedVia: 'host',
+    };
+    const navigationFrames = [
+      { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+      { frameId: 7, parentFrameId: 0, url: 'https://example.test/hidden-wrapper' },
+      { frameId: 12, parentFrameId: 7, url: nestedCandidate.frameUrl },
+    ];
+    const frameContexts = [
+      {
+        frameId: 0,
+        frameUrl: visibleCandidate.frameUrl,
+        frameName: '',
+        childFrames: [{
+          url: 'https://example.test/hidden-wrapper',
+          loadedUrl: 'https://example.test/hidden-wrapper',
+          name: 'wrapper',
+          visible: false,
+        }],
+      },
+      {
+        frameId: 7,
+        frameUrl: 'https://example.test/hidden-wrapper',
+        frameName: 'wrapper',
+        childFrames: [{
+          url: nestedCandidate.frameUrl,
+          loadedUrl: nestedCandidate.frameUrl,
+          name: 'captcha-internal',
+          visible: true,
+        }],
+      },
+      {
+        frameId: 12,
+        frameUrl: nestedCandidate.frameUrl,
+        frameName: 'captcha-internal',
+        childFrames: [],
+      },
+    ];
+
+    const hiddenAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, nestedCandidate],
+      frameContexts,
+      navigationFrames,
+    );
+    assert.equal(hiddenAdjusted[1].frameVisible, false, `${build}: hidden ancestor was ignored`);
+    assert.equal(hiddenAdjusted[1].visible, false, `${build}: nested widget remained visible`);
+    assert.equal(hiddenAdjusted[1].normalCheckbox, false, `${build}: nested checkbox remained active`);
+    assert.equal(
+      runtime.selectCaptchaCandidate(hiddenAdjusted).selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: hidden nested CAPTCHA outranked the visible candidate`,
+    );
+
+    frameContexts[0].childFrames[0].visible = true;
+    const visibleAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, nestedCandidate],
+      frameContexts,
+      navigationFrames,
+    );
+    assert.equal(visibleAdjusted[1].frameVisible, true, `${build}: visible ancestor chain was demoted`);
+    assert.equal(
+      runtime.selectCaptchaCandidate(visibleAdjusted).selected.websiteKey,
+      'KEY_HIDDEN_NESTED',
+      `${build}: visible nested challenge was not restored`,
+    );
+
+    const redirectedCandidate = {
+      ...nestedCandidate,
+      frameId: 21,
+      frameUrl: 'https://captcha.vendor.test/final-challenge',
+      websiteKey: 'KEY_REDIRECTED',
+    };
+    const redirectedAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, redirectedCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: visibleCandidate.frameUrl,
+          frameName: '',
+          childFrames: [
+            {
+              url: 'https://captcha.vendor.test/start',
+              loadedUrl: '',
+              name: '',
+              visible: true,
+            },
+            {
+              url: 'https://example.test/unrelated-frame',
+              loadedUrl: '',
+              name: '',
+              visible: false,
+            },
+          ],
+        },
+        {
+          frameId: 21,
+          frameUrl: redirectedCandidate.frameUrl,
+          frameName: '',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+        { frameId: 21, parentFrameId: 0, url: redirectedCandidate.frameUrl },
+      ],
+    );
+    assert.equal(
+      redirectedAdjusted[1].frameVisible,
+      true,
+      `${build}: unmatched redirected child was treated as hidden`,
+    );
+    assert.equal(
+      redirectedAdjusted[1].visible,
+      true,
+      `${build}: redirected visible CAPTCHA was demoted`,
+    );
+    assert.equal(
+      runtime.selectCaptchaCandidate(redirectedAdjusted).selected.websiteKey,
+      'KEY_REDIRECTED',
+      `${build}: redirected visible CAPTCHA lost to another candidate`,
+    );
+
+    const unmatchedOpaqueCandidate = {
+      ...nestedCandidate,
+      frameId: 31,
+      frameUrl: 'about:blank',
+      websiteKey: 'KEY_UNMATCHED_OPAQUE',
+    };
+    const unmatchedOpaqueAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, unmatchedOpaqueCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: visibleCandidate.frameUrl,
+          frameName: '',
+          childFrames: [
+            {
+              url: 'about:blank',
+              loadedUrl: 'about:blank',
+              name: '',
+              visible: true,
+            },
+            {
+              url: 'about:blank',
+              loadedUrl: 'about:blank',
+              name: '',
+              visible: false,
+            },
+          ],
+        },
+        {
+          frameId: 31,
+          frameUrl: 'about:blank',
+          frameName: '',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: visibleCandidate.frameUrl },
+        { frameId: 31, parentFrameId: 0, url: 'about:blank' },
+      ],
+    );
+    assert.equal(
+      unmatchedOpaqueAdjusted[1].frameVisible,
+      false,
+      `${build}: unmatched opaque child was promoted to visible`,
+    );
+    assert.equal(
+      unmatchedOpaqueAdjusted[1].visible,
+      false,
+      `${build}: unmatched opaque CAPTCHA remained active`,
+    );
+    assert.equal(
+      runtime.selectCaptchaCandidate(unmatchedOpaqueAdjusted).selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: unmatched opaque CAPTCHA displaced the proven visible widget`,
+    );
+  }
+});
+
+test('captcha candidate ranking fails closed on ties and honors exact targeting', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const candidates = [
+      {
+        frameId: 4,
+        frameUrl: 'https://example.test/frame-a',
+        type: 'recaptcha_v2',
+        websiteKey: 'KEY_A',
+        visible: true,
+        normalCheckbox: true,
+        pageAction: 'signup',
+        recaptchaDataSValue: 'classic-s',
+      },
+      {
+        frameId: 5,
+        frameUrl: 'https://example.test/frame-b',
+        type: 'hcaptcha',
+        websiteKey: 'KEY_B',
+        visible: true,
+        normalCheckbox: true,
+      },
+    ];
+    const tied = runtime.selectCaptchaCandidate(candidates);
+    assert.equal(tied.selected, null, `${build}: tied candidates were auto-selected`);
+    assert.equal(tied.ambiguous, true, `${build}: tie was not marked ambiguous`);
+    assert.match(tied.error, /exact .*frameUrl.*websiteKey/, `${build}: tie remedy missing`);
+    assert.equal(tied.candidates[0].pageAction, 'signup', `${build}: candidate action diagnostic missing`);
+    assert.equal(tied.candidates[0].recaptchaDataSValue, 'classic-s', `${build}: candidate s diagnostic missing`);
+
+    const byFrame = runtime.selectCaptchaCandidate(candidates, { frameUrl: candidates[1].frameUrl });
+    assert.equal(byFrame.selected.websiteKey, 'KEY_B', `${build}: exact frameUrl did not select candidate`);
+    assert.equal(byFrame.selected.selectionReason, 'exact frameUrl match', `${build}: exact-frame reason missing`);
+
+    const byKey = runtime.selectCaptchaCandidate(candidates, { websiteKey: 'KEY_A' });
+    assert.equal(byKey.selected.frameId, 4, `${build}: exact websiteKey did not select candidate`);
+
+    const repeatedFrameCandidates = [
+      {
+        ...candidates[0],
+        frameId: 21,
+        frameUrl: 'https://example.test/repeated-frame',
+        websiteKey: 'KEY_REPEATED',
+        responseFieldId: 'response-repeated-a',
+      },
+      {
+        ...candidates[0],
+        frameId: 22,
+        frameUrl: 'https://example.test/repeated-frame',
+        websiteKey: 'KEY_REPEATED',
+        responseFieldId: 'response-repeated-b',
+      },
+    ];
+    const repeatedFrameTie = runtime.selectCaptchaCandidate(repeatedFrameCandidates);
+    assert.match(
+      repeatedFrameTie.error,
+      /exact frameId/,
+      `${build}: same-URL same-key tie did not offer frameId`,
+    );
+    assert.doesNotMatch(
+      repeatedFrameTie.error,
+      /exact frameUrl|exact websiteKey/,
+      `${build}: tie suggested a non-unique URL or key`,
+    );
+    const byFrameId = runtime.selectCaptchaCandidate(repeatedFrameCandidates, { frameId: 22 });
+    assert.equal(byFrameId.selected.frameId, 22, `${build}: exact frameId did not select candidate`);
+    assert.equal(byFrameId.selected.selectionReason, 'exact frameId match', `${build}: frameId reason missing`);
+
+    const inheritedCandidates = [
+      {
+        ...candidates[0],
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        websiteKey: 'KEY_INHERITED_REPEAT',
+        framePath: [{ index: 0, frameUrl: 'about:srcdoc' }],
+      },
+      {
+        ...candidates[0],
+        frameId: 0,
+        frameUrl: 'about:srcdoc',
+        websiteKey: 'KEY_INHERITED_REPEAT',
+        framePath: [{ index: 1, frameUrl: 'about:srcdoc' }],
+      },
+    ];
+    const inheritedTie = runtime.selectCaptchaCandidate(inheritedCandidates);
+    assert.match(inheritedTie.error, /exact framePath/, `${build}: inherited tie did not offer framePath`);
+    assert.deepEqual(
+      inheritedTie.candidates.map(candidate => candidate.framePathIndexes),
+      [[0], [1]],
+      `${build}: framePath index diagnostics missing`,
+    );
+    const byFramePath = runtime.selectCaptchaCandidate(inheritedCandidates, {
+      frameId: 0,
+      framePath: [1],
+    });
+    assert.deepEqual(
+      byFramePath.selected.framePath,
+      inheritedCandidates[1].framePath,
+      `${build}: exact framePath did not select candidate`,
+    );
+    assert.equal(
+      byFramePath.selected.selectionReason,
+      'exact framePath match',
+      `${build}: combined frame identity reason was not deterministic`,
+    );
+
+    const hiddenChallenge = {
+      frameId: 7,
+      frameUrl: 'https://example.test/checkpoint/challenge',
+      type: 'recaptcha_v3',
+      websiteKey: 'KEY_HIDDEN',
+      visible: false,
+      challengeFrame: true,
+      responseField: true,
+      detectedVia: 'script',
+    };
+    const visibleTurnstile = {
+      frameId: 0,
+      frameUrl: 'https://example.test/',
+      type: 'turnstile',
+      websiteKey: 'KEY_VISIBLE',
+      visible: true,
+      normalCheckbox: false,
+      challengeFrame: false,
+      detectedVia: 'host',
+    };
+    const hiddenChallengeResult = runtime.selectCaptchaCandidate([
+      hiddenChallenge,
+      visibleTurnstile,
+    ]);
+    assert.equal(
+      hiddenChallengeResult.selected.websiteKey,
+      'KEY_VISIBLE',
+      `${build}: hidden challenge-frame integration outranked a visible widget`,
+    );
+
+    const activeChallenge = runtime.selectCaptchaCandidate([
+      {
+        ...hiddenChallenge,
+        type: 'recaptcha_v2_enterprise',
+        websiteKey: 'KEY_ACTIVE',
+        visible: true,
+        detectedVia: 'url',
+      },
+      visibleTurnstile,
+    ]);
+    assert.equal(
+      activeChallenge.selected.websiteKey,
+      'KEY_ACTIVE',
+      `${build}: generic visible widget outranked the active challenge frame`,
+    );
+  }
+});
+
+test('captcha candidate deduplication rejects conflicting paid-task parameters', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const base = {
+      frameId: 4,
+      frameUrl: 'https://example.test/form',
+      type: 'recaptcha_v2_enterprise',
+      websiteKey: 'KEY_SHARED',
+      visible: true,
+      normalCheckbox: true,
+    };
+    const conflicts = [
+      ['pageAction', 'signup', 'checkout'],
+      ['recaptchaDataSValue', 'classic-s-old', 'classic-s-new'],
+      ['enterprisePayload', { s: 'enterprise-s-old' }, { s: 'enterprise-s-new' }],
+      ['isInvisible', false, true],
+    ];
+    for (const [field, first, second] of conflicts) {
+      const result = runtime.selectCaptchaCandidate([
+        { ...base, [field]: first, detectedVia: 'host' },
+        { ...base, [field]: second, detectedVia: 'url' },
+      ]);
+      assert.equal(result.selected, null, `${build}: conflicting ${field} candidate was selected`);
+      assert.equal(result.ambiguous, true, `${build}: conflicting ${field} was not marked ambiguous`);
+      assert.match(result.error, new RegExp(field), `${build}: conflicting ${field} diagnostic missing`);
+      assert.deepEqual(
+        result.candidates[0].parameterConflicts,
+        [field],
+        `${build}: conflicting ${field} was not exposed in candidate diagnostics`,
+      );
+    }
+
+    const consistent = runtime.selectCaptchaCandidate([
+      {
+        ...base,
+        pageAction: 'signup',
+        enterprisePayload: { s: 'enterprise-s', extra: 'value' },
+        detectedVia: 'host',
+      },
+      {
+        ...base,
+        pageAction: 'signup',
+        enterprisePayload: { extra: 'value', s: 'enterprise-s' },
+        detectedVia: 'url',
+      },
+    ]);
+    assert.equal(consistent.error, null, `${build}: equivalent task parameters were treated as conflicting`);
+    assert.equal(consistent.selected.pageAction, 'signup', `${build}: consistent action was lost`);
+    assert.deepEqual(
+      consistent.selected.enterprisePayload,
+      { s: 'enterprise-s', extra: 'value' },
+      `${build}: consistent Enterprise payload was lost`,
+    );
+
+    const inheritedFrameTie = runtime.selectCaptchaCandidate([
+      { ...base, frameId: 0, frameUrl: 'about:srcdoc', framePath: [{ index: 0 }] },
+      { ...base, frameId: 0, frameUrl: 'about:srcdoc', framePath: [{ index: 1 }] },
+    ]);
+    assert.equal(inheritedFrameTie.selected, null, `${build}: distinct inherited frames were deduplicated`);
+    assert.equal(inheritedFrameTie.ambiguous, true, `${build}: inherited-frame tie was not preserved`);
+    assert.equal(inheritedFrameTie.candidates.length, 2, `${build}: inherited frame identities collapsed`);
+  }
+});
+
+test('keyless Turnstile markers accept only an explicit Turnstile type and site key', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const keyless = {
+      frameId: 0,
+      frameUrl: 'https://example.test/challenge',
+      type: 'turnstile_challenge',
+      websiteKey: null,
+      visible: true,
+      challengeFrame: true,
+      detectedVia: 'script',
+    };
+    const explicit = runtime.selectCaptchaCandidate([keyless], {
+      type: 'turnstile',
+      websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+    });
+    assert.equal(explicit.error, null, `${build}: explicit Turnstile fallback was rejected`);
+    assert.equal(explicit.selected.type, 'turnstile', `${build}: keyless marker kept an unsupported task type`);
+    assert.equal(
+      explicit.selected.websiteKey,
+      'TURNSTILE_EXPLICIT_KEY',
+      `${build}: explicit Turnstile site key was not bound to the marker`,
+    );
+    assert.equal(explicit.selected.explicitWebsiteKey, true, `${build}: explicit-key fallback was not reported`);
+    assert.equal(
+      explicit.selected.selectionReason,
+      'explicit site key for detected Turnstile challenge',
+      `${build}: explicit-key selection reason missing`,
+    );
+
+    for (const constraints of [
+      { websiteKey: 'TURNSTILE_EXPLICIT_KEY' },
+      { type: 'hcaptcha', websiteKey: 'TURNSTILE_EXPLICIT_KEY' },
+    ]) {
+      const rejected = runtime.selectCaptchaCandidate([keyless], constraints);
+      assert.equal(rejected.selected, null, `${build}: mismatched keyless fallback was selected`);
+      assert.match(rejected.error, /supplied websiteKey/, `${build}: keyless fallback rejection was unclear`);
+    }
+
+    const keyed = {
+      ...keyless,
+      type: 'turnstile',
+      websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+      detectedVia: 'host',
+    };
+    const exactWins = runtime.selectCaptchaCandidate([keyless, keyed], {
+      type: 'turnstile',
+      websiteKey: keyed.websiteKey,
+    });
+    assert.equal(exactWins.selected.detectedVia, 'host', `${build}: exact detected site key did not win`);
+    assert.equal(exactWins.selected.explicitWebsiteKey, undefined, `${build}: exact match was mislabeled as fallback`);
+  }
+});
+
+test('captcha type compatibility combines the base type with the Enterprise flag', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    assert.equal(
+      runtime.captchaTypesMatch('recaptcha_v2', 'recaptcha_v2_enterprise', true, true),
+      true,
+      `${build}: base v2 plus Enterprise flag should match detected Enterprise v2`,
+    );
+    assert.equal(
+      runtime.captchaTypesMatch('recaptcha_v2', 'recaptcha_v2_enterprise', null, true),
+      true,
+      `${build}: detection should be able to fill a missing Enterprise flag`,
+    );
+    assert.equal(
+      runtime.captchaTypesMatch('recaptcha_v2', 'recaptcha_v2_enterprise', false, true),
+      false,
+      `${build}: explicit classic v2 should conflict with detected Enterprise v2`,
+    );
+    assert.equal(
+      runtime.captchaTypesMatch('recaptcha_v3', 'recaptcha_v2_enterprise', true, true),
+      false,
+      `${build}: v2/v3 mismatch was accepted`,
+    );
+    assert.equal(
+      runtime.captchaTypesMatch('recaptcha_v2_enterprise', 'recaptcha_v2_enterprise', false, true),
+      false,
+      `${build}: contradictory Enterprise type and false flag was accepted`,
+    );
+  }
+});
+
+test('captcha task builders propagate frame URL and optional reCAPTCHA parameters', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    const enterpriseTask = mod.buildTask({
+      type: 'recaptcha_v2_enterprise',
+      websiteURL: 'https://example.test/checkpoint/captcha',
+      websiteKey: 'KEY_ENTERPRISE',
+      isInvisible: false,
+      pageAction: 'signup',
+      enterprisePayload: { s: 'enterprise-s' },
+    });
+    assert.deepEqual(enterpriseTask, {
+      type: 'ReCaptchaV2EnterpriseTaskProxyLess',
+      websiteURL: 'https://example.test/checkpoint/captcha',
+      websiteKey: 'KEY_ENTERPRISE',
+      isInvisible: false,
+      pageAction: 'signup',
+      enterprisePayload: { s: 'enterprise-s' },
+    }, `${build}: Enterprise task payload`);
+
+    const classicTask = mod.buildTask({
+      type: 'recaptcha_v2',
+      websiteURL: 'https://example.test/form',
+      websiteKey: 'KEY_CLASSIC',
+      recaptchaDataSValue: 'classic-s',
+    });
+    assert.equal(classicTask.recaptchaDataSValue, 'classic-s', `${build}: classic s value was lost`);
+  }
+});
+
+test('captcha website URL uses the selected HTTP frame or nearest HTTP ancestor', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const topLevelUrl = 'https://example.test/form';
+    assert.equal(
+      mod.captchaWebsiteUrl('https://example.test/checkpoint/captcha', topLevelUrl),
+      'https://example.test/checkpoint/captcha',
+      `${build}: HTTP frame URL was not used`,
+    );
+    assert.equal(
+      mod.captchaWebsiteUrl('about:blank', topLevelUrl),
+      topLevelUrl,
+      `${build}: about:blank replaced the usable website URL`,
+    );
+    assert.equal(
+      mod.captchaWebsiteUrl('about:srcdoc', topLevelUrl),
+      topLevelUrl,
+      `${build}: about:srcdoc replaced the usable website URL`,
+    );
+    const challengeUrl = 'https://captcha.vendor.test/challenge';
+    const opaqueCandidate = {
+      frameId: 12,
+      frameUrl: 'about:srcdoc',
+      type: 'recaptcha_v2',
+      websiteKey: 'KEY_OPAQUE_NESTED',
+      visible: true,
+      normalCheckbox: true,
+    };
+    const opaqueAdjusted = runtime.applyCaptchaFrameVisibility(
+      [opaqueCandidate],
+      [
+        {
+          frameId: 0,
+          frameUrl: topLevelUrl,
+          childFrames: [{
+            url: challengeUrl,
+            loadedUrl: challengeUrl,
+            name: 'challenge',
+            visible: true,
+          }],
+        },
+        {
+          frameId: 7,
+          frameUrl: challengeUrl,
+          frameName: 'challenge',
+          childFrames: [{
+            url: 'about:srcdoc',
+            loadedUrl: 'about:srcdoc',
+            name: 'opaque',
+            visible: true,
+          }],
+        },
+        {
+          frameId: 12,
+          frameUrl: 'about:srcdoc',
+          frameName: 'opaque',
+          childFrames: [],
+        },
+      ],
+      [
+        { frameId: 0, parentFrameId: -1, url: topLevelUrl },
+        { frameId: 7, parentFrameId: 0, url: challengeUrl },
+        { frameId: 12, parentFrameId: 7, url: 'about:srcdoc' },
+      ],
+    );
+    assert.equal(
+      opaqueAdjusted[0].websiteURL,
+      challengeUrl,
+      `${build}: opaque frame did not inherit its nearest HTTP ancestor URL`,
+    );
+  }
+});
+
+test('captcha token injection revalidates the selected frame and calls one matched callback', async () => {
+  const previous = {
+    document: globalThis.document,
+    location: globalThis.location,
+    window: globalThis.window,
+    Event: globalThis.Event,
+    HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+    HTMLInputElement: globalThis.HTMLInputElement,
+  };
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+      let callbackToken = null;
+      const response = {
+        tagName: 'TEXTAREA',
+        id: 'g-recaptcha-response-only',
+        value: '',
+        textContent: '',
+        style: {},
+        getAttribute: (name) => name === 'id' ? 'g-recaptcha-response-only' : null,
+        dispatchEvent: () => true,
+      };
+      const host = {
+        getAttribute: (name) => ({
+          'data-sitekey': 'KEY_ACTIVE',
+          'data-callback': 'onCaptchaSolved',
+        })[name] || null,
+      };
+      let declaredCallbackEnabled = true;
+      let turnstileChallengeMarkerEnabled = false;
+      let captchaUrlElements = [];
+      let responseFields = [response];
+      let captchaHosts = [host];
+      const document = {
+        querySelector: (selector) => {
+          if (selector.includes('g-recaptcha-response')) return responseFields[0] || null;
+          if (turnstileChallengeMarkerEnabled
+              && selector === 'script[src*="challenges.cloudflare.com/turnstile"]') {
+            return {};
+          }
+          return null;
+        },
+        querySelectorAll: (selector) => {
+          if (selector.includes('textarea[name=') || selector.includes('input[name=')) {
+            return responseFields;
+          }
+          if (selector.includes('[data-callback]')) return declaredCallbackEnabled ? captchaHosts : [];
+          if (selector.includes('[data-sitekey]')) return captchaHosts;
+          if (selector === 'iframe[src], script[src]') return captchaUrlElements;
+          return [];
+        },
+        createElement: () => response,
+        body: { appendChild: () => {} },
+        documentElement: { appendChild: () => {} },
+      };
+      globalThis.document = document;
+      globalThis.location = { href: 'https://example.test/checkpoint/captcha' };
+      globalThis.window = {
+        onCaptchaSolved: (token) => { callbackToken = token; },
+        performance: { timeOrigin: 123456789 },
+      };
+      globalThis.Event = class {
+        constructor(type, options) { this.type = type; this.bubbles = options?.bubbles; }
+      };
+      globalThis.HTMLTextAreaElement = class {};
+      globalThis.HTMLInputElement = class {};
+
+      const missingTarget = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_UNTARGETED',
+        target: {},
+      });
+      assert.equal(missingTarget.success, false, `${build}: targetless page injection succeeded`);
+      assert.equal(missingTarget.targetRequired, true, `${build}: targetless page injection diagnostic missing`);
+      assert.equal(response.value, '', `${build}: targetless page injection touched the field`);
+
+      const injected = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_123',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_ACTIVE',
+        },
+      });
+      assert.equal(injected.success, true, `${build}: targeted injection failed`);
+      assert.equal(injected.siteKeyMatched, true, `${build}: key revalidation missing`);
+      assert.equal(injected.fieldUpdated, true, `${build}: response-field status missing`);
+      assert.deepEqual(injected.fieldsUpdated, ['g-recaptcha-response'], `${build}: updated-field diagnostic`);
+      assert.equal(injected.calledCallback, true, `${build}: unique callback was not invoked`);
+      assert.equal(callbackToken, 'TOKEN_123', `${build}: callback received wrong token`);
+      assert.equal(response.value, 'TOKEN_123', `${build}: response field was not set`);
+
+      let hiddenCallbackToken = null;
+      let modalCallbackToken = null;
+      const makeResponse = id => ({
+        tagName: 'TEXTAREA',
+        id,
+        value: '',
+        textContent: '',
+        style: {},
+        getAttribute: (name) => name === 'id' ? id : null,
+        dispatchEvent: () => true,
+      });
+      const hiddenResponse = makeResponse('g-recaptcha-response-hidden');
+      const modalResponse = makeResponse('g-recaptcha-response-modal');
+      const makeHost = (callbackName) => ({
+        getAttribute: (name) => ({
+          'data-sitekey': 'KEY_SHARED_WIDGET',
+          'data-callback': callbackName,
+        })[name] || null,
+      });
+      responseFields = [hiddenResponse, modalResponse];
+      captchaHosts = [makeHost('onHiddenCaptcha'), makeHost('onModalCaptcha')];
+      globalThis.window.onHiddenCaptcha = token => { hiddenCallbackToken = token; };
+      globalThis.window.onModalCaptcha = token => { modalCallbackToken = token; };
+
+      const ambiguousField = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_AMBIGUOUS_FIELD',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+        },
+      });
+      assert.equal(ambiguousField.success, false, `${build}: ambiguous response field was updated`);
+      assert.equal(
+        ambiguousField.ambiguousResponseField,
+        true,
+        `${build}: ambiguous response field diagnostic missing`,
+      );
+      assert.equal(hiddenResponse.value, '', `${build}: ambiguous solve touched the hidden response field`);
+      assert.equal(modalResponse.value, '', `${build}: ambiguous solve touched the modal response field`);
+
+      const targetedField = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_MODAL_WIDGET',
+        callbackHint: 'onModalCaptcha',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+          responseFieldId: 'g-recaptcha-response-modal',
+          responseFieldIndex: 1,
+        },
+      });
+      assert.equal(targetedField.success, true, `${build}: selected response field injection failed`);
+      assert.equal(hiddenResponse.value, '', `${build}: hidden widget received the selected token`);
+      assert.equal(modalResponse.value, 'TOKEN_MODAL_WIDGET', `${build}: modal widget did not receive its token`);
+      assert.equal(hiddenCallbackToken, null, `${build}: hidden widget callback was invoked`);
+      assert.equal(modalCallbackToken, 'TOKEN_MODAL_WIDGET', `${build}: selected callback was not invoked`);
+
+      hiddenResponse.value = '';
+      modalResponse.value = '';
+      const staleFieldId = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_STALE_FIELD_ID',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+          responseFieldId: 'g-recaptcha-response-removed',
+          responseFieldIndex: 1,
+        },
+      });
+      assert.equal(staleFieldId.success, false, `${build}: missing selected field ID fell back to an index`);
+      assert.equal(staleFieldId.staleTarget, true, `${build}: missing selected field ID was not marked stale`);
+      assert.equal(hiddenResponse.value, '', `${build}: stale field ID touched the first response field`);
+      assert.equal(modalResponse.value, '', `${build}: stale field ID touched the old indexed response field`);
+
+      const canonicalHcaptchaResponse = makeResponse('h-captcha-response-only');
+      let createdCompatibilityResponse = null;
+      let hcaptchaCompatibilityResponses = [];
+      const hcaptchaHost = {
+        getAttribute: (name) => name === 'data-sitekey' ? 'HKEY_CANONICAL_ONLY' : null,
+      };
+      const hcaptchaDocument = {
+        querySelector: () => null,
+        querySelectorAll: (selector) => {
+          if (selector.includes('h-captcha-response')) return [canonicalHcaptchaResponse];
+          if (selector.includes('g-recaptcha-response')) return hcaptchaCompatibilityResponses;
+          if (selector.includes('[data-sitekey]')) return [hcaptchaHost];
+          return [];
+        },
+        createElement: () => makeResponse(''),
+        body: {
+          appendChild: (element) => {
+            createdCompatibilityResponse = element;
+          },
+        },
+        documentElement: { appendChild: () => {} },
+      };
+      const hcaptchaWindow = {
+        location: { href: 'https://example.test/hcaptcha' },
+        performance: { timeOrigin: 123456789 },
+        Event: globalThis.Event,
+        HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+        HTMLInputElement: globalThis.HTMLInputElement,
+      };
+      const canonicalOnlyHcaptcha = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        alsoSet: 'g-recaptcha-response',
+        token: 'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        target: {
+          frameId: 9,
+          frameUrl: hcaptchaWindow.location.href,
+          websiteKey: 'HKEY_CANONICAL_ONLY',
+          responseFieldId: 'h-captcha-response-only',
+          responseFieldIndex: 0,
+          documentTimeOrigin: 123456789,
+        },
+      }, {
+        document: hcaptchaDocument,
+        window: hcaptchaWindow,
+      });
+      assert.equal(
+        canonicalOnlyHcaptcha.success,
+        true,
+        `${build}: missing hCaptcha compatibility field aborted injection`,
+      );
+      assert.equal(
+        canonicalHcaptchaResponse.value,
+        'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        `${build}: canonical hCaptcha field was not updated`,
+      );
+      assert.equal(
+        createdCompatibilityResponse?.value,
+        'TOKEN_HCAPTCHA_CANONICAL_ONLY',
+        `${build}: missing hCaptcha compatibility field was not created`,
+      );
+
+      const firstCompatibilityResponse = makeResponse('g-recaptcha-response-first');
+      const secondCompatibilityResponse = makeResponse('g-recaptcha-response-second');
+      hcaptchaCompatibilityResponses = [firstCompatibilityResponse, secondCompatibilityResponse];
+      canonicalHcaptchaResponse.value = '';
+      createdCompatibilityResponse = null;
+      const ambiguousCompatibilityHcaptcha = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        alsoSet: 'g-recaptcha-response',
+        token: 'TOKEN_HCAPTCHA_AMBIGUOUS_COMPATIBILITY',
+        target: {
+          frameId: 9,
+          frameUrl: hcaptchaWindow.location.href,
+          websiteKey: 'HKEY_CANONICAL_ONLY',
+          responseFieldId: 'h-captcha-response-only',
+          responseFieldIndex: 0,
+          documentTimeOrigin: 123456789,
+        },
+      }, {
+        document: hcaptchaDocument,
+        window: hcaptchaWindow,
+      });
+      assert.equal(
+        ambiguousCompatibilityHcaptcha.success,
+        true,
+        `${build}: ambiguous hCaptcha compatibility fields aborted canonical injection`,
+      );
+      assert.deepEqual(
+        ambiguousCompatibilityHcaptcha.fieldsUpdated,
+        ['h-captcha-response'],
+        `${build}: skipped compatibility field was reported as updated`,
+      );
+      assert.equal(
+        ambiguousCompatibilityHcaptcha.compatibilityFieldSkipped,
+        true,
+        `${build}: compatibility-field skip was not reported`,
+      );
+      assert.match(
+        ambiguousCompatibilityHcaptcha.compatibilityFieldError,
+        /Multiple CAPTCHA response fields/,
+        `${build}: compatibility-field ambiguity diagnostic missing`,
+      );
+      assert.equal(
+        canonicalHcaptchaResponse.value,
+        'TOKEN_HCAPTCHA_AMBIGUOUS_COMPATIBILITY',
+        `${build}: canonical hCaptcha field was not updated after compatibility ambiguity`,
+      );
+      assert.equal(firstCompatibilityResponse.value, '', `${build}: first ambiguous compatibility field was updated`);
+      assert.equal(secondCompatibilityResponse.value, '', `${build}: second ambiguous compatibility field was updated`);
+      assert.equal(createdCompatibilityResponse, null, `${build}: ambiguous compatibility field was recreated`);
+
+      responseFields = [response];
+      captchaHosts = [host];
+      const selectedFrameUrl = globalThis.location.href;
+      globalThis.location.href = `${selectedFrameUrl}?step=verify#captcha`;
+      response.value = '';
+      const sameDocumentUrlChange = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_SPA_URL',
+        target: {
+          frameId: 9,
+          frameUrl: selectedFrameUrl,
+          websiteKey: 'KEY_ACTIVE',
+          documentTimeOrigin: 123456789,
+        },
+      });
+      assert.equal(
+        sameDocumentUrlChange.success,
+        true,
+        `${build}: same-document query/hash change blocked injection`,
+      );
+      assert.equal(response.value, 'TOKEN_SPA_URL', `${build}: SPA token was not injected`);
+
+      response.value = '';
+      globalThis.window.performance.timeOrigin = 987654321;
+      const replacedDocument = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_REPLACED_DOCUMENT',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_ACTIVE',
+          documentTimeOrigin: 123456789,
+        },
+      });
+      assert.equal(replacedDocument.success, false, `${build}: replacement document accepted a stale token`);
+      assert.equal(replacedDocument.staleTarget, true, `${build}: replacement document was not marked stale`);
+      assert.equal(response.value, '', `${build}: stale document token touched the field`);
+      globalThis.window.performance.timeOrigin = 123456789;
+
+      declaredCallbackEnabled = false;
+      callbackToken = null;
+      response.value = '';
+      globalThis.window.___grecaptcha_cfg = {
+        clients: {
+          0: {
+            widget: {
+              sitekey: 'KEY_ACTIVE',
+              callback: (token) => { callbackToken = token; },
+            },
+          },
+        },
+      };
+      const internalCallback = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_INTERNAL',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_ACTIVE',
+        },
+      });
+      assert.equal(internalCallback.calledCallback, true, `${build}: unique Google client callback was not invoked`);
+      assert.equal(internalCallback.callbackSource, 'grecaptcha-client', `${build}: Google callback source missing`);
+      assert.equal(callbackToken, 'TOKEN_INTERNAL', `${build}: Google client callback received wrong token`);
+
+      response.value = '';
+      const stale = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_STALE',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_GONE',
+        },
+      });
+      assert.equal(stale.success, false, `${build}: stale site key was injected`);
+      assert.equal(stale.fieldUpdated, false, `${build}: stale field status was inaccurate`);
+      assert.equal(stale.staleTarget, true, `${build}: stale target marker missing`);
+      assert.equal(response.value, '', `${build}: stale token touched the field`);
+
+      captchaUrlElements = [{
+        src: 'https://newassets.hcaptcha.com/captcha/v1/hcaptcha.html#frame=checkbox&sitekey=KEY_FRAGMENT',
+      }];
+      const fragmentKey = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        token: 'TOKEN_FRAGMENT_KEY',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_FRAGMENT',
+          type: 'hcaptcha',
+        },
+      });
+      assert.equal(fragmentKey.success, true, `${build}: fragment site key injection failed`);
+      assert.equal(fragmentKey.siteKeyMatched, true, `${build}: fragment site key was not revalidated`);
+      assert.equal(response.value, 'TOKEN_FRAGMENT_KEY', `${build}: fragment-key token was not injected`);
+      captchaUrlElements = [];
+      response.value = '';
+
+      turnstileChallengeMarkerEnabled = true;
+      const explicitTurnstile = runtime.injectCaptchaTokenInPage({
+        fieldName: 'cf-turnstile-response',
+        token: 'TOKEN_TURNSTILE',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+          type: 'turnstile',
+          explicitWebsiteKey: true,
+        },
+      });
+      assert.equal(explicitTurnstile.success, true, `${build}: explicit-key Turnstile injection failed`);
+      assert.equal(explicitTurnstile.siteKeyMatched, false, `${build}: absent explicit key was reported as matched`);
+      assert.equal(
+        explicitTurnstile.challengeMarkerMatched,
+        true,
+        `${build}: keyless Turnstile marker was not revalidated`,
+      );
+      assert.equal(response.value, 'TOKEN_TURNSTILE', `${build}: Turnstile token was not injected`);
+      turnstileChallengeMarkerEnabled = false;
+      response.value = '';
+      const staleExplicitTurnstile = runtime.injectCaptchaTokenInPage({
+        fieldName: 'cf-turnstile-response',
+        token: 'TOKEN_TURNSTILE_STALE',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'TURNSTILE_EXPLICIT_KEY',
+          type: 'turnstile',
+          explicitWebsiteKey: true,
+        },
+      });
+      assert.equal(staleExplicitTurnstile.success, false, `${build}: stale keyless Turnstile target was injected`);
+      assert.equal(staleExplicitTurnstile.staleTarget, true, `${build}: stale Turnstile marker missing`);
+      assert.equal(response.value, '', `${build}: stale Turnstile token touched the field`);
+
+      const wrongFrame = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_WRONG_FRAME',
+        target: {
+          frameId: 9,
+          frameUrl: 'https://example.test/other-frame',
+          websiteKey: 'KEY_ACTIVE',
+        },
+      });
+      assert.equal(wrongFrame.skipped, true, `${build}: wrong frame was not skipped`);
+      assert.equal(response.value, '', `${build}: wrong-frame token touched the field`);
+    }
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.location = previous.location;
+    globalThis.window = previous.window;
+    globalThis.Event = previous.Event;
+    globalThis.HTMLTextAreaElement = previous.HTMLTextAreaElement;
+    globalThis.HTMLInputElement = previous.HTMLInputElement;
+  }
+});
+
+test('captcha injection wrappers target the selected frame in both builds', async () => {
+  const previous = { chrome: globalThis.chrome, browser: globalThis.browser };
+  try {
+    const chromeMod = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/agent/captcha-solver.js')).href);
+    let chromeCall = null;
+    globalThis.chrome = {
+      scripting: {
+        executeScript: async (details) => {
+          chromeCall = details;
+          return [{ frameId: 9, result: { success: true, frameUrl: 'https://example.test/captcha' } }];
+        },
+      },
+    };
+    const chromeResult = await chromeMod.injectToken(1, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN',
+      target: { frameId: 9, frameUrl: 'https://example.test/captcha', websiteKey: 'KEY' },
+    });
+    assert.deepEqual(chromeCall.target.frameIds, [9], 'Chrome injection did not target selected frameId');
+    assert.equal(chromeCall.world, 'MAIN', 'Chrome callback injection did not use the page main world');
+    assert.equal(chromeResult.frameId, 9, 'Chrome injection result lost frameId');
+    chromeCall = null;
+    const chromeUntargeted = await chromeMod.injectToken(1, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN',
+      target: null,
+    });
+    assert.equal(chromeUntargeted.success, false, 'Chrome targetless injection succeeded');
+    assert.equal(chromeUntargeted.targetRequired, true, 'Chrome targetless injection diagnostic missing');
+    assert.equal(chromeCall, null, 'Chrome targetless injection reached the page');
+
+    const firefoxMod = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/captcha-solver.js')).href);
+    let firefoxCall = null;
+    globalThis.browser = {
+      tabs: {
+        executeScript: async (_tabId, details) => {
+          firefoxCall = details;
+          return [{ success: true, frameUrl: 'https://example.test/captcha' }];
+        },
+      },
+    };
+    const firefoxResult = await firefoxMod.injectToken(2, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN',
+      target: { frameId: 11, frameUrl: 'https://example.test/captcha', websiteKey: 'KEY' },
+    });
+    assert.equal(firefoxCall.frameId, 11, 'Firefox injection did not target selected frameId');
+    assert.equal(firefoxCall.matchAboutBlank, true, 'Firefox injection did not enable inherited-origin matching');
+    assert.equal(firefoxResult.frameId, 11, 'Firefox injection result lost frameId');
+    firefoxCall = null;
+    const firefoxUntargeted = await firefoxMod.injectToken(2, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN',
+      target: null,
+    });
+    assert.equal(firefoxUntargeted.success, false, 'Firefox targetless injection succeeded');
+    assert.equal(firefoxUntargeted.targetRequired, true, 'Firefox targetless injection diagnostic missing');
+    assert.equal(firefoxCall, null, 'Firefox targetless injection reached the page');
+  } finally {
+    globalThis.chrome = previous.chrome;
+    globalThis.browser = previous.browser;
+  }
+});
+
+test('solve_captcha runtime always detects missing fields and rejects type conflicts before dispatch', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    assert.match(
+      agent,
+      /if \(type !== 'image_to_text'\) \{[\s\S]*?detectCaptcha\(tabId, \{\s*type,\s*frameUrl,\s*frameId,\s*framePath,\s*websiteKey,/,
+      `${build}: solve_captcha does not run frame-aware detection when type is supplied`,
+    );
+    assert.match(
+      agent,
+      /type && !captchaTypesMatch\(type, detected\.type, isEnterprise, detected\.isEnterprise\)[\s\S]*?conflicts with the active detected candidate/,
+      `${build}: explicit type conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /pageAction && detected\.pageAction && String\(pageAction\) !== String\(detected\.pageAction\)[\s\S]*?requested pageAction[\s\S]*?conflicts with the active detected candidate action/,
+      `${build}: explicit pageAction conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /if \(!websiteKey\) websiteKey = detected\.websiteKey/,
+      `${build}: detected site key does not fill a missing explicit argument`,
+    );
+    assert.match(
+      agent,
+      /target: detected \? \{[\s\S]*?frameId: detected\.frameId,[\s\S]*?frameUrl: detected\.frameUrl/,
+      `${build}: selected frame is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /explicitWebsiteKey: detected\.explicitWebsiteKey === true/,
+      `${build}: explicit Turnstile key marker is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /const wantInject = args\?\.inject !== false && type !== 'image_to_text';[\s\S]*?if \(wantInject && !detected\) \{[\s\S]*?no safe injection target could be verified[\s\S]*?\}[\s\S]*?dispatched = true;/,
+      `${build}: targetless default injection is not rejected before paid dispatch`,
+    );
+    assert.match(
+      agent,
+      /documentTimeOrigin: detected\.documentTimeOrigin/,
+      `${build}: selected document identity is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /const explicitTokenOnlyFallback = args\?\.inject === false[\s\S]*?candidate\?\.websiteKey === websiteKey[\s\S]*?if \(!explicitTokenOnlyFallback/,
+      `${build}: unrelated candidates still block an explicit token-only solve`,
+    );
+    assert.match(
+      agent,
+      /try \{\s*detection = await detectCaptcha\(tabId, \{[\s\S]*?frameId,[\s\S]*?framePath,[\s\S]*?websiteKey,[\s\S]*?\}\);[\s\S]*?catch \(detectionError\) \{[\s\S]*?args\?\.inject === false && !!type && !!websiteKey[\s\S]*?CAPTCHA frame detection failed before dispatch/,
+      `${build}: a detection exception still blocks a fully explicit token-only solve`,
+    );
+    assert.match(
+      agent,
+      /websiteURL = detected\.websiteURL \|\| captchaWebsiteUrl\(detected\.frameUrl, websiteURL\)/,
+      `${build}: nearest HTTP ancestor URL is not used for opaque selected frames`,
+    );
+    assert.match(
+      agent,
+      /callbackHint: detected\.callbackName \|\| null,[\s\S]*?responseFieldId: detected\.responseFieldId,[\s\S]*?responseFieldIndex: detected\.responseFieldIndex/,
+      `${build}: selected widget identity is not carried into token injection`,
+    );
+    assert.match(
+      agent,
+      /visibilityModeApplies[\s\S]*?isInvisible != null[\s\S]*?Boolean\(isInvisible\) !== Boolean\(detected\.isInvisible\)[\s\S]*?requested isInvisible=/,
+      `${build}: explicit visibility conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /isEnterprise != null[\s\S]*?Boolean\(isEnterprise\) !== Boolean\(detected\.isEnterprise\)[\s\S]*?requested isEnterprise=/,
+      `${build}: explicit Enterprise conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
+      /alsoResponseFieldId: detected\.alsoResponseFieldId,[\s\S]*?alsoResponseFieldIndex: detected\.alsoResponseFieldIndex/,
+      `${build}: hCaptcha compatibility field identity is not carried into injection`,
     );
   }
 });

@@ -1054,7 +1054,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'solve_captcha',
-      description: 'Solve a CAPTCHA on the current page using the CapSolver API (only available when the user has enabled CapSolver and provided an API key in Settings → General → Advanced). If `type` and `websiteKey` are omitted, the tool scans the page for known widgets (reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile) and uses what it finds. Returns the solution token and whether it was injected into the page; you usually still need to click the form\'s submit button afterward. On failure (no CapSolver key configured, unknown captcha type, API error, timeout) the tool returns `{ success: false, error: "..." }` — fall back to asking the user to solve it manually.',
+      description: 'Solve a CAPTCHA on the current page using the CapSolver API (only available when the user has enabled CapSolver and provided an API key in Settings → General → Advanced). The tool scans every frame, ranks the active visible widget above hidden/background integrations, and fills missing type/site-key parameters from the selected frame. Returns the token, selected frame/type, and targeted injection/callback status; verify page progress afterward because token injection alone does not prove the challenge cleared. On failure (no CapSolver key configured, ambiguous candidates, unknown type, API error, timeout) the tool returns `{ success: false, error: "..." }` — use only the exact frameUrl, websiteKey, frameId, or framePath discriminator offered by the ambiguity result; otherwise ask the user to solve it manually.',
       parameters: {
         type: 'object',
         properties: {
@@ -1064,12 +1064,19 @@ export const AGENT_TOOLS = [
             description: 'CAPTCHA type. Omit to auto-detect from the page DOM.',
           },
           websiteKey: { type: 'string', description: 'Site key from the captcha widget\'s data-sitekey attribute. Auto-detected when omitted.' },
+          frameUrl: { type: 'string', description: 'Exact URL of the frame containing the intended CAPTCHA. Usually omit; use a candidate URL returned by an ambiguity error to select among equally active widgets.' },
+          frameId: { type: 'integer', description: 'Exact browser frame ID from an ambiguity result. Use when tied candidates share the same frameUrl and site key.' },
+          framePath: {
+            type: 'array',
+            items: { type: 'integer', minimum: 0 },
+            description: 'Exact iframe-index path from a candidate\'s framePathIndexes diagnostic. Use with frameId when inherited-origin candidates share the same URL and site key.',
+          },
           isInvisible: { type: 'boolean', description: 'reCAPTCHA v2 / hCaptcha only — true when the widget uses invisible mode (no visible checkbox). Auto-detected when omitted.' },
           isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 only — true when the widget uses Google reCAPTCHA Enterprise. Auto-detected when omitted.' },
           pageAction: { type: 'string', description: 'Required for reCAPTCHA v3 — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action or the loader script when present; pass it explicitly if detection reports it missing.' },
           minScore: { type: 'number', description: 'reCAPTCHA v3 only — minimum score requested (0.3 is the usual lower bound, 0.7+ is hard).' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
-          inject: { type: 'boolean', description: 'After solving, inject the token into the page\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true. Set false to get just the token back.' },
+          inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to get only the token without page injection.' },
         },
         required: [],
       },
