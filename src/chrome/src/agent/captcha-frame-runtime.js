@@ -23,6 +23,12 @@ export function normalizeCaptchaType(type) {
   return TYPE_ALIASES.get(value) || value;
 }
 
+export function captchaWebsiteUrl(frameUrl, topLevelUrl = '') {
+  return /^https?:\/\//i.test(String(frameUrl || ''))
+    ? String(frameUrl)
+    : String(topLevelUrl || '');
+}
+
 function recaptchaTypeDetails(type, isEnterprise) {
   const normalized = normalizeCaptchaType(type);
   const match = normalized.match(/^recaptcha_v([23])(_enterprise)?$/);
@@ -112,7 +118,8 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
   };
 
   return (Array.isArray(candidates) ? candidates : []).map(candidate => {
-    const frameVisible = frameIsVisible(candidate?.frameId);
+    const frameVisible = frameIsVisible(candidate?.frameId)
+      && candidate?.frameVisibleWithinAnchor !== false;
     return {
       ...candidate,
       frameVisible,
@@ -125,6 +132,9 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
 function candidateSummary(candidate) {
   return {
     frameId: Number.isInteger(candidate?.frameId) ? candidate.frameId : null,
+    ...(Array.isArray(candidate?.framePath) && candidate.framePath.length
+      ? { framePath: candidate.framePath }
+      : {}),
     frameUrl: candidate?.frameUrl || '',
     type: candidate?.type || '',
     websiteKey: candidate?.websiteKey || null,
@@ -266,11 +276,23 @@ function selectedReason(candidate, constraints) {
 
 // This function is serialized and executed in the web page. It must not
 // reference module-scope values.
-export function detectCaptchaCandidatesInPage() {
+export function detectCaptchaCandidatesInPage(scope = null) {
   const candidates = [];
-  const frameUrl = typeof location !== 'undefined' ? String(location.href || '') : '';
+  const pageWindow = scope?.window
+    || (typeof window !== 'undefined' ? window : null);
+  const pageDocument = scope?.document
+    || (typeof document !== 'undefined' ? document : null);
+  const pageLocation = pageWindow?.location
+    || (typeof location !== 'undefined' ? location : null);
+  const frameUrl = pageLocation ? String(pageLocation.href || '') : '';
+  if (!pageDocument) {
+    return {
+      candidates,
+      frameContext: { frameUrl, frameName: '', childFrames: [] },
+    };
+  }
   const challengeFrame = /(?:captcha|challenge|checkpoint|security[-_/ ]?verif)/i.test(frameUrl);
-  const responseField = !!document.querySelector(
+  const responseField = !!pageDocument.querySelector(
     'textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"], '
       + 'textarea[name="h-captcha-response"], input[name="h-captcha-response"], '
       + 'textarea[name="cf-turnstile-response"], input[name="cf-turnstile-response"]'
@@ -287,14 +309,16 @@ export function detectCaptchaCandidatesInPage() {
   const visibleElement = (element) => {
     if (!element) return false;
     try {
-      const style = typeof getComputedStyle === 'function' ? getComputedStyle(element) : null;
+      const style = typeof pageWindow?.getComputedStyle === 'function'
+        ? pageWindow.getComputedStyle(element)
+        : null;
       if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
       if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
       if (typeof element.getBoundingClientRect === 'function') {
         const rect = element.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) return false;
-        const viewportWidth = typeof innerWidth === 'number' ? innerWidth : rect.right;
-        const viewportHeight = typeof innerHeight === 'number' ? innerHeight : rect.bottom;
+        const viewportWidth = typeof pageWindow?.innerWidth === 'number' ? pageWindow.innerWidth : rect.right;
+        const viewportHeight = typeof pageWindow?.innerHeight === 'number' ? pageWindow.innerHeight : rect.bottom;
         if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= viewportHeight || rect.left >= viewportWidth) return false;
       }
       return true;
@@ -311,12 +335,12 @@ export function detectCaptchaCandidatesInPage() {
       responseField,
     });
   };
-  const scriptElements = Array.from(document.querySelectorAll('script[src]'));
+  const scriptElements = Array.from(pageDocument.querySelectorAll('script[src]'));
   const scriptUrls = scriptElements.map(element => {
     try { return element.src || ''; } catch (_) { return ''; }
   }).filter(Boolean);
 
-  for (const host of Array.from(document.querySelectorAll('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'))) {
+  for (const host of Array.from(pageDocument.querySelectorAll('.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'))) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-hcaptcha-sitekey');
     if (!websiteKey) continue;
     const isInvisible = host.getAttribute('data-size') === 'invisible';
@@ -331,7 +355,7 @@ export function detectCaptchaCandidatesInPage() {
     });
   }
 
-  for (const host of Array.from(document.querySelectorAll('.cf-turnstile[data-sitekey], [data-turnstile-sitekey]'))) {
+  for (const host of Array.from(pageDocument.querySelectorAll('.cf-turnstile[data-sitekey], [data-turnstile-sitekey]'))) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-turnstile-sitekey');
     if (!websiteKey) continue;
     add({
@@ -344,7 +368,7 @@ export function detectCaptchaCandidatesInPage() {
     });
   }
 
-  for (const host of Array.from(document.querySelectorAll(
+  for (const host of Array.from(pageDocument.querySelectorAll(
     '.g-recaptcha[data-sitekey], div[id^="g-recaptcha"][data-sitekey], [data-recaptcha-sitekey]'
   ))) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-recaptcha-sitekey');
@@ -385,7 +409,7 @@ export function detectCaptchaCandidatesInPage() {
     });
   }
 
-  const allIframeElements = Array.from(document.querySelectorAll('iframe'));
+  const allIframeElements = Array.from(pageDocument.querySelectorAll('iframe'));
   const iframeElements = allIframeElements.filter(element => {
     try { return !!element.src; } catch (_) { return false; }
   });
@@ -468,8 +492,8 @@ export function detectCaptchaCandidatesInPage() {
   }
 
   if (!candidates.length && (
-    document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')
-    || document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+    pageDocument.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')
+    || pageDocument.querySelector('iframe[src*="challenges.cloudflare.com"]')
   )) {
     add({
       type: 'turnstile_challenge',
@@ -496,7 +520,7 @@ export function detectCaptchaCandidatesInPage() {
     };
   });
   let frameName = '';
-  try { frameName = typeof window !== 'undefined' ? String(window.name || '') : ''; } catch (_) {}
+  try { frameName = pageWindow ? String(pageWindow.name || '') : ''; } catch (_) {}
   return {
     candidates,
     frameContext: {
@@ -508,14 +532,23 @@ export function detectCaptchaCandidatesInPage() {
 }
 
 // This function is also serialized into a page context. Keep it self-contained.
-export function injectCaptchaTokenInPage(payload) {
+export function injectCaptchaTokenInPage(payload, scope = null) {
   const fieldName = payload?.fieldName;
   const alsoSet = payload?.alsoSet || null;
   const token = payload?.token;
   const target = payload?.target || {};
-  const frameUrl = typeof location !== 'undefined' ? String(location.href || '') : '';
+  const frameWindow = scope?.window
+    || (typeof window !== 'undefined' ? window : null);
+  const frameDocument = scope?.document
+    || (typeof document !== 'undefined' ? document : null);
+  const frameLocation = frameWindow?.location
+    || (typeof location !== 'undefined' ? location : null);
+  const frameUrl = frameLocation ? String(frameLocation.href || '') : '';
   if (!fieldName || !token) {
     return { success: false, fieldUpdated: false, error: 'fieldName and token required', frameUrl };
+  }
+  if (!frameDocument || !frameWindow) {
+    return { success: false, fieldUpdated: false, error: 'target frame document is unavailable', frameUrl };
   }
   if (!Number.isInteger(target.frameId) || !target.frameUrl || !target.websiteKey) {
     return {
@@ -540,7 +573,7 @@ export function injectCaptchaTokenInPage(payload) {
   };
   const frameHasSiteKey = (key) => {
     if (!key) return false;
-    for (const element of Array.from(document.querySelectorAll(
+    for (const element of Array.from(frameDocument.querySelectorAll(
       '[data-sitekey], [data-recaptcha-sitekey], [data-hcaptcha-sitekey], [data-turnstile-sitekey]'
     ))) {
       if ([
@@ -550,7 +583,7 @@ export function injectCaptchaTokenInPage(payload) {
         element.getAttribute('data-turnstile-sitekey'),
       ].includes(key)) return true;
     }
-    for (const element of Array.from(document.querySelectorAll('iframe[src], script[src]'))) {
+    for (const element of Array.from(frameDocument.querySelectorAll('iframe[src], script[src]'))) {
       try { if (element.src && urlHasKey(element.src, key)) return true; } catch (_) {}
     }
     return false;
@@ -566,17 +599,21 @@ export function injectCaptchaTokenInPage(payload) {
   }
 
   const setOn = (name) => {
-    let element = document.querySelector(`textarea[name="${name}"], input[name="${name}"]`);
+    let element = frameDocument.querySelector(`textarea[name="${name}"], input[name="${name}"]`);
     if (!element) {
-      element = document.createElement('textarea');
+      element = frameDocument.createElement('textarea');
       element.name = name;
       element.style.display = 'none';
-      (document.body || document.documentElement).appendChild(element);
+      (frameDocument.body || frameDocument.documentElement).appendChild(element);
     }
     try {
+      const TextAreaElement = frameWindow.HTMLTextAreaElement
+        || (typeof HTMLTextAreaElement !== 'undefined' ? HTMLTextAreaElement : null);
+      const InputElement = frameWindow.HTMLInputElement
+        || (typeof HTMLInputElement !== 'undefined' ? HTMLInputElement : null);
       const prototype = element.tagName === 'TEXTAREA'
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
+        ? TextAreaElement?.prototype
+        : InputElement?.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
       if (setter) setter.call(element, token);
       else element.value = token;
@@ -584,8 +621,12 @@ export function injectCaptchaTokenInPage(payload) {
       element.value = token;
     }
     element.textContent = token;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const PageEvent = frameWindow.Event
+      || (typeof Event !== 'undefined' ? Event : null);
+    if (PageEvent) {
+      element.dispatchEvent(new PageEvent('input', { bubbles: true }));
+      element.dispatchEvent(new PageEvent('change', { bubbles: true }));
+    }
     return element;
   };
   setOn(fieldName);
@@ -595,7 +636,7 @@ export function injectCaptchaTokenInPage(payload) {
     fieldsTouched += 1;
   }
 
-  const pageWindow = (typeof window !== 'undefined' && window.wrappedJSObject) || window;
+  const pageWindow = frameWindow.wrappedJSObject || frameWindow;
   const callbacks = [];
   const addCallback = (fn, source) => {
     if (typeof fn !== 'function') return;
@@ -610,7 +651,7 @@ export function injectCaptchaTokenInPage(payload) {
       return null;
     }
   };
-  for (const host of Array.from(document.querySelectorAll(
+  for (const host of Array.from(frameDocument.querySelectorAll(
     '.g-recaptcha[data-callback], .h-captcha[data-callback], .cf-turnstile[data-callback], '
       + '[data-recaptcha-sitekey][data-callback], [data-hcaptcha-sitekey][data-callback], '
       + '[data-turnstile-sitekey][data-callback]'

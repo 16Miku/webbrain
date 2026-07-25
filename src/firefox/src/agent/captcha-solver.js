@@ -12,6 +12,7 @@
 
 import {
   applyCaptchaFrameVisibility,
+  captchaWebsiteUrl,
   captchaTypesMatch,
   detectCaptchaCandidatesInPage,
   injectCaptchaTokenInPage,
@@ -19,7 +20,7 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 
-export { captchaTypesMatch, normalizeCaptchaType, selectCaptchaCandidate };
+export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
 const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;
@@ -218,19 +219,87 @@ export async function detectCaptcha(tabId, constraints = {}) {
     frames = [{ frameId: 0, url: '' }];
   }
   if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-  const code = `(${detectCaptchaCandidatesInPage.toString()})()`;
+  const code = `(() => {
+    const detect = ${detectCaptchaCandidatesInPage.toString()};
+    const direct = detect();
+    const inheritedCandidates = [];
+    const seenDocuments = new Set();
+    const rootDocument = typeof document !== 'undefined' ? document : null;
+    const rootWindow = typeof window !== 'undefined' ? window : globalThis;
+    const isInheritedOriginFrame = (element, childUrl) => {
+      try {
+        return element.hasAttribute?.('srcdoc')
+          || /^about:(?:blank|srcdoc)(?:[?#]|$)/i.test(childUrl)
+          || (!String(element.src || '') && childUrl === 'about:blank');
+      } catch (_) {
+        return false;
+      }
+    };
+    const visit = (currentDocument, currentWindow, currentResult, path, ancestorsVisible, depth) => {
+      if (!currentDocument || depth > 12 || seenDocuments.has(currentDocument)) return;
+      seenDocuments.add(currentDocument);
+      const elements = Array.from(currentDocument.querySelectorAll('iframe'));
+      const childFrames = Array.isArray(currentResult?.frameContext?.childFrames)
+        ? currentResult.frameContext.childFrames
+        : [];
+      elements.forEach((element, index) => {
+        let childDocument;
+        let childWindow;
+        let childUrl = '';
+        try {
+          childDocument = element.contentDocument;
+          childWindow = element.contentWindow;
+          childUrl = String(childWindow?.location?.href || '');
+        } catch (_) {
+          return;
+        }
+        if (!childDocument || !childWindow || !isInheritedOriginFrame(element, childUrl)) return;
+        const childResult = detect({ document: childDocument, window: childWindow });
+        const childContext = childResult?.frameContext || {};
+        const childVisible = ancestorsVisible && childFrames[index]?.visible === true;
+        const nextPath = [...path, {
+          index,
+          frameUrl: childContext.frameUrl || childUrl,
+          frameName: childContext.frameName || '',
+        }];
+        for (const candidate of childResult?.candidates || []) {
+          inheritedCandidates.push({
+            ...candidate,
+            framePath: nextPath,
+            frameVisibleWithinAnchor: childVisible,
+          });
+        }
+        visit(childDocument, childWindow, childResult, nextPath, childVisible, depth + 1);
+      });
+    };
+    visit(rootDocument, rootWindow, direct, [], true, 0);
+    return { direct, inheritedCandidates };
+  })()`;
   const batches = await Promise.all(frames.map(async frame => {
     try {
-      const results = await browser.tabs.executeScript(tabId, { code, frameId: frame.frameId });
-      const payload = results?.[0];
+      const results = await browser.tabs.executeScript(tabId, {
+        code,
+        frameId: frame.frameId,
+        matchAboutBlank: true,
+      });
+      const response = results?.[0];
+      const payload = response?.direct || response;
       const pageCandidates = Array.isArray(payload)
         ? payload
         : (Array.isArray(payload?.candidates) ? payload.candidates : []);
+      const inheritedCandidates = Array.isArray(response?.inheritedCandidates)
+        ? response.inheritedCandidates
+        : [];
       return {
-        candidates: pageCandidates.map(candidate => ({
+        directCandidates: pageCandidates.map(candidate => ({
           ...candidate,
           frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
           frameUrl: candidate.frameUrl || frame.url || '',
+        })),
+        inheritedCandidates: inheritedCandidates.map(candidate => ({
+          ...candidate,
+          frameId: Number.isInteger(frame.frameId) ? frame.frameId : null,
+          frameUrl: candidate.frameUrl || '',
         })),
         frameContext: !Array.isArray(payload) && payload?.frameContext ? {
           ...payload.frameContext,
@@ -238,10 +307,19 @@ export async function detectCaptcha(tabId, constraints = {}) {
         } : null,
       };
     } catch (_) {
-      return { candidates: [], frameContext: null };
+      return { directCandidates: [], inheritedCandidates: [], frameContext: null };
     }
   }));
-  const candidates = batches.flatMap(batch => batch.candidates);
+  const directCandidates = batches.flatMap(batch => batch.directCandidates);
+  const directSignatures = new Set(directCandidates.map(candidate =>
+    `${candidate.type || ''}\n${candidate.websiteKey || ''}\n${candidate.frameUrl || ''}`
+  ));
+  const inheritedCandidates = batches
+    .flatMap(batch => batch.inheritedCandidates)
+    .filter(candidate => !directSignatures.has(
+      `${candidate.type || ''}\n${candidate.websiteKey || ''}\n${candidate.frameUrl || ''}`
+    ));
+  const candidates = [...directCandidates, ...inheritedCandidates];
   const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
   return selectCaptchaCandidate(
     applyCaptchaFrameVisibility(candidates, frameContexts, frames),
@@ -272,7 +350,51 @@ export async function injectToken(tabId, {
     callbackHint,
     target: target || {},
   };
-  const code = `(${injectCaptchaTokenInPage.toString()})(${JSON.stringify(pagePayload)})`;
+  const code = `(() => {
+    const inject = ${injectCaptchaTokenInPage.toString()};
+    const payload = ${JSON.stringify(pagePayload)};
+    let frameDocument = typeof document !== 'undefined' ? document : null;
+    let frameWindow = typeof window !== 'undefined' ? window : globalThis;
+    for (const segment of Array.isArray(payload?.target?.framePath) ? payload.target.framePath : []) {
+      const elements = frameDocument ? Array.from(frameDocument.querySelectorAll('iframe')) : [];
+      const element = elements[segment.index];
+      if (!element) {
+        return {
+          success: false,
+          fieldUpdated: false,
+          staleTarget: true,
+          error: 'The selected inherited-origin CAPTCHA frame path is no longer present.',
+        };
+      }
+      try {
+        const nextDocument = element.contentDocument;
+        const nextWindow = element.contentWindow;
+        const nextUrl = String(nextWindow?.location?.href || '');
+        const nextName = String(nextWindow?.name || element.name || '');
+        if (!nextDocument || !nextWindow
+            || (segment.frameUrl && nextUrl !== segment.frameUrl)
+            || (segment.frameName && nextName !== segment.frameName)) {
+          return {
+            success: false,
+            fieldUpdated: false,
+            staleTarget: true,
+            error: 'The selected inherited-origin CAPTCHA frame changed before token injection.',
+            frameUrl: nextUrl,
+          };
+        }
+        frameDocument = nextDocument;
+        frameWindow = nextWindow;
+      } catch (_) {
+        return {
+          success: false,
+          fieldUpdated: false,
+          staleTarget: true,
+          error: 'The selected inherited-origin CAPTCHA frame is no longer accessible.',
+        };
+      }
+    }
+    return inject(payload, { document: frameDocument, window: frameWindow });
+  })()`;
   const details = Number.isInteger(target?.frameId)
     ? { code, frameId: target.frameId }
     : { code, ...(target?.frameUrl ? { allFrames: true } : {}) };

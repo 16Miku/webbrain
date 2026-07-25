@@ -15,6 +15,7 @@
 
 import {
   applyCaptchaFrameVisibility,
+  captchaWebsiteUrl,
   captchaTypesMatch,
   detectCaptchaCandidatesInPage,
   injectCaptchaTokenInPage,
@@ -22,7 +23,7 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 
-export { captchaTypesMatch, normalizeCaptchaType, selectCaptchaCandidate };
+export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
 const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;

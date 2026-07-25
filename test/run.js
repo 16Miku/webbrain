@@ -50991,6 +50991,112 @@ test('captcha detection ranks a visible nested v2 Enterprise challenge above bac
   }
 });
 
+test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its parent frame', async () => {
+  const firefoxMod = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/captcha-solver.js')).href);
+  const response = captchaEl('textarea', { name: 'g-recaptcha-response' });
+  response.value = '';
+  response.textContent = '';
+  const childNodes = [
+    captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_SRCDOC' }),
+    captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    response,
+  ];
+  const makeDocument = (nodes) => ({
+    querySelector: (selector) => captchaMatchAll(nodes, selector)[0] || null,
+    querySelectorAll: (selector) => captchaMatchAll(nodes, selector),
+    createElement: () => captchaEl('textarea'),
+    body: { appendChild: () => {} },
+    documentElement: { appendChild: () => {} },
+  });
+  const childDocument = makeDocument(childNodes);
+  const PageEvent = class {
+    constructor(type, options) {
+      this.type = type;
+      this.bubbles = options?.bubbles;
+    }
+  };
+  const childWindow = {
+    location: { href: 'about:srcdoc' },
+    name: 'captcha-srcdoc',
+    innerWidth: 800,
+    innerHeight: 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    Event: PageEvent,
+    HTMLTextAreaElement: class {},
+    HTMLInputElement: class {},
+  };
+  const iframe = captchaEl('iframe', {
+    srcdoc: '<div class="g-recaptcha"></div>',
+    name: 'captcha-srcdoc',
+  });
+  iframe.name = 'captcha-srcdoc';
+  iframe.hasAttribute = (name) => name === 'srcdoc';
+  iframe.contentDocument = childDocument;
+  iframe.contentWindow = childWindow;
+
+  const topDocument = makeDocument([iframe]);
+  const topWindow = {
+    location: { href: 'https://example.test/form' },
+    name: '',
+    innerWidth: 1280,
+    innerHeight: 720,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    Event: PageEvent,
+    HTMLTextAreaElement: class {},
+    HTMLInputElement: class {},
+  };
+  const previousBrowser = globalThis.browser;
+  let sawBlankMatching = false;
+  try {
+    globalThis.browser = {
+      webNavigation: {
+        getAllFrames: async () => [
+          { frameId: 0, parentFrameId: -1, url: topWindow.location.href },
+          { frameId: 7, parentFrameId: 0, url: 'about:srcdoc' },
+        ],
+      },
+      tabs: {
+        executeScript: async (_tabId, details) => {
+          if (details.matchAboutBlank) sawBlankMatching = true;
+          if (details.frameId === 7) throw new Error('Firefox cannot inject directly into srcdoc');
+          return [vm.runInNewContext(details.code, {
+            document: topDocument,
+            window: topWindow,
+            location: topWindow.location,
+            URL,
+            Event: PageEvent,
+            HTMLTextAreaElement: topWindow.HTMLTextAreaElement,
+            HTMLInputElement: topWindow.HTMLInputElement,
+          })];
+        },
+      },
+    };
+
+    const detection = await firefoxMod.detectCaptcha(91);
+    assert.equal(sawBlankMatching, true, 'Firefox detector did not request about:blank matching');
+    assert.equal(detection.error, null, 'srcdoc CAPTCHA detection failed');
+    assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');
+    assert.equal(detection.selected.frameUrl, 'about:srcdoc', 'srcdoc frame URL was lost');
+    assert.equal(detection.selected.frameId, 0, 'srcdoc fallback did not retain its injectable parent frame');
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(detection.selected.framePath)),
+      [{ index: 0, frameUrl: 'about:srcdoc', frameName: 'captcha-srcdoc' }],
+      'srcdoc frame path was not retained',
+    );
+
+    const injection = await firefoxMod.injectToken(91, {
+      fieldName: 'g-recaptcha-response',
+      token: 'TOKEN_SRCDOC',
+      target: detection.selected,
+    });
+    assert.equal(injection.success, true, 'srcdoc token injection through the parent failed');
+    assert.equal(injection.frameUrl, 'about:srcdoc', 'srcdoc injection ran in the wrong frame');
+    assert.equal(response.value, 'TOKEN_SRCDOC', 'srcdoc response field was not updated');
+  } finally {
+    globalThis.browser = previousBrowser;
+  }
+});
+
 test('captcha frame visibility propagation demotes descendants of hidden embedding frames', async () => {
   for (const build of ['chrome', 'firefox']) {
     const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
@@ -51202,6 +51308,28 @@ test('captcha task builders propagate frame URL and optional reCAPTCHA parameter
       recaptchaDataSValue: 'classic-s',
     });
     assert.equal(classicTask.recaptchaDataSValue, 'classic-s', `${build}: classic s value was lost`);
+  }
+});
+
+test('captcha website URL uses only HTTP(S) frame URLs and otherwise keeps the top-level URL', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    const topLevelUrl = 'https://example.test/form';
+    assert.equal(
+      mod.captchaWebsiteUrl('https://example.test/checkpoint/captcha', topLevelUrl),
+      'https://example.test/checkpoint/captcha',
+      `${build}: HTTP frame URL was not used`,
+    );
+    assert.equal(
+      mod.captchaWebsiteUrl('about:blank', topLevelUrl),
+      topLevelUrl,
+      `${build}: about:blank replaced the usable website URL`,
+    );
+    assert.equal(
+      mod.captchaWebsiteUrl('about:srcdoc', topLevelUrl),
+      topLevelUrl,
+      `${build}: about:srcdoc replaced the usable website URL`,
+    );
   }
 });
 

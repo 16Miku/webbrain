@@ -29,7 +29,7 @@ import {
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch } from './captcha-solver.js';
+import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
@@ -13857,7 +13857,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               );
             }
             type = type || detected.type;
-            websiteURL = detected.frameUrl || websiteURL;
+            websiteURL = captchaWebsiteUrl(detected.frameUrl, websiteURL);
             frameUrl = detected.frameUrl || frameUrl;
             detectionNote = detected.note || null;
             if (!websiteKey) websiteKey = detected.websiteKey;
@@ -13912,6 +13912,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               token: result.token,
               target: detected ? {
                 frameId: detected.frameId,
+                framePath: detected.framePath,
                 frameUrl: detected.frameUrl,
                 websiteKey: detected.websiteKey,
                 type: detected.type,
@@ -13930,6 +13931,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           token: result.token,
           tokenPreview: result.token ? `${String(result.token).slice(0, 24)}…(${String(result.token).length} chars)` : null,
           selectedFrameId: Number.isInteger(detected?.frameId) ? detected.frameId : null,
+          selectedFramePath: Array.isArray(detected?.framePath) ? detected.framePath : null,
           selectedFrameUrl: detected?.frameUrl || null,
           selectionReason: detected?.selectionReason || null,
           detectedType: detected?.type || null,
