@@ -4,6 +4,32 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [25.9.0] - 2026-07-25
+
+### Added
+- Added 76 new LLM providers (icons, docs, and README updates across English, French, and Chinese) alongside interactive Ask-mode streaming support for the expanded provider list.
+- Added a `/watch` slash command with conditional scheduler polling, alerts on distinct successful events, dedupe-aware helper-tab cleanup, transient-failure tolerance, and locale/docs coverage.
+- Added reCAPTCHA Enterprise support to the Chrome CapSolver agent tool, including v3/Enterprise widget and script detection across DOM, URL, and iframe paths, an `isEnterprise` schema field, and clearer parameter-vs-dispatch error triage.
+- Restyled sidepanel tabs in Chrome and Firefox, with resize and RTL layout fixes.
+- Published workflow export/import format documentation.
+
+### Changed
+- Centralized text sanitization and shared UI utilities and standardized provider message logic across Chrome and Firefox, including a Firefox utils dedup follow-up.
+- Hardened interactive Ask streaming: traced the streaming run lifecycle, preserved trace ordering, redacted JSON-shaped streaming secrets, and fixed duplicate normalized streamed answers.
+- Hardened chat/run clearing and cancellation: kept the composer locked while clearing, bounded unavailable stop-state probes, waited for stopped/local/direct run followers before clearing, suppressed updates from cleared runs, guarded the Stop fallback and stopped runs until a terminal state, scoped New Chat aborts to their originating tab, discarded queued prompts before clearing, stopped active runs before starting new chats, and cancelled schedules once active runs settle.
+- Added WebBrain Cloud interface strings and microphone permission messages to all locales, refreshed the evroc provider icon and provider counts, and updated Discord links and added a Chinese community section to the docs sidebars.
+- Disabled the mode-pill animation for `prefers-reduced-motion`.
+
+### Fixed
+- Fixed detached side panel window routing in Chrome.
+- Recovered workflow replay from a start-scope mismatch.
+- Parsed action parameters with `URL.searchParams` to preserve decoded characters.
+- Preserved pending upload evidence and fixed `find_text` selection verification and advancement.
+- Fixed store submission automation.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for CapSolver Enterprise version/edition/action detection and error triage, `/watch` polling and dedupe behavior, and the centralized UI/text-sanitization utilities.
+
 ## [25.8.0] - 2026-07-23
 
 ### Added
