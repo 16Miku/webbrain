@@ -105,7 +105,7 @@
   "security.video.open_aria": "Watch the security video",
   "security.video.close_aria": "Close the security video",
   "features.label": "Features",
-  "features.show_all": "Show all features",
+  "features.show_more": "Show more features",
   "features.show_less": "Show fewer",
   "features.title": "Everything you need in a browser AI",
   "features.subtitle": "A full-featured AI agent that lives in your browser sidebar and understands any web page.",

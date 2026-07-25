@@ -105,7 +105,7 @@
   "security.video.open_aria": "Assistir ao vídeo de segurança",
   "security.video.close_aria": "Fechar o vídeo de segurança",
   "features.label": "Recursos",
-  "features.show_all": "Ver todos os recursos",
+  "features.show_more": "Ver mais recursos",
   "features.show_less": "Ver menos",
   "features.title": "Tudo que você precisa em um navegador AI",
   "features.subtitle": "Um agente de IA completo que fica na barra lateral do seu navegador e entende qualquer página da web.",

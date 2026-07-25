@@ -105,7 +105,7 @@
   "security.video.open_aria": "보안 동영상 보기",
   "security.video.close_aria": "보안 동영상 닫기",
   "features.label": "기능",
-  "features.show_all": "모든 기능 보기",
+  "features.show_more": "기능 더 보기",
   "features.show_less": "간략히 보기",
   "features.title": "브라우저 AI에 필요한 모든 것",
   "features.subtitle": "브라우저 사이드 패널에 자리 잡고 어떤 웹 페이지든 이해하는 완전한 기능의 AI 에이전트.",

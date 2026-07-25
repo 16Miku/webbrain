@@ -105,7 +105,7 @@
   "security.video.open_aria": "セキュリティ動画を見る",
   "security.video.close_aria": "セキュリティ動画を閉じる",
   "features.label": "機能",
-  "features.show_all": "すべての機能を表示",
+  "features.show_more": "さらに機能を表示",
   "features.show_less": "表示を減らす",
   "features.title": "ブラウザ AI に必要なものすべて",
   "features.subtitle": "ブラウザのサイドパネルに常駐し、あらゆる Web ページを理解する、フル機能の AI エージェント。",

@@ -105,7 +105,7 @@
   "security.video.open_aria": "Посмотреть видео о безопасности",
   "security.video.close_aria": "Закрыть видео о безопасности",
   "features.label": "Возможности",
-  "features.show_all": "Показать все возможности",
+  "features.show_more": "Показать больше возможностей",
   "features.show_less": "Свернуть",
   "features.title": "Всё, что нужно от AI в браузере",
   "features.subtitle": "Полноценный AI-агент, который живёт в боковой панели браузера и понимает любую веб-страницу.",

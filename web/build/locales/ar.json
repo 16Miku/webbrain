@@ -105,7 +105,7 @@
   "security.video.open_aria": "مشاهدة فيديو الأمان",
   "security.video.close_aria": "إغلاق فيديو الأمان",
   "features.label": "المزايا",
-  "features.show_all": "عرض كل الميزات",
+  "features.show_more": "عرض المزيد من الميزات",
   "features.show_less": "عرض أقل",
   "features.title": "كل ما تحتاجه في ذكاء اصطناعي للمتصفح",
   "features.subtitle": "وكيل ذكاء اصطناعي كامل المزايا يقطن لوحة المتصفح الجانبية ويفهم أي صفحة ويب.",
