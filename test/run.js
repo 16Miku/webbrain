@@ -51549,6 +51549,11 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
     );
     assert.match(
       agent,
+      /pageAction && detected\.pageAction && String\(pageAction\) !== String\(detected\.pageAction\)[\s\S]*?requested pageAction[\s\S]*?conflicts with the active detected candidate action/,
+      `${build}: explicit pageAction conflicts are not rejected locally`,
+    );
+    assert.match(
+      agent,
       /if \(!websiteKey\) websiteKey = detected\.websiteKey/,
       `${build}: detected site key does not fill a missing explicit argument`,
     );

@@ -13856,6 +13856,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 `solve_captcha: requested type "${type}" conflicts with the active detected candidate "${detected.type}" in ${detected.frameUrl}. Retry without type or use the detected type.`
               );
             }
+            if (pageAction && detected.pageAction && String(pageAction) !== String(detected.pageAction)) {
+              return noDispatchFailure(
+                `solve_captcha: requested pageAction "${pageAction}" conflicts with the active detected candidate action "${detected.pageAction}" in ${detected.frameUrl}. Retry without pageAction or use the detected action.`
+              );
+            }
             type = type || detected.type;
             websiteURL = captchaWebsiteUrl(detected.frameUrl, websiteURL);
             frameUrl = detected.frameUrl || frameUrl;
