@@ -50292,4 +50292,270 @@ test('linkedin shadow-dom reachability: pierce, overlay hoist, placeholder match
   }
 });
 
+// ─── CapSolver captcha detection ───────────────────────────────────────
+//
+// The detector runs in the page world, so it can only be exercised against a
+// DOM. This stub implements the slice of the DOM API detectCaptchaInPage /
+// DETECT_CODE actually use: querySelector(All) over a flat node list with
+// tag, class and attribute selectors ([attr], [attr="v"], [attr^="v"],
+// [attr*="v"]). Both builds are driven through their real public export —
+// detectCaptcha() — with the extension API stubbed, so the Firefox code
+// string is parsed and run exactly as the browser would.
+
+function captchaEl(tag, attrs = {}, children = []) {
+  const el = {
+    tagName: tag.toUpperCase(),
+    children,
+    src: attrs.src,
+    classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
+    getAttribute: (n) => (n in attrs ? attrs[n] : null),
+    querySelector: (sel) => captchaMatchAll(children, sel)[0] || null,
+    querySelectorAll: (sel) => captchaMatchAll(children, sel),
+  };
+  return el;
+}
+
+function captchaMatchAll(roots, selectorList) {
+  const flat = [];
+  (function walk(nodes) {
+    for (const n of nodes) { flat.push(n); walk(n.children || []); }
+  })(roots);
+  const selectors = String(selectorList).split(',').map(s => s.trim()).filter(Boolean);
+  const matchesOne = (el, sel) => {
+    // Tokenize into tag / .class / [attr…] parts. Splitting naively on "."
+    // would break selectors like script[src*="recaptcha/api.js"].
+    const parts = sel.match(/\[[^\]]*\]|\.[\w-]+|^[a-zA-Z][\w-]*/g) || [];
+    for (const part of parts) {
+      if (part.startsWith('.')) {
+        if (!el.classList.contains(part.slice(1))) return false;
+      } else if (part.startsWith('[')) {
+        const m = part.match(/^\[([\w-]+)(?:([\^*$]?)=["']([^"']*)["'])?\]$/);
+        if (!m) return false;
+        const value = el.getAttribute(m[1]);
+        if (value == null) return false;
+        if (m[3] != null) {
+          if (m[2] === '^' && !value.startsWith(m[3])) return false;
+          if (m[2] === '*' && !value.includes(m[3])) return false;
+          if (m[2] === '$' && !value.endsWith(m[3])) return false;
+          if (m[2] === '' && value !== m[3]) return false;
+        }
+      } else if (el.tagName.toLowerCase() !== part.toLowerCase()) {
+        return false;
+      }
+    }
+    return parts.length > 0;
+  };
+  return flat.filter(el => selectors.some(sel => matchesOne(el, sel)));
+}
+
+async function detectCaptchaOnFakePage(build, nodes) {
+  const document = {
+    querySelector: (s) => captchaMatchAll(nodes, s)[0] || null,
+    querySelectorAll: (s) => captchaMatchAll(nodes, s),
+  };
+  const previous = {
+    document: globalThis.document,
+    chrome: globalThis.chrome,
+    browser: globalThis.browser,
+  };
+  globalThis.document = document;
+  // The detector reaches for the extension API by name; give each build the
+  // executeScript shape it expects and run the payload in-process.
+  globalThis.chrome = {
+    scripting: {
+      executeScript: async ({ func }) => [{ result: func() }],
+    },
+  };
+  globalThis.browser = {
+    tabs: {
+      executeScript: async (_tabId, { code }) => [vm.runInNewContext(code, { document, URL })],
+    },
+  };
+  try {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    return await mod.detectCaptcha(1);
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.chrome = previous.chrome;
+    globalThis.browser = previous.browser;
+  }
+}
+
+test('captcha detection: reCAPTCHA version, Enterprise edition and action stay in Chrome/Firefox parity', async () => {
+  const cases = [
+    {
+      label: 'classic v2 checkbox',
+      nodes: () => [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V2' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+      ],
+      expect: { type: 'recaptcha_v2', websiteKey: 'KEY_V2', isEnterprise: false, pageAction: undefined },
+    },
+    {
+      label: 'v2 invisible carrying data-action is still v2',
+      // data-action alone used to promote this to v3, which sends CapSolver
+      // a V3 task against a v2 sitekey.
+      nodes: () => [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V2_INV', 'data-size': 'invisible', 'data-action': 'submit' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+      ],
+      expect: { type: 'recaptcha_v2', websiteKey: 'KEY_V2_INV', isInvisible: true },
+    },
+    {
+      label: 'v3 host div that also sets data-size=invisible is still v3',
+      // Mirror of the case above: some v3 wrappers copy data-size onto the
+      // host div, so the render=<sitekey> script has to win.
+      nodes: () => [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V3_INV', 'data-action': 'login', 'data-size': 'invisible' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js?render=KEY_V3_INV' }),
+      ],
+      expect: { type: 'recaptcha_v3', websiteKey: 'KEY_V3_INV', pageAction: 'login' },
+    },
+    {
+      label: 'v3 without data-action takes the action from the loader script',
+      nodes: () => [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V3_SCRIPT' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js?render=KEY_V3_SCRIPT&action=checkout' }),
+      ],
+      expect: { type: 'recaptcha_v3', websiteKey: 'KEY_V3_SCRIPT', pageAction: 'checkout' },
+    },
+    {
+      label: 'Enterprise loader promotes the widget to an Enterprise task',
+      nodes: () => [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_ENT' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/enterprise.js' }),
+      ],
+      expect: { type: 'recaptcha_v2_enterprise', websiteKey: 'KEY_ENT', isEnterprise: true },
+    },
+    {
+      label: 'URL fallback: v3 badge iframe plus render script',
+      // The badge anchor frame is indistinguishable from an invisible v2
+      // frame on its own; the matching render script is what settles it.
+      nodes: () => [
+        captchaEl('iframe', { src: 'https://www.google.com/recaptcha/api2/anchor?ar=1&k=KEY_URL_V3&size=invisible' }),
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js?render=KEY_URL_V3&action=sign%20up' }),
+      ],
+      expect: { type: 'recaptcha_v3', websiteKey: 'KEY_URL_V3', pageAction: 'sign up', detectedVia: 'url' },
+    },
+    {
+      label: 'URL fallback: Enterprise anchor iframe with no render script',
+      nodes: () => [
+        captchaEl('iframe', { src: 'https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=KEY_URL_ENT' }),
+      ],
+      expect: { type: 'recaptcha_v2_enterprise', websiteKey: 'KEY_URL_ENT', isEnterprise: true, detectedVia: 'url' },
+    },
+    {
+      label: 'URL fallback: render=explicit is not a sitekey',
+      nodes: () => [
+        captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js?render=explicit' }),
+      ],
+      expect: null,
+    },
+    {
+      label: 'provider-specific widgets still win over the reCAPTCHA scan',
+      nodes: () => [
+        captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HKEY_123456' }),
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'KEY_V2' }),
+      ],
+      expect: { type: 'hcaptcha', websiteKey: 'HKEY_123456' },
+    },
+  ];
+
+  for (const { label, nodes, expect } of cases) {
+    const chromeResult = await detectCaptchaOnFakePage('chrome', nodes());
+    const firefoxResult = await detectCaptchaOnFakePage('firefox', nodes());
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(firefoxResult ?? null)),
+      JSON.parse(JSON.stringify(chromeResult ?? null)),
+      `${label}: chrome and firefox detectors disagree`,
+    );
+    if (expect === null) {
+      assert.equal(chromeResult, null, `${label}: expected no detection`);
+      continue;
+    }
+    for (const [key, value] of Object.entries(expect)) {
+      assert.equal(chromeResult?.[key], value, `${label}: ${key}`);
+    }
+  }
+});
+
+test('captcha detection: v3 without an action reports why, and solve_captcha refuses to dispatch', async () => {
+  const nodes = [captchaEl('script', { src: 'https://www.google.com/recaptcha/enterprise.js?render=KEY_NO_ACTION' })];
+  for (const build of ['chrome', 'firefox']) {
+    const detected = await detectCaptchaOnFakePage(build, nodes);
+    assert.equal(detected.type, 'recaptcha_v3_enterprise', `${build}: enterprise v3 detected`);
+    assert.equal(detected.pageAction, undefined, `${build}: no action was available to report`);
+    assert.match(detected.note, /pageAction/, `${build}: detector explains the missing action`);
+
+    // captchaParamError is what agent.js consults *before* it flags the tool
+    // call as dispatched, so a missing action never looks like a CapSolver
+    // request that already happened.
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    assert.match(
+      mod.captchaParamError({ type: detected.type, websiteKey: detected.websiteKey }) || '',
+      /requires a `pageAction`/,
+      `${build}: v3 without pageAction is rejected before dispatch`,
+    );
+    assert.equal(
+      mod.captchaParamError({ type: detected.type, websiteKey: detected.websiteKey, pageAction: 'login' }),
+      null,
+      `${build}: v3 with a pageAction passes`,
+    );
+    assert.equal(
+      mod.captchaParamError({ type: 'recaptcha_v2_enterprise', websiteKey: 'KEY' }),
+      null,
+      `${build}: v2 does not need a pageAction`,
+    );
+  }
+});
+
+test('capsolver errors: demo-key refusals and task-config errors get different remedies', async () => {
+  const cases = [
+    {
+      label: 'demo key refusal',
+      body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: "We don't support this service." },
+      expect: /public TEST\/DEMO key/,
+    },
+    {
+      label: 'wrong task type for the widget',
+      // Exactly what an Enterprise sitekey returns for a plain V2 task. This
+      // must NOT be blamed on a demo key: the fix is to correct the task
+      // type, not to give up and move to another site.
+      body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: 'Invalid input: check captcha type or parameters' },
+      expect: /rejected the task configuration/,
+    },
+    {
+      label: 'ordinary parameter error containing the substring "test"',
+      // A bare /test/ match here treats "latest" as a test key.
+      body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: 'websiteKey is required for the latest task version' },
+      expect: /^CapSolver: websiteKey is required for the latest task version$/,
+    },
+    {
+      label: 'unrelated failure passes through untouched',
+      body: { errorId: 1, errorCode: 'ERROR_ZERO_BALANCE', errorDescription: 'Your balance is zero' },
+      expect: /^CapSolver: Your balance is zero$/,
+    },
+  ];
+
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+      for (const { label, body, expect } of cases) {
+        globalThis.fetch = async () => ({ ok: true, json: async () => body });
+        await assert.rejects(
+          () => mod.getBalance('test-key'),
+          (err) => {
+            assert.match(err.message, expect, `${build}: ${label}`);
+            return true;
+          },
+          `${build}: ${label} should reject`,
+        );
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 await run();
