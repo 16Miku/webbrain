@@ -301,7 +301,7 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 | `/verbose` | 切换详细/压缩工具显示（与工具栏按钮相同） |
 | `/reset` | 清除对话与所有按对话的标志 |
 | `/screenshot [--full-page]` | 捕获可见标签页；使用 `--full-page` 捕获完整页面（仅 Chrome） |
-| `/record [--full-screen] [--transcribe]` | 录制当前标签页；使用 `--full-screen` 录制屏幕或窗口（仅 Chrome），使用 `--transcribe` 保存转录 |
+| `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | 录制当前标签页；使用 `--full-screen` 录制屏幕或窗口（仅 Chrome），使用 `--hide-recording-indicator` 隐藏录制横幅，使用 `--transcribe` 保存转录 |
 | `/export [--traces]` | 将对话下载为 Markdown；使用 `--traces` 导出工具链 |
 | `/profile` | 无需打开设置即可切换资料自动填充开/关 |
 | `/vision` | 在当前提供商上切换视觉模式（截图理解） |
