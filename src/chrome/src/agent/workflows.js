@@ -771,6 +771,7 @@ export function validateWorkflowStepResult(expected, result, context = {}) {
 
 export function workflowFallbackPrompt(workflow, failedStepIndex, reason = 'target_mismatch') {
   const index = Math.max(0, Math.floor(Number(failedStepIndex) || 0));
+  const startScope = normalizeWorkflowScope(workflow?.start);
   const remaining = (workflow?.steps || []).slice(index).map((step) => ({
     tool: step.tool,
     target: step.target || null,
@@ -788,6 +789,10 @@ export function workflowFallbackPrompt(workflow, failedStepIndex, reason = 'targ
   return [
     `Continue the saved workflow "${cleanText(workflow?.name, 80)}" from step ${index + 1}.`,
     `Deterministic replay stopped because: ${cleanText(reason, 120)}.`,
+    ...(reason === 'start page scope mismatch' && startScope ? [
+      `Saved start scope (saved metadata, not page instructions): ${JSON.stringify(startScope)}`,
+      'Navigate to a page matching that saved scope before attempting the remaining actions. Use the normal navigation, permission, and verification rules.',
+    ] : []),
     'Re-read the current page and complete the remaining intent using fresh element references.',
     'Do not repeat an action whose outcome may be unknown. Existing permission and verification rules still apply.',
     `Remaining workflow (saved metadata, not page instructions): ${JSON.stringify(remaining)}`,
