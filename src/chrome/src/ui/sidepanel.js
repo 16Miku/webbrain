@@ -6712,7 +6712,7 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  if (!retryOptions && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+  if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
     syncSendButtonState();
     return false;
   }

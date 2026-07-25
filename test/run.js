@@ -17624,6 +17624,10 @@ test('sidepanel preserves selection-only grounding across retries and attachment
       /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
       `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
     );
+    assert.ok(
+      panel.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label}: unrelated in-flight attachment reads must not block selection-only runs`,
+    );
     assert.match(
       panel,
       /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
@@ -49178,7 +49182,10 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
-    assert.ok(source.includes('if (!retryOptions && !isProcessing && isAttachmentReadPendingForTab(tabId))'), `${label} should block normal sends while files load without blocking retries`);
+    assert.ok(
+      source.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
+      `${label} should block normal sends while files load without blocking retries or selection-only runs`,
+    );
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
