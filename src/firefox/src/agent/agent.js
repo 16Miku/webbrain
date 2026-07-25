@@ -11464,11 +11464,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     try {
       if (!workflowUrlMatches(workflow.start, startUrl)) {
+        const reason = 'start page scope mismatch';
         trace.recordNote(traceRunId, 0, 'workflow_replay_start_miss', {
           workflowId: workflow.id,
           expectedOrigin: workflow.start?.origin || '',
         });
-        return finishStopped('the current page is outside the saved origin or URL family', 0);
+        traceStatus = 'workflow_fallback';
+        finalContent = 'Deterministic replay paused before step 1; continuing with the agent.';
+        return {
+          status: 'fallback',
+          reason,
+          stepIndex: 0,
+          matchedSteps,
+          prompt: workflowFallbackPrompt(workflow, 0, reason),
+        };
       }
 
       for (let index = 0; index < workflow.steps.length; index++) {

@@ -404,6 +404,10 @@ are not saved to the workflow, conversation, user memory, replay trace, or Agent
 fallback prompt; they are still delivered to the target page by the requested
 browser action. The original opt-in source trace remains separate and can
 contain raw tool arguments until the user deletes that trace.
+If replay starts outside the saved origin or URL family, deterministic replay
+hands control to the Agent with the sanitized start scope so normal navigation,
+permission, and verification rules can recover the workflow instead of ending
+it immediately.
 
 Portable workflow files contain the raw sanitized `webbrain-workflow/1`
 definition and are limited to 1 MiB. Export re-normalizes the definition before
