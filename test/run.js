@@ -52148,8 +52148,27 @@ test('captcha token injection revalidates the selected frame and calls one match
       assert.equal(hiddenCallbackToken, null, `${build}: hidden widget callback was invoked`);
       assert.equal(modalCallbackToken, 'TOKEN_MODAL_WIDGET', `${build}: selected callback was not invoked`);
 
+      hiddenResponse.value = '';
+      modalResponse.value = '';
+      const staleFieldId = runtime.injectCaptchaTokenInPage({
+        fieldName: 'g-recaptcha-response',
+        token: 'TOKEN_STALE_FIELD_ID',
+        target: {
+          frameId: 9,
+          frameUrl: globalThis.location.href,
+          websiteKey: 'KEY_SHARED_WIDGET',
+          responseFieldId: 'g-recaptcha-response-removed',
+          responseFieldIndex: 1,
+        },
+      });
+      assert.equal(staleFieldId.success, false, `${build}: missing selected field ID fell back to an index`);
+      assert.equal(staleFieldId.staleTarget, true, `${build}: missing selected field ID was not marked stale`);
+      assert.equal(hiddenResponse.value, '', `${build}: stale field ID touched the first response field`);
+      assert.equal(modalResponse.value, '', `${build}: stale field ID touched the old indexed response field`);
+
       const canonicalHcaptchaResponse = makeResponse('h-captcha-response-only');
       let createdCompatibilityResponse = null;
+      let hcaptchaCompatibilityResponses = [];
       const hcaptchaHost = {
         getAttribute: (name) => name === 'data-sitekey' ? 'HKEY_CANONICAL_ONLY' : null,
       };
@@ -52157,7 +52176,7 @@ test('captcha token injection revalidates the selected frame and calls one match
         querySelector: () => null,
         querySelectorAll: (selector) => {
           if (selector.includes('h-captcha-response')) return [canonicalHcaptchaResponse];
-          if (selector.includes('g-recaptcha-response')) return [];
+          if (selector.includes('g-recaptcha-response')) return hcaptchaCompatibilityResponses;
           if (selector.includes('[data-sitekey]')) return [hcaptchaHost];
           return [];
         },
@@ -52207,6 +52226,56 @@ test('captcha token injection revalidates the selected frame and calls one match
         'TOKEN_HCAPTCHA_CANONICAL_ONLY',
         `${build}: missing hCaptcha compatibility field was not created`,
       );
+
+      const firstCompatibilityResponse = makeResponse('g-recaptcha-response-first');
+      const secondCompatibilityResponse = makeResponse('g-recaptcha-response-second');
+      hcaptchaCompatibilityResponses = [firstCompatibilityResponse, secondCompatibilityResponse];
+      canonicalHcaptchaResponse.value = '';
+      createdCompatibilityResponse = null;
+      const ambiguousCompatibilityHcaptcha = runtime.injectCaptchaTokenInPage({
+        fieldName: 'h-captcha-response',
+        alsoSet: 'g-recaptcha-response',
+        token: 'TOKEN_HCAPTCHA_AMBIGUOUS_COMPATIBILITY',
+        target: {
+          frameId: 9,
+          frameUrl: hcaptchaWindow.location.href,
+          websiteKey: 'HKEY_CANONICAL_ONLY',
+          responseFieldId: 'h-captcha-response-only',
+          responseFieldIndex: 0,
+          documentTimeOrigin: 123456789,
+        },
+      }, {
+        document: hcaptchaDocument,
+        window: hcaptchaWindow,
+      });
+      assert.equal(
+        ambiguousCompatibilityHcaptcha.success,
+        true,
+        `${build}: ambiguous hCaptcha compatibility fields aborted canonical injection`,
+      );
+      assert.deepEqual(
+        ambiguousCompatibilityHcaptcha.fieldsUpdated,
+        ['h-captcha-response'],
+        `${build}: skipped compatibility field was reported as updated`,
+      );
+      assert.equal(
+        ambiguousCompatibilityHcaptcha.compatibilityFieldSkipped,
+        true,
+        `${build}: compatibility-field skip was not reported`,
+      );
+      assert.match(
+        ambiguousCompatibilityHcaptcha.compatibilityFieldError,
+        /Multiple CAPTCHA response fields/,
+        `${build}: compatibility-field ambiguity diagnostic missing`,
+      );
+      assert.equal(
+        canonicalHcaptchaResponse.value,
+        'TOKEN_HCAPTCHA_AMBIGUOUS_COMPATIBILITY',
+        `${build}: canonical hCaptcha field was not updated after compatibility ambiguity`,
+      );
+      assert.equal(firstCompatibilityResponse.value, '', `${build}: first ambiguous compatibility field was updated`);
+      assert.equal(secondCompatibilityResponse.value, '', `${build}: second ambiguous compatibility field was updated`);
+      assert.equal(createdCompatibilityResponse, null, `${build}: ambiguous compatibility field was recreated`);
 
       responseFields = [response];
       captchaHosts = [host];

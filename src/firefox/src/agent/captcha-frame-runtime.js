@@ -1046,6 +1046,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
         }
       });
       if (exact) return { element: exact };
+      return {
+        error: 'The selected CAPTCHA response field ID is no longer present in the target frame.',
+        staleTarget: true,
+      };
     }
     if (Number.isInteger(selectedFieldIndex)) {
       if (fields[selectedFieldIndex]) {
@@ -1073,7 +1077,7 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     ...field,
     ...resolveResponseField(field.name, field.primary),
   }));
-  const unresolvedField = resolvedFields.find(field => field.error);
+  const unresolvedField = resolvedFields.find(field => field.primary && field.error);
   if (unresolvedField) {
     return {
       success: false,
@@ -1084,6 +1088,8 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       frameUrl,
     };
   }
+  const skippedFields = resolvedFields.filter(field => !field.primary && field.error);
+  const injectableFields = resolvedFields.filter(field => !field.error);
 
   const setOn = (name, existingElement) => {
     let element = existingElement;
@@ -1116,10 +1122,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     }
     return element;
   };
-  for (const field of resolvedFields) {
+  for (const field of injectableFields) {
     setOn(field.name, field.element);
   }
-  const fieldsTouched = resolvedFields.length;
+  const fieldsTouched = injectableFields.length;
 
   const pageWindow = frameWindow.wrappedJSObject || frameWindow;
   const callbacks = [];
@@ -1204,8 +1210,10 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
   return {
     success: true,
     fieldUpdated: true,
-    fieldsUpdated: [fieldName, ...(alsoSet ? [alsoSet] : [])],
+    fieldsUpdated: injectableFields.map(field => field.name),
     fieldsTouched,
+    compatibilityFieldSkipped: skippedFields.length > 0,
+    compatibilityFieldError: skippedFields[0]?.error || null,
     responseFieldId: target.responseFieldId || null,
     responseFieldIndex: Number.isInteger(target.responseFieldIndex)
       ? target.responseFieldIndex
