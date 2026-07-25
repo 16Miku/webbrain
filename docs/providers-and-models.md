@@ -156,6 +156,30 @@ local server was started with auth:
 
 All seven default `supportsVision: true` since most models loaded locally in 2026 are multimodal.
 
+#### Ollama launch handoff (preview)
+
+<p align="center">
+  <img src="../web/assets/webbrain-ollama-heart.png" alt="WebBrain loves Ollama launch handoff" width="720">
+</p>
+
+WebBrain supports Ollama today through the local OpenAI-compatible provider. A
+new `ollama launch webbrain --model <model>` handoff can also configure WebBrain
+automatically, but it is not integrated into upstream Ollama yet. For now, try
+it from the [`codex/ollama-webbrain-launch-handoff` branch of
+`esokullu/ollama`](https://github.com/esokullu/ollama/tree/codex/ollama-webbrain-launch-handoff);
+we hope Ollama will integrate it upstream.
+
+```bash
+git clone https://github.com/esokullu/ollama.git
+cd ollama
+git switch codex/ollama-webbrain-launch-handoff
+cmake -S . -B build -G Ninja -DOLLAMA_MLX_BACKENDS=
+cmake --build build --parallel 8
+
+OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ./ollama serve
+./ollama launch webbrain --model <model>
+```
+
 **Streaming.** Local streaming is primarily a runtime/server capability, not a
 property of the GGUF or other model weights. Interactive Ask streaming is
 enabled for llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, and current LocalAI

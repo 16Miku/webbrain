@@ -126,6 +126,31 @@ serveur local a été démarré avec authentification :
 
 Les sept ont `supportsVision: true` par défaut car la plupart des modèles chargés localement en 2026 sont multimodaux.
 
+#### Relais de lancement Ollama (préversion)
+
+<p align="center">
+  <img src="../../web/assets/webbrain-ollama-heart.png" alt="WebBrain adore le relais de lancement Ollama" width="720">
+</p>
+
+WebBrain prend aujourd'hui en charge Ollama via le fournisseur local compatible
+OpenAI. Un nouveau relais `ollama launch webbrain --model <model>` peut aussi
+configurer WebBrain automatiquement, mais il n'est pas encore intégré à Ollama
+en amont. Pour l'instant, essayez-le depuis la [branche
+`codex/ollama-webbrain-launch-handoff` de
+`esokullu/ollama`](https://github.com/esokullu/ollama/tree/codex/ollama-webbrain-launch-handoff) ;
+nous espérons qu'Ollama l'intégrera en amont.
+
+```bash
+git clone https://github.com/esokullu/ollama.git
+cd ollama
+git switch codex/ollama-webbrain-launch-handoff
+cmake -S . -B build -G Ninja -DOLLAMA_MLX_BACKENDS=
+cmake --build build --parallel 8
+
+OLLAMA_ORIGINS="chrome-extension://*,moz-extension://*" ./ollama serve
+./ollama launch webbrain --model <model>
+```
+
 **Fenêtre de contexte.** Chargez les modèles locaux avec **au moins une fenêtre de contexte de 16k tokens** pour des exécutions d'agent fiables — c'est le minimum utilisable. 8k peut fonctionner avec le niveau Compact sélectionné ; 4k est trop petit pour contenir le prompt système + les schémas d'outils. L'agent lit la fenêtre depuis `provider.contextWindow` (`providers/base.js`) pour piloter l'auto-compaction ; quand une configuration de fournisseur ne définit pas `contextWindow`, les fournisseurs locaux utilisent par défaut une valeur prudente de **16k** (cloud/routeur par défaut à 128k). **Tester la connexion** / **Charger les modèles** détectent pour **llama.cpp**, **Ollama** et **LM Studio** quand c'est rapporté (llama.cpp `GET /props` `n_ctx`, Ollama `GET /api/ps` puis `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). La détection rafraîchit le 16k par défaut ; elle réduit une surcharge manuelle plus grande seulement depuis le contexte live/runtime (pas depuis Ollama `/api/show` seul). Jan / vLLM / SGLang / LocalAI ne détectent pas encore. Vous pouvez toujours définir `config.contextWindow` explicitement, et le serveur de modèle doit effectivement être démarré avec cette taille de contexte (par exemple `llama-server -c 16384`).
 
 ### Niveaux de prompt/outils et modes
