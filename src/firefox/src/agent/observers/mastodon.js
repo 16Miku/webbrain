@@ -1,3 +1,5 @@
+import { sanitizeText } from '../text-sanitize.js';
+
 const MASTODON_APP_PATH_RE = /^\/(?:home|deck|web|notifications|explore|public|public\/local|settings|lists|publish|start|get-started|get-started\/profile|getting-started)(?:\/|$)/i;
 const DOMAIN_RE = /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b/ig;
 const EXPLICIT_HOME_RE = /\b(?:my|home|local|logged[-\s]?in|signed[-\s]?in|own)\s+(?:mastodon\s+)?(?:server|instance|domain|account|host)\s*(?:is|=|:|at|on)?\s*([a-z0-9.-]+\.[a-z]{2,})\b/i;
@@ -6,16 +8,6 @@ const REMOTE_FOLLOW_PROMPT_RE = /\b(?:sign in to continue|copy and paste this ur
 const HOME_DOMAIN_FIELD_RE = /\b(?:server|instance|domain|mastodon|fediverse)\b/i;
 const FOLLOW_LABEL_RE = /\b(?:button|link)\s+"(?:Follow|Takip et)(?:\s|")/i;
 const FOLLOWED_LABEL_RE = /\b(?:button|link)\s+"(?:Following|Unfollow|Takip ediliyor|Takibi b.rak)(?:\s|")/i;
-
-function sanitizeText(value, max = 500) {
-  if (value == null) return '';
-  return String(value)
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+/g, ' ')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
-}
 
 function normalizedHostname(hostname) {
   return String(hostname || '').toLowerCase().replace(/\.$/, '').replace(/^www\./, '');

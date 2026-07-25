@@ -11,12 +11,7 @@ export function stripImagePayloadsForPersist(html) {
   );
 }
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+import { escapeHtml } from './utils.js';
 
 function findHtmlTagEnd(source, start) {
   let quote = '';

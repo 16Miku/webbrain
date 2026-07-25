@@ -1,17 +1,8 @@
 import { isTerminalLedgerStatus } from '../progress-ledger.js';
 import { isProgressActionAllowed } from '../progress-intent.js';
+import { sanitizeText } from '../text-sanitize.js';
 
 const VALID_STATUSES = new Set(['pending', 'acted', 'processed', 'skipped', 'failed']);
-
-function sanitizeText(value, max = 240) {
-  if (value == null) return '';
-  return String(value)
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+/g, ' ')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
-}
 
 function normalizeStatus(value, fallback = 'pending') {
   const status = sanitizeText(value, 40).toLowerCase();

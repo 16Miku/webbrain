@@ -159,11 +159,10 @@ the loop ended. A screenshot or "it didn't work" message tells us nothing.
 
 ### Translations
 
-The plugin UI ships in 16 locales: ar, en, es, fr, he, id, ja, ko, ms, pl, ru, th, tl, tr, uk, zh
+The plugin UI ships in 23 locales: ar, bn, de, en, es, fa, fr, he, hi, id, ja, ko, ms, nl, pl, pt, ru, th, tl, tr, uk, vi, zh
 ([`src/chrome/src/ui/locales/`](src/chrome/src/ui/locales/)). Adding a new
 locale is mechanical — copy `en.js`, translate the values, run the build,
-mirror to firefox. Most useful additions: pt (Brazil/Portugal), de
-(Germany/Austria), ja (Japan), ko (Korea), ru, ar (RTL — see notes below).
+mirror to firefox.
 If you do RTL, add a brief CSS audit pass for the side-panel layout — most
 flexbox in the UI works, but call out anything that breaks.
 

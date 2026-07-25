@@ -49,15 +49,7 @@ const ACTION_ALIASES = new Map([
   ['visit page', 'visit'],
 ]);
 
-function sanitizeText(value, max = 500) {
-  if (value == null) return '';
-  return String(value)
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+/g, ' ')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
-}
+import { sanitizeText } from './text-sanitize.js';
 
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));

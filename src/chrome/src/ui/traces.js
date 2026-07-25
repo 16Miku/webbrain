@@ -8,6 +8,7 @@ import {
   deleteRun, clearAllRuns,
 } from '../trace/recorder.js';
 import { t } from './i18n.js';
+import { escapeHtml, escapeAttr } from './utils.js';
 
 const listEl = document.getElementById('run-list');
 const mainPane = document.getElementById('main-pane');
@@ -567,14 +568,6 @@ filterModel.addEventListener('change', renderList);
 
 // ----- Utils -----------------------------------------------------------------
 
-function escapeHtml(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-}
-function escapeAttr(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
 function safeClassToken(value, fallback = 'unknown') {
   const token = String(value == null ? '' : value).trim();
   return /^[A-Za-z0-9_-]+$/.test(token) ? token : fallback;
