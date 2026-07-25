@@ -17660,8 +17660,21 @@ test('selection-only model requests exclude prior conversation context', async (
         enrichmentHistoryLengths.push(history.length);
         return { role: 'user', content };
       };
-      agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+      agent._maybeRunPlannerGate = async (
+        gateTabId,
+        messages,
+        enriched,
+        _onUpdate,
+        _mode,
+        _costState,
+        _runId,
+        _tabInfo,
+        gateRunOptions,
+      ) => {
         messages.push(enriched);
+        if (gateRunOptions?.selectionGroundingScopeStarted === true) {
+          agent._finalizeSelectionGroundingScope(gateTabId, messages, enriched);
+        }
         const priorScratchpadIndex = messages.findIndex(message =>
           typeof message.content === 'string' && message.content.includes('PRIOR SCRATCHPAD SECRET')
         );
@@ -17793,6 +17806,99 @@ test('selection-grounded follow-ups reject and restore attachments', async () =>
     assert.equal(manageContextCalls, 0, `${label}: rejected attachment turn must not inspect unrelated history`);
     assert.equal(JSON.stringify(agent.conversations.get(tabId).slice(1)), before, `${label}: rejected attachment turn must not alter conversation history`);
     assert.ok(agent.selectionGroundingScopes.has(tabId), `${label}: rejected follow-up should preserve its selection scope`);
+  }
+});
+
+test('selection grounding discards provisional scopes on pre-anchor exits', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const provider = {
+      supportsTools: false,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => ({ content: 'Unexpected.', toolCalls: null }),
+      async *chatStream() {
+        yield { type: 'text', content: 'Unexpected.' };
+        yield { type: 'done' };
+      },
+    };
+    const createAgent = (tabId) => {
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      agent.conversationIds.set(tabId, `conv-${label}-${tabId}`);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system rules' },
+        { role: 'user', content: 'Prior ordinary turn.' },
+      ]);
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      return agent;
+    };
+
+    const cancelledTabId = 9680 + (label === 'firefox' ? 1 : 0);
+    const cancelledAgent = createAgent(cancelledTabId);
+    cancelledAgent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({
+      role: 'user',
+      content,
+    });
+    const cancelled = await cancelledAgent.processMessage(
+      cancelledTabId,
+      buildSelectionPrompt('cancelled source', 'summarize'),
+      () => {},
+      'ask',
+      [],
+      { sourceGrounding, isDetachedStartCancelled: () => true },
+    );
+    assert.equal(cancelled, 'Stopped by user before the run started.', `${label}: detached cancellation mismatch`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: cancelled pre-anchor scope leaked`);
+
+    cancelledAgent.selectionGroundingScopes.set(cancelledTabId, {
+      conversationId: `conv-${label}-${cancelledTabId}`,
+      anchorIndex: cancelledAgent.conversations.get(cancelledTabId).length,
+      anchorFingerprint: null,
+      excludedFingerprints: [],
+    });
+    const ordinaryOptions = cancelledAgent._selectionGroundedRunOptions(
+      cancelledTabId,
+      cancelledAgent.conversations.get(cancelledTabId),
+      {},
+    );
+    assert.equal(ordinaryOptions.sourceGrounding, undefined, `${label}: unanchored hydrated scope should not be inherited`);
+    assert.equal(cancelledAgent.selectionGroundingScopes.has(cancelledTabId), false, `${label}: invalid hydrated scope should be removed`);
+
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const errorTabId = 9690 + (label === 'firefox' ? 10 : 0) + pathIndex;
+      const errorAgent = createAgent(errorTabId);
+      errorAgent._enrichUserMessageWithCurrentPage = async () => {
+        throw new Error('setup failed before anchor');
+      };
+      const run = streaming
+        ? errorAgent.processMessageStream(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            { sourceGrounding },
+          )
+        : errorAgent.processMessage(
+            errorTabId,
+            buildSelectionPrompt('error source', 'summarize'),
+            () => {},
+            'ask',
+            [],
+            { sourceGrounding },
+          );
+      await assert.rejects(run, /setup failed before anchor/, `${label}: setup error should propagate`);
+      assert.equal(errorAgent.selectionGroundingScopes.has(errorTabId), false, `${label}: setup-error provisional scope leaked`);
+    }
   }
 });
 

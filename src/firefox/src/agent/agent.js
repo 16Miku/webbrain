@@ -5419,6 +5419,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : messages.slice())
       : null;
     messages.push(enriched);
+    if (runOptions?.selectionGroundingScopeStarted === true) {
+      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+    }
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
     if (!runIntent) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -10613,7 +10616,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
       };
       this.selectionGroundingScopes.set(tabId, scope);
-    } else if (!scope || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0) {
+    } else if (
+      !scope?.anchorFingerprint
+      || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0
+    ) {
       this.selectionGroundingScopes.delete(tabId);
       return runOptions;
     }
@@ -10654,6 +10660,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     scope.anchorIndex = anchorIndex;
     scope.anchorFingerprint = this._selectionGroundingMessageFingerprint(anchorMessage);
+    this._persist(tabId);
+  }
+
+  _discardProvisionalSelectionGroundingScope(tabId) {
+    const scope = this.selectionGroundingScopes.get(tabId);
+    if (!scope || scope.anchorFingerprint) return;
+    this.selectionGroundingScopes.delete(tabId);
     this._persist(tabId);
   }
 
@@ -13386,6 +13399,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
     } finally {
       this.currentCostState.delete(tabId);
+      this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
@@ -13545,6 +13559,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
       messages.push(enriched);
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+      }
       messages.push({ role: 'assistant', content: msg });
       await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
       onUpdate('warning', { message: msg });
@@ -13603,9 +13620,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
-    if (runOptions?.selectionGroundingScopeStarted === true) {
-      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
-    }
     if (!gateOutcome.proceed) {
       _traceStatus = gateOutcome.reason === 'cost_limit'
         ? 'cost_limit'
@@ -14183,6 +14197,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
     } finally {
       this.currentCostState.delete(tabId);
+      this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
@@ -14269,6 +14284,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
       messages.push(enriched);
+      if (runOptions?.selectionGroundingScopeStarted === true) {
+        this._finalizeSelectionGroundingScope(tabId, messages, enriched);
+      }
       messages.push({ role: 'assistant', content: msg });
       this._persist(tabId);
       onUpdate('warning', { message: msg });
@@ -14293,9 +14311,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
-    if (runOptions?.selectionGroundingScopeStarted === true) {
-      this._finalizeSelectionGroundingScope(tabId, messages, enriched);
-    }
     if (!gateOutcome.proceed) {
       const status = gateOutcome.reason === 'cost_limit'
         ? 'cost_limit'
