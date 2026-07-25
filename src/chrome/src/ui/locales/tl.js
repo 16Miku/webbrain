@@ -664,7 +664,7 @@ export default {
   "sp.mic.permission_denied": "Naka-block ang mikropono — i-right-click ang icon ng WebBrain sa toolbar → Manage extension → Site settings → itakda ang Microphone sa Allow",
   "sp.mic.use_allow_site": "Piliin ang \"Allow while visiting the site\" (hindi \"Allow this time\") para manatili ang pahintulot sa iba’t ibang window",
   "mic.granted": "Binigyan ng permiso!",
-  "mic.denied": "Ang mikropono ay tinanggi.Maaari mong payagan ito sa site settings ng extension.",
+  "mic.denied": "Ang mikropono ay tinanggi. Maaari mong payagan ito sa site settings ng extension.",
   "sp.attach.remove": "Alisin ang attachment",
   "sp.attach.too_large": "Masyadong malaki ang {name} para i-attach (max {max}).",
   "sp.attach.unsupported_type": "Hindi suportadong uri ng attachment ang {name} — mga image, PDF, JSON, TXT, at CSV file lang ang suportado.",

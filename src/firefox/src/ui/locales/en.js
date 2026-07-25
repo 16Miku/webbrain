@@ -428,6 +428,7 @@ export default {
   'ob.btn.enabling': 'Enabling...',
   'ob.btn.done': 'Get Started',
   'ob.btn.skip': 'Skip for now',
+  'ob.btn.start': 'Start',
   'ob.cloud.body': 'WebBrain Cloud is ready with a free daily allowance. Selected Cloud conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
   'ob.cloud.change': 'Change',
   'ob.cloud.using': 'Using WebBrain Cloud. ',

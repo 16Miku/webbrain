@@ -662,7 +662,7 @@ export default {
   "sp.mic.unsupported": "此浏览器不支持语音输入",
   "sp.mic.disabled_settings": "请在设置中启用语音输入",
   "sp.mic.permission_denied": "麦克风已被阻止 — 右键点击工具栏中的 WebBrain 图标 → 管理扩展程序 → 网站设置 → 将麦克风设为允许",
-  "sp.mic.use_allow_site": "请选择”访问此网站时允许”（不是”仅本次允许”），这样权限才能在窗口之间保留",
+  "sp.mic.use_allow_site": "请选择“访问此网站时允许”（不是“仅本次允许”），这样权限才能在窗口之间保留",
   "mic.granted": "权限已授予！",
   "mic.denied": "麦克风已被拒绝。您可以在扩展程序的网站设置中允许它。",
   "sp.attach.remove": "移除附件",

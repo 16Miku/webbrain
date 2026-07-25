@@ -1,6 +1,8 @@
 import { isTerminalLedgerStatus } from '../progress-ledger.js';
 import { isProgressActionAllowed } from '../progress-intent.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { sanitizeText as sanitizeSharedText } from '../text-sanitize.js';
+
+const sanitizeText = (value, max = 240) => sanitizeSharedText(value, max, { collapseWhitespace: true });
 
 const VALID_STATUSES = new Set(['pending', 'acted', 'processed', 'skipped', 'failed']);
 

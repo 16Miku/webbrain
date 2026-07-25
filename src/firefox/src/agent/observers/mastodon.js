@@ -1,4 +1,6 @@
-import { sanitizeText } from '../text-sanitize.js';
+import { sanitizeText as sanitizeSharedText } from '../text-sanitize.js';
+
+const sanitizeText = (value, max = 500) => sanitizeSharedText(value, max, { collapseWhitespace: true });
 
 const MASTODON_APP_PATH_RE = /^\/(?:home|deck|web|notifications|explore|public|public\/local|settings|lists|publish|start|get-started|get-started\/profile|getting-started)(?:\/|$)/i;
 const DOMAIN_RE = /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b/ig;

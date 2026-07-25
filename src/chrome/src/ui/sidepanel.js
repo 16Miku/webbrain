@@ -332,7 +332,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode(t('ob.cloud.using')),
+        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
         changeLink,
         document.createTextNode('.')
       );

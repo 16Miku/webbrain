@@ -49,7 +49,9 @@ const ACTION_ALIASES = new Map([
   ['visit page', 'visit'],
 ]);
 
-import { sanitizeText } from './text-sanitize.js';
+import { sanitizeText as sanitizeSharedText } from './text-sanitize.js';
+
+const sanitizeText = (value, max = 500) => sanitizeSharedText(value, max, { collapseWhitespace: true });
 
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));

@@ -653,7 +653,7 @@ export default {
   'sp.mic.permission_denied': 'Microphone bloqué — autorisez l’accès au microphone pour cette extension dans les permissions de site du navigateur',
   "sp.mic.use_allow_site": "Choisissez « Autoriser pendant la visite du site » (et non « Autoriser cette fois ») pour que l’autorisation reste valable entre les fenêtres",
   "mic.granted": "Permission accordée !",
-  "mic.denied": "Le microphone a été refusé.Vous pouvez l\’autoriser dans les paramètres du site de l\’extension.",
+  "mic.denied": "Le microphone a été refusé. Vous pouvez l\’autoriser dans les paramètres du site de l\’extension.",
   "sp.attach.remove": "Supprimer la pièce jointe",
   "sp.attach.too_large": "{name} est trop volumineux pour être joint (max {max}).",
   "sp.attach.unsupported_type": "{name} n’est pas un type de pièce jointe pris en charge — seuls les images, PDF, JSON, TXT et CSV sont pris en charge.",
