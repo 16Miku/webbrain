@@ -3,18 +3,9 @@
  * All skill-controlled HTML is escaped before fixed markup is introduced.
  */
 
+import { escapeHtml } from './utils.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { renderMarkdownHeadings } from './markdown-render.js';
-
-function escapeHtml(value) {
-  return String(value == null ? '' : value).replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[character]));
-}
 
 function renderEmphasis(text) {
   return text

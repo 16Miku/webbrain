@@ -74,6 +74,8 @@ export default {
   'sp.mic.disabled_settings': "ورودی صوتی را در تنظیمات فعال کنید",
   'sp.mic.permission_denied': "میکروفون مسدود شده - روی نماد WebBrain در نوار ابزار کلیک راست کنید → مدیریت برنامه افزودنی → تنظیمات سایت → میکروفون را روی Allow تنظیم کنید",
   'sp.mic.use_allow_site': "لطفاً \"مجاز در هنگام بازدید از سایت\" (نه \"مجاز این بار\") را انتخاب کنید تا مجوز در تمام پنجره ها باقی بماند",
+  'mic.granted': 'مجوز اعطا شد!',
+  'mic.denied': 'میکروفون رد شد. شما می توانید آن را در تنظیمات سایت افزونه اجازه دهید.',
   'sp.attach.remove': "حذف پیوست",
   'sp.attach.too_large': "{name} برای اتصال بیش از حد بزرگ است (حداکثر {max}).",
   'sp.attach.unsupported_type': "{name} یک نوع پیوست پشتیبانی نمی‌شود - فقط تصاویر، فایل‌های PDF، JSON، TXT و فایل‌های CSV پشتیبانی می‌شوند.",
@@ -428,6 +430,10 @@ export default {
   'ob.btn.enabling': "فعال کردن...",
   'ob.btn.done': "شروع کنید",
   'ob.btn.skip': "فعلا رد شوید",
+  'ob.btn.start': 'شروع',
+  'ob.cloud.body': 'WebBrain Cloud با یک بدله روزانه رایگان آماده است. مکالمات Cloud انتخابی ممکن است حفظ شوند و برای بهبود WebBrain استفاده شوند در حالی که Help Improve WebBrain به طور پیش فرض روشن است. شما می توانید آن را در Settings → General خاموش کنید.',
+  'ob.cloud.change': 'تغییر',
+  'ob.cloud.using': 'استفاده از WebBrain Cloud.',
 
   // --- Settings ----------------------------------------------------------
   'st.title': "تنظیمات WebBrain",

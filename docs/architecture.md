@@ -1,6 +1,6 @@
 # WebBrain Architecture
 
-> Version 25.7.12
+> Version 25.8.5
 
 ## Overview
 

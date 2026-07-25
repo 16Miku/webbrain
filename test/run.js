@@ -14033,8 +14033,10 @@ test('sidepanel escapes dynamic system-message interpolation before raw HTML ins
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    assert.match(panel, /function escapeHtml\(str\) \{[\s\S]*?String\(str == null \? '' : str\)/, `${label}: escapeHtml should normalize nullish values`);
-    assert.equal(panel.includes("replace(/[&<>\"']/g"), true, `${label}: escapeHtml should cover attribute-breaking quotes as well as HTML tags`);
+    const utils = fs.readFileSync(path.join(ROOT, path.dirname(panelRel), 'utils.js'), 'utf8');
+    assert.match(panel, /import \{ escapeHtml \} from '\.\/utils\.js';/, `${label}: sidepanel should use the shared escapeHtml`);
+    assert.match(utils, /export function escapeHtml\(s\) \{[\s\S]*?String\(s == null \? '' : s\)/, `${label}: escapeHtml should normalize nullish values`);
+    assert.equal(utils.includes("replace(/[&<>\"']/g"), true, `${label}: escapeHtml should cover attribute-breaking quotes as well as HTML tags`);
     assert.match(
       panel,
       /function tSystemHtml\(key, params\) \{[\s\S]*?Object\.entries\(params \|\| \{\}\)[\s\S]*?safeParams\[name\] = escapeHtml\(value\);[\s\S]*?return t\(key, safeParams\);[\s\S]*?\}/,

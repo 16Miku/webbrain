@@ -55,12 +55,6 @@ export class AwsBedrockProvider extends BaseLLMProvider {
     return { host, url: `https://${host}${path}`, path };
   }
 
-  _messagesContainImage(messages) {
-    return messages.some((msg) => Array.isArray(msg?.content) && msg.content.some((block) => {
-      return block && (block.type === 'image_url' || block.type === 'image');
-    }));
-  }
-
   _toBedrockPayload(openAiMessages, options = {}) {
     if (this._messagesContainImage(openAiMessages)) {
       throw new Error('Bedrock Converse provider does not support image inputs yet. Disable screenshots or use a vision-capable provider.');

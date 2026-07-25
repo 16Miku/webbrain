@@ -13,6 +13,7 @@ import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
+import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -316,7 +317,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     cloudReady = true;
     localModelChoices = [];
     if (providerBody) {
-      providerBody.textContent = 'WebBrain Cloud is ready with a free daily allowance. Selected Cloud conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.';
+      providerBody.textContent = t('ob.cloud.body');
     }
     if (providerStatus) {
       providerStatus.textContent = '';
@@ -324,21 +325,21 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
       changeLink.href = chrome.runtime.getURL('src/ui/settings.html#providers');
       changeLink.target = '_blank';
       changeLink.rel = 'noopener noreferrer';
-      changeLink.textContent = 'Change';
+      changeLink.textContent = t('ob.cloud.change');
       changeLink.addEventListener('click', async (event) => {
         event.preventDefault();
         openProviderSettings();
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode('Using WebBrain Cloud. '),
+        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
         changeLink,
         document.createTextNode('.')
       );
     }
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
-    settingsBtn.textContent = 'Start';
+    settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
   }
 
@@ -9265,16 +9266,6 @@ function bindMessageCopyButton(btn) {
       setTimeout(() => { btn.textContent = t('sp.copy'); btn.classList.remove('copied'); }, 1500);
     });
   });
-}
-
-function escapeHtml(str) {
-  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
 }
 
 function systemHtml(html) {

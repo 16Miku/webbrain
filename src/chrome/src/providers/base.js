@@ -60,6 +60,12 @@ export class BaseLLMProvider {
     return error;
   }
 
+  _messagesContainImage(messages) {
+    return messages.some((msg) => Array.isArray(msg?.content) && msg.content.some((block) => {
+      return block && (block.type === 'image_url' || block.type === 'image');
+    }));
+  }
+
   /**
    * Check if this provider supports tool/function calling.
    */

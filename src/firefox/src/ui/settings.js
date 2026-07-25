@@ -3,6 +3,7 @@
  */
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
+import { escapeHtml } from './utils.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
@@ -610,12 +611,6 @@ if (globalThis.browser?.storage?.onChanged) {
       if (warning) warning.style.display = askBefore ? 'none' : '';
     }
   });
-}
-
-function escapeHtml(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
 }
 
 // --- Skills ---

@@ -1,3 +1,5 @@
+import { escapeHtml } from './utils.js';
+
 export const TAB_CHAT_PREFIX = 'tabChat:';
 export const TAB_CHAT_PERSIST_BUDGET = 7 * 1024 * 1024;
 const TAB_CHAT_QUOTA_RETRY_BUDGET = 256 * 1024;
@@ -9,13 +11,6 @@ export function stripImagePayloadsForPersist(html) {
     /data:image\/[a-z0-9.+-]+(?:;[^,]*)?;base64,[a-z0-9+/=]+/gi,
     TRANSPARENT_PIXEL_PNG_DATA_URL,
   );
-}
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 function findHtmlTagEnd(source, start) {
