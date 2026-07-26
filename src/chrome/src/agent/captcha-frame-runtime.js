@@ -644,7 +644,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       return false;
     }
   };
-  const challengeDialogRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+  const challengeDialogRe = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {

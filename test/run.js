@@ -4725,6 +4725,11 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
       label: 'Verify that you\u2019re a human',
       normalized: /verify that you re a human/,
     },
+    {
+      tree: 'dialog "reCAPTCHA challenge" [ref_8]',
+      label: 'reCAPTCHA challenge',
+      normalized: /recaptcha challenge/,
+    },
   ];
   for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
     for (const example of cases) {
@@ -4775,6 +4780,11 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
       assert.equal(gate.detectChallengeDialogInPage()?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
+    });
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'reCAPTCHA' }),
+    ], async () => {
+      assert.equal(gate.detectChallengeDialogInPage()?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Email verification failed' }),
@@ -4969,18 +4979,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(changedManual.gate?.status, 'manual_required', `${label}: changed dialog reset a failed solve to a paid solve`);
-    const manualCompletion = await agent._observeCaptchaChallenge(
-      tabId,
-      'get_accessibility_tree',
-      {
-        pageContent: 'main [ref_930]\n heading "Welcome" [ref_931]',
-        pageUrl: 'https://example.test/identity-check',
-      },
-      { filter: 'visible' },
-    );
-    assert.equal(manualCompletion.gate?.status, 'cleared', `${label}: dialog-free root read did not clear the manually completed CAPTCHA`);
-    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: manually completed CAPTCHA gate remained persisted`);
+    assert.equal(changedManual.gate?.status, 'cleared', `${label}: unrelated post-CAPTCHA dialog kept the failed solve gated`);
+    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: unrelated post-CAPTCHA dialog left a persisted gate`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {

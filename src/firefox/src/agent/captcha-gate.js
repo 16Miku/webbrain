@@ -1,6 +1,6 @@
-const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+const CHALLENGE_DIALOG_RE = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
 const CHALLENGE_FAILURE_RE = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
-const CHALLENGE_CONTEXT_RE = /\b(?:captcha|human|robot|challenge)\b/i;
+const CHALLENGE_CONTEXT_RE = /\b(?:(?:re|h|fun)?captcha|human|robot|challenge)\b/i;
 
 function matchesChallengeLabel(value, allowGenericFailure = false) {
   const text = String(value || '');
@@ -94,9 +94,9 @@ export function detectChallengeDialogInPage(options = null) {
       ? { challenge: null, frameContext: { frameUrl, frameName, childFrames: [] } }
       : null;
   }
-  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+  const challengeRe = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
   const challengeFailureRe = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
-  const challengeContextRe = /\b(?:captcha|human|robot|challenge)\b/i;
+  const challengeContextRe = /\b(?:(?:re|h|fun)?captcha|human|robot|challenge)\b/i;
   const matchesChallenge = value => {
     const text = String(value || '');
     return challengeRe.test(text)
