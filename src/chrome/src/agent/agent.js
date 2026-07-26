@@ -2776,7 +2776,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: null, loopCheck: { kind: 'none' } };
     }
 
-    const challenge = detectChallengeDialog(toolResult.pageContent);
+    const activeGate = this._captchaGateStates.get(tabId);
+    let challenge = detectChallengeDialog(toolResult.pageContent);
+    const unresolvedDialogSurface = /^(?:\s*)(?:dialog|alertdialog)(?=\s|$)/im
+      .test(toolResult.pageContent)
+      || toolResult.pageGate?.surface === 'dialog';
+    if (!challenge && activeGate && unresolvedDialogSurface) {
+      const priorLabel = activeGate.publicGate?.challengeDialog?.label;
+      challenge = {
+        label: String(toolResult.pageGate?.label || priorLabel || 'Verification dialog'),
+        normalizedLabel: '',
+      };
+    }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
@@ -2809,7 +2820,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           dialogLabel: challenge?.normalizedLabel || '',
         })
       : { kind: 'none' };
-    const activeGate = this._captchaGateStates.get(tabId);
     if (!challenge) {
       if (activeGate && authoritativeRootRead) {
         const clearedGate = {
@@ -2830,11 +2840,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const key = captchaChallengeKey(pageUrl, challenge.normalizedLabel);
     const existing = activeGate;
-    if (existing?.key === key && existing?.status === 'verification_pending') {
+    if (existing?.status === 'manual_required') {
+      const manualGate = {
+        ...existing.publicGate,
+        status: 'manual_required',
+        challengeDialog: { label: challenge.label },
+      };
+      this._captchaGateStates.set(tabId, {
+        ...existing,
+        status: 'manual_required',
+        publicGate: manualGate,
+      });
+      toolResult.captchaGate = manualGate;
+      return { gate: manualGate, loopCheck };
+    }
+    if (existing?.status === 'verification_pending') {
       if (!authoritativeRootRead) {
         const pendingGate = {
           ...existing.publicGate,
           status: 'verification_pending',
+          challengeDialog: { label: challenge.label },
           verificationReadRequired: true,
         };
         this._captchaGateStates.set(tabId, {
@@ -2853,6 +2878,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const pendingGate = {
           ...existing.publicGate,
           status: 'verification_pending',
+          challengeDialog: { label: challenge.label },
           verificationAttempts,
           verificationRetryRequired: true,
         };
@@ -2869,6 +2895,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const manualGate = {
         ...existing.publicGate,
         status: 'manual_required',
+        challengeDialog: { label: challenge.label },
         solveFailedToClearChallenge: true,
         verificationAttempts,
       };
@@ -2910,15 +2937,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && frame?.visible === true
       ))
       .map(frame => frame.vendor))];
-    const selectedCorrelated = detection?.selected?.visible === true
-      || (
-        detection?.selected?.dialogAssociated === true
-        && detection?.selected?.frameVisible !== false
-      )
-      || (
-        detection?.selected?.challengeFrame === true
-        && detection?.selected?.frameVisible !== false
-      );
+    const selectedCorrelated = detection?.selected?.dialogAssociated === true
+      && detection?.selected?.frameVisible !== false;
     const supported = this.captchaSolverEnabled
       && !detectionFailed
       && !detection?.error

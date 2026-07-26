@@ -644,7 +644,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       return false;
     }
   };
-  const challengeDialogRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|â€™)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+  const challengeDialogRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {

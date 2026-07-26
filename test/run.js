@@ -4840,26 +4840,37 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
     assert.deepEqual(executed, ['solve_captcha'], `${label}: second paid solve dispatched`);
     assert.match(String(retryMessages[0]?.content), /do not submit, dismiss, or call solve_captcha again/i);
 
-    const persistentResult = {
-      pageContent: 'dialog [ref_900]\n heading "Security verification" [ref_901]\n button "Dismiss" [ref_902]',
-      pageUrl: 'https://example.test/signup',
+    const changedChallengeResult = {
+      pageContent: 'dialog "Verification failed" [ref_900]\n button "Dismiss" [ref_902]',
+      pageUrl: 'https://example.test/signup?verification=failed',
     };
     const firstPersistent = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
-      persistentResult,
-      {},
+      changedChallengeResult,
+      { filter: 'visible' },
     );
-    assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: first post-solve read did not allow verification latency`);
+    assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: changed challenge key reset the attempted solve`);
     assert.equal(firstPersistent.gate?.verificationRetryRequired, true, `${label}: bounded verification retry was not requested`);
+    assert.equal(agent._captchaGateStates.get(tabId)?.key, 'https://example.test/signup\nsecurity verification', `${label}: changed challenge key replaced the attempted-solve identity`);
     const persistent = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
-      persistentResult,
+      changedChallengeResult,
       { filter: 'visible' },
     );
     assert.equal(persistent.gate?.status, 'manual_required', `${label}: dialog surviving the bounded retry offered another solve`);
     assert.equal(persistent.gate?.solveFailedToClearChallenge, true, `${label}: persistent-dialog reason missing`);
+    const changedManual = await agent._observeCaptchaChallenge(
+      tabId,
+      'get_accessibility_tree',
+      {
+        pageContent: 'dialog "Identity confirmation" [ref_910]\n button "Continue" [ref_911]',
+        pageUrl: 'https://example.test/identity-check',
+      },
+      { filter: 'visible' },
+    );
+    assert.equal(changedManual.gate?.status, 'manual_required', `${label}: changed dialog reset a failed solve to a paid solve`);
 
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
@@ -52356,10 +52367,13 @@ async function detectCaptchaOnFakePage(build, nodes) {
 test('challenge-dialog routing detects supported widgets and diagnoses unsupported Arkose frames', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const supportedNodes = [
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'SUPPORTED_KEY' }),
-      captchaEl('iframe', {
-        src: 'https://www.google.com/recaptcha/api2/anchor?k=SUPPORTED_KEY&secret=must-not-persist',
-      }),
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'SUPPORTED_KEY' }),
+        captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/api2/anchor?k=SUPPORTED_KEY&secret=must-not-persist',
+        }),
+      ]),
       captchaEl('iframe', {
         src: 'https://client-api.arkoselabs.com/fc/gc/?token=hidden-background-widget',
         hidden: true,
@@ -52392,9 +52406,9 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       }),
       captchaEl('div', {
         role: 'dialog',
-        innerText: 'Security verification',
+        innerText: 'Verify that you\u2019re human',
       }, [
-        captchaEl('h2', { textContent: 'Security verification' }),
+        captchaEl('h2', { textContent: 'Verify that you\u2019re human' }),
         captchaEl('div', {
           class: 'g-recaptcha g-recaptcha-v3',
           'data-sitekey': 'DIALOG_V3_KEY',
@@ -52411,7 +52425,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       agent.captchaSolverEnabled = true;
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
-        pageContent: 'dialog "Security verification" [ref_150]\n button "Dismiss" [ref_151]',
+        pageContent: 'dialog "Verify that you\u2019re human" [ref_150]\n button "Dismiss" [ref_151]',
       });
       assert.equal(observed.gate?.status, 'solve_required', `${build}: invisible v3 widget inside the active dialog was not routable`);
       assert.equal(observed.gate?.selectedType, 'recaptcha_v3_enterprise', `${build}: dialog-associated v3 type was lost`);
@@ -52437,6 +52451,26 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       });
       assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated global v3 loader was selected for a passkey dialog`);
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
+    });
+
+    const unrelatedVisibleNodes = [
+      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' }),
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification\nUse your passkey',
+      }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+      ]),
+    ];
+    await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent._currentUrl = async () => 'https://example.test/signup';
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
+      });
+      assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated visible reCAPTCHA was selected for a passkey dialog`);
+      assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: visible-only candidate did not fail closed`);
     });
 
     const arkoseNodes = [
@@ -52476,11 +52510,11 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
         innerText: `${challengeLabel}\nDismiss`,
       }, [
         captchaEl('h2', { textContent: challengeLabel }),
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'PREFLIGHT_KEY' }),
+        captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/api2/anchor?k=PREFLIGHT_KEY',
+        }),
       ]),
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'PREFLIGHT_KEY' }),
-      captchaEl('iframe', {
-        src: 'https://www.google.com/recaptcha/api2/anchor?k=PREFLIGHT_KEY',
-      }),
     ];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
