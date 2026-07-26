@@ -25502,6 +25502,76 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
   }
 });
 
+test('Chrome full-page screenshot paths reject blank background captures after retries', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/background',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'Ymxhbms=' };
+    };
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
+
+    const agent = new AgentCh({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 200,
+      visibleTextChars: 100,
+      domNodes: 50,
+      imageCount: 0,
+      scrollHeight: 1200,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const userResult = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(userResult, {
+      ok: false,
+      error: 'Background full-page screenshot remained blank after retries',
+    });
+
+    const toolResult = await agent.executeTool(42, 'full_page_screenshot', {});
+    assert.deepEqual(toolResult, {
+      success: false,
+      error: 'Full page screenshot failed: Background full-page screenshot remained blank after retries',
+    });
+    assert.equal(captureCalls, 4, 'each full-page path should retry once before rejecting the blank frame');
+  } finally {
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('user full-page screenshots apply adapter capture policy without LLM adapter injection', async () => {
   const originalChrome = globalThis.chrome;
   const originalAttach = cdpClientCh.attach;

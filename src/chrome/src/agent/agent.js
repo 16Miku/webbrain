@@ -777,19 +777,42 @@ export class Agent extends LoopDetector {
     }
   }
 
+  async _captureFullPageWithBlankRetry(tabId, capturePolicy) {
+    const probe = await this._captureViewportProbe(tabId);
+    const captureOnce = async () => {
+      const capture = await this._withIndicatorsHidden(tabId, () =>
+        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
+      );
+      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      if (!imageData) return null;
+      return {
+        dataUrl: `data:image/png;base64,${imageData}`,
+        capture,
+      };
+    };
+    return this._retryBlankScreenshotCapture(
+      await captureOnce(),
+      captureOnce,
+      { probe },
+    );
+  }
+
   async captureFullPageScreenshotForUser(tabId) {
     if (!tabId) return { ok: false, error: 'No tab ID' };
     try {
       const capturePolicy = await this._getFullPageCapturePolicy(tabId);
       await cdpClient.attach(tabId);
       await this._preparePageForCapture(tabId);
-      const capture = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-      );
-      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+      const capture = captured?.capture;
       const warning = typeof capture === 'object' ? capture?.warning || null : null;
-      if (!imageData) return { ok: false, error: 'Full-page screenshot returned no image data' };
-      return { ok: true, dataUrl: `data:image/png;base64,${imageData}`, warning };
+      if (!captured?.dataUrl) {
+        return { ok: false, error: 'Full-page screenshot returned no image data' };
+      }
+      if (captured?.blankFrameRetry?.finalBlank) {
+        return { ok: false, error: 'Background full-page screenshot remained blank after retries' };
+      }
+      return { ok: true, dataUrl: captured.dataUrl, warning };
     } catch (e) {
       return { ok: false, error: e?.message || String(e) };
     }
@@ -15051,14 +15074,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const capturePolicy = await this._getFullPageCapturePolicy(tabId);
         await cdpClient.attach(tabId);
         await this._preparePageForCapture(tabId);
-        const capture = await this._withIndicatorsHidden(tabId, () =>
-          cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-        );
-        const imageData = typeof capture === 'string' ? capture : capture?.data;
+        const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+        const capture = captured?.capture;
         const captureWarning = typeof capture === 'object' ? capture?.warning || null : null;
         const captureBounds = typeof capture === 'object' ? capture?.captureBounds || null : null;
-        if (!imageData) throw new Error('Full-page screenshot returned no image data');
-        const rawUrl = `data:image/png;base64,${imageData}`;
+        if (!captured?.dataUrl) throw new Error('Full-page screenshot returned no image data');
+        if (captured?.blankFrameRetry?.finalBlank) {
+          throw new Error('Background full-page screenshot remained blank after retries');
+        }
+        const rawUrl = captured.dataUrl;
         const warningNote = captureWarning ? `\nWarning: ${captureWarning}` : '';
 
         // If the caller asked to save, do it with the RAW (uncompressed,
