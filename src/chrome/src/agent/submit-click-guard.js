@@ -8,8 +8,9 @@ const SUBMIT_LIKE_CLICK_RE = /^(create|save|submit|add|post|publish|send|confirm
 /**
  * Record the first submit-like text click and reject a rapid duplicate on the
  * same tab and URL. Returns the tool result to emit when blocked, otherwise
- * null. The URL callback is lazy so ordinary clicks and explicit retries do
- * not perform a tab lookup.
+ * null. The URL callback is lazy so ordinary clicks do not perform a tab
+ * lookup. An `_allowResubmit` retry is allowed through but re-recorded, so a
+ * further rapid duplicate needs its own acknowledgement.
  */
 export async function guardRecentSubmitClick(
   recentSubmitClicks,
@@ -18,7 +19,7 @@ export async function guardRecentSubmitClick(
   getCurrentUrl,
   now = Date.now,
 ) {
-  if (!args?.text || args._allowResubmit) return null;
+  if (!args?.text) return null;
 
   const rawText = String(args.text).trim();
   if (!SUBMIT_LIKE_CLICK_RE.test(rawText)) return null;
@@ -33,6 +34,14 @@ export async function guardRecentSubmitClick(
   const timestamp = now();
   const fresh = entries.filter(entry => timestamp - entry.ts < SUBMIT_CLICK_WINDOW_MS);
   const match = fresh.find(entry => entry.key === key);
+
+  if (match && args._allowResubmit) {
+    match.ts = timestamp;
+    match.url = currentUrl;
+    match.text = rawText;
+    recentSubmitClicks.set(tabId, fresh);
+    return null;
+  }
 
   if (match) {
     return {

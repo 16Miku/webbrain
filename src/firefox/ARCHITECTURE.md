@@ -193,8 +193,10 @@ System prompt has a new "MODALS & DIALOGS" section describing the intended flow 
 Submit-like text clicks use the same browser-free guard as Chrome. The first
 click is recorded by tab, normalized label, and current URL; another matching
 click within 45 seconds is blocked unless `_allowResubmit` explicitly
-acknowledges the retry. Navigation, expired entries, ordinary labels, and
-validation-rejected submits remain eligible for a fresh click.
+acknowledges the retry. An acknowledged retry re-arms the window, so a further
+rapid duplicate needs its own acknowledgement. Navigation, expired entries,
+ordinary labels, and validation-rejected submits remain eligible for a fresh
+click.
 
 ---
 

@@ -34089,7 +34089,7 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
     );
     assert.equal(recentClicks.get(tabId).length, 1, 'expired submit-click entries were not pruned');
 
-    const readsBeforeIgnoredCalls = urlReads;
+    now += 30_000;
     assert.equal(
       await guardModule.guardRecentSubmitClick(
         recentClicks,
@@ -34102,6 +34102,28 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       'explicit resubmit acknowledgement should bypass the guard',
     );
     assert.equal(
+      recentClicks.get(tabId)[0].ts,
+      now,
+      'an acknowledged resubmit should re-record the entry',
+    );
+
+    now += 30_000;
+    const thirdRapidClick = await guardModule.guardRecentSubmitClick(
+      recentClicks,
+      tabId,
+      { text: 'Save changes' },
+      getCurrentUrl,
+      () => now,
+    );
+    assert.equal(
+      thirdRapidClick.blockedDuplicateSubmit,
+      true,
+      'a rapid duplicate after an acknowledged resubmit should be blocked by the re-armed window',
+    );
+    assert.equal(thirdRapidClick.secondsSincePrevious, 30);
+
+    const readsBeforeIgnoredCalls = urlReads;
+    assert.equal(
       await guardModule.guardRecentSubmitClick(
         recentClicks,
         tabId,
@@ -34112,7 +34134,7 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       null,
       'non-submit-like labels should bypass the guard',
     );
-    assert.equal(urlReads, readsBeforeIgnoredCalls, 'bypassed clicks should not query the tab URL');
+    assert.equal(urlReads, readsBeforeIgnoredCalls, 'non-submit-like clicks should not query the tab URL');
 
     const failedLookupClicks = new Map();
     const failingUrlLookup = async () => {
