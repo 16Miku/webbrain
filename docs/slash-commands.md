@@ -31,6 +31,7 @@ for its available flags.
 | `/workflow --export <id>` | Download a sanitized portable `webbrain-workflow/1` JSON file |
 | `/workflow --import --file` | Import a portable workflow file as a new local saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** See [below](#allow-api). |
+| `/foreground [prompt]` | Run one local task in the foreground for visual compatibility |
 | `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting. |
 | `/compact` | Force context compaction for the current conversation |
 | `/verbose` | Toggle verbose/compact tool display |
@@ -63,6 +64,20 @@ navigate it back to the watched URL, and the helper tab is closed when the watch
 ends. Transient poll failures are tolerated; three consecutive failures stop the
 watch.
 
+## `/foreground`
+
+Regular local runs stay pinned to their original tab and operate without
+activating that tab or focusing its window. Chrome captures through CDP with
+focus emulation scoped to the run; Firefox captures the target tab directly
+with `tabs.captureTab`. If Chrome repeatedly returns a blank background frame,
+WebBrain discards it and continues from DOM and accessibility data.
+
+Use `/foreground <prompt>` as a one-run compatibility escape hatch for a site
+whose visual state does not render correctly in the background. It restores tab
+activation and window focus for that run. The setting is not persistent, and
+managed cloud runs retain their existing foreground behavior because their
+browser is dedicated to the task.
+
 ## `/allow-api`
 
 `/allow-api` lifts the UI-first restriction for the current conversation so the
@@ -89,10 +104,11 @@ immediately before and after the run (Chrome and Firefox). For example,
 `checkout-before.png` and `checkout-after.png`; without `--save-as`, WebBrain
 uses timestamped filenames.
 
-If the run opens another tab, WebBrain reactivates the originating run tab
-before saving the after screenshot. If the recording or initial screenshot
-cannot be started and saved, the run is not sent. Standalone `/record` and
-`/screenshot` keep their existing behavior.
+For the Chrome diagnostic suffix, WebBrain may reactivate the originating run
+tab before saving the after screenshot. Firefox captures that tab directly
+without activating it. If the recording or initial screenshot cannot be
+started and saved, the run is not sent. Standalone `/record` and `/screenshot`
+keep their existing behavior.
 
 ## Exports, snapshots, and workflows
 

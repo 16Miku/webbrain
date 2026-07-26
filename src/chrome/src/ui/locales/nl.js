@@ -125,6 +125,7 @@ export default {
   'sp.slash.save_workflow': 'Sla de laatste succesvolle opgenomen uitvoering op',
   'sp.slash.delete_workflow': 'Verwijder een opgeslagen workflow op ID',
   'sp.slash.allow_api': 'Sta API-wijzigingen toe voor dit gesprek',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Schakel machtigingsvragen globaal uit',
   'sp.slash.compact': 'Compact deze gesprekscontext',
   'sp.slash.verbose': 'Schakel uitvoerige of compacte toolweergave',

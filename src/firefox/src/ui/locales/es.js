@@ -567,6 +567,7 @@ export default {
   'sp.slash.show_scratchpad': 'Mostrar el bloc de notas actual',
   'sp.slash.clear_scratchpad': 'Borrar el bloc de notas actual',
   'sp.slash.allow_api': 'Permitir mutaciones de API en esta conversación',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Desactivar las solicitudes de permiso globalmente',
   'sp.slash.compact': 'Compactar el contexto de esta conversación',
   'sp.slash.verbose': 'Alternar entre vista de herramientas detallada o compacta',

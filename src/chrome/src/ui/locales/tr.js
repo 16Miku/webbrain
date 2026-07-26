@@ -615,6 +615,7 @@ export default {
   'sp.slash.show_scratchpad': 'Mevcut not defterini göster',
   'sp.slash.clear_scratchpad': 'Geçerli not defterini temizle',
   'sp.slash.allow_api': 'Bu konuşma için API değişikliklerine izin ver',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'İzin istemlerini küresel olarak devre dışı bırak',
   'sp.slash.compact': 'Bu konuşmanın bağlamını sıkıştır',
   'sp.slash.verbose': 'Araç görünümünü ayrıntılı ve kompakt arasında geçiş yap',

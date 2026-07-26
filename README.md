@@ -212,10 +212,11 @@ they diverge.
 Chrome DevTools Protocol via `chrome.debugger`, so the Firefox build has no
 shadow-DOM piercing, no real trusted mouse events (some React/Vue handlers won't
 fire), no closed-shadow-root traversal, no `resolveSelector` retry budget, no
-SPA-navigation-aware retry, and no CDP screenshots (it falls back to
-`tabs.captureVisibleTab`, active tabs only). Site adapters, vision detection,
-loop detection, the auto-screenshot loop, and the Compact prompt/tool set *are*
-mirrored to Firefox. Some single-page apps may also fail to trigger
+SPA-navigation-aware retry, and no CDP screenshots. It uses `tabs.captureTab`
+for viewport screenshots, including inactive run tabs, but still cannot provide
+Chrome's pixel-perfect or full-page CDP capture. Site adapters, vision
+detection, loop detection, the auto-screenshot loop, and the Compact prompt/tool
+set *are* mirrored to Firefox. Some single-page apps may also fail to trigger
 content-script re-injection after client-side navigation.
 
 ## Contributing

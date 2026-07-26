@@ -625,6 +625,7 @@ const SLASH_COMMANDS = [
     ],
   },
   { value: '/allow-api', usage: '/allow-api [prompt]', descriptionKey: 'sp.slash.allow_api', action: 'enable', acceptsPayload: true },
+  { value: '/foreground', usage: '/foreground [prompt]', descriptionKey: 'sp.slash.foreground', action: 'enable', acceptsPayload: true },
   { value: '/dangerously-skip-permissions', usage: '/dangerously-skip-permissions [prompt]', descriptionKey: 'sp.slash.dangerously_skip_permissions', action: 'disable', acceptsPayload: true, outOfBand: true },
   { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
   { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
@@ -3732,6 +3733,7 @@ async function adoptRestoredRunState(tabId, state) {
       tabId,
       requestId,
       mode,
+      foreground: runUi.foreground === true,
     }, {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
@@ -3777,6 +3779,7 @@ async function applyActiveRunState(numericTabId, state) {
       || addMessage('assistant', '');
     currentAssistantEl = runAssistantEl;
     runAssistantEl.dataset.runRequestId = String(runUi.requestId);
+    runAssistantEl.dataset.retryForeground = runUi.foreground === true ? 'true' : 'false';
     if (runUi.runId) runAssistantEl.dataset.runId = String(runUi.runId);
     const lastRenderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     const replayEvents = Array.isArray(runUi.events) ? runUi.events : [];
@@ -4094,7 +4097,9 @@ function rebindContinueButtons() {
   document.querySelectorAll('.continue-btn').forEach(btn => {
     if (btn.dataset.bound) return;
     btn.dataset.bound = 'true';
-    btn.addEventListener('click', continueAgent);
+    btn.addEventListener('click', () => continueAgent({
+      foreground: btn.dataset.foreground === 'true',
+    }));
   });
 }
 
@@ -5074,7 +5079,10 @@ function resumeAfterSubscription(btn) {
     ? btn.dataset.resumeMode
     : agentMode;
   setMode(mode);
-  void continueAgent({ mode });
+  void continueAgent({
+    mode,
+    foreground: btn?.dataset?.resumeForeground === 'true',
+  });
 }
 
 function rebindSubscribeButtons() {
@@ -5113,6 +5121,7 @@ function retryPayloadFromButton(btn) {
     text,
     mode,
     apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
+    foreground: btn.dataset.retryForeground === 'true',
     ...(btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
       ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
       : {}),
@@ -5147,6 +5156,7 @@ function bindErrorRetryButton(btn) {
       __retry: {
         mode: payload.mode,
         apiMutationsAllowed: payload.apiMutationsAllowed,
+        foreground: payload.foreground,
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         attachments: payload.attachments,
       },
@@ -5185,6 +5195,7 @@ function retryPayloadForRunAssistant(assistantEl) {
       ? assistantEl.dataset.runMode
       : agentMode,
     apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
+    foreground: assistantEl?.dataset.retryForeground === 'true',
     ...(assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
       ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
       : {}),
@@ -6416,6 +6427,10 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return payload;
   }
 
+  if (command.value === '/foreground') {
+    return payload;
+  }
+
   if (command.value === '/dangerously-skip-permissions') {
     await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: false }).catch(() => {});
     askBeforeConsequential = false;
@@ -6845,6 +6860,9 @@ async function sendMessage(extraChatParams = {}) {
   const apiMutationsAllowedForSend = retryOptions
     ? !!retryOptions.apiMutationsAllowed
     : isApiMutationsAllowedForTab(tabId) || /^\/allow-api\b/i.test(text);
+  const foregroundForSend = retryOptions
+    ? !!retryOptions.foreground
+    : /^\/foreground\b/i.test(text);
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   hideSlashCommandAutocomplete();
@@ -6908,6 +6926,7 @@ async function sendMessage(extraChatParams = {}) {
     text,
     mode: modeForSend,
     apiMutationsAllowed: apiMutationsAllowedForSend,
+    foreground: foregroundForSend,
     ...(sourceGrounding ? { sourceGrounding } : {}),
     attachments: attachmentsForSend,
   };
@@ -6927,6 +6946,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
     assistantEl.dataset.retryApiMutationsAllowed = apiMutationsAllowedForSend ? 'true' : 'false';
+    assistantEl.dataset.retryForeground = foregroundForSend ? 'true' : 'false';
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     assistantEl.dataset.lastRenderedSeq = '0';
@@ -6952,6 +6972,7 @@ async function sendMessage(extraChatParams = {}) {
       locale: getLocale(),
       intentFailureMessage: t('sp.plan.intent_unavailable'),
       apiMutationsAllowed: apiMutationsAllowedForSend,
+      foreground: foregroundForSend,
       ...(runCaptureDirective ? {
         runCapture: {
           kind: runCaptureDirective.kind,
@@ -7509,7 +7530,11 @@ function handleAgentUpdateMessage(msg) {
       // already nulled out currentAssistantEl. The continue bar attaches to
       // the messages container, not to a specific message, so it's fine to
       // show unconditionally.
-      showContinueButton();
+      {
+        const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
+          || retryPayloadForRunAssistant(eventAssistantEl);
+        showContinueButton({ foreground: retryPayload?.foreground === true });
+      }
       break;
 
     case 'warning':
@@ -8625,6 +8650,9 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
     ? resumeMode
     : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
+  resumeBtn.dataset.resumeForeground = textEl.closest('.message.assistant')?.dataset.retryForeground === 'true'
+    ? 'true'
+    : 'false';
   resumeBtn.dataset.bound = 'true';
   resumeBtn.addEventListener('click', () => resumeAfterSubscription(resumeBtn));
   actions.appendChild(resumeBtn);
@@ -8680,6 +8708,10 @@ function renderCostAllowanceError(textEl, content, resumeMode = '', resumeOption
     continueBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
       ? resumeMode
       : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
+    continueBtn.dataset.resumeForeground = resumeOptions?.retryPayload?.foreground === true
+      || textEl.closest('.message.assistant')?.dataset.retryForeground === 'true'
+      ? 'true'
+      : 'false';
     continueBtn.hidden = true;
     continueBtn.dataset.bound = 'true';
     continueBtn.addEventListener('click', () => resumeAfterSubscription(continueBtn));
@@ -8708,6 +8740,7 @@ function configureRetryButton(btn, retryPayload) {
   btn.dataset.retryText = String(retryPayload.text || '');
   btn.dataset.retryMode = retryPayload.mode || 'ask';
   btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
+  btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
   btn.dataset.retrySourceGrounding = retryPayload.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
     ? SELECTION_ONLY_SOURCE_GROUNDING
     : '';
@@ -8847,7 +8880,7 @@ function displayMaxAgentSteps(value) {
   return Number.isFinite(n) && n > 0 ? String(Math.floor(n)) : '130';
 }
 
-function showContinueButton() {
+function showContinueButton(options = {}) {
   // Remove any existing continue button
   document.querySelectorAll('.continue-bar').forEach(el => el.remove());
   resetChatNavigation();
@@ -8861,13 +8894,19 @@ function showContinueButton() {
   messagesEl.appendChild(bar);
   scrollToBottom({ force: true });
 
-  document.getElementById('btn-continue').addEventListener('click', continueAgent);
+  const continueBtn = document.getElementById('btn-continue');
+  continueBtn.dataset.foreground = options?.foreground === true ? 'true' : 'false';
+  continueBtn.dataset.bound = 'true';
+  continueBtn.addEventListener('click', () => continueAgent({
+    foreground: continueBtn.dataset.foreground === 'true',
+  }));
 }
 
 async function continueAgent(options = {}) {
   const tabId = currentTabId;
   const requestId = createRunRequestId(tabId);
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  const foregroundForSend = options?.foreground === true;
   clearActiveChatPayloadForTab(tabId);
 
   setTabProcessing(tabId, true);
@@ -8888,6 +8927,7 @@ async function continueAgent(options = {}) {
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
+    assistantEl.dataset.retryForeground = foregroundForSend ? 'true' : 'false';
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
     const questionEl = precedingUserMessage(assistantEl);
@@ -8901,6 +8941,7 @@ async function continueAgent(options = {}) {
       tabId,
       requestId,
       mode: modeForSend,
+      foreground: foregroundForSend,
     });
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);

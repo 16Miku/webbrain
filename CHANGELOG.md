@@ -4,6 +4,31 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [26.0.0] - 2026-07-26
+
+### Added
+- Added non-blocking local browser runs: regular Chrome and Firefox tasks stay pinned to their original tab without activating it or stealing window focus, while `/foreground [prompt]` provides a one-run compatibility escape hatch for sites that must render visually in the foreground.
+- Added offline converters for exported traces in Agent Trajectory Interchange Format (ATIF) and OpenTelemetry Protocol (OTLP), with documentation and regression coverage.
+- Added an accessible in-panel **New conversation** confirmation that works when Vivaldi Web Panels suppress native browser dialogs.
+
+### Changed
+- Rebuilt CAPTCHA handling around frame-aware challenge detection and targeted response injection for reCAPTCHA, hCaptcha, and Turnstile, including branded-dialog and ancestor-loader recognition, cross-frame verification, manual-completion recovery, explicit gate abandonment, and fail-closed handling for ambiguous or conflicting candidates.
+- Isolated selected-text context from independent, scheduled, cloud, and saved-workflow runs while preserving grounded follow-ups, attachments, compaction, and shortcuts within the originating selection conversation.
+- Extended the rapid duplicate-submit guard to Firefox and made acknowledged resubmits re-arm the protection window in both browsers.
+- Refreshed and reorganized the English, French, and Chinese documentation, landing-page demos, language ordering, and agent/skills/slash-command references.
+- Polished the floating chat-navigation control, linked Settings title behavior, full-screen recording status, and slash-command keyboard actions.
+- Extracted shared loop-detection, image-budget, and text tool-call parsing helpers without changing their browser parity.
+
+### Fixed
+- Rejected blank Chrome full-page captures, improved background screenshot compatibility, and verified inactive Firefox tabs before declaring a run complete.
+- Fixed CapSolver key migration so valid saved `CAP-` keys enable solving consistently while malformed keys remain disabled.
+- Fixed selection-scoped history, workflow, attachment, and navigation paths that could leak context into unrelated runs.
+- Fixed CAPTCHA frame visibility, challenge correlation, response-field targeting, token fallback, and recovery after redirects or manual completion.
+- Fixed the full-screen recording message so it matches whether the recording indicator is actually visible.
+
+### Tests
+- Added mirrored Chrome/Firefox regression coverage for background runs, inactive-tab capture, CAPTCHA gating and injection, selection-scope isolation, duplicate-submit protection, trace conversion, and the updated UI flows.
+
 ## [25.9.0] - 2026-07-25
 
 ### Added

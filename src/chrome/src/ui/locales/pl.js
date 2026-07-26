@@ -87,6 +87,7 @@ export default {
   'sp.slash.show_scratchpad': 'Pokaż bieżący notatnik',
   'sp.slash.clear_scratchpad': 'Wyczyść bieżący notatnik',
   'sp.slash.allow_api': 'Zezwól na modyfikacje API w tej rozmowie',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Wyłącz pytania o uprawnienia globalnie',
   'sp.slash.compact': 'Skompaktuj kontekst tej rozmowy',
   'sp.slash.verbose': 'Przełącz szczegółowy lub kompaktowy widok narzędzi',

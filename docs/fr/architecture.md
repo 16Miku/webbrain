@@ -402,7 +402,7 @@ rouvert reconstruise correctement le Markdown en cours. Chrome utilise
 |---|---|---|
 | Arrière-plan | Service worker (éphémère) | Page d'arrière-plan (persistante) |
 | Événements | CDP de confiance (`isTrusted=true`) | Synthétiques (`isTrusted=false`) |
-| Captures d'écran | CDP `Page.captureScreenshot` | `browser.tabs.captureVisibleTab()` |
+| Captures d'écran | CDP `Page.captureScreenshot` avec émulation de focus limitée à l'exécution en arrière-plan | `browser.tabs.captureTab()` pour capturer directement un onglet inactif |
 | Persistance conversation/interface | `chrome.storage.session` | `browser.storage.session` |
 | Document hors-écran | Oui (proxy fetch + enregistreur) | Non disponible |
 | Enregistreur de trace | IndexedDB (optionnel) | IndexedDB (optionnel) — même `trace/recorder.js` |

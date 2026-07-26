@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': "नवीनतम सफल रिकॉर्ड किए गए रन को सहेजें",
   'sp.slash.delete_workflow': "आईडी के आधार पर सहेजे गए वर्कफ़्लो को हटाएँ",
   'sp.slash.allow_api': "इस वार्तालाप के लिए एपीआई म्यूटेशन की अनुमति दें",
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': "विश्व स्तर पर अनुमति संकेतों को अक्षम करें",
   'sp.slash.compact': "इस वार्तालाप प्रसंग को संक्षिप्त करें",
   'sp.slash.verbose': "वर्बोज़ या कॉम्पैक्ट टूल डिस्प्ले को टॉगल करें",

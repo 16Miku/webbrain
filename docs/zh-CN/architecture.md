@@ -278,7 +278,7 @@ while (steps < maxSteps) {
 |---|---|---|
 | 后台 | Service Worker（临时） | 后台页面（持久化） |
 | 事件 | CDP 受信任（`isTrusted=true`） | 合成事件（`isTrusted=false`） |
-| 截图 | CDP `Page.captureScreenshot` | `browser.tabs.captureVisibleTab()` |
+| 截图 | CDP `Page.captureScreenshot`，后台运行时使用仅限该次运行的焦点模拟 | `browser.tabs.captureTab()`，可直接捕获非活动标签页 |
 | 对话/UI 持久化 | `chrome.storage.session` | `browser.storage.session` |
 | 离屏文档 | 有（fetch 代理 + 录制器） | 不可用 |
 | 轨迹记录器 | IndexedDB（可选） | IndexedDB（可选）— 相同的 `trace/recorder.js` |
