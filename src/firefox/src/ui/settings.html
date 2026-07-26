@@ -1417,20 +1417,9 @@
           <div class="provider-card" id="captcha-card">
             <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.captcha.desc_html"></div>
 
-            <div class="setting-row" style="margin-bottom:12px;">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.captcha.enabled.label"></div>
-                <div class="setting-desc" data-i18n="st.captcha.enabled.desc"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-captcha-enabled">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
             <div class="field">
               <label data-i18n="st.captcha.api_key.label"></label>
-              <input type="password" id="captcha-api-key" placeholder="CAP-XXXXXXXXXXXXXXXXXXXX">
+              <input type="password" id="captcha-api-key" placeholder="CAP-XXXXXXXXXXXXXXXXXXXX" pattern="CAP-[A-Za-z0-9_-]{20,}" minlength="24" autocomplete="off" spellcheck="false">
             </div>
 
             <div class="btn-row">

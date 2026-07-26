@@ -27,6 +27,7 @@ import {
   getClaudeOAuthStatus,
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
+import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import {
@@ -735,14 +736,15 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// CapSolver opt-in. We only need the toggle here — the API key is read at
-// call time inside the agent's solve_captcha handler so rotating it via
-// the settings page is picked up without a restart.
+// A valid key plus explicit consent enables CapSolver. Requiring the existing
+// boolean preserves legacy profiles that saved a key while the old switch was
+// off; pressing Save Key in the new UI sets consent to true.
 async function loadCaptchaSolver() {
-  const stored = await chrome.storage.local.get('captchaSolverEnabled');
-  if (stored.captchaSolverEnabled != null) {
-    agent.captchaSolverEnabled = !!stored.captchaSolverEnabled;
-  }
+  const stored = await chrome.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
+  agent.captchaSolverEnabled = isCapsolverEnabled(
+    stored.capsolverApiKey,
+    stored.captchaSolverEnabled,
+  );
 }
 loadCaptchaSolver();
 
@@ -931,9 +933,10 @@ chrome.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.captchaSolverEnabled) {
-    agent.captchaSolverEnabled = !!changes.captchaSolverEnabled.newValue;
-    refreshPrompts = true;
+  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+    loadCaptchaSolver()
+      .then(() => agent._refreshSystemPrompts())
+      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({

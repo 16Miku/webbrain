@@ -32,6 +32,7 @@ import {
 import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
+import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
 import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
@@ -206,8 +207,8 @@ export class Agent extends LoopDetector {
     this.userMemoryEnabled = true;
     this.userMemoryRecords = [];
     this.userMemoryMaxPromptChars = USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS;
-    // CapSolver opt-in. Off by default. When enabled AND an API key is
-    // set, the system prompt gets a "[CAPTCHA SOLVER]" note telling the
+    // CapSolver integration. A valid saved API key enables the
+    // "[CAPTCHA SOLVER]" system-prompt note telling the
     // model to try `solve_captcha` once before falling back to asking
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
@@ -12931,9 +12932,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     // ─── CAPTCHA solver ──────────────────────────────────────────────
-    // Only meaningfully wired when the user has enabled CapSolver in
-    // Settings. We re-check on every call so flipping the toggle or
-    // rotating the key takes effect without a restart.
+    // A valid saved key is the enable control. Re-check it on every call so
+    // rotating or clearing the key takes effect without a restart.
     if (name === 'solve_captcha') {
       let dispatched = false;
       const noDispatchFailure = (error) => ({
@@ -12943,13 +12943,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error,
       });
       try {
-        const stored = await browser.storage.local.get(['captchaSolverEnabled', 'capsolverApiKey']);
-        if (!stored.captchaSolverEnabled) {
-          return noDispatchFailure('CapSolver is not enabled. Ask the user to enable it in Settings → General → Advanced, or fall back to asking them to solve the captcha manually.');
-        }
-        const apiKey = (stored.capsolverApiKey || '').trim();
-        if (!apiKey) {
-          return noDispatchFailure('CapSolver is enabled but no API key is configured. Ask the user to set one in Settings → General → Advanced, or fall back to asking them to solve the captcha manually.');
+        const stored = await browser.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
+        const apiKey = normalizeCapsolverApiKey(stored.capsolverApiKey);
+        if (!isCapsolverEnabled(apiKey, stored.captchaSolverEnabled)) {
+          return noDispatchFailure('CapSolver is not enabled with a valid API key. Ask the user to save their key in Settings → General → Advanced, or fall back to asking them to solve the captcha manually.');
         }
 
         let websiteURL = '';

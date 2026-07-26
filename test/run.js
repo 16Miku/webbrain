@@ -2991,7 +2991,8 @@ test('config transfer exports and restores Settings values including provider ke
     strictSecretMode: true,
     profileEnabled: true,
     profileText: 'Use the test profile',
-    capsolverApiKey: 'capsolver-secret',
+    capsolverApiKey: 'CAP-0123456789abcdefghij',
+    captchaSolverEnabled: true,
     providers: {
       openai: { type: 'openai', apiKey: 'provider-secret', model: 'gpt-test', configured: true },
       webbrain_cloud: { type: 'openai', deviceGuid: 'must-stay-on-device' },
@@ -3014,7 +3015,8 @@ test('config transfer exports and restores Settings values including provider ke
   assert.equal(chromeExport.settings.providers.openai.apiKey, 'provider-secret');
   assert.equal(chromeExport.settings.visionModel.apiKey, 'vision-secret');
   assert.equal(chromeExport.settings.transcriptionModel.apiKey, 'audio-secret');
-  assert.equal(chromeExport.settings.capsolverApiKey, 'capsolver-secret');
+  assert.equal(chromeExport.settings.capsolverApiKey, 'CAP-0123456789abcdefghij');
+  assert.equal(chromeExport.settings.captchaSolverEnabled, true);
   assert.equal(chromeExport.settings.profileText, 'Use the test profile');
   assert.equal(chromeExport.settings.downloadDirectory, 'Work/WebBrain');
   assert.equal(chromeExport.settings.wb_user_memory_v1.records.length, 1);
@@ -15389,6 +15391,117 @@ test('settings moves profile and memory controls into Memory while CAPTCHA stays
   }
 });
 
+test('saving a valid CapSolver key opts in without overriding legacy opt-outs', async () => {
+  for (const [label, prefix, api] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const capsolverConfig = await import(
+      pathToFileURL(path.join(ROOT, prefix, 'src/agent/capsolver-config.js')).href
+    );
+
+    assert.doesNotMatch(html, /toggle-captcha-enabled/, `${label}: CapSolver still exposes a redundant enable switch`);
+    assert.match(
+      html,
+      /id="captcha-api-key"[^>]*pattern="CAP-\[A-Za-z0-9_-\]\{20,\}"[^>]*minlength="24"/,
+      `${label}: CapSolver key input should expose the same structural validation as the runtime`,
+    );
+    assert.doesNotMatch(settings, /captchaEnabledToggle/, `${label}: removed CapSolver toggle still has settings handlers`);
+
+    const saveStart = settings.indexOf("btnSaveCaptcha.addEventListener('click', async () => {");
+    const saveEnd = settings.indexOf('\n  });\n}\n\nif (btnTestCaptcha', saveStart);
+    assert.notEqual(saveStart, -1, `${label}: CapSolver save handler missing`);
+    assert.notEqual(saveEnd, -1, `${label}: CapSolver save handler boundary missing`);
+    const saveBody = settings.slice(saveStart, saveEnd + 7);
+    assert.match(saveBody, /normalizeCapsolverApiKey\(captchaApiKeyInput\?\.value\)/, `${label}: CapSolver key should be normalized before saving`);
+    assert.match(saveBody, /if \(!isValidCapsolverApiKey\(key\)\) \{[\s\S]*?return;/, `${label}: malformed CapSolver keys should not be saved`);
+    assert.match(
+      saveBody,
+      new RegExp(`await ${api}\\.storage\\.local\\.set\\(\\{[\\s\\S]*?capsolverApiKey: key,[\\s\\S]*?captchaSolverEnabled: true,[\\s\\S]*?\\}\\)`),
+      `${label}: saving a valid CapSolver key should record explicit consent`,
+    );
+
+    assert.match(
+      background,
+      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?agent\\.captchaSolverEnabled = isCapsolverEnabled\\([\\s\\S]*?stored\\.capsolverApiKey,[\\s\\S]*?stored\\.captchaSolverEnabled,[\\s\\S]*?\\);`),
+      `${label}: background startup should require both a valid key and prior consent`,
+    );
+    assert.match(
+      background,
+      /if \(changes\.capsolverApiKey \|\| changes\.captchaSolverEnabled\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
+      `${label}: key or consent changes should refresh CapSolver availability immediately`,
+    );
+    assert.match(
+      agent,
+      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?const apiKey = normalizeCapsolverApiKey\\(stored\\.capsolverApiKey\\);[\\s\\S]*?if \\(!isCapsolverEnabled\\(apiKey, stored\\.captchaSolverEnabled\\)\\)`),
+      `${label}: solve_captcha should revalidate the saved key and consent at dispatch time`,
+    );
+
+    assert.equal(capsolverConfig.normalizeCapsolverApiKey('  CAP-0123456789abcdefghij  '), 'CAP-0123456789abcdefghij');
+    assert.equal(capsolverConfig.isValidCapsolverApiKey('CAP-0123456789abcdefghij'), true);
+    assert.equal(capsolverConfig.isValidCapsolverApiKey('CAP-0123456789abcdefghi'), false);
+    assert.equal(capsolverConfig.isValidCapsolverApiKey('cap-0123456789abcdefghij'), false);
+    assert.equal(capsolverConfig.isValidCapsolverApiKey('CAP-0123456789 abcdefghij'), false);
+    assert.equal(capsolverConfig.isCapsolverEnabled('CAP-0123456789abcdefghij', true), true);
+    assert.equal(capsolverConfig.isCapsolverEnabled('CAP-0123456789abcdefghij', false), false);
+    assert.equal(capsolverConfig.isCapsolverEnabled('CAP-0123456789abcdefghij', undefined), false);
+    assert.equal(capsolverConfig.isCapsolverEnabled('not-a-key', true), false);
+  }
+});
+
+test('config import preserves CapSolver consent independently from a saved key', () => {
+  const wrap = (settings) => JSON.stringify({ schema: 'webbrain-config/1', settings });
+  for (const [label, configTransfer] of [
+    ['chrome', ConfigTransferCh],
+    ['firefox', ConfigTransferFx],
+  ]) {
+    const key = 'CAP-0123456789abcdefghij';
+    assert.equal(
+      configTransfer.parseConfigImport(wrap({ capsolverApiKey: key, captchaSolverEnabled: true })).settings.captchaSolverEnabled,
+      true,
+      `${label}: explicit legacy opt-in should survive import`,
+    );
+    assert.equal(
+      configTransfer.parseConfigImport(wrap({ capsolverApiKey: key, captchaSolverEnabled: false })).settings.captchaSolverEnabled,
+      false,
+      `${label}: explicit legacy opt-out should survive import`,
+    );
+    assert.equal(
+      configTransfer.parseConfigImport(wrap({ capsolverApiKey: key })).settings.captchaSolverEnabled,
+      false,
+      `${label}: a legacy key with no consent bit should remain disabled`,
+    );
+  }
+});
+
+test('all locales explain CapSolver auto-enablement and key validation', async () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      assert.match(
+        locale['st.captcha.desc_html'],
+        /CapSolver/,
+        `${browser}/${filename}: CapSolver description missing`,
+      );
+      assert.match(
+        locale['st.captcha.saved'],
+        /CapSolver/,
+        `${browser}/${filename}: saved-key result should say CapSolver is enabled`,
+      );
+      assert.match(
+        locale['st.captcha.need_key'],
+        /CAP-/,
+        `${browser}/${filename}: invalid-key result should state the required prefix`,
+      );
+    }
+  }
+});
+
 test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request config', () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
@@ -16885,11 +16998,6 @@ test('settings waits for immediate preference writes and theme persistence', () 
       settings,
       /profileEnabledToggle\.addEventListener\('change', async \(\) => \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{ profileEnabled: profileEnabledToggle\.checked \}\)\.catch\(\(\) => \{\}\);[\s\S]*?\}\);/,
       `${label}: profile toggle should await persistence`,
-    );
-    assert.match(
-      settings,
-      /captchaEnabledToggle\.addEventListener\('change', async \(\) => \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{ captchaSolverEnabled: captchaEnabledToggle\.checked \}\)\.catch\(\(\) => \{\}\);[\s\S]*?\}\);/,
-      `${label}: captcha toggle should await persistence`,
     );
     assert.match(
       settings,
