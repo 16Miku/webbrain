@@ -4864,9 +4864,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   /**
    * Capture a viewport screenshot for the run's tab without activating it.
-   * Firefox supports `scale: 1` on captureTab to force a CSS-pixel-aligned
-   * image (otherwise it captures at devicePixelRatio, causing the same
-   * coordinate-mismatch loop Chrome had pre-1.5.1). Returns
+   * `tabs.captureTab()` has been available since Firefox 59; WebBrain's
+   * minimum is Firefox 109 and its `<all_urls>` permission authorizes capture.
+   * Firefox supports `scale: 1` here to force a CSS-pixel-aligned image
+   * (otherwise it captures at devicePixelRatio, causing the same coordinate-
+   * mismatch loop Chrome had pre-1.5.1). Returns
    * { dataUrl, width, height } in (possibly budget-resized) pixels, or null.
    * `opts` accepted for Chrome call-site parity; capture is always CSS-locked.
    */

@@ -793,7 +793,13 @@ export class Agent extends LoopDetector {
     return this._retryBlankScreenshotCapture(
       await captureOnce(),
       captureOnce,
-      { probe },
+      {
+        probe,
+        // A full-page image is expected to reflect the whole scroll extent.
+        // Document length alone therefore cannot distinguish a legitimate
+        // uniform page from a blank background compositor frame.
+        includeDocumentLengthSignal: false,
+      },
     );
   }
 
@@ -5023,7 +5029,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  _pageSignalsContentBehindBlank(probe) {
+  _pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal = true } = {}) {
     if (!probe) return true;
     const textChars = Number(probe.documentTextChars || 0);
     const visibleTextChars = Number(probe.visibleTextChars || 0);
@@ -5037,15 +5043,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       visibleTextChars > 20 ||
       imageCount > 0 ||
       domNodes > 150 ||
-      (innerHeight > 0 && scrollHeight > innerHeight + 200)
+      (
+        includeDocumentLengthSignal
+        && innerHeight > 0
+        && scrollHeight > innerHeight + 200
+      )
     );
   }
 
-  async _retryBlankScreenshotCapture(firstShot, captureOnce, { probe = null } = {}) {
+  async _retryBlankScreenshotCapture(
+    firstShot,
+    captureOnce,
+    { probe = null, includeDocumentLengthSignal = true } = {},
+  ) {
     if (!firstShot?.dataUrl || typeof captureOnce !== 'function') return firstShot;
     let shot = firstShot;
     let blankness = await this._analyzeScreenshotBlankness(shot.dataUrl);
-    if (!blankness?.blank || !this._pageSignalsContentBehindBlank(probe)) return shot;
+    if (
+      !blankness?.blank
+      || !this._pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal })
+    ) return shot;
 
     const meta = {
       detected: true,

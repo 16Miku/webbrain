@@ -25572,6 +25572,65 @@ test('Chrome full-page screenshot paths reject blank background captures after r
   }
 });
 
+test('Chrome full-page blank guard ignores document length as the lone content signal', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/uniform-long-page',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'dW5pZm9ybQ==' };
+    };
+
+    const agent = new AgentCh({});
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 0,
+      visibleTextChars: 0,
+      domNodes: 20,
+      imageCount: 0,
+      scrollHeight: 5000,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const result = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(result, {
+      ok: true,
+      dataUrl: 'data:image/png;base64,dW5pZm9ybQ==',
+      warning: null,
+    });
+    assert.equal(captureCalls, 1, 'a uniform long page should not retry from scroll length alone');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('user full-page screenshots apply adapter capture policy without LLM adapter injection', async () => {
   const originalChrome = globalThis.chrome;
   const originalAttach = cdpClientCh.attach;
