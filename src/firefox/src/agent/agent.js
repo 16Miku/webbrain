@@ -702,6 +702,19 @@ export class Agent extends LoopDetector {
             updatedAt: Number(entry.clarificationAuthorizationGuard.updatedAt) || Date.now(),
           });
         }
+        const captchaGateState = entry.captchaGateState;
+        if (
+          captchaGateState
+          && typeof captchaGateState === 'object'
+          && typeof captchaGateState.key === 'string'
+          && ['solve_required', 'verification_pending', 'manual_required'].includes(
+            captchaGateState.status
+          )
+          && captchaGateState.publicGate
+          && typeof captchaGateState.publicGate === 'object'
+        ) {
+          this._captchaGateStates.set(tabId, captchaGateState);
+        }
       }
     } catch (e) { /* session storage may be unavailable */ }
   }
@@ -736,6 +749,7 @@ export class Agent extends LoopDetector {
       progressSession: this.progressSessions.get(tabId) || null,
       selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
+      captchaGateState: this._captchaGateStates.get(tabId) || null,
     };
   }
 
@@ -1485,11 +1499,6 @@ export class Agent extends LoopDetector {
         this.failedBulkApiReplayShapes.delete(key);
       }
     }
-  }
-
-  _clearRunLoopState(tabId) {
-    super._clearRunLoopState(tabId);
-    this._captchaGateStates.delete(tabId);
   }
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
@@ -2356,7 +2365,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         captchaGate: true,
         manualCompletionRequired: true,
         captchaDiagnostics: gate.publicGate?.diagnostics || null,
-        error: 'A verification challenge requires manual completion. Do not dismiss or close it, and do not click Continue/Submit again.',
+        error: 'A verification challenge requires manual completion. Do not dismiss or close it, and do not click Continue/Submit again. After the user completes it, first read a complete root accessibility tree with filter "visible" to confirm the dialog is gone.',
       };
     }
     if (gate.status === 'verification_pending') {
@@ -2367,7 +2376,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         captchaGate: true,
         captchaVerificationRequired: true,
         captchaDiagnostics: gate.publicGate?.diagnostics || null,
-        error: 'The one allowed CAPTCHA solve returned, but the verification dialog has not been confirmed cleared. Read the root accessibility tree now; do not submit, dismiss, or call solve_captcha again.',
+        error: 'The one allowed CAPTCHA solve returned, but the verification dialog has not been confirmed cleared. Wait briefly, then read a complete root accessibility tree with filter "visible"; do not submit, dismiss, or call solve_captcha again.',
       };
     }
     return {
@@ -2444,8 +2453,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
+    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
+    const requestedPage = toolArgs?.page;
+    const requestedMaxDepth = toolArgs?.maxDepth;
+    const parsedMaxDepth = Number(requestedMaxDepth);
     const authoritativeRootRead = !toolArgs?.ref_id
-      && (!toolArgs?.page || Number(toolArgs.page) === 1);
+      && (
+        requestedPage === undefined
+        || requestedPage === null
+        || requestedPage === ''
+        || Number(requestedPage) === 1
+      )
+      && treeFilter !== 'interactive'
+      && (
+        requestedMaxDepth === undefined
+        || requestedMaxDepth === null
+        || requestedMaxDepth === ''
+        || (Number.isFinite(parsedMaxDepth) && parsedMaxDepth >= 15)
+      )
+      && toolResult.truncated !== true
+      && toolResult.hasMore !== true
+      && toolResult.autoDegraded !== true
+      && toolResult.pageGate?.surface !== 'dialog';
     const loopCheck = challenge || authoritativeRootRead
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
@@ -2464,21 +2493,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         toolResult.captchaGate = clearedGate;
         return { gate: clearedGate, loopCheck };
       }
+      if (activeGate) {
+        toolResult.captchaGate = activeGate.publicGate;
+        return { gate: activeGate.publicGate, loopCheck };
+      }
       return { gate: null, loopCheck };
     }
 
     const key = captchaChallengeKey(pageUrl, challenge.normalizedLabel);
     const existing = activeGate;
-    if (existing?.status === 'verification_pending') {
+    if (existing?.key === key && existing?.status === 'verification_pending') {
+      if (!authoritativeRootRead) {
+        const pendingGate = {
+          ...existing.publicGate,
+          status: 'verification_pending',
+          verificationReadRequired: true,
+        };
+        this._captchaGateStates.set(tabId, {
+          ...existing,
+          publicGate: pendingGate,
+        });
+        toolResult.captchaGate = pendingGate;
+        return { gate: pendingGate, loopCheck };
+      }
+
+      const verificationAttempts = Math.max(
+        0,
+        Number(existing.verificationAttempts) || 0
+      ) + 1;
+      if (verificationAttempts < 2) {
+        const pendingGate = {
+          ...existing.publicGate,
+          status: 'verification_pending',
+          verificationAttempts,
+          verificationRetryRequired: true,
+        };
+        this._captchaGateStates.set(tabId, {
+          ...existing,
+          status: 'verification_pending',
+          publicGate: pendingGate,
+          verificationAttempts,
+        });
+        toolResult.captchaGate = pendingGate;
+        return { gate: pendingGate, loopCheck };
+      }
+
       const manualGate = {
         ...existing.publicGate,
         status: 'manual_required',
         solveFailedToClearChallenge: true,
+        verificationAttempts,
       };
       this._captchaGateStates.set(tabId, {
         ...existing,
         status: 'manual_required',
         publicGate: manualGate,
+        verificationAttempts,
       });
       toolResult.captchaGate = manualGate;
       return { gate: manualGate, loopCheck };
@@ -2512,10 +2582,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && frame?.visible === true
       ))
       .map(frame => frame.vendor))];
+    const selectedCorrelated = detection?.selected?.visible === true
+      || (
+        detection?.selected?.dialogAssociated === true
+        && detection?.selected?.frameVisible !== false
+      )
+      || (
+        detection?.selected?.challengeFrame === true
+        && detection?.selected?.frameVisible !== false
+      );
     const supported = this.captchaSolverEnabled
       && !detectionFailed
       && !detection?.error
       && !!detection?.selected
+      && selectedCorrelated
       && unsupportedVendors.length === 0;
     const publicGate = {
       status: supported ? 'solve_required' : 'manual_required',
@@ -2526,6 +2606,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(detectionFailed ? { detectionFailed: true } : {}),
       ...(!this.captchaSolverEnabled ? { solverDisabled: true } : {}),
       ...(detection?.error ? { selectionFailed: true } : {}),
+      ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
     };
     this._captchaGateStates.set(tabId, { key, status: publicGate.status, publicGate });
     toolResult.captchaGate = publicGate;
@@ -3273,12 +3354,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ...activeCaptchaGate.publicGate,
             status: 'verification_pending',
             solveAttempted: true,
+            verificationAttempts: 0,
           };
           captchaSolveOutcome = verificationGate;
           this._captchaGateStates.set(tabId, {
             ...activeCaptchaGate,
             status: 'verification_pending',
             publicGate: verificationGate,
+            verificationAttempts: 0,
           });
         } else {
           const manualGate = {
@@ -3495,8 +3578,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } else if (captchaGateDecision?.status === 'cleared') {
         resultContent += '\n[TRUSTED CAPTCHA GATE: A read-only root check confirmed that the verification dialog is gone. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn.]';
         onUpdate('warning', { message: 'Read-only verification confirmed the CAPTCHA dialog cleared.' });
+      } else if (captchaGateDecision?.status === 'verification_pending') {
+        resultContent += captchaGateDecision.verificationRetryRequired
+          ? '\n[TRUSTED CAPTCHA GATE: The verification dialog was still present on the first complete post-solve check. Wait briefly, then make one final complete root accessibility-tree read with filter "visible". Do not submit, dismiss, or call solve_captcha again.]'
+          : '\n[TRUSTED CAPTCHA GATE: Verification is still pending. Read-only subtree, paginated, truncated, auto-degraded, or interactive-only tree reads cannot clear this gate. Wait briefly, then read a complete root accessibility tree with filter "visible".]';
       } else if (captchaSolveOutcome?.status === 'verification_pending') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but the challenge is not yet verified cleared. Read the root accessibility tree now. Until that read confirms the dialog is absent, do not submit, dismiss, or call solve_captcha again.]';
+        resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but the challenge is not yet verified cleared. Wait briefly, then read a complete root accessibility tree with filter "visible". Until that read confirms the dialog is absent, do not submit, dismiss, or call solve_captcha again.]';
       } else if (captchaSolveOutcome?.status === 'manual_required') {
         resultContent += '\n[TRUSTED CAPTCHA GATE: The one allowed automatic solve did not clear the verification challenge. Stop automation and ask the user to complete it manually. Do not retry solve_captcha, dismiss, close, or resubmit the challenge.]';
         onUpdate('warning', { message: 'Automatic CAPTCHA solve did not clear the challenge; manual completion is required.' });
@@ -3564,6 +3651,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (captchaGateDecision?.status === 'solve_required'
           || captchaGateDecision?.status === 'cleared'
+          || captchaGateDecision?.status === 'verification_pending'
           || captchaSolveOutcome?.status === 'verification_pending') {
         this._appendSyntheticToolResults(
           tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
@@ -8110,6 +8198,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._lastAxScopes.delete(tabId);
     this.recentNavUrls.delete(tabId);
     this.completionInvariants.delete(tabId);
+    this._captchaGateStates.delete(tabId);
     if (!preserveRunGuard) {
       this._runningTabs.delete(tabId);
       this.currentRunId.delete(tabId);

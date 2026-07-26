@@ -137,6 +137,24 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     visibilityByFrameId.set(frameId, visible);
     return visible;
   };
+  const dialogAssociationByFrameId = new Map();
+  const frameIsDialogAssociated = (frameId, visiting = new Set()) => {
+    if (dialogAssociationByFrameId.has(frameId)) {
+      return dialogAssociationByFrameId.get(frameId);
+    }
+    if (!Number.isInteger(frameId) || frameId === 0 || visiting.has(frameId)) {
+      return false;
+    }
+    const parentFrameId = navigationByFrameId.get(frameId)?.parentFrameId;
+    if (!Number.isInteger(parentFrameId) || parentFrameId === -1) return false;
+    const embeddingFrame = findEmbeddingFrame(frameId, parentFrameId);
+    visiting.add(frameId);
+    const associated = embeddingFrame?.dialogAssociated === true
+      || frameIsDialogAssociated(parentFrameId, visiting);
+    visiting.delete(frameId);
+    dialogAssociationByFrameId.set(frameId, associated);
+    return associated;
+  };
 
   const sourceCandidates = Array.isArray(candidates) ? candidates : [];
   const pathIsStrictAncestor = (sourcePath, targetPath) => {
@@ -249,6 +267,8 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
       ...candidate,
       frameVisible,
       websiteURL: nearestHttpUrl(candidate),
+      dialogAssociated: candidate?.dialogAssociated === true
+        || frameIsDialogAssociated(candidate?.frameId),
       visible: candidate?.visible === true && frameVisible,
       normalCheckbox: candidate?.normalCheckbox === true && candidate?.visible === true && frameVisible,
     };
@@ -271,6 +291,7 @@ function candidateSummary(candidate) {
     visible: candidate?.visible === true,
     normalCheckbox: candidate?.normalCheckbox === true,
     challengeFrame: candidate?.challengeFrame === true,
+    dialogAssociated: candidate?.dialogAssociated === true,
     frameVisible: candidate?.frameVisible !== false,
     isInvisible: candidate?.isInvisible === true,
     isEnterprise: candidate?.isEnterprise === true,
@@ -384,6 +405,7 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
         visible: previous.visible === true || candidate.visible === true,
         normalCheckbox: previous.normalCheckbox === true || candidate.normalCheckbox === true,
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
+        dialogAssociated: previous.dialogAssociated === true || candidate.dialogAssociated === true,
         responseField: previous.responseField === true || candidate.responseField === true,
       };
       for (const field of taskParameterFields) {
@@ -622,20 +644,67 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       return false;
     }
   };
-  const add = (candidate) => {
+  const challengeDialogRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|â€™)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+  const challengeDialogs = Array.from(
+    pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
+  ).filter((element) => {
+    if (!visibleElement(element)) return false;
+    let labelledBy = '';
+    try {
+      labelledBy = String(element.getAttribute?.('aria-labelledby') || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(id => pageDocument.getElementById?.(id)?.textContent || '')
+        .join(' ');
+    } catch (_) {}
+    return [
+      element.getAttribute?.('aria-label'),
+      labelledBy,
+      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      element.getAttribute?.('title'),
+      element.innerText,
+      element.textContent,
+    ].some(value => challengeDialogRe.test(String(value || '')));
+  });
+  const elementInChallengeDialog = (element) => {
+    if (!element) return false;
+    return challengeDialogs.some((dialog) => {
+      if (dialog === element) return true;
+      try {
+        if (typeof dialog.contains === 'function' && dialog.contains(element)) return true;
+      } catch (_) {}
+      let ancestor = element.parentElement || null;
+      for (let depth = 0; ancestor && depth < 20; depth += 1) {
+        if (ancestor === dialog) return true;
+        ancestor = ancestor.parentElement || null;
+      }
+      return false;
+    });
+  };
+  const add = (candidate, associationElement = null) => {
     if (!candidate?.type) return;
+    const {
+      responseFieldDialogAssociated,
+      alsoResponseFieldDialogAssociated,
+      ...serializableCandidate
+    } = candidate;
     candidates.push({
-      ...candidate,
+      ...serializableCandidate,
       frameUrl,
       challengeFrame,
       responseField,
       documentTimeOrigin,
+      dialogAssociated: candidate.dialogAssociated === true
+        || responseFieldDialogAssociated === true
+        || alsoResponseFieldDialogAssociated === true
+        || elementInChallengeDialog(associationElement),
     });
   };
   const scriptElements = Array.from(pageDocument.querySelectorAll('script[src]'));
-  const scriptUrls = scriptElements.map(element => {
-    try { return element.src || ''; } catch (_) { return ''; }
-  }).filter(Boolean);
+  const scriptRecords = scriptElements.map((element) => {
+    try { return { element, url: element.src || '' }; } catch (_) { return { element, url: '' }; }
+  }).filter(record => record.url);
+  const scriptUrls = scriptRecords.map(record => record.url);
   const responseFieldIdentity = (widget, name, fallbackIndex, widgetCount) => {
     const selector = `textarea[name="${name}"], input[name="${name}"]`;
     const fields = Array.from(pageDocument.querySelectorAll(selector));
@@ -662,6 +731,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     return {
       ...(responseFieldId ? { responseFieldId } : {}),
       ...(responseFieldIndex >= 0 ? { responseFieldIndex } : {}),
+      ...(elementInChallengeDialog(field) ? { responseFieldDialogAssociated: true } : {}),
     };
   };
   const alsoResponseFieldIdentity = (widget, name, fallbackIndex, widgetCount) => {
@@ -671,8 +741,14 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(Number.isInteger(identity.responseFieldIndex)
         ? { alsoResponseFieldIndex: identity.responseFieldIndex }
         : {}),
+      ...(identity.responseFieldDialogAssociated
+        ? { alsoResponseFieldDialogAssociated: true }
+        : {}),
     };
   };
+  const recaptchaResponseInChallengeDialog = Array.from(pageDocument.querySelectorAll(
+    'textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"]'
+  )).some(elementInChallengeDialog);
 
   const hcaptchaHosts = Array.from(pageDocument.querySelectorAll(
     '.h-captcha[data-sitekey], div[data-hcaptcha-widget-id]'
@@ -691,7 +767,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...responseFieldIdentity(host, 'h-captcha-response', widgetIndex, hcaptchaHosts.length),
       ...alsoResponseFieldIdentity(host, 'g-recaptcha-response', widgetIndex, hcaptchaHosts.length),
       detectedVia: 'host',
-    });
+    }, host);
   }
 
   const turnstileHosts = Array.from(pageDocument.querySelectorAll(
@@ -708,7 +784,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       callbackName: host.getAttribute('data-callback') || null,
       ...responseFieldIdentity(host, 'cf-turnstile-response', widgetIndex, turnstileHosts.length),
       detectedVia: 'host',
-    });
+    }, host);
   }
 
   const recaptchaHosts = Array.from(pageDocument.querySelectorAll(
@@ -751,7 +827,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
         : {}),
       ...responseFieldIdentity(host, 'g-recaptcha-response', widgetIndex, recaptchaHosts.length),
       detectedVia: 'host',
-    });
+    }, host);
   }
 
   const allIframeElements = Array.from(pageDocument.querySelectorAll('iframe'));
@@ -791,7 +867,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
             hcaptchaFrames.length,
           ),
           detectedVia: 'url',
-        });
+        }, element);
       }
       continue;
     }
@@ -810,7 +886,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
             turnstileFrames.length,
           ),
           detectedVia: 'url',
-        });
+        }, element);
       }
       continue;
     }
@@ -846,10 +922,10 @@ export function detectCaptchaCandidatesInPage(scope = null) {
         recaptchaFrames.length,
       ),
       detectedVia: 'url',
-    });
+    }, element);
   }
 
-  for (const url of scriptUrls) {
+  for (const { element, url } of scriptRecords) {
     if (!/recaptcha\/(api\.js|enterprise\.js)/i.test(url)) continue;
     const websiteKey = urlParam(url, 'render');
     if (!websiteKey || websiteKey === 'explicit') continue;
@@ -862,9 +938,10 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       isEnterprise,
       visible: false,
       normalCheckbox: false,
+      dialogAssociated: recaptchaResponseInChallengeDialog,
       ...(pageAction ? { pageAction } : { note: V3_NO_ACTION_NOTE }),
       detectedVia: 'script',
-    });
+    }, element);
   }
 
   const hasDetectedTurnstile = candidates.some(candidate => candidate.type === 'turnstile');
@@ -894,6 +971,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       loadedUrl,
       name,
       visible: visibleElement(element),
+      dialogAssociated: elementInChallengeDialog(element),
     };
   });
   let frameName = '';

@@ -4844,13 +4844,21 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       pageContent: 'dialog [ref_900]\n heading "Security verification" [ref_901]\n button "Dismiss" [ref_902]',
       pageUrl: 'https://example.test/signup',
     };
-    const persistent = await agent._observeCaptchaChallenge(
+    const firstPersistent = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
       persistentResult,
       {},
     );
-    assert.equal(persistent.gate?.status, 'manual_required', `${label}: persistent dialog offered another solve`);
+    assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: first post-solve read did not allow verification latency`);
+    assert.equal(firstPersistent.gate?.verificationRetryRequired, true, `${label}: bounded verification retry was not requested`);
+    const persistent = await agent._observeCaptchaChallenge(
+      tabId,
+      'get_accessibility_tree',
+      persistentResult,
+      { filter: 'visible' },
+    );
+    assert.equal(persistent.gate?.status, 'manual_required', `${label}: dialog surviving the bounded retry offered another solve`);
     assert.equal(persistent.gate?.solveFailedToClearChallenge, true, `${label}: persistent-dialog reason missing`);
 
     const clearedAgent = new AgentClass({});
@@ -4878,7 +4886,112 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
   }
 });
 
-test('active CAPTCHA gate rejects a queued Dismiss or Continue before browser dispatch', async () => {
+test('CAPTCHA gate survives user continuations and only a complete dialog-capable root read clears it', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const tabId = label === 'chrome' ? 8823 : 8824;
+    const agent = new AgentClass({});
+    const key = 'https://example.test/signup\nsecurity verification';
+    const state = {
+      key,
+      status: 'manual_required',
+      publicGate: {
+        status: 'manual_required',
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: [], frames: [] },
+      },
+    };
+    agent._captchaGateStates.set(tabId, state);
+    agent.conversations.set(tabId, [{ role: 'system', content: 'test' }]);
+
+    agent._clearRunLoopState(tabId);
+    assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: run continuation discarded the unresolved gate`);
+    assert.deepEqual(agent._conversationStorageEntry(tabId)?.captchaGateState, state, `${label}: unresolved gate was not persisted for worker restart`);
+
+    for (const [toolArgs, extraResult, description] of [
+      [{ filter: 'interactive' }, {}, 'interactive-only read'],
+      [{ filter: 'visible' }, { truncated: true }, 'truncated read'],
+      [{ filter: 'visible', ref_id: 'ref_20' }, {}, 'subtree read'],
+      [{ filter: 'visible', page: 0 }, {}, 'invalid zero page read'],
+      [{ filter: 'visible', page: 2 }, {}, 'later page read'],
+      [{ filter: 'visible', maxDepth: 8 }, {}, 'depth-limited read'],
+      [{ filter: 'visible' }, { pageGate: { surface: 'dialog', label: 'Security verification' } }, 'dialog-scoped read'],
+    ]) {
+      const observation = await agent._observeCaptchaChallenge(
+        tabId,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_1]\n heading "Welcome" [ref_2]',
+          pageUrl: 'https://example.test/signup',
+          ...extraResult,
+        },
+        toolArgs,
+      );
+      assert.equal(observation.gate?.status, 'manual_required', `${label}: ${description} lost strong manual routing`);
+      assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: ${description} cleared the unresolved gate`);
+    }
+
+    const cleared = await agent._observeCaptchaChallenge(
+      tabId,
+      'get_accessibility_tree',
+      {
+        pageContent: 'main [ref_1]\n heading "Welcome" [ref_2]',
+        pageUrl: 'https://example.test/signup',
+      },
+      { filter: 'visible' },
+    );
+    assert.equal(cleared.gate?.status, 'cleared', `${label}: complete visible root read did not clear the gate`);
+    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: cleared gate remained active`);
+
+    agent._captchaGateStates.set(tabId, state);
+    agent._cleanupTab(tabId);
+    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: actual tab cleanup leaked gate state`);
+  }
+});
+
+test('unresolved CAPTCHA gates hydrate after a background worker restart', async () => {
+  for (const [label, AgentClass, apiName] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const tabId = label === 'chrome' ? 8825 : 8826;
+    const agent = new AgentClass({});
+    const key = agent._convKey(tabId);
+    const captchaGateState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'verification_pending',
+      verificationAttempts: 1,
+      publicGate: {
+        status: 'verification_pending',
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    };
+    const previousApi = globalThis[apiName];
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({
+            [key]: {
+              messages: [{ role: 'system', content: 'test' }],
+              mode: 'act',
+              captchaGateState,
+            },
+          }),
+        },
+      },
+    };
+    try {
+      await agent._hydrate(tabId);
+      assert.deepEqual(agent._captchaGateStates.get(tabId), captchaGateState, `${label}: worker restart lost the unresolved CAPTCHA gate`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('active CAPTCHA gate rejects the exact Dismiss, Close, Continue sequence before browser dispatch', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = label === 'chrome' ? 8801 : 8802;
@@ -4896,6 +5009,7 @@ test('active CAPTCHA gate rejects a queued Dismiss or Continue before browser di
     });
     const toolCalls = [
       { id: `${label}_dismiss`, function: { name: 'click_ax', arguments: '{"ref_id":"ref_50486214628935"}' } },
+      { id: `${label}_close`, function: { name: 'click', arguments: '{"text":"Close"}' } },
       { id: `${label}_continue`, function: { name: 'click_ax', arguments: '{"ref_id":"ref_3"}' } },
     ];
     const result = await agent._executeToolBatch(
@@ -4910,9 +5024,10 @@ test('active CAPTCHA gate rejects a queued Dismiss or Continue before browser di
     );
     assert.deepEqual(result, { action: 'continue' }, `${label}: blocked mutation did not request a fresh solve turn`);
     assert.deepEqual(executed, [], `${label}: CAPTCHA-gated click reached browser dispatch`);
-    assert.equal(messages.filter(message => message.role === 'tool').length, 2, `${label}: queued calls need structural results`);
+    assert.equal(messages.filter(message => message.role === 'tool').length, 3, `${label}: queued calls need structural results`);
     assert.match(String(messages[0].content), /Call solve_captcha once before any page-changing action/i, `${label}: strong solve routing missing`);
-    assert.match(String(messages[1].content), /active CAPTCHA gate requires a fresh routing turn/i, `${label}: queued Continue was not skipped`);
+    assert.match(String(messages[1].content), /active CAPTCHA gate requires a fresh routing turn/i, `${label}: queued Close was not skipped`);
+    assert.match(String(messages[2].content), /active CAPTCHA gate requires a fresh routing turn/i, `${label}: queued Continue was not skipped`);
   }
 });
 
@@ -52130,6 +52245,11 @@ function captchaEl(tag, attrs = {}, children = []) {
     querySelector: (sel) => captchaMatchAll(children, sel)[0] || null,
     querySelectorAll: (sel) => captchaMatchAll(children, sel),
   };
+  for (const child of children) child.parentElement = el;
+  el.contains = (candidate) => {
+    if (candidate === el) return true;
+    return children.some(child => child === candidate || child.contains?.(candidate));
+  };
   return el;
 }
 
@@ -52264,6 +52384,59 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
         `${build}: diagnostic frame URL retained its query string`,
       );
       assert.equal(agent._captchaGateBlockResult(1, 'click')?.solveCaptchaRequired, true, `${build}: Dismiss/Continue click was not blocked`);
+    });
+
+    const invisibleV3Nodes = [
+      captchaEl('script', {
+        src: 'https://www.google.com/recaptcha/enterprise.js?render=DIALOG_V3_KEY&action=signup',
+      }),
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification',
+      }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+        captchaEl('div', {
+          class: 'g-recaptcha g-recaptcha-v3',
+          'data-sitekey': 'DIALOG_V3_KEY',
+          'data-size': 'invisible',
+          'data-action': 'signup',
+          'data-enterprise': 'true',
+        }, [
+          captchaEl('textarea', { name: 'g-recaptcha-response', id: 'dialog-v3-response' }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent._currentUrl = async () => 'https://example.test/signup';
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_150]\n button "Dismiss" [ref_151]',
+      });
+      assert.equal(observed.gate?.status, 'solve_required', `${build}: invisible v3 widget inside the active dialog was not routable`);
+      assert.equal(observed.gate?.selectedType, 'recaptcha_v3_enterprise', `${build}: dialog-associated v3 type was lost`);
+    });
+
+    const unrelatedV3Nodes = [
+      captchaEl('script', {
+        src: 'https://www.google.com/recaptcha/enterprise.js?render=BACKGROUND_ONLY&action=analytics',
+      }),
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification\nUse your passkey',
+      }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+      ]),
+    ];
+    await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent._currentUrl = async () => 'https://example.test/signup';
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_170]\n heading "Use your passkey" [ref_171]',
+      });
+      assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated global v3 loader was selected for a passkey dialog`);
+      assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
     });
 
     const arkoseNodes = [
@@ -53007,7 +53180,14 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
   iframe.contentDocument = childDocument;
   iframe.contentWindow = childWindow;
 
-  const topDocument = makeDocument([iframe]);
+  const verificationDialog = captchaEl('div', {
+    role: 'dialog',
+    innerText: 'Security verification',
+  }, [
+    captchaEl('h2', { textContent: 'Security verification' }),
+    iframe,
+  ]);
+  const topDocument = makeDocument([verificationDialog]);
   const topWindow = {
     location: { href: 'https://example.test/form' },
     name: '',
@@ -53052,6 +53232,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
     assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');
     assert.equal(detection.selected.frameUrl, 'about:srcdoc', 'srcdoc frame URL was lost');
     assert.equal(detection.selected.frameId, 0, 'srcdoc fallback did not retain its injectable parent frame');
+    assert.equal(detection.selected.dialogAssociated, true, 'srcdoc CAPTCHA lost its active-dialog association');
     assert.deepEqual(
       JSON.parse(JSON.stringify(detection.selected.framePath)),
       [{ index: 0, frameUrl: 'about:srcdoc', frameName: 'captcha-srcdoc' }],
@@ -53155,6 +53336,13 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       'KEY_HIDDEN_NESTED',
       `${build}: visible nested challenge was not restored`,
     );
+    frameContexts[0].childFrames[0].dialogAssociated = true;
+    const dialogAdjusted = runtime.applyCaptchaFrameVisibility(
+      [visibleCandidate, nestedCandidate],
+      frameContexts,
+      navigationFrames,
+    );
+    assert.equal(dialogAdjusted[1].dialogAssociated, true, `${build}: active-dialog iframe association did not reach the nested CAPTCHA`);
 
     const redirectedCandidate = {
       ...nestedCandidate,
