@@ -2679,7 +2679,10 @@
     .video-frame {
       position: relative;
       width: 100%;
-      padding-bottom: 65.625%;
+      /* 16:9 — the demo video is native 1920x1080 now that the chapter text
+         lives in full-bleed preroll cards instead of a letterboxed caption
+         band. Matches every other media frame on the page. */
+      padding-bottom: 56.25%;
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
@@ -3194,7 +3197,7 @@
   <p class="section-subtitle">WebBrain がページを読み、データを抽出し、ブラウザのタスクを自動化する様子をご覧ください。</p>
   <div class="video-showcase">
     <div class="video-frame">
-      <video id="demo-video" data-desktop-src="/assets/webbrain-home-captioned.mp4" data-mobile-src="/assets/webbrain-home-vertical.mp4" data-desktop-poster="/assets/webbrain-home-poster.jpg" data-mobile-poster="/assets/webbrain-home-poster-vertical.jpg" poster="/assets/webbrain-home-poster.jpg" controls preload="metadata" playsinline></video>
+      <video id="demo-video" data-desktop-src="/assets/webbrain-home-demo.mp4" data-mobile-src="/assets/webbrain-home-demo-vertical.mp4" data-desktop-poster="/assets/webbrain-home-demo-poster.jpg" data-mobile-poster="/assets/webbrain-home-demo-poster-vertical.jpg" poster="/assets/webbrain-home-demo-poster.jpg" controls preload="metadata" playsinline></video>
     </div>
   </div>
 
