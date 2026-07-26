@@ -115,6 +115,42 @@
     </div>
   </div>
 
+  <div
+    id="new-conversation-confirm"
+    class="new-conversation-confirm hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="new-conversation-confirm-title"
+    tabindex="-1"
+  >
+    <div class="new-conversation-confirm-card">
+      <div class="new-conversation-confirm-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>
+          <path d="M12 9v4"/>
+          <path d="M12 17h.01"/>
+        </svg>
+      </div>
+      <h2 id="new-conversation-confirm-title" data-i18n="sp.clear.confirm">This conversation will be lost. Start a new conversation?</h2>
+      <div class="new-conversation-confirm-actions">
+        <button
+          id="new-conversation-confirm-cancel"
+          class="new-conversation-confirm-cancel"
+          type="button"
+          data-new-conversation-confirm-action
+          data-i18n="sp.scheduled.cancel"
+        >Cancel</button>
+        <button
+          id="new-conversation-confirm-accept"
+          class="new-conversation-confirm-accept"
+          type="button"
+          data-new-conversation-confirm-action
+          data-i18n="sp.btn.clear"
+        >New conversation (clear history)</button>
+      </div>
+    </div>
+  </div>
+
   <div id="app">
     <!-- Header -->
     <header id="header">
