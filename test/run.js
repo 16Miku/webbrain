@@ -52660,7 +52660,17 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       const gate = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(gate?.status, 'solve_required', `${build}: first mutation bypassed read-only dialog detection`);
       assert.equal(agent._captchaGateStates.get(1)?.status, 'solve_required', `${build}: preflight did not activate runtime gate`);
+      assert.equal(agent._captchaGateStates.get(1)?.challengeFrameId, 0, `${build}: preflight discarded the challenge frame identity`);
       assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.solveCaptchaRequired, true, `${build}: detected Dismiss click was not blocked`);
+
+      const disabledAgent = new AgentClass({});
+      disabledAgent.captchaSolverEnabled = false;
+      disabledAgent._currentUrl = async () => 'https://example.test/signup';
+      const disabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
+      assert.equal(disabledGate?.status, 'manual_required', `${build}: disabled solver skipped challenge preflight`);
+      assert.equal(disabledGate?.solverDisabled, true, `${build}: disabled preflight did not explain manual routing`);
+      assert.equal(disabledAgent._captchaGateStates.get(2)?.challengeFrameId, 0, `${build}: disabled preflight discarded the challenge frame identity`);
+      assert.equal(disabledAgent._captchaGateBlockResult(2, 'click_ax')?.manualCompletionRequired, true, `${build}: disabled preflight allowed the challenge mutation`);
     });
   }
 });
@@ -52682,9 +52692,13 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
       },
     ];
     let embeddingVisible = false;
+    let childChallengeVisible = true;
+    let childInspectionFails = false;
     const payloadForFrame = frameId => frameId === 7
       ? {
-          challenge: { label: 'Security verification' },
+          challenge: childChallengeVisible
+            ? { label: 'Security verification' }
+            : null,
           frameContext: {
             frameUrl: 'https://challenge.example.test/verify',
             frameName: 'verification-frame',
@@ -52713,7 +52727,8 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
           },
           scripting: {
             executeScript: async ({ target }) => {
-              const frameIds = target.allFrames ? [0, 7] : [0];
+              const frameIds = (target.allFrames ? [0, 7] : [0])
+                .filter(frameId => frameId !== 7 || !childInspectionFails);
               return frameIds.map(frameId => ({
                 frameId,
                 result: payloadForFrame(frameId),
@@ -52727,9 +52742,12 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
             getAllFrames: async () => navigationFrames,
           },
           tabs: {
-            executeScript: async (_tabId, details) => [
-              payloadForFrame(details.frameId),
-            ],
+            executeScript: async (_tabId, details) => {
+              if (details.frameId === 7 && childInspectionFails) {
+                throw new Error('Cannot access challenge frame');
+              }
+              return [payloadForFrame(details.frameId)];
+            },
           },
         };
       }
@@ -52739,6 +52757,58 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
       embeddingVisible = true;
       const visible = await agent._detectChallengeDialogBeforeMutation(1);
       assert.equal(visible?.label, 'Security verification', `${build}: visible ancestor iframe suppressed challenge dialog`);
+
+      agent._captchaGateStates.set(1, {
+        key: 'https://example.test/signup\nsecurity verification',
+        status: 'verification_pending',
+        verificationAttempts: 0,
+        challengeFrameId: 7,
+        challengeFrameUrl: 'https://challenge.example.test/verify',
+        publicGate: {
+          status: 'verification_pending',
+          solveAttempted: true,
+          challengeDialog: { label: 'Security verification' },
+          diagnostics: { vendors: ['recaptcha'], frames: [] },
+        },
+      });
+      const childStillVisible = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_10]\n heading "Signup" [ref_11]',
+          pageUrl: 'https://example.test/signup',
+        },
+        { filter: 'visible' },
+      );
+      assert.equal(childStillVisible.gate?.status, 'verification_pending', `${build}: top-only root read cleared a visible child-frame challenge`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: child-frame gate state was deleted`);
+
+      childInspectionFails = true;
+      const childUninspectable = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_15]\n heading "Signup" [ref_16]',
+          pageUrl: 'https://example.test/signup',
+        },
+        { filter: 'visible' },
+      );
+      assert.equal(childUninspectable.gate?.status, 'verification_pending', `${build}: inaccessible challenge frame cleared the gate`);
+      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, true, `${build}: inaccessible frame did not fail closed`);
+
+      childInspectionFails = false;
+      childChallengeVisible = false;
+      const childCleared = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_20]\n heading "Welcome" [ref_21]',
+          pageUrl: 'https://example.test/signup',
+        },
+        { filter: 'visible' },
+      );
+      assert.equal(childCleared.gate?.status, 'cleared', `${build}: cleared child frame kept CAPTCHA gate active`);
+      assert.equal(agent._captchaGateStates.has(1), false, `${build}: cleared child-frame gate remained persisted`);
     } finally {
       globalThis.chrome = previousChrome;
       globalThis.browser = previousBrowser;

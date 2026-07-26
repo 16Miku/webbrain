@@ -211,7 +211,7 @@ export class Agent extends LoopDetector {
     // model to try `solve_captcha` once before falling back to asking
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
-    this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate }
+    this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
     // Pre-execution planner (Settings → Plan before Act). Default "try";
     // attempts a read-only planning LLM call and degrades the current turn to
     // Ask/read-only if structured planning itself fails. "strict" fails closed.
@@ -2430,13 +2430,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       frameContexts,
       navigationFrames,
     );
-    return visibleCandidates.find(candidate => candidate.visible === true)?.challenge || null;
+    const candidate = visibleCandidates.find(entry => entry.visible === true);
+    return candidate
+      ? {
+          ...candidate.challenge,
+          frameId: candidate.frameId,
+          frameUrl: candidate.frameUrl || '',
+        }
+      : null;
   }
 
-  async _detectChallengeDialogBeforeMutation(tabId) {
+  async _detectChallengeDialogBeforeMutation(tabId, options = {}) {
+    const includeStatus = options?.includeStatus === true;
+    const expectedFrameId = Number.isInteger(options?.expectedFrameId)
+      ? options.expectedFrameId
+      : null;
     let navigationFrames = [];
+    let navigationInspectionComplete = false;
     try {
-      navigationFrames = await browser.webNavigation?.getAllFrames?.({ tabId }) || [];
+      const discoveredFrames = await browser.webNavigation?.getAllFrames?.({ tabId });
+      if (Array.isArray(discoveredFrames)) {
+        navigationFrames = discoveredFrames;
+        navigationInspectionComplete = true;
+      }
     } catch {}
     if (!navigationFrames.length) {
       navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
@@ -2457,10 +2473,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return null;
       }
     }));
-    return this._visibleChallengeDialogFromFrames(
-      frameEntries.filter(Boolean),
+    const successfulEntries = frameEntries.filter(entry =>
+      entry?.payload && typeof entry.payload === 'object'
+    );
+    const challenge = this._visibleChallengeDialogFromFrames(
+      successfulEntries,
       navigationFrames,
     );
+    if (!includeStatus) return challenge;
+    const inspectedFrameIds = new Set(successfulEntries.map(entry => entry.frameId));
+    const expectedFrameStillExists = expectedFrameId !== null
+      && navigationFrames.some(frame => frame?.frameId === expectedFrameId);
+    return {
+      challenge,
+      inspectionComplete: expectedFrameId === null
+        || inspectedFrameIds.has(expectedFrameId)
+        || (navigationInspectionComplete && !expectedFrameStillExists),
+    };
   }
 
   async _captchaMutationPreflight(tabId, toolName, toolArgs = {}) {
@@ -2468,7 +2497,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
-    if (!this.captchaSolverEnabled || !gatedAction || toolName === 'solve_captcha') return null;
+    if (!gatedAction || toolName === 'solve_captcha') return null;
     const activeGate = this._captchaGateStates.get(tabId);
     if (activeGate && !this._shouldRetryCaptchaManualGate(activeGate)) return null;
     const challenge = await this._detectChallengeDialogBeforeMutation(tabId);
@@ -2481,6 +2510,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       {
         pageContent: `dialog ${JSON.stringify(String(challenge.label).slice(0, 200))}`,
         pageUrl,
+        captchaChallengeFrameId: Number.isInteger(challenge.frameId)
+          ? challenge.frameId
+          : null,
+        captchaChallengeFrameUrl: challenge.frameUrl || '',
       },
       {},
     );
@@ -2530,6 +2563,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && toolResult.truncated !== true
       && toolResult.hasMore !== true
       && toolResult.autoDegraded !== true;
+    if (
+      !challenge
+      && activeGate
+      && authoritativeRootRead
+      && Number.isInteger(activeGate.challengeFrameId)
+    ) {
+      const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: activeGate.challengeFrameId,
+      });
+      if (frameInspection.challenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(frameInspection.challenge.label).slice(0, 200))}`
+        );
+      } else if (!frameInspection.inspectionComplete) {
+        const guardedGate = {
+          ...activeGate.publicGate,
+          verificationFrameReadRequired: true,
+        };
+        this._captchaGateStates.set(tabId, {
+          ...activeGate,
+          publicGate: guardedGate,
+        });
+        toolResult.captchaGate = guardedGate;
+        return { gate: guardedGate, loopCheck: { kind: 'none' } };
+      }
+    }
     const loopCheck = challenge || authoritativeRootRead
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
@@ -2681,7 +2741,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(detection?.error ? { selectionFailed: true } : {}),
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
     };
-    this._captchaGateStates.set(tabId, { key, status: publicGate.status, publicGate });
+    this._captchaGateStates.set(tabId, {
+      key,
+      status: publicGate.status,
+      publicGate,
+      ...(Number.isInteger(toolResult.captchaChallengeFrameId)
+        ? {
+            challengeFrameId: toolResult.captchaChallengeFrameId,
+            challengeFrameUrl: String(toolResult.captchaChallengeFrameUrl || ''),
+          }
+        : {}),
+    });
     toolResult.captchaGate = publicGate;
     return { gate: publicGate, loopCheck };
   }
