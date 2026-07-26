@@ -52992,6 +52992,7 @@ function captchaEl(tag, attrs = {}, children = []) {
     src: attrs.src,
     innerText: attrs.innerText || '',
     textContent: attrs.textContent || attrs.innerText || '',
+    value: attrs.value || '',
     hidden: attrs.hidden === true,
     style: {},
     classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
@@ -53120,6 +53121,13 @@ async function detectCaptchaOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
     return (await mod.detectCaptcha(1)).selected;
+  });
+}
+
+async function detectCaptchaDetailsOnFakePage(build, nodes) {
+  return withCaptchaFakePage(build, nodes, async () => {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    return mod.detectCaptcha(1);
   });
 }
 
@@ -53574,11 +53582,16 @@ test('challenge dialog with no enabled supported solver stops the batch for manu
   }
 });
 
-test('CAPTCHA gate helper stays byte-identical and cloud traces retain gate diagnostics outside update rollover', () => {
+test('CAPTCHA helpers stay byte-identical and cloud traces retain gate diagnostics outside update rollover', () => {
   assert.equal(
     fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/captcha-gate.js'), 'utf8'),
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js'), 'utf8'),
     'chrome and firefox CAPTCHA gate helpers must remain byte-identical',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/captcha-frame-runtime.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/captcha-frame-runtime.js'), 'utf8'),
+    'chrome and firefox CAPTCHA frame runtimes must remain byte-identical',
   );
   const cloudSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
   assert.match(cloudSource, /if \(type === 'captcha_gate'\)[\s\S]*?run\.captchaDiagnostics = \{ \.\.\.scrubbedData, observedAt: run\.updatedAt \};/);
@@ -53836,6 +53849,110 @@ test('captcha detection binds the selected widget to its own response field', as
       `${build}: hCaptcha compatibility field identity missing`,
     );
     assert.equal(hcaptcha.alsoResponseFieldIndex, 0, `${build}: hCaptcha compatibility field index missing`);
+  }
+});
+
+test('captcha detection reports exact response token state without exposing token values', async () => {
+  const token = 'RAW_CAPTCHA_TOKEN_MUST_NOT_ESCAPE_7fc2';
+  for (const build of ['chrome', 'firefox']) {
+    const solvedField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-solved',
+      name: 'g-recaptcha-response',
+      value: token,
+    });
+    const pendingField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-pending',
+      name: 'g-recaptcha-response',
+    });
+    const solvedHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_SOLVED_WIDGET',
+      hidden: true,
+    }, [solvedField]);
+    const pendingHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_PENDING_WIDGET',
+    }, [pendingField]);
+
+    const pendingDetection = await detectCaptchaDetailsOnFakePage(build, [
+      solvedHost,
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      pendingDetection.selected.responseTokenPresent,
+      false,
+      `${build}: a solved sibling widget contaminated the selected pending widget`,
+    );
+    assert.equal(
+      pendingDetection.candidates.find(candidate =>
+        candidate.websiteKey === 'KEY_SOLVED_WIDGET'
+      )?.responseTokenPresent,
+      true,
+      `${build}: non-empty exact response field was not reported as solved`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(pendingDetection),
+      new RegExp(token),
+      `${build}: raw response token escaped through detection`,
+    );
+
+    pendingField.value = token;
+    const solvedDetection = await detectCaptchaDetailsOnFakePage(build, [
+      solvedHost,
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      solvedDetection.selected.responseTokenPresent,
+      true,
+      `${build}: selected non-empty response field was not reported as solved`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(solvedDetection),
+      new RegExp(token),
+      `${build}: selected raw response token escaped through detection`,
+    );
+
+    const primaryField = captchaEl('textarea', {
+      id: 'h-captcha-response-primary',
+      name: 'h-captcha-response',
+    });
+    const compatibilityField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-compatibility',
+      name: 'g-recaptcha-response',
+      value: token,
+    });
+    const hcaptcha = await detectCaptchaOnFakePage(build, [
+      captchaEl('div', {
+        class: 'h-captcha',
+        'data-sitekey': 'HKEY_SOLVED_COMPATIBILITY',
+      }, [primaryField, compatibilityField]),
+    ]);
+    assert.equal(
+      hcaptcha.responseTokenPresent,
+      true,
+      `${build}: solved hCaptcha compatibility field was ignored`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(hcaptcha),
+      new RegExp(token),
+      `${build}: hCaptcha compatibility token escaped through detection`,
+    );
+
+    Object.defineProperty(pendingField, 'value', {
+      configurable: true,
+      get() { throw new Error('hostile response field getter'); },
+    });
+    const unreadable = await detectCaptchaOnFakePage(build, [
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      unreadable.responseTokenPresent,
+      false,
+      `${build}: unreadable response field did not fail closed`,
+    );
   }
 });
 

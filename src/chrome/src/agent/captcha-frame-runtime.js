@@ -300,6 +300,7 @@ function candidateSummary(candidate) {
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
     callbackName: candidate?.callbackName || null,
+    responseTokenPresent: candidate?.responseTokenPresent === true,
     responseFieldId: candidate?.responseFieldId || null,
     responseFieldIndex: Number.isInteger(candidate?.responseFieldIndex)
       ? candidate.responseFieldIndex
@@ -407,6 +408,8 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
         dialogAssociated: previous.dialogAssociated === true || candidate.dialogAssociated === true,
         responseField: previous.responseField === true || candidate.responseField === true,
+        responseTokenPresent: previous.responseTokenPresent === true
+          || candidate.responseTokenPresent === true,
       };
       for (const field of taskParameterFields) {
         const previousValue = previous[field];
@@ -686,6 +689,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     const {
       responseFieldDialogAssociated,
       alsoResponseFieldDialogAssociated,
+      alsoResponseTokenPresent,
       ...serializableCandidate
     } = candidate;
     candidates.push({
@@ -693,6 +697,8 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       frameUrl,
       challengeFrame,
       responseField,
+      responseTokenPresent: candidate.responseTokenPresent === true
+        || alsoResponseTokenPresent === true,
       documentTimeOrigin,
       dialogAssociated: candidate.dialogAssociated === true
         || responseFieldDialogAssociated === true
@@ -728,9 +734,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     const responseFieldIndex = fields.indexOf(field);
     let responseFieldId = '';
     try { responseFieldId = String(field.id || field.getAttribute?.('id') || ''); } catch (_) {}
+    let responseTokenPresent = false;
+    try { responseTokenPresent = String(field.value || '').trim().length > 0; } catch (_) {}
     return {
       ...(responseFieldId ? { responseFieldId } : {}),
       ...(responseFieldIndex >= 0 ? { responseFieldIndex } : {}),
+      responseTokenPresent,
       ...(elementInChallengeDialog(field) ? { responseFieldDialogAssociated: true } : {}),
     };
   };
@@ -741,6 +750,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(Number.isInteger(identity.responseFieldIndex)
         ? { alsoResponseFieldIndex: identity.responseFieldIndex }
         : {}),
+      alsoResponseTokenPresent: identity.responseTokenPresent === true,
       ...(identity.responseFieldDialogAssociated
         ? { alsoResponseFieldDialogAssociated: true }
         : {}),
