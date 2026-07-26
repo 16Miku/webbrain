@@ -107,9 +107,17 @@ export function detectChallengeDialogInPage(options = null) {
   };
   const visible = (element) => {
     try {
-      const style = getComputedStyle(element);
-      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
-      if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
+      const elementStyle = getComputedStyle(element);
+      if (elementStyle.visibility === 'hidden' || elementStyle.visibility === 'collapse') return false;
+      let current = element;
+      for (let depth = 0; current && depth < 30; depth += 1) {
+        const style = getComputedStyle(current);
+        if (style.display === 'none' || Number(style.opacity) === 0) return false;
+        if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
+        current = current.parentElement
+          || (typeof current.getRootNode === 'function' ? current.getRootNode()?.host : null)
+          || null;
+      }
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;
       const viewportWidth = typeof window !== 'undefined' && typeof window.innerWidth === 'number'
@@ -139,9 +147,16 @@ export function detectChallengeDialogInPage(options = null) {
       visible: visible(element),
     };
   });
+  // A challenge dialog that exists in the DOM but is hidden or off-viewport
+  // is positive evidence the challenge is inactive. Report it separately so
+  // callers can distinguish "confirmed hidden" from "not found" — a dialog
+  // this scan cannot see at all (closed shadow root, unreachable frame) must
+  // not be treated as disproved.
+  let hiddenChallenge = null;
   const finish = challenge => includeFrameContext
     ? {
         challenge,
+        ...(hiddenChallenge ? { hiddenChallenge } : {}),
         frameContext: {
           frameUrl,
           frameName,
@@ -149,23 +164,80 @@ export function detectChallengeDialogInPage(options = null) {
         },
       }
     : challenge;
-  for (const element of document.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')) {
-    if (!visible(element)) continue;
+  // The accessibility tree pierces open shadow roots on some sites, where
+  // frameworks (e.g. LinkedIn's interop shell) render whole dialogs that
+  // document.querySelectorAll cannot see. Scan open shadow roots too so this
+  // preflight can confirm the same dialogs the tree reports.
+  const dialogSelector = 'dialog, [role="dialog"], [role="alertdialog"]';
+  const dialogCandidates = [];
+  const collectDialogs = (root, depth) => {
+    try {
+      for (const element of root.querySelectorAll(dialogSelector)) {
+        if (dialogCandidates.length >= 200) break;
+        dialogCandidates.push(element);
+      }
+    } catch {}
+    if (depth >= 4) return;
+    let descendants;
+    try { descendants = root.querySelectorAll('*'); } catch { return; }
+    for (const host of descendants) {
+      if (host.shadowRoot) collectDialogs(host.shadowRoot, depth + 1);
+    }
+  };
+  collectDialogs(document, 0);
+  const recordHiddenChallenge = (element) => {
+    if (hiddenChallenge) return;
+    try {
+      const values = [
+        element.getAttribute?.('aria-label'),
+        element.getAttribute?.('title'),
+        element.innerText,
+        element.textContent,
+        ...Array.from(element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || [])
+          .map(heading => heading.textContent || ''),
+      ];
+      for (const value of values) {
+        const text = String(value || '');
+        if (!matchesChallenge(text)) continue;
+        const line = text.split(/\r?\n/).find(entry => matchesChallenge(entry)) || text;
+        const label = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+        if (label) {
+          hiddenChallenge = { label };
+          return;
+        }
+      }
+    } catch {}
+  };
+  for (const element of dialogCandidates) {
+    if (!visible(element)) {
+      recordHiddenChallenge(element);
+      continue;
+    }
     let labelledBy = '';
     try {
+      const idRoot = (typeof element.getRootNode === 'function' && element.getRootNode()) || document;
       labelledBy = String(element.getAttribute('aria-labelledby') || '')
         .split(/\s+/)
         .filter(Boolean)
-        .map(id => document.getElementById(id)?.textContent || '')
+        .map(id => (typeof idRoot.getElementById === 'function' ? idRoot : document)
+          .getElementById(id)?.textContent || '')
+        .join(' ');
+    } catch {}
+    let renderedHeadings = '';
+    try {
+      renderedHeadings = Array.from(
+        element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
+      )
+        .filter(visible)
+        .map(heading => heading.textContent || '')
         .join(' ');
     } catch {}
     const values = [
       element.getAttribute?.('aria-label'),
       labelledBy,
-      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      renderedHeadings,
       element.getAttribute?.('title'),
       element.innerText,
-      element.textContent,
     ];
     for (const value of values) {
       const text = String(value || '');

@@ -2867,6 +2867,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         frameId: Number.isInteger(entry?.frameId) ? entry.frameId : 0,
         payload: entry?.result,
       }));
+      const hiddenChallenges = entries.flatMap(entry => {
+        const label = String(entry.payload?.hiddenChallenge?.label || '');
+        if (!label) return [];
+        const normalized = detectChallengeDialog(
+          `dialog ${JSON.stringify(label.slice(0, 200))}`,
+          { allowGenericFailure: options?.allowGenericFailure === true },
+        );
+        if (!normalized?.normalizedLabel) return [];
+        return [{
+          frameId: entry.frameId,
+          frameUrl: String(entry.payload?.frameContext?.frameUrl || ''),
+          label: normalized.label,
+          normalizedLabel: normalized.normalizedLabel,
+        }];
+      });
       const inspectedFrameIds = new Set(entries
         .filter(entry => entry.payload && typeof entry.payload === 'object')
         .map(entry => entry.frameId));
@@ -2876,9 +2891,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return includeStatus
         ? {
             challenge,
+            challengeHidden: hiddenChallenges.length > 0,
+            hiddenChallenges,
+            // With no expected frame, "complete" still requires at least one
+            // frame to have actually been inspected.
             inspectionComplete: expectedFrameId === null
-              || inspectedFrameIds.has(expectedFrameId)
-              || (navigationInspectionComplete && !expectedFrameStillExists),
+              ? inspectedFrameIds.size > 0
+              : (inspectedFrameIds.has(expectedFrameId)
+                || (navigationInspectionComplete && !expectedFrameStillExists)),
           }
         : challenge;
     };
@@ -2891,7 +2911,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return inspected(results);
       } catch {
         return includeStatus
-          ? { challenge: null, inspectionComplete: false }
+          ? {
+              challenge: null,
+              challengeHidden: false,
+              hiddenChallenges: [],
+              inspectionComplete: false,
+            }
           : null;
       }
     }
@@ -2919,6 +2944,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? challenge.frameId
           : null,
         captchaChallengeFrameUrl: challenge.frameUrl || '',
+        captchaChallengeVisibilityConfirmed: true,
       },
       {},
     );
@@ -2937,6 +2963,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const activeGate = this._captchaGateStates.get(tabId);
+    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
+    let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
+      ? toolResult.captchaChallengeFrameId
+      : null;
+    let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
     let challenge = detectChallengeDialog(toolResult.pageContent, {
       allowGenericFailure: !!activeGate,
     });
@@ -2946,11 +2977,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { allowGenericFailure: !!activeGate },
       );
     }
+    if (
+      challenge
+      && treeFilter !== 'visible'
+      && toolResult.captchaChallengeVisibilityConfirmed !== true
+    ) {
+      const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: observedChallengeFrameId,
+        allowGenericFailure: !!activeGate,
+      });
+      if (recheck.challenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
+          { allowGenericFailure: !!activeGate },
+        );
+        observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
+          ? recheck.challenge.frameId
+          : null;
+        observedChallengeFrameUrl = String(recheck.challenge.frameUrl || '');
+      }
+      // A DOM scan cannot prove that the tree-observed dialog is the same
+      // element as a hidden match: a page may retain a hidden template while
+      // rendering the active challenge in a closed shadow root. Hidden,
+      // missing, and inconclusive scan results therefore remain diagnostic
+      // only and keep the gate fail-closed.
+    }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
-    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     const requestedPage = toolArgs?.page;
     const requestedMaxDepth = toolArgs?.maxDepth;
     const parsedMaxDepth = Number(requestedMaxDepth);
@@ -3148,10 +3204,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       key,
       status: publicGate.status,
       publicGate,
-      ...(Number.isInteger(toolResult.captchaChallengeFrameId)
+      ...(Number.isInteger(observedChallengeFrameId)
         ? {
-            challengeFrameId: toolResult.captchaChallengeFrameId,
-            challengeFrameUrl: String(toolResult.captchaChallengeFrameUrl || ''),
+            challengeFrameId: observedChallengeFrameId,
+            challengeFrameUrl: observedChallengeFrameUrl,
           }
         : {}),
     });

@@ -5287,8 +5287,11 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   }
 });
 
-test('CAPTCHA mutation preflight ignores hidden and off-viewport verification dialogs', async () => {
-  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fail closed', async () => {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
     const hiddenCases = [
       captchaEl('div', {
         role: 'dialog',
@@ -5309,8 +5312,73 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        const agent = new AgentClass({});
+        const observation = await agent._observeCaptchaChallenge(
+          1,
+          'get_accessibility_tree',
+          {
+            pageContent: 'dialog "Security verification" [ref_1]\n button "Dismiss" [ref_2]',
+            pageUrl: 'https://example.test/form',
+          },
+          {},
+        );
+        assert.ok(
+          observation.gate,
+          `${build}: ambiguous all-tree challenge was cleared by non-unique hidden evidence`,
+        );
+        assert.equal(
+          agent._captchaGateStates.has(1),
+          true,
+          `${build}: ambiguous all-tree challenge failed open`,
+        );
       });
     }
+    const visibilityOverrideNodes = [
+      captchaEl('div', { 'data-test-visibility': 'hidden' }, [
+        captchaEl('div', {
+          role: 'dialog',
+          innerText: 'Security verification',
+          'data-test-visibility': 'visible',
+        }, [
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+          captchaEl('iframe', {
+            src: 'https://www.google.com/recaptcha/api2/anchor?k=VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
+      );
+      const runtime = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
+      ).href);
+      const detected = runtime.detectCaptchaCandidatesInPage({
+        window: {
+          location: globalThis.location,
+          innerWidth: globalThis.innerWidth,
+          innerHeight: globalThis.innerHeight,
+          getComputedStyle: globalThis.getComputedStyle,
+        },
+        document: globalThis.document,
+      });
+      const candidate = detected.candidates.find(
+        entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
+      );
+      assert.equal(
+        candidate?.visible,
+        true,
+        `${build}: visible CAPTCHA widget under visibility-hidden ancestor was demoted`,
+      );
+    });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
@@ -5330,6 +5398,196 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
         'Email verification failed',
         `${build}: active-gate failure context was ignored`,
       );
+    });
+
+    const hiddenStageNodes = [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Account details',
+        textContent: 'Account details Security verification',
+      }, [
+        captchaEl('h2', { textContent: 'Account details' }),
+        captchaEl('section', {
+          hidden: true,
+          innerText: 'Security verification',
+        }, [
+          captchaEl('h2', { textContent: 'Security verification' }),
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'INACTIVE_STAGE_KEY',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, hiddenStageNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
+      );
+    });
+    const hiddenStageCandidate = await detectCaptchaOnFakePage(build, hiddenStageNodes);
+    assert.equal(
+      hiddenStageCandidate?.dialogAssociated,
+      false,
+      `${build}: hidden CAPTCHA stage associated its widget with the visible modal`,
+    );
+  }
+});
+
+test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate on inconclusive scans', async () => {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
+    // A visible challenge dialog rendered inside an open shadow root (the
+    // LinkedIn interop-outlet pattern): invisible to document.querySelectorAll
+    // but reported by the shadow-piercing accessibility tree.
+    const shadowDialogNodes = [
+      captchaEl('div', {
+        id: 'interop-outlet',
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+            captchaEl('h2', { textContent: 'Security verification' }),
+          ]),
+        ],
+      }),
+    ];
+    await withCaptchaFakePage(build, shadowDialogNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
+      );
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: shadow-rooted challenge from an all-tree read did not arm the gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: shadow-rooted challenge did not persist a gate`);
+    });
+
+    // A hidden challenge is disproof only for the same normalized label in
+    // the same frame. An unrelated hidden reCAPTCHA must not clear a visible
+    // tree-only challenge (for example one inside a closed shadow root).
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'reCAPTCHA',
+        hidden: true,
+      }),
+    ], async () => {
+      const agent = new AgentClass({});
+      const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
+        includeStatus: true,
+      });
+      assert.deepEqual(recheck.hiddenChallenges, [{
+        frameId: 0,
+        frameUrl: 'https://example.test/form',
+        label: 'reCAPTCHA',
+        normalizedLabel: 'recaptcha',
+      }], `${build}: hidden challenge evidence lost its frame or normalized label`);
+
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: unrelated hidden challenge cleared the tree-only CAPTCHA gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
+
+      const sameLabelAgent = new AgentClass({});
+      const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "reCAPTCHA" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(
+        sameLabelObservation.gate,
+        `${build}: same-label hidden template cleared the tree-only CAPTCHA gate`,
+      );
+      assert.equal(
+        sameLabelAgent._captchaGateStates.has(1),
+        true,
+        `${build}: same-label hidden template failed open`,
+      );
+    });
+
+    const crossFrameAgent = new AgentClass({});
+    crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: null,
+      challengeHidden: true,
+      hiddenChallenges: [{
+        frameId: 7,
+        frameUrl: 'https://challenge.example.test/hidden',
+        label: 'Security verification',
+        normalizedLabel: 'security verification',
+      }],
+      inspectionComplete: true,
+    });
+    const crossFrameObservation = await crossFrameAgent._observeCaptchaChallenge(
+      1,
+      'get_accessibility_tree',
+      {
+        pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+        pageUrl: 'https://example.test/form',
+        captchaChallengeFrameId: 0,
+      },
+      {},
+    );
+    assert.ok(crossFrameObservation.gate, `${build}: hidden challenge from another frame cleared the gate`);
+    assert.equal(crossFrameAgent._captchaGateStates.has(1), true, `${build}: cross-frame hidden challenge failed open`);
+
+    // Hidden ancestry must still win even across the shadow boundary: a
+    // challenge dialog inside the shadow root of a hidden host stays inert.
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        hidden: true,
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }),
+        ],
+      }),
+    ], async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: shadow dialog under a hidden host armed the preflight`,
+      );
+    });
+
+    // When script injection fails outright the scan proves nothing — the
+    // tree's observation must be kept rather than failing the gate open.
+    // (The "scan succeeds but cannot find the dialog at all" case is covered
+    // by the unsupported-Arkose routing test: absence is not disproof.)
+    await withCaptchaFakePage(build, [], async () => {
+      globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
+      globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: inconclusive DOM scan cleared the tree challenge and failed open`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive DOM scan did not persist a gate`);
     });
   }
 });
@@ -53638,6 +53896,21 @@ function captchaEl(tag, attrs = {}, children = []) {
     querySelectorAll: (sel) => captchaMatchAll(children, sel),
   };
   for (const child of children) child.parentElement = el;
+  if (Array.isArray(attrs.shadow)) {
+    // Open shadow root: content is reachable only via el.shadowRoot, never
+    // through document/parent querySelectorAll — mirroring the real DOM.
+    const shadowChildren = attrs.shadow;
+    el.shadowRoot = {
+      host: el,
+      children: shadowChildren,
+      querySelector: (sel) => captchaMatchAll(shadowChildren, sel)[0] || null,
+      querySelectorAll: (sel) => captchaMatchAll(shadowChildren, sel),
+    };
+    for (const child of shadowChildren) {
+      child.parentElement = null;
+      child.getRootNode = () => el.shadowRoot;
+    }
+  }
   el.contains = (candidate) => {
     if (candidate === el) return true;
     return children.some(child => child === candidate || child.contains?.(candidate));
@@ -53652,6 +53925,7 @@ function captchaMatchAll(roots, selectorList) {
   })(roots);
   const selectors = String(selectorList).split(',').map(s => s.trim()).filter(Boolean);
   const matchesOne = (el, sel) => {
+    if (sel === '*') return true;
     // Tokenize into tag / .class / [attr…] parts. Splitting naively on "."
     // would break selectors like script[src*="recaptcha/api.js"].
     const parts = sel.match(/\[[^\]]*\]|\.[\w-]+|^[a-zA-Z][\w-]*/g) || [];
@@ -53699,7 +53973,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
   globalThis.innerHeight = 720;
   globalThis.getComputedStyle = (element) => ({
     display: element.hidden ? 'none' : 'block',
-    visibility: 'visible',
+    visibility: element.getAttribute?.('data-test-visibility') || 'visible',
     opacity: '1',
   });
   // The detector reaches for the extension API by name; give each build the
