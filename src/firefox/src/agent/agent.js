@@ -12497,7 +12497,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isActionMode(mode)) {
         try {
           const tab = await browser.tabs.get(tabId);
-          if (tab?.active) {
+          // Scheduled URL-target tabs intentionally stay inactive. Firefox can
+          // execute scripts in and capture those tabs directly, so completion
+          // verification must not depend on active-tab state.
+          if (tab) {
             // Probe page URL, title, and "work in progress" signals: open
             // dialogs/modals and visible forms. If any of these are present
             // while the model claims it created/added/saved/submitted, the

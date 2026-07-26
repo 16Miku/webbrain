@@ -1103,6 +1103,79 @@ test('remaining model-facing screenshot fallbacks apply redaction', () => {
     'Firefox done verification should not embed base64 in the done result');
 });
 
+test('Firefox done verifies inactive scheduled tabs before accepting completion', async () => {
+  const originalBrowser = globalThis.browser;
+  const tabId = 417;
+  let executeScriptCalls = 0;
+  const captures = [];
+  try {
+    globalThis.browser = {
+      tabs: {
+        get: async () => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/items/new',
+          title: 'Create item',
+        }),
+        executeScript: async () => {
+          executeScriptCalls += 1;
+          return [{
+            url: 'https://example.test/items/new',
+            title: 'Create item',
+            openDialogCount: 1,
+            dialogTitles: ['Create item'],
+            visibleFormCount: 1,
+            relevantFormCount: 1,
+            formDescriptors: [{
+              label: 'Create item',
+              relevant: true,
+              utility: false,
+              editableCount: 2,
+              submitCount: 1,
+            }],
+            liveRegionMessages: [],
+            successMessages: [],
+          }];
+        },
+        captureTab: async (capturedTabId, options) => {
+          captures.push({ tabId: capturedTabId, options });
+          return 'data:image/png;base64,AA==';
+        },
+        sendMessage: async () => ({}),
+      },
+    };
+
+    const agent = new AgentFx({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent.conversationModes.set(tabId, 'act');
+
+    const result = await agent.executeTool(tabId, 'done', {
+      summary: 'Created the item.',
+      outcome: 'success',
+    });
+
+    assert.equal(executeScriptCalls, 1,
+      'inactive Firefox runs should still probe dialogs and forms before done');
+    assert.deepEqual(captures, [{
+      tabId,
+      options: { format: 'png', quality: 80 },
+    }], 'inactive Firefox runs should capture their own tab for done verification');
+    assert.equal(result.blockedDone, true,
+      'an unfinished inactive-tab form should block a successful done result');
+
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+    const doneStart = source.indexOf("if (name === 'done')");
+    const doneEnd = source.indexOf('// Network & download tools', doneStart);
+    assert.doesNotMatch(source.slice(doneStart, doneEnd), /if \(tab\?\.active\)/,
+      'Firefox done verification must not be gated on active-tab state');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('firefox auto and media screenshot helpers redact model-facing data URLs', () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
   // Signature may include optional opts for Chrome call-site parity.
