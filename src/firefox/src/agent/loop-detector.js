@@ -41,6 +41,11 @@ export class LoopDetector {
     // unrelated noise between them, catching the "click missing its target,
     // model retries forever" failure mode in 2-3 attempts instead of never.
     this.recentCoordClicks = new Map(); // tabId -> [{ key, ts }]
+    // Verification overlays often allocate fresh accessibility ref ids every
+    // time they are dismissed and reopened. Track their semantic identity
+    // separately so ref churn and interleaved close/Continue calls cannot
+    // disguise the same challenge loop.
+    this.verificationChallengeStates = new Map(); // tabId -> { key, active, reopenCount }
   }
 
   /**
@@ -193,6 +198,43 @@ export class LoopDetector {
     this.recentCoordClicks.delete(tabId);
   }
 
+  _checkVerificationChallengeLoop(tabId, { pageUrl = '', dialogLabel = '' } = {}) {
+    const normalizedLabel = String(dialogLabel || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .slice(0, 160);
+    const previous = this.verificationChallengeStates.get(tabId);
+
+    if (!normalizedLabel) {
+      if (previous?.active) {
+        this.verificationChallengeStates.set(tabId, { ...previous, active: false });
+      }
+      return { kind: 'none' };
+    }
+
+    const key = `${this._normalizeUrl(pageUrl)}\n${normalizedLabel}`;
+    if (!previous || previous.key !== key) {
+      this.verificationChallengeStates.set(tabId, { key, active: true, reopenCount: 0 });
+      return { kind: 'none' };
+    }
+    if (previous.active) return { kind: 'none' };
+
+    const reopenCount = previous.reopenCount + 1;
+    this.verificationChallengeStates.set(tabId, { key, active: true, reopenCount });
+    if (reopenCount >= 2) {
+      return {
+        kind: 'stop',
+        message: 'Stopped: the same verification dialog was dismissed and reopened repeatedly on the same page. Do not close it or resubmit the form again. Use the CAPTCHA solver when supported, or ask the user to complete the verification manually.',
+      };
+    }
+    return {
+      kind: 'nudge',
+      warning: '[VERIFICATION DIALOG REOPENED: The same verification challenge returned on the same page. Do not dismiss or close it and do not click Continue/Submit again. Use solve_captcha once if supported; otherwise ask the user to complete it manually.]',
+    };
+  }
+
   /**
    * Clear everything the detector accumulated for `tabId` except the nav
    * arrival history, which must outlive intra-run resets so navigation
@@ -212,6 +254,7 @@ export class LoopDetector {
   _clearRunLoopState(tabId) {
     this.recentNavUrls.delete(tabId);
     this._clearLoopState(tabId);
+    this.verificationChallengeStates.delete(tabId);
   }
 
   /**

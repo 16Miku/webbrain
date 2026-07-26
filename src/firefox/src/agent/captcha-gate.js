@@ -1,0 +1,187 @@
+const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+
+function normalizeChallengeLabel(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+export function detectChallengeDialog(pageContent) {
+  const lines = String(pageContent || '').split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*(?:dialog|alertdialog)\s+"([^"\r\n]{1,200})"/i);
+    if (!match || !CHALLENGE_DIALOG_RE.test(match[1])) continue;
+    return {
+      label: match[1].trim().slice(0, 200),
+      normalizedLabel: normalizeChallengeLabel(match[1]),
+    };
+  }
+  return null;
+}
+
+// Serialized into the page for a lightweight, read-only preflight before
+// model-authored mutations. Keep this function self-contained.
+export function detectChallengeDialogInPage() {
+  if (typeof document === 'undefined' || !document?.querySelectorAll) return null;
+  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+  const visible = (element) => {
+    try {
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    } catch {
+      return false;
+    }
+  };
+  for (const element of document.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')) {
+    if (!visible(element)) continue;
+    let labelledBy = '';
+    try {
+      labelledBy = String(element.getAttribute('aria-labelledby') || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(id => document.getElementById(id)?.textContent || '')
+        .join(' ');
+    } catch {}
+    const values = [
+      element.getAttribute?.('aria-label'),
+      labelledBy,
+      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      element.getAttribute?.('title'),
+      element.innerText,
+      element.textContent,
+    ];
+    for (const value of values) {
+      const text = String(value || '');
+      if (!challengeRe.test(text)) continue;
+      // Return the dialog's full label, not the matched keyword, so the gate
+      // key built here matches the one built from the accessibility-tree
+      // dialog name and the same challenge is never keyed two ways.
+      const line = text.split(/\r?\n/).find(entry => challengeRe.test(entry)) || text;
+      const label = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (label) return { label };
+    }
+  }
+  return null;
+}
+
+export function captchaChallengeKey(pageUrl, normalizedLabel) {
+  let normalizedUrl = String(pageUrl || '').trim();
+  try {
+    const parsed = new URL(normalizedUrl);
+    parsed.hash = '';
+    normalizedUrl = parsed.href;
+  } catch {
+    normalizedUrl = normalizedUrl.split('#')[0];
+  }
+  return `${normalizedUrl}\n${normalizeChallengeLabel(normalizedLabel)}`;
+}
+
+export function sanitizeCaptchaFrameUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return `${parsed.origin}${parsed.pathname}`;
+    }
+    if (parsed.protocol === 'about:') return `${parsed.protocol}${parsed.pathname}`;
+    return `${parsed.protocol}//`;
+  } catch {
+    return raw.split(/[?#]/)[0].slice(0, 300);
+  }
+}
+
+export function captchaVendorFromUrl(value) {
+  const url = String(value || '').toLowerCase();
+  if (!url) return 'unknown';
+  if (/arkoselabs|funcaptcha|fc-api/.test(url)) return 'arkose';
+  if (/recaptcha|google\.com\/recaptcha|recaptcha\.net/.test(url)) return 'recaptcha';
+  if (/hcaptcha/.test(url)) return 'hcaptcha';
+  if (/challenges\.cloudflare|turnstile/.test(url)) return 'turnstile';
+  if (/geetest/.test(url)) return 'geetest';
+  if (/datadome/.test(url)) return 'datadome';
+  if (/mtcaptcha/.test(url)) return 'mtcaptcha';
+  if (/awswaf|aws-waf|captcha\.aws/.test(url)) return 'aws_waf';
+  if (/perimeterx|px-captcha/.test(url)) return 'perimeterx';
+  return 'unknown';
+}
+
+export function buildCaptchaDiagnostics({
+  candidates = [],
+  frameContexts = [],
+  navigationFrames = [],
+} = {}) {
+  const rows = [];
+  const seen = new Set();
+  const addFrame = ({ frameId = null, parentFrameId = null, frameUrl = '', source, visible = null }) => {
+    const sanitizedUrl = sanitizeCaptchaFrameUrl(frameUrl);
+    if (!sanitizedUrl) return;
+    const vendor = captchaVendorFromUrl(frameUrl);
+    const key = `${frameId ?? ''}|${parentFrameId ?? ''}|${sanitizedUrl}|${source}`;
+    if (seen.has(key) || rows.length >= 40) return;
+    seen.add(key);
+    rows.push({
+      frameId: Number.isInteger(frameId) ? frameId : null,
+      ...(Number.isInteger(parentFrameId) ? { parentFrameId } : {}),
+      frameUrl: sanitizedUrl,
+      vendor,
+      source,
+      ...(typeof visible === 'boolean' ? { visible } : {}),
+    });
+  };
+
+  for (const frame of navigationFrames || []) {
+    addFrame({
+      frameId: frame?.frameId,
+      parentFrameId: frame?.parentFrameId,
+      frameUrl: frame?.url,
+      source: 'navigation',
+    });
+  }
+  for (const context of frameContexts || []) {
+    addFrame({
+      frameId: context?.frameId,
+      frameUrl: context?.frameUrl,
+      source: 'document',
+    });
+    for (const child of context?.childFrames || []) {
+      addFrame({
+        frameUrl: child?.loadedUrl || child?.url,
+        source: 'embedded',
+        visible: child?.visible,
+      });
+    }
+  }
+  for (const candidate of candidates || []) {
+    addFrame({
+      frameId: candidate?.frameId,
+      frameUrl: candidate?.frameUrl,
+      source: 'candidate',
+      visible: candidate?.visible,
+    });
+  }
+
+  const candidateTypes = [...new Set(
+    (candidates || []).map(candidate => String(candidate?.type || '').trim()).filter(Boolean)
+  )].sort();
+  const candidateVendors = candidateTypes.map((type) => {
+    if (type.startsWith('recaptcha')) return 'recaptcha';
+    if (type === 'hcaptcha') return 'hcaptcha';
+    if (type === 'turnstile' || type === 'cloudflare' || type === 'cf_turnstile') return 'turnstile';
+    return 'unknown';
+  });
+  const vendors = [...new Set(
+    [...rows.map(row => row.vendor), ...candidateVendors].filter(vendor => vendor !== 'unknown')
+  )].sort();
+  return {
+    vendors,
+    candidateTypes,
+    supportedCandidateCount: Array.isArray(candidates) ? candidates.length : 0,
+    frames: rows,
+  };
+}

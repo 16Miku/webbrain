@@ -19,6 +19,7 @@ import {
   normalizeCaptchaType,
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
+import { buildCaptchaDiagnostics } from './captcha-gate.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -321,10 +322,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
     ));
   const candidates = [...directCandidates, ...inheritedCandidates];
   const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
-  return selectCaptchaCandidate(
-    applyCaptchaFrameVisibility(candidates, frameContexts, frames),
-    constraints,
-  );
+  const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, frames);
+  return {
+    ...selectCaptchaCandidate(visibleCandidates, constraints),
+    diagnostics: buildCaptchaDiagnostics({
+      candidates: visibleCandidates,
+      frameContexts,
+      navigationFrames: frames,
+    }),
+  };
 }
 
 export async function injectToken(tabId, {
