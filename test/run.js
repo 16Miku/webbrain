@@ -12447,10 +12447,10 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
   const comparisonDialogIndex = template.indexOf('id="comparison-video-dialog"');
 
   for (const asset of [
-    'web/assets/webbrain-home-captioned.mp4',
-    'web/assets/webbrain-home-vertical.mp4',
-    'web/assets/webbrain-home-poster.jpg',
-    'web/assets/webbrain-home-poster-vertical.jpg',
+    'web/assets/webbrain-home-demo.mp4',
+    'web/assets/webbrain-home-demo-vertical.mp4',
+    'web/assets/webbrain-home-demo-poster.jpg',
+    'web/assets/webbrain-home-demo-poster-vertical.jpg',
     'web/assets/demo-desktop.mp4',
     'web/assets/demo-mobile.mp4',
   ]) {
@@ -12458,10 +12458,17 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
     assert.ok(fs.statSync(path.join(ROOT, asset)).size > 100_000, `${asset}: media asset should not be empty`);
   }
 
+  // The hero demo is a homepage asset on the critical path — keep it honest
+  // about weight so a future re-export cannot quietly ship an 80MB file.
+  for (const asset of ['web/assets/webbrain-home-demo.mp4', 'web/assets/webbrain-home-demo-vertical.mp4']) {
+    const mb = fs.statSync(path.join(ROOT, asset)).size / 1_000_000;
+    assert.ok(mb < 16, `${asset}: hero demo should stay under 16MB (is ${mb.toFixed(1)}MB)`);
+  }
+
   assert.match(
     template,
-    /<video id="demo-video"[^>]*data-desktop-src="\/assets\/webbrain-home-captioned\.mp4"[^>]*data-mobile-src="\/assets\/webbrain-home-vertical\.mp4"[^>]*data-desktop-poster="\/assets\/webbrain-home-poster\.jpg"[^>]*data-mobile-poster="\/assets\/webbrain-home-poster-vertical\.jpg"/,
-    'web demo: main action video should use the new captioned desktop and vertical assets',
+    /<video id="demo-video"[^>]*data-desktop-src="\/assets\/webbrain-home-demo\.mp4"[^>]*data-mobile-src="\/assets\/webbrain-home-demo-vertical\.mp4"[^>]*data-desktop-poster="\/assets\/webbrain-home-demo-poster\.jpg"[^>]*data-mobile-poster="\/assets\/webbrain-home-demo-poster-vertical\.jpg"/,
+    'web demo: main action video should use the preroll desktop and vertical assets',
   );
   assert.match(
     template,
@@ -12470,7 +12477,7 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
   );
   assert.match(
     template,
-    /\.video-frame \{[\s\S]*?padding-bottom: 65\.625%;[\s\S]*?\}[\s\S]*?@media \(max-width: 768px\) \{[\s\S]*?\.video-frame \{ padding-bottom: 177\.78%; \}/,
+    /\.video-frame \{[\s\S]*?padding-bottom: 56\.25%;[\s\S]*?\}[\s\S]*?@media \(max-width: 768px\) \{[\s\S]*?\.video-frame \{ padding-bottom: 177\.78%; \}/,
     'web demo: desktop and mobile frames should preserve the new assets’ native aspect ratios',
   );
   assert.ok(
