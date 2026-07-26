@@ -505,6 +505,10 @@ const inputHighlightEl = document.getElementById('input-highlight');
 const sendBtn = document.getElementById('btn-send');
 const micBtn = document.getElementById('btn-mic');
 const clearBtn = document.getElementById('btn-clear');
+const appEl = document.getElementById('app');
+const newConversationConfirmEl = document.getElementById('new-conversation-confirm');
+const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
+const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
 const historyBtn = document.getElementById('btn-history');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
@@ -975,6 +979,7 @@ const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
 const clearingConversationTabs = new Set();
+let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
@@ -1020,6 +1025,86 @@ function isConversationClearInProgress(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) && clearingConversationTabs.has(numericTabId);
 }
+
+function settleNewConversationConfirmation(confirmed, { restoreFocus = true } = {}) {
+  const state = newConversationConfirmationState;
+  if (!state) return;
+  newConversationConfirmationState = null;
+  newConversationConfirmEl?.classList.add('hidden');
+  if (appEl) appEl.inert = state.appWasInert;
+  if (restoreFocus && state.previouslyFocusedElement?.isConnected
+      && typeof state.previouslyFocusedElement.focus === 'function') {
+    state.previouslyFocusedElement.focus({ preventScroll: true });
+  }
+  state.resolve(!!confirmed);
+}
+
+function requestNewConversationConfirmation(tabId) {
+  if (newConversationConfirmationState || !appEl || !newConversationConfirmEl
+      || !newConversationConfirmCancelBtn || !newConversationConfirmAcceptBtn) {
+    return Promise.resolve(false);
+  }
+
+  let resolveConfirmation;
+  const promise = new Promise((resolve) => {
+    resolveConfirmation = resolve;
+  });
+  newConversationConfirmationState = {
+    tabId: Number(tabId),
+    promise,
+    resolve: resolveConfirmation,
+    appWasInert: appEl.inert,
+    previouslyFocusedElement: document.activeElement,
+  };
+
+  applyDOMTranslations(newConversationConfirmEl);
+  appEl.inert = true;
+  newConversationConfirmEl.classList.remove('hidden');
+  newConversationConfirmCancelBtn.focus({ preventScroll: true });
+  return promise;
+}
+
+function handleNewConversationConfirmKeydown(event) {
+  if (!newConversationConfirmationState) return false;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    settleNewConversationConfirmation(false);
+  } else if (event.key === 'Tab') {
+    const focusable = Array.from(newConversationConfirmEl.querySelectorAll(
+      '[data-new-conversation-confirm-action]:not([disabled])',
+    ));
+    if (!focusable.length) {
+      event.preventDefault();
+      newConversationConfirmEl.focus({ preventScroll: true });
+    } else {
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !newConversationConfirmEl.contains(activeElement))) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && (activeElement === last || !newConversationConfirmEl.contains(activeElement))) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  event.stopImmediatePropagation();
+  return true;
+}
+
+document.addEventListener('keydown', handleNewConversationConfirmKeydown, true);
+newConversationConfirmCancelBtn?.addEventListener('click', () => {
+  settleNewConversationConfirmation(false);
+});
+newConversationConfirmAcceptBtn?.addEventListener('click', () => {
+  settleNewConversationConfirmation(true);
+});
+newConversationConfirmEl?.addEventListener('click', (event) => {
+  if (event.target === newConversationConfirmEl) settleNewConversationConfirmation(false);
+});
 
 function setTabAbortRequested(tabId, requested) {
   const numericTabId = Number(tabId);
@@ -3542,6 +3627,10 @@ if (verboseBtn) {
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  if (newConversationConfirmationState
+      && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
+    settleNewConversationConfirmation(false, { restoreFocus: false });
+  }
   const switchGeneration = ++tabSwitchGeneration;
   tabSwitchTransitionId = newTabId;
   queuedTabSwitchMessages = [];
@@ -10291,8 +10380,9 @@ document.addEventListener('wb-locale-changed', () => {
 
 clearBtn.addEventListener('click', async () => {
   const tabId = currentTabId;
-  if (isConversationClearInProgress(tabId)) return;
-  if (!window.confirm(t('sp.clear.confirm'))) return;
+  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return;
+  if (!await requestNewConversationConfirmation(tabId)) return;
+  if (!sameTabId(currentTabId, tabId)) return;
   setConversationClearInProgress(tabId, true);
   try {
     suppressRunUpdatesForClearedConversation(tabId);

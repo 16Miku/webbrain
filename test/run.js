@@ -12749,6 +12749,18 @@ test('all locales translate the new-conversation warning', () => {
   }
 });
 
+test('Vivaldi FAQ no longer sends New conversation users out of the Web Panel', () => {
+  const localeDir = path.join(ROOT, 'web/build/locales');
+  for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.json'))) {
+    const locale = JSON.parse(fs.readFileSync(path.join(localeDir, filename), 'utf8'));
+    const answer = String(locale['faq.vivaldi_dialogs.a_html'] || '');
+    const paragraphs = answer.match(/<p>[\s\S]*?<\/p>/g) || [];
+    assert.equal(paragraphs.length, 3, `${filename}: obsolete New conversation workaround should be removed from the Vivaldi FAQ`);
+  }
+  const english = JSON.parse(fs.readFileSync(path.join(localeDir, 'en.json'), 'utf8'));
+  assert.doesNotMatch(english['faq.vivaldi_dialogs.a_html'], /New conversation:|Open in → New Tab/, 'English Vivaldi FAQ should not retain the normal-tab workaround');
+});
+
 test('all locales cover English keys and preserve interpolation placeholders', async () => {
   const placeholders = (value) => [...String(value).matchAll(/\{(\w+)\}/g)]
     .map((match) => match[1])
@@ -13257,14 +13269,18 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
   }
 });
 
-test('sidepanel New conversation uses a message-plus icon and keeps its confirmation guard', () => {
+test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialog', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
     ['firefox', 'src/firefox'],
   ]) {
     const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     const clearButton = html.match(/<button id="btn-clear"[\s\S]*?<\/button>/)?.[0] || '';
+    const confirmStart = html.indexOf('id="new-conversation-confirm"');
+    const confirmEnd = html.indexOf('\n\n  <div id="app">', confirmStart);
+    const confirmation = html.slice(confirmStart, confirmEnd);
 
     assert.match(clearButton, /data-i18n-title="sp\.btn\.clear"/, `${label}: New conversation tooltip should remain localized`);
     assert.match(clearButton, /data-i18n-aria-label="sp\.btn\.clear"/, `${label}: New conversation icon button should expose an accessible name`);
@@ -13273,11 +13289,28 @@ test('sidepanel New conversation uses a message-plus icon and keeps its confirma
     assert.match(clearButton, /d="M11\.5 8v6"[\s\S]*?d="M8\.5 11h6"/, `${label}: New conversation icon should include the plus`);
     assert.doesNotMatch(clearButton, /points="23 4 23 10 17 10"|M20\.49 15a9/, `${label}: legacy refresh icon should be removed`);
 
+    assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, `${label}: custom New conversation confirmation should exist outside the inert app`);
+    assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"/, `${label}: custom confirmation should expose modal dialog semantics`);
+    assert.match(confirmation, /id="new-conversation-confirm-title" data-i18n="sp\.clear\.confirm"/, `${label}: custom confirmation warning should stay localized`);
+    assert.match(confirmation, /id="new-conversation-confirm-cancel"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.scheduled\.cancel"/, `${label}: custom confirmation should have a localized safe action`);
+    assert.match(confirmation, /id="new-conversation-confirm-accept"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: custom confirmation should have a localized explicit clear action`);
+    assert.match(css, /\.new-conversation-confirm \{[\s\S]*?position: fixed;[\s\S]*?background: var\(--overlay-bg-strong\);/, `${label}: custom confirmation should stay visible inside narrow browser panels`);
+    assert.match(css, /\.new-conversation-confirm-actions \.new-conversation-confirm-accept \{[\s\S]*?background: var\(--error\);/, `${label}: destructive confirmation action should be visually distinct`);
+    assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.new-conversation-confirm-actions \{[\s\S]*?grid-template-columns: 1fr;/, `${label}: confirmation actions should stack in narrow Vivaldi panels`);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.new-conversation-confirm \{[\s\S]*?animation: none;/, `${label}: confirmation should respect reduced motion`);
+
+    assert.match(panel, /function requestNewConversationConfirmation\(tabId\) \{[\s\S]*?applyDOMTranslations\(newConversationConfirmEl\);[\s\S]*?appEl\.inert = true;[\s\S]*?classList\.remove\('hidden'\);[\s\S]*?newConversationConfirmCancelBtn\.focus/, `${label}: opening the custom confirmation should translate it, inert the app, and focus Cancel`);
+    assert.match(panel, /function settleNewConversationConfirmation\(confirmed,[\s\S]*?appEl\.inert = state\.appWasInert;[\s\S]*?previouslyFocusedElement\.focus[\s\S]*?state\.resolve\(!!confirmed\);/, `${label}: closing the custom confirmation should restore app state and focus`);
+    assert.match(panel, /function handleNewConversationConfirmKeydown\(event\) \{[\s\S]*?event\.key === 'Escape'[\s\S]*?event\.key === 'Tab'[\s\S]*?data-new-conversation-confirm-action[\s\S]*?event\.stopImmediatePropagation\(\);/, `${label}: confirmation should own Escape and trap keyboard focus before other sidepanel shortcuts`);
+    assert.match(panel, /newConversationConfirmEl\?\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === newConversationConfirmEl[\s\S]*?settleNewConversationConfirmation\(false\)/, `${label}: clicking the confirmation backdrop should cancel safely`);
+    assert.match(panel, /async function switchToTab\(newTabId\) \{[\s\S]*?newConversationConfirmationState[\s\S]*?!sameTabId\(newConversationConfirmationState\.tabId, newTabId\)[\s\S]*?settleNewConversationConfirmation\(false, \{ restoreFocus: false \}\);/, `${label}: switching tabs should cancel a stale confirmation`);
+
     const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
     const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
+    assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(!window\.confirm\(t\('sp\.clear\.confirm'\)\)\) return;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
     );
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
@@ -17834,7 +17867,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
 
     const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
     const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
-    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?if \(!window\.confirm\(t\('sp\.clear\.confirm'\)\)\) return;/, `${label}: clear button should confirm before clearing the conversation`);
+    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;/, `${label}: clear button should confirm in-panel and reject a stale tab before clearing`);
     assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: clear button should clear the originally requested tab only`);
 
     const compactIdx = panel.indexOf("if (command.value === '/compact')");

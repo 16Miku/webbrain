@@ -120,6 +120,128 @@ body {
   display: none;
 }
 
+.new-conversation-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: var(--overlay-bg-strong);
+  backdrop-filter: blur(3px);
+  animation: fadeIn 0.16s ease;
+}
+
+.new-conversation-confirm.hidden {
+  display: none;
+}
+
+.new-conversation-confirm-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 14px 12px;
+  align-items: center;
+  width: min(100%, 330px);
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--error) 34%, var(--border));
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.30);
+}
+
+.new-conversation-confirm-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  color: var(--error-soft);
+}
+
+.new-conversation-confirm-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.new-conversation-confirm-card h2 {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.new-conversation-confirm-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr);
+  gap: 8px;
+}
+
+.new-conversation-confirm-actions button {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.new-conversation-confirm-actions button:active {
+  transform: scale(0.98);
+}
+
+.new-conversation-confirm-actions button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.new-conversation-confirm-actions .new-conversation-confirm-cancel {
+  border-color: var(--border);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+}
+
+.new-conversation-confirm-actions .new-conversation-confirm-cancel:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.new-conversation-confirm-actions .new-conversation-confirm-accept {
+  background: var(--error);
+  color: #fff;
+}
+
+.new-conversation-confirm-actions .new-conversation-confirm-accept:hover {
+  background: color-mix(in srgb, var(--error) 86%, #000);
+}
+
+@media (max-width: 340px) {
+  .new-conversation-confirm-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-conversation-confirm {
+    animation: none;
+  }
+
+  .new-conversation-confirm-actions button {
+    transition: none;
+  }
+}
+
 .pin-coachmark {
   position: fixed;
   inset: 0;
