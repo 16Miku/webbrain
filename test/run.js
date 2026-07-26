@@ -4903,6 +4903,17 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       { filter: 'visible' },
     );
     assert.equal(changedManual.gate?.status, 'manual_required', `${label}: changed dialog reset a failed solve to a paid solve`);
+    const manualCompletion = await agent._observeCaptchaChallenge(
+      tabId,
+      'get_accessibility_tree',
+      {
+        pageContent: 'main [ref_930]\n heading "Welcome" [ref_931]',
+        pageUrl: 'https://example.test/identity-check',
+      },
+      { filter: 'visible' },
+    );
+    assert.equal(manualCompletion.gate?.status, 'cleared', `${label}: dialog-free root read did not clear the manually completed CAPTCHA`);
+    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: manually completed CAPTCHA gate remained persisted`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {

@@ -2875,8 +2875,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         })
       : { kind: 'none' };
     if (!challenge) {
+      const remainingDialogSurface = /^(?:\s*)(?:dialog|alertdialog)(?=\s|$)/im
+        .test(toolResult.pageContent)
+        || toolResult.pageGate?.surface === 'dialog';
       const failedSolveMustRemainManual = activeGate?.status === 'manual_required'
-        && activeGate.publicGate?.solveFailedToClearChallenge === true;
+        && activeGate.publicGate?.solveFailedToClearChallenge === true
+        && remainingDialogSurface;
       if (activeGate && authoritativeRootRead && !failedSolveMustRemainManual) {
         const clearedGate = {
           ...activeGate.publicGate,
