@@ -107,10 +107,12 @@ export function detectChallengeDialogInPage(options = null) {
   };
   const visible = (element) => {
     try {
+      const elementStyle = getComputedStyle(element);
+      if (elementStyle.visibility === 'hidden' || elementStyle.visibility === 'collapse') return false;
       let current = element;
       for (let depth = 0; current && depth < 30; depth += 1) {
         const style = getComputedStyle(current);
-        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+        if (style.display === 'none' || Number(style.opacity) === 0) return false;
         if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
         current = current.parentElement
           || (typeof current.getRootNode === 'function' ? current.getRootNode()?.host : null)

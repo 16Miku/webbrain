@@ -627,12 +627,19 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const visibleElement = (element) => {
     if (!element) return false;
     try {
+      const elementStyle = typeof pageWindow?.getComputedStyle === 'function'
+        ? pageWindow.getComputedStyle(element)
+        : null;
+      if (
+        elementStyle
+        && (elementStyle.visibility === 'hidden' || elementStyle.visibility === 'collapse')
+      ) return false;
       let current = element;
       for (let depth = 0; current && depth < 30; depth += 1) {
         const style = typeof pageWindow?.getComputedStyle === 'function'
           ? pageWindow.getComputedStyle(current)
           : null;
-        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        if (style && (style.display === 'none' || Number(style.opacity) === 0)) return false;
         if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
         current = current.parentElement || null;
       }

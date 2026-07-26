@@ -4798,6 +4798,52 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
         );
       });
     }
+    const visibilityOverrideNodes = [
+      captchaEl('div', { 'data-test-visibility': 'hidden' }, [
+        captchaEl('div', {
+          role: 'dialog',
+          innerText: 'Security verification',
+          'data-test-visibility': 'visible',
+        }, [
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+          captchaEl('iframe', {
+            src: 'https://www.google.com/recaptcha/api2/anchor?k=VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
+      );
+      const runtime = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
+      ).href);
+      const detected = runtime.detectCaptchaCandidatesInPage({
+        window: {
+          location: globalThis.location,
+          innerWidth: globalThis.innerWidth,
+          innerHeight: globalThis.innerHeight,
+          getComputedStyle: globalThis.getComputedStyle,
+        },
+        document: globalThis.document,
+      });
+      const candidate = detected.candidates.find(
+        entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
+      );
+      assert.equal(
+        candidate?.visible,
+        true,
+        `${build}: visible CAPTCHA widget under visibility-hidden ancestor was demoted`,
+      );
+    });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
@@ -52681,7 +52727,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
   globalThis.innerHeight = 720;
   globalThis.getComputedStyle = (element) => ({
     display: element.hidden ? 'none' : 'block',
-    visibility: 'visible',
+    visibility: element.getAttribute?.('data-test-visibility') || 'visible',
     opacity: '1',
   });
   // The detector reaches for the extension API by name; give each build the
