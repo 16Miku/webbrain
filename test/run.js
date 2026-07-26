@@ -463,6 +463,12 @@ const {
   estimateImageTokens,
   fitImageDimensions,
 } = ImageBudgetCh;
+const SubmitClickGuardCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/submit-click-guard.js').replace(/\\/g, '/')
+);
+const SubmitClickGuardFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/submit-click-guard.js').replace(/\\/g, '/')
+);
 // The mutating-tool surface differs per build, so it lives outside the
 // byte-identical loop-detector module. Import the real sets rather than
 // restating them here — a hand-copied list is exactly the drift this suite
@@ -34430,6 +34436,199 @@ test('execute_js submissions receive form validation feedback', async () => {
     const result = JSON.parse(agent._unwrapUntrusted(messages[0].content));
     assert.equal(result.formValidationFailed, true, `${AgentClass.name}: execute_js validation failure was not returned`);
     assert.match(result.error, /correct the payment details/i);
+  }
+});
+
+test('duplicate submit-click guard is production code with Chrome/Firefox parity', async () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/submit-click-guard.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/submit-click-guard.js'), 'utf8'),
+    'chrome and firefox duplicate-submit guards must remain byte-identical',
+  );
+
+  for (const guardModule of [SubmitClickGuardCh, SubmitClickGuardFx]) {
+    const recentClicks = new Map();
+    const tabId = 6201;
+    let now = 100_000;
+    let currentUrl = 'https://example.test/products';
+    let urlReads = 0;
+    const getCurrentUrl = async () => {
+      urlReads += 1;
+      return currentUrl;
+    };
+
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: '  Save changes  ' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'first submit-like click should be recorded and allowed',
+    );
+    assert.deepEqual(recentClicks.get(tabId), [{
+      key: 'save changes|https://example.test/products',
+      ts: 100_000,
+      url: 'https://example.test/products',
+      text: 'Save changes',
+    }]);
+
+    now += 10_400;
+    const duplicate = await guardModule.guardRecentSubmitClick(
+      recentClicks,
+      tabId,
+      { text: 'SAVE changes' },
+      getCurrentUrl,
+      () => now,
+    );
+    assert.equal(duplicate.success, false);
+    assert.equal(duplicate.dispatched, false);
+    assert.equal(duplicate.blockedDuplicateSubmit, true);
+    assert.equal(duplicate.previousClickUrl, 'https://example.test/products');
+    assert.equal(duplicate.currentUrl, 'https://example.test/products');
+    assert.equal(duplicate.secondsSincePrevious, 10);
+    assert.match(duplicate.error, /pass _allowResubmit: true/i);
+
+    currentUrl = 'https://example.test/products/new';
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'the same label after navigation should be allowed',
+    );
+
+    now += guardModule.SUBMIT_CLICK_WINDOW_MS;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'an entry exactly at the expiry boundary should be allowed',
+    );
+    assert.equal(recentClicks.get(tabId).length, 1, 'expired submit-click entries were not pruned');
+
+    now += 30_000;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes', _allowResubmit: true },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'explicit resubmit acknowledgement should bypass the guard',
+    );
+    assert.equal(
+      recentClicks.get(tabId)[0].ts,
+      now,
+      'an acknowledged resubmit should re-record the entry',
+    );
+
+    now += 30_000;
+    const thirdRapidClick = await guardModule.guardRecentSubmitClick(
+      recentClicks,
+      tabId,
+      { text: 'Save changes' },
+      getCurrentUrl,
+      () => now,
+    );
+    assert.equal(
+      thirdRapidClick.blockedDuplicateSubmit,
+      true,
+      'a rapid duplicate after an acknowledged resubmit should be blocked by the re-armed window',
+    );
+    assert.equal(thirdRapidClick.secondsSincePrevious, 30);
+
+    const readsBeforeIgnoredCalls = urlReads;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Continue' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'non-submit-like labels should bypass the guard',
+    );
+    assert.equal(urlReads, readsBeforeIgnoredCalls, 'non-submit-like clicks should not query the tab URL');
+
+    const failedLookupClicks = new Map();
+    const failingUrlLookup = async () => {
+      throw new Error('tab closed');
+    };
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        failedLookupClicks,
+        tabId,
+        { text: 'Publish' },
+        failingUrlLookup,
+        () => now,
+      ),
+      null,
+    );
+    assert.equal(
+      (
+        await guardModule.guardRecentSubmitClick(
+          failedLookupClicks,
+          tabId,
+          { text: 'Publish' },
+          failingUrlLookup,
+          () => now,
+        )
+      ).blockedDuplicateSubmit,
+      true,
+      'URL lookup failures should retain the existing empty-URL guard behavior',
+    );
+  }
+});
+
+test('Firefox blocks a duplicate submit click before content-script dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  const tabId = 6202;
+  const url = 'https://example.test/products';
+  let dispatches = 0;
+
+  try {
+    globalThis.browser = {
+      tabs: {
+        get: async () => ({ id: tabId, url }),
+        sendMessage: async () => {
+          dispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+
+    const agent = new AgentFx({ getVisionProvider: async () => null });
+    agent._isPdfTab = async () => false;
+    agent._recentSubmitClicks.set(tabId, [{
+      key: `save|${url}`,
+      ts: Date.now(),
+      url,
+      text: 'Save',
+    }]);
+
+    const result = await agent.executeTool(tabId, 'click', { text: 'Save' });
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.blockedDuplicateSubmit, true);
+    assert.equal(dispatches, 0, 'Firefox dispatched a duplicate submit click to the content script');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
