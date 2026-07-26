@@ -59,6 +59,32 @@ Screenshot events can include `screenshot_base64` or `screenshot_dataUrl`.
 Consumers should check `schema`, tolerate additional fields, and avoid relying
 on undocumented event internals.
 
+### Convert a trace to ATIF v1.7
+
+The dependency-free converter turns one Traces-page JSON export into the
+[Agent Trajectory Interchange Format (ATIF)](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md):
+
+```bash
+node scripts/trace-to-atif.mjs webbrain-trace-model-run.json
+```
+
+By default this writes `webbrain-trace-model-run.atif.json` next to the source
+file. Pass a second path to choose another destination, or `-` to write the
+trajectory to standard output:
+
+```bash
+node scripts/trace-to-atif.mjs trace.json trajectory.json
+node scripts/trace-to-atif.mjs trace.json -
+```
+
+The converter maps user and agent messages, tool calls and observations, token
+metrics, errors, model metadata, and final content. It does not upload data.
+Screenshots and verbose diagnostic event kinds are counted in
+`extra.omitted_event_counts` but are not copied: ATIF represents images as
+files referenced alongside the trajectory, while a WebBrain JSON export embeds
+them as data URLs or base64. The converted trajectory remains sensitive because
+it still contains prompts, tool arguments, URLs, and results.
+
 ### Convert a trace to OpenTelemetry OTLP JSON
 
 The repository includes an offline converter for sending an exported
