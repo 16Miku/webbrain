@@ -559,6 +559,9 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
 );
+const { traceExportToOtlp, parseTraceToOtlpArgs } = await import(
+  'file://' + path.join(ROOT, 'scripts/trace-to-otlp.mjs').replace(/\\/g, '/')
+);
 
 // providers/manager.js — pure ESM at module load (chrome.* only inside
 // methods). We import the class so we can exercise the static categoryFor()
@@ -3192,6 +3195,189 @@ test('trace export: renders Ask streaming decisions and aggregate lifecycle metr
     assert.match(markdown, /Ask stream completed · chat_completions · terminal_event_received · 7 text deltas · 128 chars · first delta 42 ms · 310 ms total · 0 tool calls/, `${label}: completion metrics missing`);
     assert.match(markdown, /Ask stream fallback · responses · missing_terminal_event · code missing_response_completed · 2 text deltas/, `${label}: fallback reason missing`);
   }
+});
+
+const OTLP_TRACE_FIXTURE = {
+  schema: 'webbrain-trace/1',
+  exportedAt: 1_784_937_600_000,
+  exportedByWebBrainVersion: '25.9.7',
+  run: {
+    runId: 'run_otlp_fixture',
+    conversationId: 'conversation_fixture',
+    startedAt: 1_784_937_600_000,
+    endedAt: 1_784_937_601_500,
+    durationMs: 1500,
+    status: 'loop_stopped',
+    model: 'test-model',
+    providerId: 'test-provider',
+    webbrainVersion: '25.9.6',
+    userMessage: 'Private user request',
+    finalContent: 'Private final answer',
+  },
+  events: [
+    {
+      runId: 'run_otlp_fixture',
+      seq: 1,
+      ts: 1_784_937_600_500,
+      kind: 'llm_response',
+      data: {
+        step: 1,
+        model: 'response-model',
+        latencyMs: 200,
+        usage: { prompt_tokens: 31, completion_tokens: 12 },
+        content: 'Private model response',
+      },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 2,
+      ts: 1_784_937_600_900,
+      kind: 'tool',
+      data: {
+        step: 1,
+        name: 'fetch_url',
+        latencyMs: 75,
+        args: { url: 'https://private.example/account' },
+        result: { success: false, error: 'Private tool failure' },
+      },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 3,
+      ts: 1_784_937_601_000,
+      kind: 'error',
+      data: { step: 1, phase: 'loop', message: 'Stopped after repeated failures.' },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 4,
+      ts: 1_784_937_601_100,
+      kind: 'screenshot',
+      data: { step: 1, screenshot_base64: 'data:image/png;base64,PRIVATE_SCREENSHOT' },
+    },
+  ],
+};
+
+function otlpAttributes(items = []) {
+  return Object.fromEntries(items.map(({ key, value }) => {
+    const entry = value || {};
+    const field = Object.keys(entry)[0];
+    return [key, entry[field]];
+  }));
+}
+
+test('OTLP trace converter emits valid ID, hierarchy, timing, and GenAI span shapes', () => {
+  const payload = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  assert.equal(payload.resourceSpans.length, 1);
+  const [{ resource, scopeSpans }] = payload.resourceSpans;
+  assert.equal(otlpAttributes(resource.attributes)['service.name'], 'webbrain');
+  assert.equal(scopeSpans.length, 1);
+  assert.equal(scopeSpans[0].scope.name, 'webbrain.trace-export');
+
+  const spans = scopeSpans[0].spans;
+  assert.equal(spans.length, 3);
+  const [root, inference, tool] = spans;
+  assert.match(root.traceId, /^[0-9a-f]{32}$/);
+  assert.match(root.spanId, /^[0-9a-f]{16}$/);
+  assert.equal(root.parentSpanId, undefined);
+  assert.equal(root.name, 'invoke_agent WebBrain');
+  assert.equal(root.kind, 1);
+  assert.equal(root.startTimeUnixNano, '1784937600000000000');
+  assert.equal(root.endTimeUnixNano, '1784937601500000000');
+  assert.equal(root.status.code, 2);
+
+  for (const child of [inference, tool]) {
+    assert.equal(child.traceId, root.traceId);
+    assert.equal(child.parentSpanId, root.spanId);
+    assert.match(child.spanId, /^[0-9a-f]{16}$/);
+  }
+  assert.equal(inference.name, 'chat response-model');
+  assert.equal(inference.kind, 3);
+  assert.equal(inference.startTimeUnixNano, '1784937600300000000');
+  assert.equal(inference.endTimeUnixNano, '1784937600500000000');
+  assert.deepEqual(otlpAttributes(inference.attributes), {
+    'gen_ai.operation.name': 'chat',
+    'gen_ai.provider.name': 'test-provider',
+    'gen_ai.request.model': 'response-model',
+    'gen_ai.usage.input_tokens': '31',
+    'gen_ai.usage.output_tokens': '12',
+    'webbrain.event.sequence': '1',
+    'webbrain.step': '1',
+  });
+
+  assert.equal(tool.name, 'execute_tool fetch_url');
+  assert.equal(tool.kind, 1);
+  assert.equal(tool.status.code, 2);
+  assert.equal(otlpAttributes(tool.attributes)['error.type'], 'tool_error');
+  assert.equal(otlpAttributes(tool.attributes)['gen_ai.tool.name'], 'fetch_url');
+});
+
+test('OTLP trace converter is deterministic and private-by-default', () => {
+  const first = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  const second = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  assert.deepEqual(second, first);
+  const serialized = JSON.stringify(first);
+  assert.doesNotMatch(serialized, /Private user request|Private final answer|Private model response/);
+  assert.doesNotMatch(serialized, /private\.example|Private tool failure/);
+  assert.doesNotMatch(serialized, /gen_ai\.tool\.call\.(?:arguments|result)/);
+
+  const withContent = traceExportToOtlp(OTLP_TRACE_FIXTURE, { includeContent: true });
+  const contentText = JSON.stringify(withContent);
+  assert.match(contentText, /Private user request/);
+  assert.match(contentText, /Private final answer/);
+  assert.match(contentText, /Private model response/);
+  assert.match(contentText, /gen_ai\.tool\.call\.arguments/);
+  assert.match(contentText, /gen_ai\.tool\.call\.result/);
+  assert.doesNotMatch(contentText, /PRIVATE_SCREENSHOT/);
+});
+
+test('OTLP trace converter rejects other schemas and malformed records', () => {
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, schema: 'webbrain-trace/2' }),
+    /webbrain-trace\/1/,
+  );
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, run: null }),
+    /run object/,
+  );
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, events: {} }),
+    /events array/,
+  );
+  const legacy = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    run: { runId: 'legacy-run' },
+    events: [{
+      seq: 1,
+      ts: 1234,
+      kind: 'tool',
+      data: { name: 'read_page' },
+    }],
+  }, { includeContent: true });
+  const [root, tool] = legacy.resourceSpans[0].scopeSpans[0].spans;
+  assert.equal(root.startTimeUnixNano, '1234000000');
+  assert.equal(tool.startTimeUnixNano, '1234000000');
+  assert.doesNotMatch(JSON.stringify(legacy), /stringValue\":\"(?:undefined|null)\"/);
+});
+
+test('OTLP trace converter CLI parsing keeps content opt-in and output explicit', () => {
+  assert.deepEqual(parseTraceToOtlpArgs(['trace.json']), {
+    input: 'trace.json',
+    output: '',
+    includeContent: false,
+  });
+  assert.deepEqual(parseTraceToOtlpArgs([
+    'trace.json',
+    '--output',
+    'trace.otlp.json',
+    '--include-content',
+  ]), {
+    input: 'trace.json',
+    output: 'trace.otlp.json',
+    includeContent: true,
+  });
+  assert.throws(() => parseTraceToOtlpArgs([]), /input trace JSON/);
+  assert.throws(() => parseTraceToOtlpArgs(['a.json', '--upload']), /Unknown option/);
 });
 
 test('/export --traces is wired in both side panels and backgrounds', () => {
