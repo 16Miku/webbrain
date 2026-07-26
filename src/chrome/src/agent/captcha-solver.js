@@ -22,6 +22,7 @@ import {
   normalizeCaptchaType,
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
+import { buildCaptchaDiagnostics } from './captcha-gate.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -251,15 +252,30 @@ export async function solveCaptcha(apiKey, params) {
 
 export async function detectCaptcha(tabId, constraints = {}) {
   const frameTreePromise = typeof chrome.webNavigation?.getAllFrames === 'function'
-    ? chrome.webNavigation.getAllFrames({ tabId }).catch(() => [])
+    ? chrome.webNavigation.getAllFrames({ tabId })
     : Promise.resolve([]);
-  const [results, navigationFrames] = await Promise.all([
+  const [scriptAttempt, frameTreeAttempt] = await Promise.allSettled([
     chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: detectCaptchaCandidatesInPage,
     }),
     frameTreePromise,
   ]);
+  const navigationFrames = frameTreeAttempt.status === 'fulfilled'
+    ? frameTreeAttempt.value
+    : [];
+  if (scriptAttempt.status === 'rejected') {
+    const cause = scriptAttempt.reason;
+    const error = new Error(
+      cause instanceof Error
+        ? cause.message
+        : String(cause || 'CAPTCHA frame inspection failed.'),
+    );
+    if (cause instanceof Error) error.cause = cause;
+    error.captchaDiagnostics = buildCaptchaDiagnostics({ navigationFrames });
+    throw error;
+  }
+  const results = scriptAttempt.value;
   const candidates = [];
   const frameContexts = [];
   for (const entry of results || []) {
@@ -280,10 +296,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
       });
     }
   }
-  return selectCaptchaCandidate(
-    applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames),
-    constraints,
-  );
+  const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames);
+  return {
+    ...selectCaptchaCandidate(visibleCandidates, constraints),
+    diagnostics: buildCaptchaDiagnostics({
+      candidates: visibleCandidates,
+      frameContexts,
+      navigationFrames,
+    }),
+  };
 }
 
 // ─── Token injection ───────────────────────────────────────────────────

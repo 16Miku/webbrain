@@ -19,6 +19,7 @@ import {
   normalizeCaptchaType,
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
+import { buildCaptchaDiagnostics } from './captcha-gate.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -235,7 +236,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
         return false;
       }
     };
-    const visit = (currentDocument, currentWindow, currentResult, path, ancestorsVisible, depth) => {
+    const visit = (
+      currentDocument,
+      currentWindow,
+      currentResult,
+      path,
+      ancestorsVisible,
+      ancestorsDialogAssociated,
+      depth,
+    ) => {
       if (!currentDocument || depth > 12 || seenDocuments.has(currentDocument)) return;
       seenDocuments.add(currentDocument);
       const elements = Array.from(currentDocument.querySelectorAll('iframe'));
@@ -257,6 +266,8 @@ export async function detectCaptcha(tabId, constraints = {}) {
         const childResult = detect({ document: childDocument, window: childWindow });
         const childContext = childResult?.frameContext || {};
         const childVisible = ancestorsVisible && childFrames[index]?.visible === true;
+        const childDialogAssociated = ancestorsDialogAssociated
+          || childFrames[index]?.dialogAssociated === true;
         const nextPath = [...path, {
           index,
           frameUrl: childContext.frameUrl || childUrl,
@@ -267,12 +278,21 @@ export async function detectCaptcha(tabId, constraints = {}) {
             ...candidate,
             framePath: nextPath,
             frameVisibleWithinAnchor: childVisible,
+            dialogAssociated: candidate.dialogAssociated === true || childDialogAssociated,
           });
         }
-        visit(childDocument, childWindow, childResult, nextPath, childVisible, depth + 1);
+        visit(
+          childDocument,
+          childWindow,
+          childResult,
+          nextPath,
+          childVisible,
+          childDialogAssociated,
+          depth + 1,
+        );
       });
     };
-    visit(rootDocument, rootWindow, direct, [], true, 0);
+    visit(rootDocument, rootWindow, direct, [], true, false, 0);
     return { direct, inheritedCandidates };
   })()`;
   const batches = await Promise.all(frames.map(async frame => {
@@ -321,10 +341,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
     ));
   const candidates = [...directCandidates, ...inheritedCandidates];
   const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
-  return selectCaptchaCandidate(
-    applyCaptchaFrameVisibility(candidates, frameContexts, frames),
-    constraints,
-  );
+  const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, frames);
+  return {
+    ...selectCaptchaCandidate(visibleCandidates, constraints),
+    diagnostics: buildCaptchaDiagnostics({
+      candidates: visibleCandidates,
+      frameContexts,
+      navigationFrames: frames,
+    }),
+  };
 }
 
 export async function injectToken(tabId, {

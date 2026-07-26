@@ -147,6 +147,7 @@ function compactCloudRunForPersistence(run) {
     workflowId: run?.workflowId || null,
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
+    captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
     task: run?.task,
     structured: !!run?.outputSchema || run?.structured === true,
@@ -191,6 +192,7 @@ function cloudSnapshot(run, { includeUpdates = true } = {}) {
     task: run.task,
     structured: run.structured ?? !!run.outputSchema,
     pendingInput: run.pendingInput || null,
+    ...(run.captchaDiagnostics ? { captchaDiagnostics: run.captchaDiagnostics } : {}),
     result: run.result,
     persistenceTruncated: run.persistenceTruncated,
     summary: run.summary,
@@ -365,17 +367,24 @@ export function createCloudRunController({
         run.summary = result.summary || run.summary;
       }
     }
+    if (type === 'captcha_gate') {
+      // Keep the latest sanitized frame/vendor snapshot at run level so it
+      // survives the rolling 200-update window in exported cloud traces.
+      run.captchaDiagnostics = { ...scrubbedData, observedAt: run.updatedAt };
+    }
     if (type === 'clarify' && scrubbedData?.clarifyId && !TERMINAL_STATUSES.has(run.status)) {
       run.status = 'needs_user_input';
       run.pendingInput = scrubbedData;
     }
     if (type === 'run_status'
-        && scrubbedData?.status === 'clarification_required'
+        && ['clarification_required', 'captcha_manual_required'].includes(scrubbedData?.status)
         && run.status !== 'aborting'
         && run.status !== 'aborted') {
       run.status = 'failed';
       run.error = scrubbedData.message
-        || 'Cloud run stopped because explicit clarification authorization is required.';
+        || (scrubbedData.status === 'captcha_manual_required'
+          ? 'Cloud run stopped because manual CAPTCHA completion is required.'
+          : 'Cloud run stopped because explicit clarification authorization is required.');
       run.pendingInput = null;
     }
     if (type === 'plan_review' && run.status === 'running') {
