@@ -33,6 +33,7 @@ import * as trace from '../trace/recorder.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
+import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
@@ -2404,24 +2405,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _visibleChallengeDialogFromFrames(frameEntries, navigationFrames) {
+    const candidates = [];
+    const frameContexts = [];
+    for (const entry of Array.isArray(frameEntries) ? frameEntries : []) {
+      const frameId = Number.isInteger(entry?.frameId) ? entry.frameId : 0;
+      const payload = entry?.payload;
+      if (!payload || typeof payload !== 'object') continue;
+      if (payload.frameContext) {
+        frameContexts.push({ ...payload.frameContext, frameId });
+      }
+      if (payload.challenge?.label) {
+        candidates.push({
+          frameId,
+          frameUrl: payload.frameContext?.frameUrl || '',
+          visible: true,
+          normalCheckbox: false,
+          challenge: payload.challenge,
+        });
+      }
+    }
+    const visibleCandidates = applyCaptchaFrameVisibility(
+      candidates,
+      frameContexts,
+      navigationFrames,
+    );
+    return visibleCandidates.find(candidate => candidate.visible === true)?.challenge || null;
+  }
+
   async _detectChallengeDialogBeforeMutation(tabId) {
-    const code = `(${detectChallengeDialogInPage.toString()})()`;
-    const execute = allFrames => browser.tabs.executeScript(tabId, {
-      code,
-      allFrames,
-      matchAboutBlank: true,
-    });
+    let navigationFrames = [];
     try {
-      const results = await execute(true);
-      return (results || []).find(result => result?.label) || null;
-    } catch {
+      navigationFrames = await browser.webNavigation?.getAllFrames?.({ tabId }) || [];
+    } catch {}
+    if (!navigationFrames.length) {
+      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+    }
+    const code = `(${detectChallengeDialogInPage.toString()})({ includeFrameContext: true })`;
+    const frameEntries = await Promise.all(navigationFrames.map(async frame => {
       try {
-        const results = await execute(false);
-        return (results || []).find(result => result?.label) || null;
+        const results = await browser.tabs.executeScript(tabId, {
+          code,
+          frameId: frame.frameId,
+          matchAboutBlank: true,
+        });
+        return {
+          frameId: frame.frameId,
+          payload: results?.[0],
+        };
       } catch {
         return null;
       }
-    }
+    }));
+    return this._visibleChallengeDialogFromFrames(
+      frameEntries.filter(Boolean),
+      navigationFrames,
+    );
   }
 
   async _captchaMutationPreflight(tabId, toolName, toolArgs = {}) {
@@ -2459,18 +2498,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: null, loopCheck: { kind: 'none' } };
     }
 
-    const activeGate = this._captchaGateStates.get(tabId);
     let challenge = detectChallengeDialog(toolResult.pageContent);
-    const unresolvedDialogSurface = /^(?:\s*)(?:dialog|alertdialog)(?=\s|$)/im
-      .test(toolResult.pageContent)
-      || toolResult.pageGate?.surface === 'dialog';
-    if (!challenge && activeGate && unresolvedDialogSurface) {
-      const priorLabel = activeGate.publicGate?.challengeDialog?.label;
-      challenge = {
-        label: String(toolResult.pageGate?.label || priorLabel || 'Verification dialog'),
-        normalizedLabel: '',
-      };
+    if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
+      challenge = detectChallengeDialog(
+        `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`
+      );
     }
+    const activeGate = this._captchaGateStates.get(tabId);
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
@@ -2495,8 +2529,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       )
       && toolResult.truncated !== true
       && toolResult.hasMore !== true
-      && toolResult.autoDegraded !== true
-      && toolResult.pageGate?.surface !== 'dialog';
+      && toolResult.autoDegraded !== true;
     const loopCheck = challenge || authoritativeRootRead
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
@@ -2504,7 +2537,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         })
       : { kind: 'none' };
     if (!challenge) {
-      if (activeGate && authoritativeRootRead) {
+      const failedSolveMustRemainManual = activeGate?.status === 'manual_required'
+        && activeGate.publicGate?.solveFailedToClearChallenge === true;
+      if (activeGate && authoritativeRootRead && !failedSolveMustRemainManual) {
         const clearedGate = {
           ...activeGate.publicGate,
           status: 'cleared',

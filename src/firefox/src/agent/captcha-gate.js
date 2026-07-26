@@ -1,4 +1,4 @@
-const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification|verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
 
 function normalizeChallengeLabel(value) {
   return String(value || '')
@@ -66,9 +66,22 @@ export function detectChallengeDialog(pageContent) {
 
 // Serialized into the page for a lightweight, read-only preflight before
 // model-authored mutations. Keep this function self-contained.
-export function detectChallengeDialogInPage() {
-  if (typeof document === 'undefined' || !document?.querySelectorAll) return null;
-  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification)\b/i;
+export function detectChallengeDialogInPage(options = null) {
+  const includeFrameContext = options?.includeFrameContext === true;
+  const pageWindow = typeof window !== 'undefined' ? window : null;
+  const pageLocation = pageWindow?.location
+    || (typeof location !== 'undefined' ? location : null);
+  const frameUrl = pageLocation ? String(pageLocation.href || '') : '';
+  let frameName = '';
+  try {
+    frameName = pageWindow ? String(pageWindow.name || '') : '';
+  } catch {}
+  if (typeof document === 'undefined' || !document?.querySelectorAll) {
+    return includeFrameContext
+      ? { challenge: null, frameContext: { frameUrl, frameName, childFrames: [] } }
+      : null;
+  }
+  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re human|verify (?:that )?you are human|are you human|robot check|challenge verification|verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
   const visible = (element) => {
     try {
       const style = getComputedStyle(element);
@@ -90,6 +103,29 @@ export function detectChallengeDialogInPage() {
       return false;
     }
   };
+  const childFrames = Array.from(document.querySelectorAll('iframe')).map((element, index) => {
+    let loadedUrl = '';
+    try {
+      loadedUrl = String(element.contentWindow?.location?.href || '');
+    } catch {}
+    return {
+      index,
+      url: String(element.getAttribute?.('src') || element.src || ''),
+      loadedUrl,
+      name: String(element.getAttribute?.('name') || element.name || ''),
+      visible: visible(element),
+    };
+  });
+  const finish = challenge => includeFrameContext
+    ? {
+        challenge,
+        frameContext: {
+          frameUrl,
+          frameName,
+          childFrames,
+        },
+      }
+    : challenge;
   for (const element of document.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')) {
     if (!visible(element)) continue;
     let labelledBy = '';
@@ -116,10 +152,10 @@ export function detectChallengeDialogInPage() {
       // dialog name and the same challenge is never keyed two ways.
       const line = text.split(/\r?\n/).find(entry => challengeRe.test(entry)) || text;
       const label = line.replace(/\s+/g, ' ').trim().slice(0, 200);
-      if (label) return { label };
+      if (label) return finish({ label });
     }
   }
-  return null;
+  return finish(null);
 }
 
 export function captchaChallengeKey(pageUrl, normalizedLabel) {

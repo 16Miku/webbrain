@@ -4904,6 +4904,31 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
     );
     assert.equal(changedManual.gate?.status, 'manual_required', `${label}: changed dialog reset a failed solve to a paid solve`);
 
+    const confirmationAgent = new AgentClass({});
+    confirmationAgent._captchaGateStates.set(tabId, {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'verification_pending',
+      verificationAttempts: 0,
+      publicGate: {
+        status: 'verification_pending',
+        solveAttempted: true,
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    });
+    const confirmation = await confirmationAgent._observeCaptchaChallenge(
+      tabId,
+      'get_accessibility_tree',
+      {
+        pageContent: 'dialog "Signup complete" [ref_920]\n button "Continue" [ref_921]',
+        pageUrl: 'https://example.test/signup',
+        pageGate: { surface: 'dialog', label: 'Signup complete' },
+      },
+      { filter: 'visible' },
+    );
+    assert.equal(confirmation.gate?.status, 'cleared', `${label}: non-challenge confirmation dialog kept the solved CAPTCHA gated`);
+    assert.equal(confirmationAgent._captchaGateStates.has(tabId), false, `${label}: confirmation dialog leaked a cleared CAPTCHA gate`);
+
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
       key: 'https://example.test/signup\nsecurity verification',
@@ -52356,13 +52381,27 @@ async function withCaptchaFakePage(build, nodes, callback) {
   // The detector reaches for the extension API by name; give each build the
   // executeScript shape it expects and run the payload in-process.
   globalThis.chrome = {
+    webNavigation: {
+      getAllFrames: async () => [{
+        frameId: 0,
+        parentFrameId: -1,
+        url: location.href,
+      }],
+    },
     scripting: {
-      executeScript: async ({ func }) => [{ frameId: 0, result: func() }],
+      executeScript: async ({ func, args = [] }) => [{
+        frameId: 0,
+        result: func(...args),
+      }],
     },
   };
   globalThis.browser = {
     webNavigation: {
-      getAllFrames: async () => [{ frameId: 0, url: location.href }],
+      getAllFrames: async () => [{
+        frameId: 0,
+        parentFrameId: -1,
+        url: location.href,
+      }],
     },
     tabs: {
       executeScript: async (_tabId, { code }) => [vm.runInNewContext(code, {
@@ -52612,6 +52651,87 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(agent._captchaGateStates.get(1)?.status, 'solve_required', `${build}: preflight did not activate runtime gate`);
       assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.solveCaptchaRequired, true, `${build}: detected Dismiss click was not blocked`);
     });
+  }
+});
+
+test('challenge-dialog preflight honors ancestor iframe visibility across extension frames', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const previousChrome = globalThis.chrome;
+    const previousBrowser = globalThis.browser;
+    const navigationFrames = [
+      {
+        frameId: 0,
+        parentFrameId: -1,
+        url: 'https://example.test/signup',
+      },
+      {
+        frameId: 7,
+        parentFrameId: 0,
+        url: 'https://challenge.example.test/verify',
+      },
+    ];
+    let embeddingVisible = false;
+    const payloadForFrame = frameId => frameId === 7
+      ? {
+          challenge: { label: 'Security verification' },
+          frameContext: {
+            frameUrl: 'https://challenge.example.test/verify',
+            frameName: 'verification-frame',
+            childFrames: [],
+          },
+        }
+      : {
+          challenge: null,
+          frameContext: {
+            frameUrl: 'https://example.test/signup',
+            frameName: '',
+            childFrames: [{
+              index: 0,
+              url: 'https://challenge.example.test/verify',
+              loadedUrl: '',
+              name: 'verification-frame',
+              visible: embeddingVisible,
+            }],
+          },
+        };
+    try {
+      if (build === 'chrome') {
+        globalThis.chrome = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          scripting: {
+            executeScript: async ({ target }) => {
+              const frameIds = target.allFrames ? [0, 7] : [0];
+              return frameIds.map(frameId => ({
+                frameId,
+                result: payloadForFrame(frameId),
+              }));
+            },
+          },
+        };
+      } else {
+        globalThis.browser = {
+          webNavigation: {
+            getAllFrames: async () => navigationFrames,
+          },
+          tabs: {
+            executeScript: async (_tabId, details) => [
+              payloadForFrame(details.frameId),
+            ],
+          },
+        };
+      }
+      const agent = new AgentClass({});
+      const hidden = await agent._detectChallengeDialogBeforeMutation(1);
+      assert.equal(hidden, null, `${build}: dialog inside hidden ancestor iframe was treated as visible`);
+      embeddingVisible = true;
+      const visible = await agent._detectChallengeDialogBeforeMutation(1);
+      assert.equal(visible?.label, 'Security verification', `${build}: visible ancestor iframe suppressed challenge dialog`);
+    } finally {
+      globalThis.chrome = previousChrome;
+      globalThis.browser = previousBrowser;
+    }
   }
 });
 
