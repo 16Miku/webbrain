@@ -122,6 +122,7 @@ export default {
   'sp.slash.save_workflow': 'Letzten erfolgreichen aufgezeichneten Durchlauf speichern',
   'sp.slash.delete_workflow': 'Gespeicherten Workflow nach ID löschen',
   'sp.slash.allow_api': 'API-Mutationen für dieses Gespräch erlauben',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Berechtigungsabfragen global deaktivieren',
   'sp.slash.compact': 'Diesen Gesprächskontext kompaktieren',
   'sp.slash.verbose': 'Ausführliche oder kompakte Tool-Anzeige umschalten',

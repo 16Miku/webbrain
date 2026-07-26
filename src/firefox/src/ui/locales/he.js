@@ -117,6 +117,7 @@ export default {
   "sp.slash.show_memory": "הצג זיכרון משתמש שמור",
   "sp.slash.forget_memory": "שכח זיכרון שמור לפי מזהה",
   "sp.slash.allow_api": "אפשר שינויי API בשיחה הזו",
+  "sp.slash.foreground": "Run this task in the foreground for visual compatibility",
   "sp.slash.dangerously_skip_permissions": "השבת בקשות הרשאה באופן גלובלי",
   "sp.slash.compact": "דחוס את הקשר השיחה הזה",
   "sp.slash.verbose": "החלף את תצוגת הכלים המילולית או הקומפקטית",

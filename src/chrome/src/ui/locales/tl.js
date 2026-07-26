@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': 'Ipakita ang kasalukuyang scratchpad',
   'sp.slash.clear_scratchpad': 'I-clear ang kasalukuyang scratchpad',
   'sp.slash.allow_api': 'Payagan ang mga API mutation para sa pag-uusap na ito',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Patayin ang mga prompt ng pahintulot sa buong sistema',
   'sp.slash.compact': 'I-compact ang konteksto ng pag-uusap na ito',
   'sp.slash.verbose': 'I-toggle ang pagpapakita ng tool sa pagitan ng detalyado at compact',

@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': '显示当前草稿板',
   'sp.slash.clear_scratchpad': '清除当前草稿板',
   'sp.slash.allow_api': '允许此对话进行 API 修改',
+  'sp.slash.foreground': '在前台运行此任务以确保视觉兼容性',
   'sp.slash.dangerously_skip_permissions': '全局关闭权限提示',
   'sp.slash.compact': '压缩此对话上下文',
   'sp.slash.verbose': '切换工具显示的详细或紧凑模式',

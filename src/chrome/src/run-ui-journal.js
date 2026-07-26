@@ -116,6 +116,7 @@ export class RunUiJournal {
       requestId: createRunRequestId(tabId, requestId),
       mode: String(metadata?.mode || ''),
       kind: metadata?.kind === 'continue' ? 'continue' : 'chat',
+      foreground: metadata?.foreground === true,
       runId: null,
       status: 'running',
       seq: 0,
@@ -144,6 +145,7 @@ export class RunUiJournal {
     const snapshot = this.snapshots.get(tabId);
     if (!snapshot || String(snapshot.requestId) !== String(requestId)) return null;
     if (metadata?.mode) snapshot.mode = String(metadata.mode);
+    if (typeof metadata?.foreground === 'boolean') snapshot.foreground = metadata.foreground;
     if (!snapshot.kind && metadata?.kind) {
       snapshot.kind = metadata.kind === 'continue' ? 'continue' : 'chat';
     }
@@ -273,6 +275,7 @@ export class RunUiJournal {
     }
     if (typeof snapshot.mode !== 'string') snapshot.mode = '';
     if (snapshot.kind !== 'continue' && snapshot.kind !== 'chat') snapshot.kind = 'chat';
+    if (snapshot.foreground !== true) snapshot.foreground = false;
     if (typeof snapshot.streamedText !== 'string') snapshot.streamedText = '';
     if (snapshot.streamedText.length > RUN_UI_STREAM_TEXT_LIMIT) {
       snapshot.streamedText = '';

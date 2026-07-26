@@ -50,19 +50,11 @@ function normalizeRunCaptureRequest(value) {
 }
 
 export async function captureAndSaveRunScreenshot(api, tabId, filename) {
-  let tab = tabId == null ? null : await api.tabs.get(tabId);
-  if (!tab || tab.windowId == null) {
+  const tab = tabId == null ? null : await api.tabs.get(tabId);
+  if (!tab) {
     throw new Error('The run tab is no longer available.');
   }
-  // A run can activate a new tab. Return to the originating tab so the after
-  // image captures the page that the agent operated on.
-  if (!tab.active) {
-    tab = await api.tabs.update(tabId, { active: true });
-  }
-  if (!tab?.active || tab.windowId == null) {
-    throw new Error('The run tab could not be activated for capture.');
-  }
-  const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  const dataUrl = await api.tabs.captureTab(tabId, { format: 'png' });
   filename = await filenameInConfiguredDownloadDirectory(api, filename);
   const downloadId = await api.downloads.download({
     url: dataUrl,

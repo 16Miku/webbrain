@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': '현재 스크래치패드 표시',
   'sp.slash.clear_scratchpad': '현재 스크래치패드 지우기',
   'sp.slash.allow_api': '이 대화에서 API 변경 허용',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': '권한 확인을 전역적으로 비활성화',
   'sp.slash.compact': '이 대화 컨텍스트 압축',
   'sp.slash.verbose': '도구 표시를 상세 또는 압축으로 전환',

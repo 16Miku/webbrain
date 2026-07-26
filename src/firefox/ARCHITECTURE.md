@@ -7,7 +7,7 @@
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
 - **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
-- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureVisibleTab()` instead of CDP `Page.captureScreenshot`.
+- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
 - **No duplicate-submit guard** — the per-tab submit-throttle (Chrome v3.6.5+) is still Chrome-only. Firefox's agent loop does not block rapid duplicate Create/Submit clicks. `blockedDone` and the ambiguous-click candidate payload were ported to Firefox in v4.0.1 (see "Overlay defenses" below).
@@ -399,7 +399,7 @@ document.dispatchEvent(ev);
 
 ### Verify form
 
-Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureVisibleTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
+Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
 
 ---
 
@@ -447,10 +447,12 @@ Uses `browser.storage.local` instead of `chrome.storage.local` for config persis
 
 ## Scheduled Tasks (`scheduler.js`)
 
-Firefox ships the same `ScheduledJobManager` class (`src/firefox/src/agent/scheduler.js`), using `browser.alarms` instead of `chrome.alarms`. Feature parity with the Chrome build except for two differences:
+Firefox ships the same `ScheduledJobManager` class (`src/firefox/src/agent/scheduler.js`), using `browser.alarms` instead of `chrome.alarms`. Feature parity with the Chrome build except for one difference:
 
 - **No service-worker keepalive.** Chrome pings `chrome.runtime.getPlatformInfo` every 20 s during a job run to prevent the MV3 service worker from dying mid-run. Firefox has a persistent background page (MV2) that is always alive, so no keepalive is needed.
-- **URL-target tabs open active.** On Firefox, URL-target tasks open their tab with `active: true` (Chrome opens them in the background). This is a cosmetic difference with no behavioural impact.
+
+Like Chrome, Firefox opens URL-target task tabs inactive and does not activate
+an existing target tab before a scheduled run.
 
 All job kinds (`resume`, `task`), lifecycle states, retry/deferral logic, schedule types (`once`, `recurring`), LLM tools (`schedule_resume`, `schedule_task`), and storage key (`wb_scheduled_jobs`) are identical to Chrome. See `docs/architecture.md § Scheduled Tasks` for the full reference.
 

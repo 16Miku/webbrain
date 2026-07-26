@@ -567,6 +567,7 @@ export default {
   'sp.slash.show_scratchpad': 'แสดงสมุดบันทึกปัจจุบัน',
   'sp.slash.clear_scratchpad': 'ล้างกระดานร่างปัจจุบัน',
   'sp.slash.allow_api': 'อนุญาตการเปลี่ยนแปลง API สำหรับการสนทนานี้',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'ปิดการถามสิทธิ์โดยทั่วไป',
   'sp.slash.compact': 'บีบอัดบริบทการสนทนานี้',
   'sp.slash.verbose': 'สลับการแสดงเครื่องมือระหว่างละเอียดและกระชับ',

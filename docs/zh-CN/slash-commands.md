@@ -29,6 +29,7 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 | `/workflow --export <id>` | 下载经过清洗的可移植 `webbrain-workflow/1` JSON 文件 |
 | `/workflow --import --file` | 将可移植工作流文件导入为新的本地工作流 |
 | `/allow-api` | **按对话的 API 变更覆盖。** 参见[下文](#allow-api)。 |
+| `/foreground [提示词]` | 为视觉兼容性在前台运行一次本地任务 |
 | `/dangerously-skip-permissions` | **全局权限提示绕过。** 无需打开设置即可关闭「操作前询问」。在你重新启用该设置之前，WebBrain 将不再按站点弹出提示。 |
 | `/compact` | 强制压缩当前对话上下文 |
 | `/verbose` | 切换详细/压缩工具显示 |
@@ -55,6 +56,17 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 轮询在专用的非活动标签页中进行，因此离开发起页面不会把它导航回被监视的 URL；watch
 结束时会关闭该辅助标签页。短暂的轮询失败可以容忍；连续三次失败会停止 watch。
 
+## `/foreground`
+
+常规本地运行会固定在最初的标签页上执行，不会激活该标签页或聚焦其窗口。Chrome 通过
+CDP 截图，并仅在该次运行期间模拟焦点；Firefox 使用 `tabs.captureTab` 直接捕获目标
+标签页。如果 Chrome 多次返回空白的后台画面，WebBrain 会丢弃该画面，继续使用 DOM
+和无障碍数据。
+
+若某个网站无法在后台正确渲染视觉状态，可使用 `/foreground <提示词>` 作为仅对本次
+运行生效的兼容模式。它会为该次运行恢复标签页激活和窗口聚焦，不会成为持久设置。
+托管 Cloud 运行仍保留现有前台行为，因为其浏览器专用于该任务。
+
 ## `/allow-api`
 
 `/allow-api` 会为当前对话解除 UI 优先限制，使智能体在 UI 失败时可通过 `fetch_url`
@@ -77,9 +89,9 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 `测试结账流程 /screenshot --save-as checkout.png` 会保存 `checkout-before.png` 和
 `checkout-after.png`；若不带 `--save-as`，WebBrain 使用带时间戳的文件名。
 
-如果运行打开了另一个标签页，WebBrain 会在保存「之后」截图前重新激活发起运行的标签页。
-如果录制或初始截图无法启动并保存，该运行不会被发送。独立的 `/record` 与
-`/screenshot` 保持原有行为。
+对于这个诊断后缀，Chrome 可能会在保存「之后」截图前重新激活发起运行的标签页；
+Firefox 会直接捕获该标签页而不激活它。如果录制或初始截图无法启动并保存，该运行不会
+被发送。独立的 `/record` 与 `/screenshot` 保持原有行为。
 
 ## 导出、快照与工作流
 
