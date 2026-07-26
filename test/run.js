@@ -4829,12 +4829,50 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
         `${label}: ${toolName} escaped post-solve verification`,
       );
     }
-    agent._captchaGateStates.set(88, { ...active, status: 'manual_required' });
+    agent._captchaGateStates.set(88, {
+      ...active,
+      status: 'manual_required',
+      publicGate: { ...active.publicGate, status: 'manual_required' },
+    });
     assert.equal(
       agent._captchaGateBlockResult(88, 'solve_captcha')?.manualCompletionRequired,
       true,
       `${label}: failed/unsupported challenge allowed another paid solve`,
     );
+    assert.equal(agent._captchaGateBlockResult(88, 'done'), null, `${label}: manual gate blocked partial completion`);
+    for (const toolName of ['navigate', 'new_tab', 'go_back', 'go_forward']) {
+      assert.equal(agent._captchaGateBlockResult(88, toolName), null, `${label}: manual gate blocked abandonment via ${toolName}`);
+    }
+    assert.equal(
+      agent._captchaGateBlockResult(88, 'click_ax')?.manualCompletionRequired,
+      true,
+      `${label}: abandonment exemption allowed an in-document mutation`,
+    );
+    const sameDocumentResult = {};
+    assert.equal(
+      agent._clearCaptchaGateAfterNavigation(
+        88,
+        'navigate',
+        'https://example.test/signup?step=1',
+        'https://example.test/signup?step=2',
+        sameDocumentResult,
+      ),
+      null,
+      `${label}: query-only navigation bypassed the challenged document gate`,
+    );
+    assert.equal(agent._captchaGateStates.has(88), true, `${label}: same-document navigation deleted the gate`);
+    const abandonmentResult = {};
+    const abandoned = agent._clearCaptchaGateAfterNavigation(
+      88,
+      'navigate',
+      'https://example.test/signup',
+      'https://other.test/home',
+      abandonmentResult,
+    );
+    assert.equal(abandoned?.status, 'cleared', `${label}: leaving the challenged document did not clear the gate`);
+    assert.equal(abandoned?.clearedByNavigation, true, `${label}: navigation clearance reason missing`);
+    assert.equal(abandonmentResult.captchaGate?.clearedByNavigation, true, `${label}: navigation result omitted gate clearance`);
+    assert.equal(agent._captchaGateStates.has(88), false, `${label}: abandoned document gate remained persisted`);
   }
 });
 
@@ -52700,6 +52738,16 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(disabledGate?.solverDisabled, true, `${build}: disabled preflight did not explain manual routing`);
       assert.equal(disabledAgent._captchaGateStates.get(2)?.challengeFrameId, 0, `${build}: disabled preflight discarded the challenge frame identity`);
       assert.equal(disabledAgent._captchaGateBlockResult(2, 'click_ax')?.manualCompletionRequired, true, `${build}: disabled preflight allowed the challenge mutation`);
+
+      const abandonmentAgent = new AgentClass({});
+      abandonmentAgent.captchaSolverEnabled = false;
+      const abandonmentGate = await abandonmentAgent._captchaMutationPreflight(
+        3,
+        'navigate',
+        { url: 'https://other.test/home' },
+      );
+      assert.equal(abandonmentGate, null, `${build}: navigation away armed a CAPTCHA gate`);
+      assert.equal(abandonmentAgent._captchaGateStates.has(3), false, `${build}: navigation preflight persisted a challenge gate`);
     });
   }
 });

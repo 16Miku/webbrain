@@ -2367,10 +2367,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _captchaGateBlockResult(tabId, toolName, toolArgs = {}) {
     const gate = this._captchaGateStates.get(tabId);
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
+    const abandonmentNavigation = Agent.NAV_TOOLS.has(toolName);
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
-    if (!gate || !gatedAction) return null;
+    if (
+      !gate
+      || !gatedAction
+      || abandonmentNavigation
+      || (gatedCompletion && gate.status === 'manual_required')
+    ) {
+      return null;
+    }
     if (toolName === 'solve_captcha' && gate.status === 'solve_required') return null;
     if (gate.status === 'manual_required') {
       return {
@@ -2403,6 +2411,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       captchaDiagnostics: gate.publicGate?.diagnostics || null,
       error: 'A supported verification challenge is active. Call solve_captcha once before any page-changing action. Do not dismiss or close the dialog, and do not click Continue/Submit again.',
     };
+  }
+
+  _clearCaptchaGateAfterNavigation(tabId, toolName, beforeUrl, afterUrl, toolResult) {
+    if (!Agent.NAV_TOOLS.has(toolName)) return null;
+    const gate = this._captchaGateStates.get(tabId);
+    if (!gate) return null;
+    const beforeDocument = this._normalizeUrlPath(beforeUrl);
+    const afterDocument = this._normalizeUrlPath(afterUrl);
+    if (!beforeDocument || !afterDocument || beforeDocument === afterDocument) return null;
+    const clearedGate = {
+      ...gate.publicGate,
+      status: 'cleared',
+      clearedByNavigation: true,
+    };
+    this._captchaGateStates.delete(tabId);
+    if (toolResult && typeof toolResult === 'object') {
+      toolResult.captchaGate = clearedGate;
+    }
+    return clearedGate;
   }
 
   _visibleChallengeDialogFromFrames(frameEntries, navigationFrames) {
@@ -2501,7 +2528,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
-    if (!gatedAction || toolName === 'solve_captcha') return null;
+    if (!gatedAction || toolName === 'solve_captcha' || Agent.NAV_TOOLS.has(toolName)) return null;
     const activeGate = this._captchaGateStates.get(tabId);
     if (activeGate && !this._shouldRetryCaptchaManualGate(activeGate)) return null;
     const challenge = await this._detectChallengeDialogBeforeMutation(tabId);
@@ -3466,6 +3493,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         const beforePath = this._normalizeUrlPath(beforeUrl);
         const afterPath = this._normalizeUrlPath(afterUrl);
+        const clearedCaptchaGate = this._clearCaptchaGateAfterNavigation(
+          tabId,
+          fnName,
+          beforeUrl,
+          afterUrl,
+          toolResult,
+        );
+        if (clearedCaptchaGate) onUpdate('captcha_gate', clearedCaptchaGate);
         // Explicit navigation tools intentionally go somewhere. For implicit
         // navigation, retain the less noisy path-level warning policy: query /
         // hash-only SPA changes reset state but do not force a re-plan notice.
