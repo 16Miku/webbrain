@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': 'Afficher le bloc-notes actuel',
   'sp.slash.clear_scratchpad': 'Effacer le bloc-notes actuel',
   'sp.slash.allow_api': 'Autoriser les mutations API pour cette conversation',
+  'sp.slash.foreground': 'Exécuter cette tâche au premier plan pour assurer la compatibilité visuelle',
   'sp.slash.dangerously_skip_permissions': 'Désactiver les demandes d\'autorisation globalement',
   'sp.slash.compact': 'Compacter le contexte de cette conversation',
   'sp.slash.verbose': "Basculer l'affichage des outils entre détaillé et compact",

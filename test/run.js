@@ -1125,6 +1125,79 @@ test('remaining model-facing screenshot fallbacks apply redaction', () => {
     'Firefox done verification should not embed base64 in the done result');
 });
 
+test('Firefox done verifies inactive scheduled tabs before accepting completion', async () => {
+  const originalBrowser = globalThis.browser;
+  const tabId = 417;
+  let executeScriptCalls = 0;
+  const captures = [];
+  try {
+    globalThis.browser = {
+      tabs: {
+        get: async () => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/items/new',
+          title: 'Create item',
+        }),
+        executeScript: async () => {
+          executeScriptCalls += 1;
+          return [{
+            url: 'https://example.test/items/new',
+            title: 'Create item',
+            openDialogCount: 1,
+            dialogTitles: ['Create item'],
+            visibleFormCount: 1,
+            relevantFormCount: 1,
+            formDescriptors: [{
+              label: 'Create item',
+              relevant: true,
+              utility: false,
+              editableCount: 2,
+              submitCount: 1,
+            }],
+            liveRegionMessages: [],
+            successMessages: [],
+          }];
+        },
+        captureTab: async (capturedTabId, options) => {
+          captures.push({ tabId: capturedTabId, options });
+          return 'data:image/png;base64,AA==';
+        },
+        sendMessage: async () => ({}),
+      },
+    };
+
+    const agent = new AgentFx({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent.conversationModes.set(tabId, 'act');
+
+    const result = await agent.executeTool(tabId, 'done', {
+      summary: 'Created the item.',
+      outcome: 'success',
+    });
+
+    assert.equal(executeScriptCalls, 1,
+      'inactive Firefox runs should still probe dialogs and forms before done');
+    assert.deepEqual(captures, [{
+      tabId,
+      options: { format: 'png', quality: 80 },
+    }], 'inactive Firefox runs should capture their own tab for done verification');
+    assert.equal(result.blockedDone, true,
+      'an unfinished inactive-tab form should block a successful done result');
+
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+    const doneStart = source.indexOf("if (name === 'done')");
+    const doneEnd = source.indexOf('// Network & download tools', doneStart);
+    assert.doesNotMatch(source.slice(doneStart, doneEnd), /if \(tab\?\.active\)/,
+      'Firefox done verification must not be gated on active-tab state');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('firefox auto and media screenshot helpers redact model-facing data URLs', () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
   // Signature may include optional opts for Chrome call-site parity.
@@ -6419,6 +6492,79 @@ test('blank screenshot retry: skips retry when a blank page has no content signa
     assert.equal(result.blankFrameRetry, undefined);
     assert.equal(recaptures, 0);
   }
+});
+
+test('Chrome background capture emulates focus without foregrounding and restores CDP state', async () => {
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const calls = [];
+  cdpClientCh.sendCommand = async (tabId, method, params) => {
+    calls.push({ tabId, method, params });
+    return {};
+  };
+  try {
+    const agent = new AgentCh({});
+    const tabId = 42;
+
+    agent._runningTabs.add(tabId);
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: false, focusEmulated: true },
+    );
+    assert.deepEqual(calls, [{
+      tabId,
+      method: 'Emulation.setFocusEmulationEnabled',
+      params: { enabled: true },
+    }]);
+
+    await agent._clearBackgroundFocusEmulation(tabId);
+    assert.deepEqual(calls.at(-1), {
+      tabId,
+      method: 'Emulation.setFocusEmulationEnabled',
+      params: { enabled: false },
+    });
+
+    calls.length = 0;
+    agent._configureCapturePolicyForRun(tabId, { foreground: true });
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: true, focusEmulated: false },
+    );
+    assert.deepEqual(calls, [{ tabId, method: 'Page.bringToFront', params: undefined }]);
+
+    calls.length = 0;
+    agent._configureCapturePolicyForRun(tabId, { cloudRun: true });
+    await agent._preparePageForCapture(tabId);
+    assert.deepEqual(calls, [{ tabId, method: 'Page.bringToFront', params: undefined }],
+      'managed cloud runs should retain foreground capture behavior');
+
+    calls.length = 0;
+    agent._runningTabs.delete(tabId);
+    agent._configureCapturePolicyForRun(tabId, {});
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: false, focusEmulated: false },
+    );
+    assert.deepEqual(calls, [], 'capture outside a run should not mutate focus state');
+  } finally {
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+});
+
+test('local screenshot implementations do not foreground ordinary run tabs', () => {
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  const firefoxScheduler = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/scheduler.js'), 'utf8');
+
+  assert.equal(
+    [...chromeAgent.matchAll(/Page\.bringToFront/g)].length,
+    2,
+    'Chrome should mention bringToFront only in policy documentation and its foreground compatibility branch',
+  );
+  assert.match(chromeAgent, /if \(this\._foregroundCaptureTabs\.has\(tabId\)\)[\s\S]*?'Page\.bringToFront'/);
+  assert.doesNotMatch(firefoxAgent, /captureVisibleTab/);
+  assert.match(firefoxAgent, /browser\.tabs\.captureTab\(tabId,/);
+  assert.doesNotMatch(firefoxScheduler, /active:\s*job\.source !== 'watch'/);
+  assert.match(firefoxScheduler, /tabs\.create\(\{ url: job\.target\.url, active: false \}\)/);
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -14354,6 +14500,12 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   const scheduleList = chrome.parseSlashInvocation('  /SCHEDULE   --LIST  ');
   assert.equal(scheduleList.action, 'list');
   assert.equal(chrome.slashInvocationIsOutOfBand(scheduleList), true);
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const foreground = runtime.parseSlashInvocation('/FoReGrOuNd finish the checkout');
+    assert.equal(foreground.action, 'enable', `${label}: /foreground should select the compatibility action`);
+    assert.equal(foreground.payload, 'finish the checkout', `${label}: /foreground should preserve the task payload`);
+    assert.equal(foreground.command.acceptsPayload, true, `${label}: /foreground should accept an inline prompt`);
+  }
   for (const command of chrome.SLASH_COMMANDS.filter((item) => !item.unsupported)) {
     const invocation = chrome.parseSlashInvocation(`${command.value} --help`);
     assert.equal(invocation.action, 'help', `${command.value} --help should route to command help`);
@@ -14431,6 +14583,57 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.match(panel, /if \(match\?\.kind === 'base-action'\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return activateSlashCommandBaseAction\(\);/, `${label}: Enter should run the selected base-action row`);
     assert.match(panel, /if \(e\.key === 'Enter'\) \{[\s\S]*?const match = slashCommandMatches\[slashCommandSelectedIndex\];[\s\S]*?match\?\.kind === 'option'[\s\S]*?applySlashCommandCompletion\(\)/, `${label}: Enter should accept an option suggestion before submitting the parent command`);
     assert.match(panel, /if \(e\.key === 'Tab'\) \{[\s\S]*?const completionIndex =[\s\S]*?if \(!slashCommandMatches\[completionIndex\]\) return false;\s*e\.preventDefault\(\);[\s\S]*?applySlashCommandCompletion\(completionIndex\);/, `${label}: Tab should retain its default focus behavior when the Enter row is the only match`);
+  }
+});
+
+test('/foreground is a run-scoped compatibility override in both local builds', () => {
+  for (const [label, panelRel, backgroundRel, apiName] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/background.js', 'chrome'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/background.js', 'browser'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+
+    assert.match(panel, /const foregroundForSend = retryOptions[\s\S]*?\^\\\/foreground\\b/i,
+      `${label}: send flow should recognize /foreground before slash parsing`);
+    assert.match(panel, /foreground: foregroundForSend,[\s\S]*?sendRunWithReconnect\('chat_start',[\s\S]*?foreground: foregroundForSend,/,
+      `${label}: fresh runs and retries should carry the foreground bit`);
+    assert.match(panel, /case 'max_steps_reached':[\s\S]*?showContinueButton\(\{ foreground: retryPayload\?\.foreground === true \}\)/,
+      `${label}: max-step continuations should inherit foreground mode`);
+    assert.match(panel, /function showContinueButton\(options = \{\}\)[\s\S]*?continueBtn\.dataset\.foreground[\s\S]*?continueAgent\(\{[\s\S]*?foreground:/,
+      `${label}: persisted Continue buttons should retain foreground mode`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\)[\s\S]*?const foregroundForSend = options\?\.foreground === true;[\s\S]*?dataset\.retryForeground = foregroundForSend[\s\S]*?sendRunWithReconnect\('continue_start',[\s\S]*?foreground: foregroundForSend,/,
+      `${label}: continuation runs should forward and retain foreground mode`);
+    assert.match(panel, /async function adoptRestoredRunState\([\s\S]*?sendRunWithReconnect\('continue_start', \{[\s\S]*?foreground: runUi\.foreground === true,/,
+      `${label}: remounted runs should recover foreground mode from the durable journal`);
+    assert.match(panel, /async function applyActiveRunState\([\s\S]*?dataset\.retryForeground = runUi\.foreground === true/,
+      `${label}: replayed max-step events should rebuild foreground continuation state`);
+    assert.match(background, new RegExp(
+      `async function activateForegroundCompatibilityTab\\(tabId\\)[\\s\\S]*?${apiName}\\.tabs\\.update\\(tabId, \\{ active: true \\}\\)[\\s\\S]*?${apiName}\\.windows\\.update\\(tab\\.windowId, \\{ focused: true \\}\\)`,
+    ), `${label}: compatibility mode should activate the run tab and focus its window`);
+    assert.match(background, /if \(msg\.foreground\) await activateForegroundCompatibilityTab\(tabId\);[\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
+      `${label}: background dispatch should scope foreground behavior to the requested run`);
+    assert.match(background, /case 'continue':[\s\S]*?foreground: msg\.foreground === true,[\s\S]*?agent\.continueProcessing\([\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
+      `${label}: background continuations should persist foreground mode and configure the agent`);
+
+    for (const [caseName, nextCaseName] of [
+      ['chat', 'chat_stream'],
+      ['chat_stream', 'continue'],
+      ['continue', 'clear_conversation'],
+    ]) {
+      const start = background.indexOf(`case '${caseName}': {`);
+      const end = background.indexOf(`case '${nextCaseName}': {`, start);
+      const body = background.slice(start, end);
+      const tryIndex = body.indexOf('try {');
+      const activationIndex = body.indexOf('await activateForegroundCompatibilityTab(tabId)');
+      const finallyIndex = body.lastIndexOf('finally {');
+      const releaseIndex = body.lastIndexOf('releaseRunKeepalive();');
+      assert.ok(start >= 0 && end > start, `${label}: ${caseName} handler should be extractable`);
+      assert.ok(tryIndex >= 0 && activationIndex > tryIndex,
+        `${label}: ${caseName} activation failures should enter run cleanup`);
+      assert.ok(finallyIndex > activationIndex && releaseIndex > finallyIndex,
+        `${label}: ${caseName} should release its keepalive after activation failures`);
+    }
   }
 });
 
@@ -14516,7 +14719,7 @@ test('hidden trailing run-capture suffixes wrap normal prompts without entering 
   assert.match(host, /const filename = recordingState\.filename \|\| `webbrain-recording-\$\{stamp\}\.webm`;/, 'chrome: custom filename should override only the default timestamped recording name');
 });
 
-test('run screenshot capture reactivates the originating tab before saving', async () => {
+test('run screenshot capture keeps Firefox backgrounded while Chrome retains its diagnostic activation path', async () => {
   for (const [label, captureRel] of [
     ['chrome', 'src/chrome/src/run-capture.js'],
     ['firefox', 'src/firefox/src/run-capture.js'],
@@ -14537,6 +14740,10 @@ test('run screenshot capture reactivates the originating tab before saving', asy
           captures.push({ windowId, options });
           return 'data:image/png;base64,capture';
         },
+        captureTab: async (tabId, options) => {
+          captures.push({ tabId, options });
+          return 'data:image/png;base64,capture';
+        },
       },
       downloads: {
         download: async (options) => {
@@ -14553,8 +14760,13 @@ test('run screenshot capture reactivates the originating tab before saving', asy
     const runtime = await loadRunCaptureRuntime(captureRel);
     const result = await runtime.captureAndSaveRunScreenshot(api, 42, 'run-after.png');
 
-    assert.deepEqual(updates, [{ tabId: 42, changes: { active: true } }], `${label}: inactive run tab should be reactivated`);
-    assert.deepEqual(captures, [{ windowId: 7, options: { format: 'png' } }], `${label}: capture should use the reactivated tab's window`);
+    if (label === 'chrome') {
+      assert.deepEqual(updates, [{ tabId: 42, changes: { active: true } }], 'chrome: diagnostic capture should retain its existing activation path');
+      assert.deepEqual(captures, [{ windowId: 7, options: { format: 'png' } }], 'chrome: diagnostic capture should use the activated tab window');
+    } else {
+      assert.deepEqual(updates, [], 'firefox: inactive run tab should not be activated for capture');
+      assert.deepEqual(captures, [{ tabId: 42, options: { format: 'png' } }], 'firefox: capture should target the run tab directly');
+    }
     assert.equal(downloads[0].filename, 'run-after.png', `${label}: after screenshot should be saved under the requested filename`);
     assert.deepEqual(result, {
       filename: '/Users/test/Downloads/WebBrain/run-after.png',
@@ -15437,7 +15649,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.match(body, /resumeBtn\.textContent = t\('sp\.subscribe\.resume'\);/, `${label}: subscribe card should render a localized resume action`);
     assert.match(body, /resumeBtn\.dataset\.resumeMode = \['ask', 'act', 'dev'\]\.includes\(resumeMode\)[\s\S]*?\? resumeMode[\s\S]*?: \(textEl\.closest\('\.message\.assistant'\)\?\.dataset\.runMode \|\| agentMode\);/, `${label}: resume action should prefer an explicitly captured failed run mode`);
     assert.match(body, /resumeAfterSubscription\(resumeBtn\)/, `${label}: subscribe card should use the shared resume handler`);
-    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{ mode \}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode before continuing`);
+    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{[\s\S]*?mode,[\s\S]*?foreground: btn\?\.dataset\?\.resumeForeground === 'true',[\s\S]*?\}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode and preserve foreground mode before continuing`);
     assert.match(panel, /btn\.addEventListener\('click', \(\) => resumeAfterSubscription\(btn\)\);/, `${label}: restored subscribe cards should use the shared resume handler`);
     const errorUpdateStart = panel.indexOf('function renderAgentErrorUpdate(');
     const errorUpdateEnd = panel.indexOf('\n}\n\nfunction rebindRestoredMessageControls', errorUpdateStart);
@@ -16191,7 +16403,7 @@ test('sidepanel rebinds interactive controls after restoring serialized tab chat
     assert.match(panel, /function bindMessageCopyButton\(btn\) \{[\s\S]*?addEventListener\('click'/, `${label}: message copy rebinding should attach a click listener`);
     assert.match(panel, /btn\.__wbCopyBound = true;/, `${label}: message copy binding should use an in-memory flag so restored HTML can rebind`);
     assert.match(panel, /document\.querySelectorAll\('\.code-copy-btn'\)[\s\S]*?addEventListener\('click'/, `${label}: code copy buttons should be rebound`);
-    assert.match(panel, /function rebindContinueButtons\(\) \{[\s\S]*?document\.querySelectorAll\('\.continue-btn'\)[\s\S]*?addEventListener\('click', continueAgent\)/, `${label}: restored Continue buttons should be rebound`);
+    assert.match(panel, /function rebindContinueButtons\(\) \{[\s\S]*?document\.querySelectorAll\('\.continue-btn'\)[\s\S]*?addEventListener\('click', \(\) => continueAgent\(\{[\s\S]*?foreground: btn\.dataset\.foreground === 'true'/, `${label}: restored Continue buttons should be rebound with their foreground mode`);
     assert.match(panel, /function rebindClarifyCards\(\) \{[\s\S]*?document\.querySelectorAll\('\.clarify-card'\)[\s\S]*?submitClarify\(card, tabId, clarifyId/, `${label}: restored clarify cards should be rebound`);
     assert.match(panel, /function rebindScheduleComposers\(\) \{[\s\S]*?document\.querySelectorAll\('form\.schedule-composer'\)[\s\S]*?bindScheduleComposer\(form\)/, `${label}: restored schedule composers should be rebound`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?rebindCopyButtons\(\);[\s\S]*?rebindContinueButtons\(\);[\s\S]*?rebindClarifyCards\(\);[\s\S]*?rebindScheduleComposers\(\);[\s\S]*?\}/, `${label}: restored tab chat should rebind all durable message controls`);
@@ -20246,7 +20458,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /function showContinueButton\(\) \{[\s\S]*?resetChatNavigation\(\);[\s\S]*?messagesEl\.appendChild\(bar\);[\s\S]*?scrollToBottom\(\{ force: true \}\);/,
+      /function showContinueButton\(options = \{\}\) \{[\s\S]*?resetChatNavigation\(\);[\s\S]*?messagesEl\.appendChild\(bar\);[\s\S]*?scrollToBottom\(\{ force: true \}\);/,
       `${label}: the blocking Continue prompt should replace turn navigation instead of being covered by it`,
     );
     assert.match(
@@ -21609,16 +21821,19 @@ test('Chrome ScheduledJobManager keeps alarm-triggered runs alive until completi
   assert.equal(keepAliveStops, 1, 'keepalive should stop after the run settles');
 });
 
-test('Firefox ScheduledJobManager activates URL-target tabs before running', async () => {
+test('Firefox ScheduledJobManager keeps URL-target tabs inactive while running', async () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
   let h;
+  let observedInactiveTarget = false;
   h = makeSchedulerHarness(SchedulerFx, {
     now,
     processMessage: async (tabId) => {
-      assert.equal(h.tabs.get(tabId)?.active, true, 'Firefox URL-target scheduled runs need an active tab for screenshots');
+      assert.equal(h.tabs.get(tabId)?.active, false, 'Firefox URL-target scheduled runs should stay in the background');
+      observedInactiveTarget = true;
       return 'done';
     },
   });
+  h.tabs.set(77, { ...h.tabs.get(77), active: false });
   const created = await h.manager.createTaskJob({
     tabId: 77,
     conversationId: 'conv-1',
@@ -21634,8 +21849,7 @@ test('Firefox ScheduledJobManager activates URL-target tabs before running', asy
   });
 
   await h.manager.handleAlarm(h.alarmName(created.jobId));
-  const helperTab = [...h.tabs.values()].find((tab) => tab.url === 'https://example.org/app');
-  assert.equal(helperTab?.active, true, 'new Firefox URL helper tabs should be active');
+  assert.equal(observedInactiveTarget, true, 'Firefox should run the scheduled task against its inactive helper tab');
 });
 
 test('ScheduledJobManager restoreAlarms requeues stranded transient jobs', async () => {
@@ -25272,7 +25486,7 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
       warning: 'Full-page screenshot assembly failed (canvas too large). Showing the first captured tile instead.',
     });
     const agent = new AgentCh({});
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
 
     const result = await agent.captureFullPageScreenshotForUser(42);
@@ -25282,6 +25496,135 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;
+  }
+});
+
+test('Chrome full-page screenshot paths reject blank background captures after retries', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/background',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'Ymxhbms=' };
+    };
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
+
+    const agent = new AgentCh({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 200,
+      visibleTextChars: 100,
+      domNodes: 50,
+      imageCount: 0,
+      scrollHeight: 1200,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const userResult = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(userResult, {
+      ok: false,
+      error: 'Background full-page screenshot remained blank after retries',
+    });
+
+    const toolResult = await agent.executeTool(42, 'full_page_screenshot', {});
+    assert.deepEqual(toolResult, {
+      success: false,
+      error: 'Full page screenshot failed: Background full-page screenshot remained blank after retries',
+    });
+    assert.equal(captureCalls, 4, 'each full-page path should retry once before rejecting the blank frame');
+  } finally {
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome full-page blank guard ignores document length as the lone content signal', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/uniform-long-page',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'dW5pZm9ybQ==' };
+    };
+
+    const agent = new AgentCh({});
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 0,
+      visibleTextChars: 0,
+      domNodes: 20,
+      imageCount: 0,
+      scrollHeight: 5000,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const result = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(result, {
+      ok: true,
+      dataUrl: 'data:image/png;base64,dW5pZm9ybQ==',
+      warning: null,
+    });
+    assert.equal(captureCalls, 1, 'a uniform long page should not retry from scroll length alone');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
   }
 });
 
@@ -25308,7 +25651,7 @@ test('user full-page screenshots apply adapter capture policy without LLM adapte
     };
     const agent = new AgentCh({});
     agent.useSiteAdapters = false;
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
 
     const result = await agent.captureFullPageScreenshotForUser(42);
@@ -25358,7 +25701,7 @@ test('agent full-page screenshot tool applies adapter capture policy without LLM
     });
     agent.useSiteAdapters = false;
     agent.screenshotRedaction = true;
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
     agent._shrinkImageForBudget = async (dataUrl) => ({ dataUrl, width: 400, height: 1500 });
     agent._redactScreenshotDataUrl = async (_tabId, dataUrl, options) => {
@@ -49932,12 +50275,13 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
 test('run UI journal: resumed requests preserve sequence and replay boundaries', () => {
   for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
     const journal = new Journal();
-    journal.begin(7, 'resume-request');
+    journal.begin(7, 'resume-request', { foreground: true });
     journal.record(7, 'resume-request', 'thinking', { content: 'Before restart' }, 'run-before');
     journal.record(7, 'resume-request', 'plan_review', { planId: 'plan-before' }, 'run-before');
     journal.acknowledge(7, 'resume-request', 1);
 
     const before = journal.get(7);
+    assert.equal(before.foreground, true, `${label}: foreground mode should be part of the durable run snapshot`);
     assert.equal(before.seq, 2, `${label}: fixture should start above sequence zero`);
     assert.equal(before.ackedSeq, 1, `${label}: fixture should retain an acknowledged replay boundary`);
 
@@ -49945,6 +50289,7 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
     restarted.restore(7, structuredClone(before));
     const resumed = restarted.resume(7, 'resume-request');
     assert.ok(resumed, `${label}: matching request should resume its existing journal`);
+    assert.equal(resumed.foreground, true, `${label}: restored continuations should retain foreground mode`);
     assert.equal(resumed.seq, 2, `${label}: resume must preserve the prior sequence`);
     assert.equal(resumed.ackedSeq, 1, `${label}: resume must preserve the acknowledged replay boundary`);
     assert.equal(resumed.truncatedBeforeSeq, 1, `${label}: resume must preserve the compaction boundary`);
@@ -49958,6 +50303,9 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
 
     const next = restarted.record(7, 'resume-request', 'thinking', { content: 'After restart' }, 'run-after');
     assert.equal(next.seq, 3, `${label}: first resumed event should advance beyond the old sequence`);
+
+    const backgroundRun = new Journal().begin(8, 'background-request');
+    assert.equal(backgroundRun.foreground, false, `${label}: ordinary runs should remain background by default`);
     assert.deepEqual(
       restarted.get(7).events.map(event => event.seq),
       [2, 3],

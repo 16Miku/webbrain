@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': "آخرین اجرای موفق ثبت شده را ذخیره کنید",
   'sp.slash.delete_workflow': "یک گردش کار ذخیره شده توسط ID را حذف کنید",
   'sp.slash.allow_api': "جهش های API را برای این مکالمه مجاز کنید",
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': "درخواست های مجوز را در سطح جهانی غیرفعال کنید",
   'sp.slash.compact': "این زمینه مکالمه را فشرده کنید",
   'sp.slash.verbose': "نمایش ابزار فشرده یا پرمخاطب را تغییر دهید",

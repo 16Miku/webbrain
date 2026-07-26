@@ -1532,6 +1532,14 @@ function assertNoActiveTabRun(tabId) {
   }
 }
 
+async function activateForegroundCompatibilityTab(tabId) {
+  const tab = await browser.tabs.get(tabId);
+  await browser.tabs.update(tabId, { active: true });
+  if (tab?.windowId != null) {
+    await browser.windows.update(tab.windowId, { focused: true });
+  }
+}
+
 const detachedRunStarts = new Map();
 const detachedRunFailures = new Map();
 const RUN_KEEPALIVE_INTERVAL_MS = 20_000;
@@ -1871,7 +1879,11 @@ async function handleMessage(msg, sender) {
       assertRunCanStart(tabId, msg);
       const isWorkflowRun = !!msg.workflowId;
       const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');
-      const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, { mode, kind: 'chat' });
+      const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, {
+        mode,
+        kind: 'chat',
+        foreground: msg.foreground === true,
+      });
       const releaseRunKeepalive = acquireRunKeepalive();
 
       if (msg.apiMutationsAllowed) agent.setApiMutationsAllowed(tabId, true);
@@ -1884,6 +1896,8 @@ async function handleMessage(msg, sender) {
       let result = '';
       let runError = null;
       try {
+        if (msg.foreground) await activateForegroundCompatibilityTab(tabId);
+
         // Capture belongs to the background run lifecycle so it survives the
         // sidebar closing or reloading while the agent is still working.
         runCaptureState = await runCaptureController.start(msg.runCapture, tabId);
@@ -1898,6 +1912,7 @@ async function handleMessage(msg, sender) {
         const runOptions = {
           ...(isWorkflowRun ? { independentRun: true } : {}),
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
+          ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
             ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
             : {}),
@@ -1988,7 +2003,11 @@ async function handleMessage(msg, sender) {
       if (!tabId) throw new Error('No tab ID');
       assertNoActiveTabRun(tabId);
       const mode = msg.mode || 'ask';
-      const runUi = beginRunUiSnapshot(tabId, msg.requestId);
+      const runUi = beginRunUiSnapshot(tabId, msg.requestId, {
+        mode,
+        kind: 'chat',
+        foreground: msg.foreground === true,
+      });
       const releaseRunKeepalive = acquireRunKeepalive();
 
       if (msg.apiMutationsAllowed) agent.setApiMutationsAllowed(tabId, true);
@@ -1999,8 +2018,11 @@ async function handleMessage(msg, sender) {
       let result = '';
       let runError = null;
       try {
+        if (msg.foreground) await activateForegroundCompatibilityTab(tabId);
+
         const runOptions = {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
+          ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
             ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
             : {}),
@@ -2039,7 +2061,11 @@ async function handleMessage(msg, sender) {
       if (!tabId) throw new Error('No tab ID');
       assertRunCanStart(tabId, msg);
       const mode = msg.mode || 'ask';
-      const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, { mode, kind: 'continue' });
+      const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, {
+        mode,
+        kind: 'continue',
+        foreground: msg.foreground === true,
+      });
       const releaseRunKeepalive = acquireRunKeepalive();
 
       sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS');
@@ -2048,10 +2074,13 @@ async function handleMessage(msg, sender) {
       let result = '';
       let runError = null;
       try {
+        if (msg.foreground) await activateForegroundCompatibilityTab(tabId);
+
         result = await agent.continueProcessing(tabId, (type, data) => {
           updates.push({ type, data });
           sendAgentUpdate(tabId, runUi.requestId, type, data);
         }, mode, {
+          ...(msg.foreground ? { foreground: true } : {}),
           detachedRequestId: runUi.requestId,
           isDetachedStartCancelled: () => isDetachedRunStartCancelled(tabId, msg),
           beforeConsequentialTool: () => flushRunUiSnapshot(tabId, runUi.requestId),

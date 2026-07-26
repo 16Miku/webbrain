@@ -365,6 +365,13 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
+    // Ordinary runs capture and act in their original tab without activating
+    // it. Managed cloud runs and the explicit /foreground compatibility
+    // override retain the old Page.bringToFront behavior for their lifetime.
+    this._foregroundCaptureTabs = new Set();
+    // Focus emulation is enabled lazily for background screenshot paths. CDP
+    // sessions outlive individual runs, so every run cleanup must disable it.
+    this._focusEmulatedTabs = new Set();
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
     this._completionRunCounter = 0;
     this.scheduler = null;
@@ -773,19 +780,48 @@ export class Agent extends LoopDetector {
     }
   }
 
+  async _captureFullPageWithBlankRetry(tabId, capturePolicy) {
+    const probe = await this._captureViewportProbe(tabId);
+    const captureOnce = async () => {
+      const capture = await this._withIndicatorsHidden(tabId, () =>
+        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
+      );
+      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      if (!imageData) return null;
+      return {
+        dataUrl: `data:image/png;base64,${imageData}`,
+        capture,
+      };
+    };
+    return this._retryBlankScreenshotCapture(
+      await captureOnce(),
+      captureOnce,
+      {
+        probe,
+        // A full-page image is expected to reflect the whole scroll extent.
+        // Document length alone therefore cannot distinguish a legitimate
+        // uniform page from a blank background compositor frame.
+        includeDocumentLengthSignal: false,
+      },
+    );
+  }
+
   async captureFullPageScreenshotForUser(tabId) {
     if (!tabId) return { ok: false, error: 'No tab ID' };
     try {
       const capturePolicy = await this._getFullPageCapturePolicy(tabId);
       await cdpClient.attach(tabId);
-      await this._bringToFrontForCapture(tabId);
-      const capture = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-      );
-      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      await this._preparePageForCapture(tabId);
+      const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+      const capture = captured?.capture;
       const warning = typeof capture === 'object' ? capture?.warning || null : null;
-      if (!imageData) return { ok: false, error: 'Full-page screenshot returned no image data' };
-      return { ok: true, dataUrl: `data:image/png;base64,${imageData}`, warning };
+      if (!captured?.dataUrl) {
+        return { ok: false, error: 'Full-page screenshot returned no image data' };
+      }
+      if (captured?.blankFrameRetry?.finalBlank) {
+        return { ok: false, error: 'Background full-page screenshot remained blank after retries' };
+      }
+      return { ok: true, dataUrl: captured.dataUrl, warning };
     } catch (e) {
       return { ok: false, error: e?.message || String(e) };
     }
@@ -4996,7 +5032,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  _pageSignalsContentBehindBlank(probe) {
+  _pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal = true } = {}) {
     if (!probe) return true;
     const textChars = Number(probe.documentTextChars || 0);
     const visibleTextChars = Number(probe.visibleTextChars || 0);
@@ -5010,15 +5046,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       visibleTextChars > 20 ||
       imageCount > 0 ||
       domNodes > 150 ||
-      (innerHeight > 0 && scrollHeight > innerHeight + 200)
+      (
+        includeDocumentLengthSignal
+        && innerHeight > 0
+        && scrollHeight > innerHeight + 200
+      )
     );
   }
 
-  async _retryBlankScreenshotCapture(firstShot, captureOnce, { probe = null } = {}) {
+  async _retryBlankScreenshotCapture(
+    firstShot,
+    captureOnce,
+    { probe = null, includeDocumentLengthSignal = true } = {},
+  ) {
     if (!firstShot?.dataUrl || typeof captureOnce !== 'function') return firstShot;
     let shot = firstShot;
     let blankness = await this._analyzeScreenshotBlankness(shot.dataUrl);
-    if (!blankness?.blank || !this._pageSignalsContentBehindBlank(probe)) return shot;
+    if (
+      !blankness?.blank
+      || !this._pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal })
+    ) return shot;
 
     const meta = {
       detected: true,
@@ -5113,7 +5160,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       await cdpClient.attach(tabId);
       await cdpClient.sendCommand(tabId, 'Page.enable');
-      await this._bringToFrontForCapture(tabId);
+      await this._preparePageForCapture(tabId);
 
       // Probe the CSS viewport first so we can either (a) clip exactly
       // to it for pixel-accurate captures, or (b) compute a budget-aware
@@ -5158,7 +5205,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { dataUrl: redacted, width: cssW, height: cssH, coordAligned: true };
         };
         const first = await captureOnce();
-        return await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+        const captured = await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+        // A persistently blank background frame is worse than no image: the
+        // normal page-reading/AX context remains available to the planner,
+        // while a blank image can falsely imply that the page itself is empty.
+        return captured?.blankFrameRetry?.finalBlank ? null : captured;
       }
 
       // Non-coord-aligned mode: pre-compute target dims via the budget
@@ -5193,7 +5244,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       };
       const first = await captureOnce();
-      return await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+      const captured = await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+      return captured?.blankFrameRetry?.finalBlank ? null : captured;
     } catch (e) {
       return null;
     }
@@ -5446,39 +5498,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       await cdpClient.attach(tabId);
       await cdpClient.sendCommand(tabId, 'Page.enable');
-      await this._bringToFrontForCapture(tabId);
-      const vp = await cdpClient.evaluate(tabId, '({w: window.innerWidth, h: window.innerHeight})');
-      const cssW = Math.max(1, Math.round(vp?.result?.value?.w || 1024));
-      const cssH = Math.max(1, Math.round(vp?.result?.value?.h || 768));
-      const shot = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-          format: 'png',
-          fromSurface: true,
-          clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
-        })
-      );
-      if (!shot?.data) return null;
-      const cropDataUrl = `data:image/png;base64,${shot.data}`;
-      // Model-facing path honors maxImageDimension (issue #311). Keep the raw
-      // `cropDataUrl` at full CSS resolution for the local download crop;
-      // `_locateVisibleMediaWithVision` maps vision boxes back to that space.
-      const shrunk = await this._shrinkImageForBudget(cropDataUrl, cssW, cssH, this._budgetForCapture());
-      let dataUrl = shrunk.dataUrl;
-      // Local screenshot redaction (issue #312): the model-facing `dataUrl`
-      // is sent to vision for media localization, so pixelate PII on it.
-      // The raw `cropDataUrl` is kept untouched for the local download.
-      if (this.screenshotRedaction) {
-        dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
-      }
-      return {
-        dataUrl,
-        cropDataUrl,
-        width: cssW,
-        height: cssH,
-        visionWidth: shrunk.width,
-        visionHeight: shrunk.height,
-        coordAligned: true,
+      await this._preparePageForCapture(tabId);
+      const probe = await this._captureViewportProbe(tabId);
+      const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
+      const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
+      const captureOnce = async () => {
+        const shot = await this._withIndicatorsHidden(tabId, () =>
+          cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+            format: 'png',
+            fromSurface: true,
+            clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+          })
+        );
+        if (!shot?.data) return null;
+        const cropDataUrl = `data:image/png;base64,${shot.data}`;
+        // Model-facing path honors maxImageDimension (issue #311). Keep the raw
+        // `cropDataUrl` at full CSS resolution for the local download crop;
+        // `_locateVisibleMediaWithVision` maps vision boxes back to that space.
+        const shrunk = await this._shrinkImageForBudget(cropDataUrl, cssW, cssH, this._budgetForCapture());
+        let dataUrl = shrunk.dataUrl;
+        // Local screenshot redaction (issue #312): the model-facing `dataUrl`
+        // is sent to vision for media localization, so pixelate PII on it.
+        // The raw `cropDataUrl` is kept untouched for the local download.
+        if (this.screenshotRedaction) {
+          dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
+        }
+        return {
+          dataUrl,
+          cropDataUrl,
+          width: cssW,
+          height: cssH,
+          visionWidth: shrunk.width,
+          visionHeight: shrunk.height,
+          coordAligned: true,
+        };
       };
+      const captured = await this._retryBlankScreenshotCapture(
+        await captureOnce(),
+        captureOnce,
+        { probe },
+      );
+      return captured?.blankFrameRetry?.finalBlank ? null : captured;
     } catch (_) {
       const fallback = await this._captureAutoScreenshot(tabId, { coordAligned: true });
       return fallback ? { ...fallback, cropDataUrl: fallback.dataUrl } : null;
@@ -5721,15 +5781,58 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Try to bring a tab to the front via CDP before capturing. The surface
-   * screenshot path (`fromSurface: true`) can produce stale/blank frames if
-   * the page is occluded or backgrounded in some compositor states. This is
-   * best-effort — ignore failures and let the capture proceed.
+   * Prepare a page for capture without changing the user's selected tab.
+   *
+   * Focus emulation makes background pages report themselves as focused and
+   * active without activating their tab. It is scoped to the current run and
+   * disabled in the run's finally block because debugger sessions persist.
+   * Cloud runs and /foreground deliberately retain the old activation path.
    */
-  async _bringToFrontForCapture(tabId) {
+  async _preparePageForCapture(tabId) {
+    if (this._foregroundCaptureTabs.has(tabId)) {
+      try {
+        await cdpClient.sendCommand(tabId, 'Page.bringToFront');
+        return { foreground: true, focusEmulated: false };
+      } catch {
+        return { foreground: false, focusEmulated: false };
+      }
+    }
+    if (!this._runningTabs.has(tabId)) {
+      return { foreground: false, focusEmulated: false };
+    }
     try {
-      await cdpClient.sendCommand(tabId, 'Page.bringToFront');
-    } catch { /* ignore */ }
+      await cdpClient.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+      this._focusEmulatedTabs.add(tabId);
+      return { foreground: false, focusEmulated: true };
+    } catch {
+      // Older Chromium builds may not expose the experimental command.
+      // Background capture can still succeed, so do not activate the tab.
+      return { foreground: false, focusEmulated: false };
+    }
+  }
+
+  async _clearBackgroundFocusEmulation(tabId) {
+    if (!this._focusEmulatedTabs.has(tabId)) return;
+    this._focusEmulatedTabs.delete(tabId);
+    try {
+      await cdpClient.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
+    } catch { /* detached/closed tabs need no cleanup */ }
+  }
+
+  _configureCapturePolicyForRun(tabId, runOptions = {}) {
+    const previousForeground = this._foregroundCaptureTabs.has(tabId);
+    if (runOptions?.cloudRun === true || runOptions?.foreground === true) {
+      this._foregroundCaptureTabs.add(tabId);
+    } else {
+      this._foregroundCaptureTabs.delete(tabId);
+    }
+    return previousForeground;
+  }
+
+  async _restoreCapturePolicyAfterRun(tabId, previousForeground) {
+    await this._clearBackgroundFocusEmulation(tabId);
+    if (previousForeground) this._foregroundCaptureTabs.add(tabId);
+    else this._foregroundCaptureTabs.delete(tabId);
   }
 
   // ───────────── Image-budget (token-conscious screenshots) ─────────────
@@ -9444,6 +9547,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.screenshotClickScale.delete(tabId);
+    void this._clearBackgroundFocusEmulation(tabId);
+    this._foregroundCaptureTabs.delete(tabId);
     this.lastSeenAdapter.delete(tabId);
     this.activeSkillIds.delete(tabId);
     this._runModeOverrides.delete(tabId);
@@ -13392,6 +13497,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.conversationModes.set(tabId, 'act');
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     const startUrl = await this._currentUrl(tabId);
     const conversationId = await this.ensureConversationId(tabId, 'act');
     const traceRunId = await trace.startRun({
@@ -13582,6 +13688,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._planExecutionGuards.delete(tabId);
       this._resetActiveSkillsForRun(tabId);
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks?.delete(tabId);
@@ -14144,7 +14251,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await cdpClient.attach(tabId);
           await cdpClient.sendCommand(tabId, 'Page.enable');
           probe = await this._captureViewportProbe(tabId);
-          await this._bringToFrontForCapture(tabId);
+          await this._preparePageForCapture(tabId);
           coordAligned = !!(args && args.coord_aligned);
           const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
           const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
@@ -14239,12 +14346,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           description = captured.description || '';
           coordDownscaled = !!captured.coordDownscaled;
           blankFrameRetry = captured.blankFrameRetry || null;
+          if (captured?.blankFrameRetry?.finalBlank) {
+            throw new Error('Background screenshot remained blank after retries');
+          }
         } catch {
           const tab = await chrome.tabs.get(tabId);
           if (!tab?.active) {
             return {
               success: false,
-              error: 'Cannot capture screenshot: this tab is not the active tab in its window. Switch to the tab before using /screenshot, or use a page-reading tool.',
+              error: 'Background screenshot capture was unavailable. Continue with get_accessibility_tree, get_interactive_elements, or read_page, or rerun the task with /foreground for visual compatibility.',
             };
           }
           // Tabs API fallback: no clip/scale available. Capture full, then
@@ -14302,6 +14412,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           description = captured?.description || '';
           coordDownscaled = !!captured?.coordDownscaled;
           blankFrameRetry = captured?.blankFrameRetry || null;
+        }
+        if (blankFrameRetry?.finalBlank) {
+          return {
+            success: false,
+            error: 'Screenshot remained blank after retries. Continue with page-reading tools or rerun the task with /foreground for visual compatibility.',
+          };
         }
         if (!dataUrl) {
           return {
@@ -14449,29 +14565,41 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let imageDataUrl = null;
           let annotatedRect = null;
           if (plannerCanSeeImages) {
-            await this._bringToFrontForCapture(tabId);
-            const shot = await this._withIndicatorsHidden(tabId, () =>
-              cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-                format: 'png', quality: 80, fromSurface: true,
-              })
-            );
-            imageDataUrl = `data:image/png;base64,${shot.data}`;
-            // Local screenshot redaction (issue #312): pixelate form fields +
-            // email/phone text BEFORE this verification screenshot reaches the
-            // planner model. Runs before the optional interaction-rect outline.
-            if (this.screenshotRedaction) {
-              imageDataUrl = await this._redactScreenshotDataUrl(tabId, imageDataUrl, { coordinateSpace: 'viewport' });
-            }
-            // If we remember the rect of the last ax interaction on this tab,
-            // outline it on the screenshot so the model can anchor its review
-            // to the element it actually touched.
-            const last = this._lastInteractionRect.get(tabId);
-            if (last) {
-              const cssViewport = probe
-                ? { width: probe.innerWidth, height: probe.innerHeight }
+            await this._preparePageForCapture(tabId);
+            const captureOnce = async () => {
+              const shot = await this._withIndicatorsHidden(tabId, () =>
+                cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+                  format: 'png', quality: 80, fromSurface: true,
+                })
+              );
+              return shot?.data
+                ? { dataUrl: `data:image/png;base64,${shot.data}` }
                 : null;
-              imageDataUrl = await this._annotateScreenshot(imageDataUrl, last, cssViewport);
-              annotatedRect = { x: last.x, y: last.y, w: last.w, h: last.h };
+            };
+            const captured = await this._retryBlankScreenshotCapture(
+              await captureOnce(),
+              captureOnce,
+              { probe },
+            );
+            if (captured?.dataUrl && !captured?.blankFrameRetry?.finalBlank) {
+              imageDataUrl = captured.dataUrl;
+              // Local screenshot redaction (issue #312): pixelate form fields +
+              // email/phone text BEFORE this verification screenshot reaches the
+              // planner model. Runs before the optional interaction-rect outline.
+              if (this.screenshotRedaction) {
+                imageDataUrl = await this._redactScreenshotDataUrl(tabId, imageDataUrl, { coordinateSpace: 'viewport' });
+              }
+              // If we remember the rect of the last ax interaction on this tab,
+              // outline it on the screenshot so the model can anchor its review
+              // to the element it actually touched.
+              const last = this._lastInteractionRect.get(tabId);
+              if (last) {
+                const cssViewport = probe
+                  ? { width: probe.innerWidth, height: probe.innerHeight }
+                  : null;
+                imageDataUrl = await this._annotateScreenshot(imageDataUrl, last, cssViewport);
+                annotatedRect = { x: last.x, y: last.y, w: last.w, h: last.h };
+              }
             }
           }
 
@@ -14931,15 +15059,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         const capturePolicy = await this._getFullPageCapturePolicy(tabId);
         await cdpClient.attach(tabId);
-        await this._bringToFrontForCapture(tabId);
-        const capture = await this._withIndicatorsHidden(tabId, () =>
-          cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-        );
-        const imageData = typeof capture === 'string' ? capture : capture?.data;
+        await this._preparePageForCapture(tabId);
+        const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+        const capture = captured?.capture;
         const captureWarning = typeof capture === 'object' ? capture?.warning || null : null;
         const captureBounds = typeof capture === 'object' ? capture?.captureBounds || null : null;
-        if (!imageData) throw new Error('Full-page screenshot returned no image data');
-        const rawUrl = `data:image/png;base64,${imageData}`;
+        if (!captured?.dataUrl) throw new Error('Full-page screenshot returned no image data');
+        if (captured?.blankFrameRetry?.finalBlank) {
+          throw new Error('Background full-page screenshot remained blank after retries');
+        }
+        const rawUrl = captured.dataUrl;
         const warningNote = captureWarning ? `\nWarning: ${captureWarning}` : '';
 
         // If the caller asked to save, do it with the RAW (uncompressed,
@@ -15110,18 +15239,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // 2. Capture screenshot
         try {
           await cdpClient.sendCommand(tabId, 'Page.enable');
-          await this._bringToFrontForCapture(tabId);
-          const shot = await this._withIndicatorsHidden(tabId, () =>
-            cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-              format: 'png', quality: 100, fromSurface: true,
-            })
+          await this._preparePageForCapture(tabId);
+          const probe = await this._captureViewportProbe(tabId);
+          const captureOnce = async () => {
+            const shot = await this._withIndicatorsHidden(tabId, () =>
+              cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+                format: 'png', quality: 100, fromSurface: true,
+              })
+            );
+            return shot?.data
+              ? { dataUrl: `data:image/png;base64,${shot.data}` }
+              : null;
+          };
+          const captured = await this._retryBlankScreenshotCapture(
+            await captureOnce(),
+            captureOnce,
+            { probe },
           );
+          if (!captured?.dataUrl || captured?.blankFrameRetry?.finalBlank) {
+            throw new Error('Screenshot was blank or unavailable');
+          }
           // Route the screenshot through `_attachImage` (like the `screenshot`
           // tool) so the batch loop strips it and re-attaches it as an
           // image_url block. Left inline as `result.image`, the base64 blob
           // blows past the tool-result char cap and gets truncated to garbage
           // that the vision model can never read.
-          let verifyShotUrl = `data:image/png;base64,${shot.data}`;
+          let verifyShotUrl = captured.dataUrl;
           // Apply the user's image budget (issue #311) before the image
           // reaches the model, then run local redaction (issue #312) on the
           // budget-fit copy so PII is pixelated at the size the model sees.
@@ -18678,6 +18821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
@@ -18696,6 +18840,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
         else this.cloudRunContexts.delete(tabId);
       }
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
@@ -19510,6 +19655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
@@ -19528,6 +19674,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
         else this.cloudRunContexts.delete(tabId);
       }
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);

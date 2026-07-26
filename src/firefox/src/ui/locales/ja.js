@@ -567,6 +567,7 @@ export default {
   'sp.slash.show_scratchpad': '現在のスクラッチパッドを表示',
   'sp.slash.clear_scratchpad': '現在のスクラッチパッドをクリア',
   'sp.slash.allow_api': 'この会話でAPIの変更を許可',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': '権限の確認をグローバルに無効化',
   'sp.slash.compact': 'この会話のコンテキストをコンパクト化',
   'sp.slash.verbose': 'ツール表示を詳細とコンパクトで切り替え',

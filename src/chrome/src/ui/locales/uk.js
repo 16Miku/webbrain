@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': 'Показати поточний блокнот',
   'sp.slash.clear_scratchpad': 'Очистити поточний чернетник',
   'sp.slash.allow_api': 'Дозволити зміни API для цієї розмови',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Вимкнути запити дозволів глобально',
   'sp.slash.compact': 'Стиснути контекст цієї розмови',
   'sp.slash.verbose': 'Перемкнути докладний або компактний вигляд інструментів',

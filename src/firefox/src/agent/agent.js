@@ -4836,10 +4836,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Capture a viewport screenshot via the WebExtension tabs API. Firefox
-   * supports `scale: 1` on captureVisibleTab to force a CSS-pixel-aligned
-   * image (otherwise it captures at devicePixelRatio, causing the same
-   * coordinate-mismatch loop chrome had pre-1.5.1). Returns
+   * Capture a viewport screenshot for the run's tab without activating it.
+   * `tabs.captureTab()` has been available since Firefox 59; WebBrain's
+   * minimum is Firefox 109 and its `<all_urls>` permission authorizes capture.
+   * Firefox supports `scale: 1` here to force a CSS-pixel-aligned image
+   * (otherwise it captures at devicePixelRatio, causing the same coordinate-
+   * mismatch loop Chrome had pre-1.5.1). Returns
    * { dataUrl, width, height } in (possibly budget-resized) pixels, or null.
    * `opts` accepted for Chrome call-site parity; capture is always CSS-locked.
    */
@@ -4847,12 +4849,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       const tab = await browser.tabs.get(tabId);
       if (!tab) return null;
-      // captureVisibleTab takes a windowId and snapshots whatever is currently
-      // visible in that window — it does NOT take a tabId. If the agent's
-      // tab isn't the active tab, we'd silently capture an unrelated page
-      // and feed misleading visual context to the model. Skip in that case;
-      // the model will plan from text only this turn.
-      if (!tab.active) return null;
       const probe = await this._captureViewportProbe(tabId);
       const w = Math.max(1, Math.round(probe?.innerWidth || 1024));
       const h = Math.max(1, Math.round(probe?.innerHeight || 768));
@@ -4863,7 +4859,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // scale: 1 forces 1 image pixel per CSS pixel (Firefox-specific option,
         // ignored by Chrome but Chrome path uses CDP anyway).
         const rawDataUrl = await this._withIndicatorsHidden(tabId, () =>
-          browser.tabs.captureVisibleTab(tab.windowId, {
+          browser.tabs.captureTab(tabId, {
             format: 'jpeg',
             quality: 60,
             scale: 1,
@@ -4871,7 +4867,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
         if (!rawDataUrl) return null;
 
-        // Firefox's captureVisibleTab doesn't take a clip/scale in a way that
+        // Firefox's captureTab doesn't take a clip/scale in a way that
         // lets us downsize during capture (scale:1 is viewport-lock, not a
         // factor). Capture at CSS size; shrink only when a side exceeds
         // maxImageDimension (coord-aligned budget).
@@ -5013,7 +5009,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _captureVisibleMediaScreenshot(tabId) {
     try {
       const tab = await browser.tabs.get(tabId);
-      if (!tab?.active) return null;
+      if (!tab) return null;
       let width = 1024;
       let height = 768;
       try {
@@ -5027,7 +5023,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       } catch (_) {}
       const cropDataUrl = await this._withIndicatorsHidden(tabId, () =>
-        browser.tabs.captureVisibleTab(tab.windowId, {
+        browser.tabs.captureTab(tabId, {
           format: 'png',
           scale: 1,
         })
@@ -12370,27 +12366,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'screenshot') {
       try {
-        // Get the tab's window to capture. Firefox captureVisibleTab takes
-        // a windowId and snapshots whatever's currently visible in that
-        // window — not the tab we ask for. If the agent's tab isn't the
-        // active tab, refuse rather than capture an unrelated page.
+        // Firefox captureTab targets the run tab directly, so the user can
+        // continue working in another tab while the agent gathers vision.
         const tab = await browser.tabs.get(tabId);
-        if (!tab?.active) {
-          return {
-            success: false,
-            error: 'Cannot capture screenshot: this tab is not the active tab in its window. Switch to the tab before using /screenshot, or use a page-reading tool.',
-          };
-        }
+        if (!tab) return { success: false, error: 'Screenshot failed: run tab is unavailable.' };
         const probe = await this._captureViewportProbe(tabId);
         const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
         const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
         const captureOnce = async () => {
           // scale: 1 CSS-locks the capture (Firefox-specific option). Without
-          // it captureVisibleTab snapshots at native devicePixelRatio, so on
+          // it captureTab snapshots at native devicePixelRatio, so on
           // hi-DPI displays the image would be DPR× the CSS viewport and any
           // pixel coordinate read off it would miss.
           const rawUrl = await this._withIndicatorsHidden(tabId, () =>
-            browser.tabs.captureVisibleTab(tab.windowId, {
+            browser.tabs.captureTab(tabId, {
               format: 'png',
               quality: 80,
               scale: 1,
@@ -12483,7 +12472,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isActionMode(mode)) {
         try {
           const tab = await browser.tabs.get(tabId);
-          if (tab?.active) {
+          // Scheduled URL-target tabs intentionally stay inactive. Firefox can
+          // execute scripts in and capture those tabs directly, so completion
+          // verification must not depend on active-tab state.
+          if (tab) {
             // Probe page URL, title, and "work in progress" signals: open
             // dialogs/modals and visible forms. If any of these are present
             // while the model claims it created/added/saved/submitted, the
@@ -12551,7 +12543,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const plannerCanSeeImages = !!provider?.supportsVision;
             let dataUrl = plannerCanSeeImages
               ? await this._withIndicatorsHidden(tabId, () =>
-                  browser.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 80 })
+                  browser.tabs.captureTab(tabId, { format: 'png', quality: 80 })
                 )
               : null;
             if (dataUrl && this.screenshotRedaction) {
@@ -13499,16 +13491,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         } catch {}
 
-        // Capture screenshot (requires active tab)
+        // Capture the run tab directly without activating it.
         try {
           const tab = await browser.tabs.get(tabId);
-          if (tab?.active) {
+          if (tab) {
             // Route through `_attachImage` (like the `screenshot` tool) so the
             // batch loop strips it and re-attaches it as an image_url block.
             // Left inline as `result.image`, the base64 data URL blows past the
             // tool-result char cap and gets truncated to unreadable garbage.
             let verifyShotUrl = await this._withIndicatorsHidden(tabId, () =>
-              browser.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 80 })
+              browser.tabs.captureTab(tabId, { format: 'png', quality: 80 })
             );
             // Budget-resize for the model (issue #311 maxImageDimension).
             verifyShotUrl = (await this._shrinkImageForBudget(verifyShotUrl, 0, 0, this._budgetForCapture())).dataUrl;
