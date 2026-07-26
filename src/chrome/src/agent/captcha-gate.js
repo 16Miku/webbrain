@@ -9,15 +9,57 @@ function normalizeChallengeLabel(value) {
     .slice(0, 160);
 }
 
+function parseSerializedTreeLabel(line) {
+  const input = String(line || '');
+  const start = input.indexOf('"');
+  if (start < 0) return '';
+  let escaped = false;
+  const maxEnd = Math.min(input.length, start + 1002);
+  for (let index = start + 1; index < maxEnd; index += 1) {
+    const char = input[index];
+    if (char === '"' && !escaped) {
+      try {
+        const parsed = JSON.parse(input.slice(start, index + 1));
+        return typeof parsed === 'string' ? parsed.trim().slice(0, 200) : '';
+      } catch {
+        return '';
+      }
+    }
+    if (char === '\\' && !escaped) {
+      escaped = true;
+    } else {
+      escaped = false;
+    }
+  }
+  return '';
+}
+
 export function detectChallengeDialog(pageContent) {
   const lines = String(pageContent || '').split(/\r?\n/);
-  for (const line of lines) {
-    const match = line.match(/^\s*(?:dialog|alertdialog)\s+"([^"\r\n]{1,200})"/i);
-    if (!match || !CHALLENGE_DIALOG_RE.test(match[1])) continue;
-    return {
-      label: match[1].trim().slice(0, 200),
-      normalizedLabel: normalizeChallengeLabel(match[1]),
-    };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const dialogMatch = line.match(/^(\s*)(?:dialog|alertdialog)(?=\s|$)/i);
+    if (!dialogMatch) continue;
+    const dialogIndent = dialogMatch[1].length;
+    const ownLabel = parseSerializedTreeLabel(line);
+    if (ownLabel && CHALLENGE_DIALOG_RE.test(ownLabel)) {
+      return {
+        label: ownLabel,
+        normalizedLabel: normalizeChallengeLabel(ownLabel),
+      };
+    }
+    for (let childIndex = index + 1; childIndex < lines.length; childIndex += 1) {
+      const childLine = lines[childIndex];
+      if (!childLine.trim()) continue;
+      const childIndent = childLine.match(/^\s*/)?.[0].length || 0;
+      if (childIndent <= dialogIndent) break;
+      const childLabel = parseSerializedTreeLabel(childLine);
+      if (!childLabel || !CHALLENGE_DIALOG_RE.test(childLabel)) continue;
+      return {
+        label: childLabel,
+        normalizedLabel: normalizeChallengeLabel(childLabel),
+      };
+    }
   }
   return null;
 }

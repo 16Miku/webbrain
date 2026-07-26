@@ -4708,6 +4708,26 @@ button "Continue" [ref_3] type="submit"`;
   }
 });
 
+test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes', () => {
+  const cases = [
+    {
+      tree: 'dialog [ref_1]\n heading "Security verification" [ref_2]\n button "Dismiss" [ref_3]',
+      label: 'Security verification',
+    },
+    {
+      tree: String.raw`dialog "Complete \"Security verification\" now" [ref_4]`,
+      label: 'Complete "Security verification" now',
+    },
+  ];
+  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+    for (const example of cases) {
+      const challenge = gate.detectChallengeDialog(example.tree);
+      assert.equal(challenge?.label, example.label, `${build}: failed to parse ${example.tree}`);
+      assert.match(challenge?.normalizedLabel || '', /security verification/, `${build}: normalized challenge label missing`);
+    }
+  }
+});
+
 test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the one solve', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -4821,7 +4841,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
     assert.match(String(retryMessages[0]?.content), /do not submit, dismiss, or call solve_captcha again/i);
 
     const persistentResult = {
-      pageContent: 'dialog "Security verification" [ref_900]\n button "Dismiss" [ref_901]',
+      pageContent: 'dialog [ref_900]\n heading "Security verification" [ref_901]\n button "Dismiss" [ref_902]',
       pageUrl: 'https://example.test/signup',
     };
     const persistent = await agent._observeCaptchaChallenge(
@@ -52276,12 +52296,14 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
 
 test('enabled CAPTCHA gate performs a read-only dialog preflight before the first mutation', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const challengeLabel = 'Complete "Security verification" now';
     const nodes = [
       captchaEl('div', {
         role: 'dialog',
-        'aria-label': 'Security verification',
-        innerText: 'Security verification\nDismiss',
-      }),
+        innerText: `${challengeLabel}\nDismiss`,
+      }, [
+        captchaEl('h2', { textContent: challengeLabel }),
+      ]),
       captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'PREFLIGHT_KEY' }),
       captchaEl('iframe', {
         src: 'https://www.google.com/recaptcha/api2/anchor?k=PREFLIGHT_KEY',
