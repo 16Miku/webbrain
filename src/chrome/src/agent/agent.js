@@ -2790,7 +2790,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const execute = target => chrome.scripting.executeScript({
       target,
       func: detectChallengeDialogInPage,
-      args: [{ includeFrameContext: true }],
+      args: [{
+        includeFrameContext: true,
+        allowGenericFailure: options?.allowGenericFailure === true,
+      }],
     });
     const inspected = (results) => {
       const entries = (results || []).map(entry => ({
@@ -2866,13 +2869,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: null, loopCheck: { kind: 'none' } };
     }
 
-    let challenge = detectChallengeDialog(toolResult.pageContent);
+    const activeGate = this._captchaGateStates.get(tabId);
+    let challenge = detectChallengeDialog(toolResult.pageContent, {
+      allowGenericFailure: !!activeGate,
+    });
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
-        `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`
+        `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
+        { allowGenericFailure: !!activeGate },
       );
     }
-    const activeGate = this._captchaGateStates.get(tabId);
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
@@ -2907,6 +2913,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: activeGate.challengeFrameId,
+        allowGenericFailure: true,
       });
       if (frameInspection.challenge?.label) {
         challenge = detectChallengeDialog(

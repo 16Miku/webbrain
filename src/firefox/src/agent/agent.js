@@ -2457,7 +2457,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!navigationFrames.length) {
       navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
     }
-    const code = `(${detectChallengeDialogInPage.toString()})({ includeFrameContext: true })`;
+    const serializedOptions = JSON.stringify({
+      includeFrameContext: true,
+      allowGenericFailure: options?.allowGenericFailure === true,
+    });
+    const code = `(${detectChallengeDialogInPage.toString()})(${serializedOptions})`;
     const frameEntries = await Promise.all(navigationFrames.map(async frame => {
       try {
         const results = await browser.tabs.executeScript(tabId, {
@@ -2531,13 +2535,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: null, loopCheck: { kind: 'none' } };
     }
 
-    let challenge = detectChallengeDialog(toolResult.pageContent);
+    const activeGate = this._captchaGateStates.get(tabId);
+    let challenge = detectChallengeDialog(toolResult.pageContent, {
+      allowGenericFailure: !!activeGate,
+    });
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
-        `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`
+        `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
+        { allowGenericFailure: !!activeGate },
       );
     }
-    const activeGate = this._captchaGateStates.get(tabId);
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
@@ -2572,6 +2579,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: activeGate.challengeFrameId,
+        allowGenericFailure: true,
       });
       if (frameInspection.challenge?.label) {
         challenge = detectChallengeDialog(

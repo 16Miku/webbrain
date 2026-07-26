@@ -1,4 +1,15 @@
-const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|’)re human|verify (?:that )?you are human|are you human|robot check|challenge verification|verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
+const CHALLENGE_DIALOG_RE = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+const CHALLENGE_FAILURE_RE = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
+const CHALLENGE_CONTEXT_RE = /\b(?:captcha|human|robot|challenge)\b/i;
+
+function matchesChallengeLabel(value, allowGenericFailure = false) {
+  const text = String(value || '');
+  return CHALLENGE_DIALOG_RE.test(text)
+    || (
+      CHALLENGE_FAILURE_RE.test(text)
+      && (allowGenericFailure || CHALLENGE_CONTEXT_RE.test(text))
+    );
+}
 
 function normalizeChallengeLabel(value) {
   return String(value || '')
@@ -34,7 +45,8 @@ function parseSerializedTreeLabel(line) {
   return '';
 }
 
-export function detectChallengeDialog(pageContent) {
+export function detectChallengeDialog(pageContent, options = null) {
+  const allowGenericFailure = options?.allowGenericFailure === true;
   const lines = String(pageContent || '').split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -42,7 +54,7 @@ export function detectChallengeDialog(pageContent) {
     if (!dialogMatch) continue;
     const dialogIndent = dialogMatch[1].length;
     const ownLabel = parseSerializedTreeLabel(line);
-    if (ownLabel && CHALLENGE_DIALOG_RE.test(ownLabel)) {
+    if (ownLabel && matchesChallengeLabel(ownLabel, allowGenericFailure)) {
       return {
         label: ownLabel,
         normalizedLabel: normalizeChallengeLabel(ownLabel),
@@ -54,7 +66,7 @@ export function detectChallengeDialog(pageContent) {
       const childIndent = childLine.match(/^\s*/)?.[0].length || 0;
       if (childIndent <= dialogIndent) break;
       const childLabel = parseSerializedTreeLabel(childLine);
-      if (!childLabel || !CHALLENGE_DIALOG_RE.test(childLabel)) continue;
+      if (!childLabel || !matchesChallengeLabel(childLabel, allowGenericFailure)) continue;
       return {
         label: childLabel,
         normalizedLabel: normalizeChallengeLabel(childLabel),
@@ -68,6 +80,7 @@ export function detectChallengeDialog(pageContent) {
 // model-authored mutations. Keep this function self-contained.
 export function detectChallengeDialogInPage(options = null) {
   const includeFrameContext = options?.includeFrameContext === true;
+  const allowGenericFailure = options?.allowGenericFailure === true;
   const pageWindow = typeof window !== 'undefined' ? window : null;
   const pageLocation = pageWindow?.location
     || (typeof location !== 'undefined' ? location : null);
@@ -81,7 +94,17 @@ export function detectChallengeDialogInPage(options = null) {
       ? { challenge: null, frameContext: { frameUrl, frameName, childFrames: [] } }
       : null;
   }
-  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re human|verify (?:that )?you are human|are you human|robot check|challenge verification|verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
+  const challengeRe = /\b(?:captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+  const challengeFailureRe = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
+  const challengeContextRe = /\b(?:captcha|human|robot|challenge)\b/i;
+  const matchesChallenge = value => {
+    const text = String(value || '');
+    return challengeRe.test(text)
+      || (
+        challengeFailureRe.test(text)
+        && (allowGenericFailure || challengeContextRe.test(text))
+      );
+  };
   const visible = (element) => {
     try {
       const style = getComputedStyle(element);
@@ -146,11 +169,11 @@ export function detectChallengeDialogInPage(options = null) {
     ];
     for (const value of values) {
       const text = String(value || '');
-      if (!challengeRe.test(text)) continue;
+      if (!matchesChallenge(text)) continue;
       // Return the dialog's full label, not the matched keyword, so the gate
       // key built here matches the one built from the accessibility-tree
       // dialog name and the same challenge is never keyed two ways.
-      const line = text.split(/\r?\n/).find(entry => challengeRe.test(entry)) || text;
+      const line = text.split(/\r?\n/).find(entry => matchesChallenge(entry)) || text;
       const label = line.replace(/\s+/g, ' ').trim().slice(0, 200);
       if (label) return finish({ label });
     }

@@ -4713,18 +4713,37 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
     {
       tree: 'dialog [ref_1]\n heading "Security verification" [ref_2]\n button "Dismiss" [ref_3]',
       label: 'Security verification',
+      normalized: /security verification/,
     },
     {
       tree: String.raw`dialog "Complete \"Security verification\" now" [ref_4]`,
       label: 'Complete "Security verification" now',
+      normalized: /security verification/,
+    },
+    {
+      tree: 'dialog "Verify that you\u2019re a human" [ref_5]',
+      label: 'Verify that you\u2019re a human',
+      normalized: /verify that you re a human/,
     },
   ];
   for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
     for (const example of cases) {
       const challenge = gate.detectChallengeDialog(example.tree);
       assert.equal(challenge?.label, example.label, `${build}: failed to parse ${example.tree}`);
-      assert.match(challenge?.normalizedLabel || '', /security verification/, `${build}: normalized challenge label missing`);
+      assert.match(challenge?.normalizedLabel || '', example.normalized, `${build}: normalized challenge label missing`);
     }
+    const genericFailure = 'dialog "Email verification failed" [ref_6]';
+    assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
+    assert.equal(
+      gate.detectChallengeDialog(genericFailure, { allowGenericFailure: true })?.label,
+      'Email verification failed',
+      `${build}: active CAPTCHA could not retain a renamed failure dialog`,
+    );
+    assert.equal(
+      gate.detectChallengeDialog('dialog "CAPTCHA verification failed" [ref_7]')?.label,
+      'CAPTCHA verification failed',
+      `${build}: contextual CAPTCHA failure was missed`,
+    );
   }
 });
 
@@ -4753,9 +4772,19 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
       });
     }
     await withCaptchaFakePage(build, [
-      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }),
+      captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Security verification', `${build}: visible dialog was missed`);
+      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
+    });
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'Email verification failed' }),
+    ], async () => {
+      assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: generic application failure armed preflight`);
+      assert.equal(
+        gate.detectChallengeDialogInPage({ allowGenericFailure: true })?.label,
+        'Email verification failed',
+        `${build}: active-gate failure context was ignored`,
+      );
     });
   }
 });
@@ -52543,9 +52572,9 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       }),
       captchaEl('div', {
         role: 'dialog',
-        innerText: 'Verify that you\u2019re human',
+        innerText: 'Verify that you\u2019re a human',
       }, [
-        captchaEl('h2', { textContent: 'Verify that you\u2019re human' }),
+        captchaEl('h2', { textContent: 'Verify that you\u2019re a human' }),
         captchaEl('div', {
           class: 'g-recaptcha g-recaptcha-v3',
           'data-sitekey': 'DIALOG_V3_KEY',
@@ -52562,7 +52591,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       agent.captchaSolverEnabled = true;
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
-        pageContent: 'dialog "Verify that you\u2019re human" [ref_150]\n button "Dismiss" [ref_151]',
+        pageContent: 'dialog "Verify that you\u2019re a human" [ref_150]\n button "Dismiss" [ref_151]',
       });
       assert.equal(observed.gate?.status, 'solve_required', `${build}: invisible v3 widget inside the active dialog was not routable`);
       assert.equal(observed.gate?.selectedType, 'recaptcha_v3_enterprise', `${build}: dialog-associated v3 type was lost`);
