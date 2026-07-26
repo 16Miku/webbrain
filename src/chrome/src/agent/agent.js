@@ -4,6 +4,7 @@ import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
+import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -15824,41 +15825,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         await cdpClient.attach(tabId);
 
-        // ── Duplicate submit-click guard ────────────────────────────────
-        // The model often mistakes the modal-open link and the in-modal
-        // submit button on Stripe-style UIs (both labeled "Create product",
-        // "Add product", etc.) — clicking twice creates duplicate records.
-        // Track clicks whose text matches a submit-like pattern and block
-        // a second one on the same tab+URL within a short window, UNLESS
-        // the URL has changed (real navigation) or the model explicitly
-        // acknowledges the duplicate via args._allowResubmit = true.
-        if (args.text && !args._allowResubmit) {
-          const rawText = String(args.text).trim();
-          const submitLikeRE = /^(create|save|submit|add|post|publish|send|confirm|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i;
-          if (submitLikeRE.test(rawText)) {
-            let curUrl = '';
-            try { const t = await chrome.tabs.get(tabId); curUrl = t?.url || ''; } catch (e) {}
-            const buf = this._recentSubmitClicks.get(tabId) || [];
-            const key = `${rawText.toLowerCase()}|${curUrl}`;
-            const now = Date.now();
-            // Keep entries from the last 45 seconds
-            const fresh = buf.filter(e => now - e.ts < 45000);
-            const match = fresh.find(e => e.key === key);
-            if (match) {
-              return {
-                success: false,
-                dispatched: false,
-                blockedDuplicateSubmit: true,
-                error: `Blocked: you already clicked "${rawText}" on this page ${Math.round((now - match.ts) / 1000)}s ago and the URL has not changed since. Stripe-style UIs often reuse the same label for the modal-OPEN button and the SUBMIT button inside the modal — a second click typically creates a duplicate record. Before clicking "${rawText}" again, verify: (a) that all required fields are actually filled by reading the form/page, (b) that this click is intended as a FIRST submit and not a retry. If the previous click did nothing because a field was empty, fill the field first. If you genuinely need to retry, pass _allowResubmit: true in the args.`,
-                previousClickUrl: match.url,
-                currentUrl: curUrl,
-                secondsSincePrevious: Math.round((now - match.ts) / 1000),
-              };
-            }
-            fresh.push({ key, ts: now, url: curUrl, text: rawText });
-            this._recentSubmitClicks.set(tabId, fresh);
-          }
-        }
+        const duplicateSubmit = await guardRecentSubmitClick(
+          this._recentSubmitClicks,
+          tabId,
+          args,
+          async () => {
+            const tab = await chrome.tabs.get(tabId);
+            return tab?.url || '';
+          },
+        );
+        if (duplicateSubmit) return duplicateSubmit;
 
         // ── Global SELECT guard ─────────────────────────────────────────
         // Inject a capture-phase mousedown+click listener that prevents

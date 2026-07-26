@@ -4,6 +4,7 @@ import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
+import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -13819,6 +13820,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
     } catch { /* tab lookup failures are non-fatal — fall through */ }
+
+    if (name === 'click') {
+      const duplicateSubmit = await guardRecentSubmitClick(
+        this._recentSubmitClicks,
+        tabId,
+        args,
+        async () => {
+          const tab = await browser.tabs.get(tabId);
+          return tab?.url || '';
+        },
+      );
+      if (duplicateSubmit) return duplicateSubmit;
+    }
 
     const axScope = this._lastAxScopes.get(tabId);
     const contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
