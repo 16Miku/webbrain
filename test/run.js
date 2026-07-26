@@ -4753,7 +4753,10 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
 });
 
 test('CAPTCHA mutation preflight ignores hidden and off-viewport verification dialogs', async () => {
-  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
     const hiddenCases = [
       captchaEl('div', {
         role: 'dialog',
@@ -4774,6 +4777,18 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        const agent = new AgentClass({});
+        const observation = await agent._observeCaptchaChallenge(
+          1,
+          'get_accessibility_tree',
+          {
+            pageContent: 'dialog "Security verification" [ref_1]\n button "Dismiss" [ref_2]',
+            pageUrl: 'https://example.test/form',
+          },
+          {},
+        );
+        assert.equal(observation.gate, null, `${build}: hidden dialog from an all-tree read armed the gate`);
+        assert.equal(agent._captchaGateStates.has(1), false, `${build}: hidden all-tree dialog persisted a gate`);
       });
     }
     await withCaptchaFakePage(build, [
@@ -4796,6 +4811,39 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
         `${build}: active-gate failure context was ignored`,
       );
     });
+
+    const hiddenStageNodes = [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Account details',
+        textContent: 'Account details Security verification',
+      }, [
+        captchaEl('h2', { textContent: 'Account details' }),
+        captchaEl('section', {
+          hidden: true,
+          innerText: 'Security verification',
+        }, [
+          captchaEl('h2', { textContent: 'Security verification' }),
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'INACTIVE_STAGE_KEY',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, hiddenStageNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
+      );
+    });
+    const hiddenStageCandidate = await detectCaptchaOnFakePage(build, hiddenStageNodes);
+    assert.equal(
+      hiddenStageCandidate?.dialogAssociated,
+      false,
+      `${build}: hidden CAPTCHA stage associated its widget with the visible modal`,
+    );
   }
 });
 

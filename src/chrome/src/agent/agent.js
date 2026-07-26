@@ -2879,6 +2879,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? challenge.frameId
           : null,
         captchaChallengeFrameUrl: challenge.frameUrl || '',
+        captchaChallengeVisibilityConfirmed: true,
       },
       {},
     );
@@ -2897,6 +2898,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const activeGate = this._captchaGateStates.get(tabId);
+    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
+    let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
+      ? toolResult.captchaChallengeFrameId
+      : null;
+    let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
     let challenge = detectChallengeDialog(toolResult.pageContent, {
       allowGenericFailure: !!activeGate,
     });
@@ -2906,11 +2912,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { allowGenericFailure: !!activeGate },
       );
     }
+    if (
+      challenge
+      && treeFilter !== 'visible'
+      && toolResult.captchaChallengeVisibilityConfirmed !== true
+    ) {
+      const visibleChallenge = await this._detectChallengeDialogBeforeMutation(tabId, {
+        allowGenericFailure: !!activeGate,
+      });
+      if (visibleChallenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(visibleChallenge.label).slice(0, 200))}`,
+          { allowGenericFailure: !!activeGate },
+        );
+        observedChallengeFrameId = Number.isInteger(visibleChallenge.frameId)
+          ? visibleChallenge.frameId
+          : null;
+        observedChallengeFrameUrl = String(visibleChallenge.frameUrl || '');
+      } else {
+        challenge = null;
+      }
+    }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
-    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     const requestedPage = toolArgs?.page;
     const requestedMaxDepth = toolArgs?.maxDepth;
     const parsedMaxDepth = Number(requestedMaxDepth);
@@ -3108,10 +3134,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       key,
       status: publicGate.status,
       publicGate,
-      ...(Number.isInteger(toolResult.captchaChallengeFrameId)
+      ...(Number.isInteger(observedChallengeFrameId)
         ? {
-            challengeFrameId: toolResult.captchaChallengeFrameId,
-            challengeFrameUrl: String(toolResult.captchaChallengeFrameUrl || ''),
+            challengeFrameId: observedChallengeFrameId,
+            challengeFrameUrl: observedChallengeFrameUrl,
           }
         : {}),
     });

@@ -107,9 +107,13 @@ export function detectChallengeDialogInPage(options = null) {
   };
   const visible = (element) => {
     try {
-      const style = getComputedStyle(element);
-      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
-      if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
+      let current = element;
+      for (let depth = 0; current && depth < 30; depth += 1) {
+        const style = getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+        if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
+        current = current.parentElement || null;
+      }
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;
       const viewportWidth = typeof window !== 'undefined' && typeof window.innerWidth === 'number'
@@ -159,13 +163,21 @@ export function detectChallengeDialogInPage(options = null) {
         .map(id => document.getElementById(id)?.textContent || '')
         .join(' ');
     } catch {}
+    let renderedHeadings = '';
+    try {
+      renderedHeadings = Array.from(
+        element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
+      )
+        .filter(visible)
+        .map(heading => heading.textContent || '')
+        .join(' ');
+    } catch {}
     const values = [
       element.getAttribute?.('aria-label'),
       labelledBy,
-      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      renderedHeadings,
       element.getAttribute?.('title'),
       element.innerText,
-      element.textContent,
     ];
     for (const value of values) {
       const text = String(value || '');

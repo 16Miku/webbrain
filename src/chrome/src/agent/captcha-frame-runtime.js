@@ -627,11 +627,15 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const visibleElement = (element) => {
     if (!element) return false;
     try {
-      const style = typeof pageWindow?.getComputedStyle === 'function'
-        ? pageWindow.getComputedStyle(element)
-        : null;
-      if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
-      if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
+      let current = element;
+      for (let depth = 0; current && depth < 30; depth += 1) {
+        const style = typeof pageWindow?.getComputedStyle === 'function'
+          ? pageWindow.getComputedStyle(current)
+          : null;
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+        if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
+        current = current.parentElement || null;
+      }
       if (typeof element.getBoundingClientRect === 'function') {
         const rect = element.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) return false;
@@ -657,13 +661,21 @@ export function detectCaptchaCandidatesInPage(scope = null) {
         .map(id => pageDocument.getElementById?.(id)?.textContent || '')
         .join(' ');
     } catch (_) {}
+    let renderedHeadings = '';
+    try {
+      renderedHeadings = Array.from(
+        element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
+      )
+        .filter(visibleElement)
+        .map(heading => heading.textContent || '')
+        .join(' ');
+    } catch (_) {}
     return [
       element.getAttribute?.('aria-label'),
       labelledBy,
-      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      renderedHeadings,
       element.getAttribute?.('title'),
       element.innerText,
-      element.textContent,
     ].some(value => challengeDialogRe.test(String(value || '')));
   });
   const elementInChallengeDialog = (element) => {
