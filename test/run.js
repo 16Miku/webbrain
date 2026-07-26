@@ -447,6 +447,12 @@ const CaptchaGateCh = await import(
 const CaptchaGateFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js').replace(/\\/g, '/')
 );
+const ToolCallParserCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js').replace(/\\/g, '/')
+);
+const ToolCallParserFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js').replace(/\\/g, '/')
+);
 // The mutating-tool surface differs per build, so it lives outside the
 // byte-identical loop-detector module. Import the real sets rather than
 // restating them here — a hand-copied list is exactly the drift this suite
@@ -44237,6 +44243,103 @@ test('streamed plain final answers cannot bypass unresolved progress rows', asyn
     assert.ok(progressBlock, `${AgentClass.name}: streamed plain final progress block nudge missing`);
     const blockedDone = agent.conversations.get(tabId).find(msg => msg.role === 'tool' && /"blockedDone":true/.test(msg.content || ''));
     assert.ok(blockedDone, `${AgentClass.name}: streamed done after plain-final nudge was not blocked`);
+  }
+});
+
+test('text tool-call parser is production code with format and allowlist coverage', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
+    'chrome and firefox tool-call parsers must remain byte-identical',
+  );
+  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page']);
+  const cases = [
+    {
+      label: 'tool_call JSON with nested arguments',
+      raw: '<tool_call>{"name":"click","arguments":{"text":"Save","meta":{"source":"dialog"}}}</tool_call>',
+      expected: [{ name: 'click', args: { text: 'Save', meta: { source: 'dialog' } } }],
+    },
+    {
+      label: 'token wrapper',
+      raw: '<|tool_call|>{"name":"read_page","arguments":{}}<|/tool_call|>',
+      expected: [{ name: 'read_page', args: {} }],
+    },
+    {
+      label: 'functioncall wrapper',
+      raw: '<functioncall>{"name":"navigate","arguments":{"url":"https://example.test/path"}}</functioncall>',
+      expected: [{ name: 'navigate', args: { url: 'https://example.test/path' } }],
+    },
+    {
+      label: 'custom quote tokens',
+      raw: 'call:click{text:<|"|>Save<|"|>}',
+      expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'bare JSON with string arguments',
+      raw: '{"name":"read_page","arguments":"[]"}',
+      expected: [{ name: 'read_page', args: [] }],
+    },
+    {
+      label: 'XML typed parameters',
+      raw: [
+        '<tool_call><function=click>',
+        '<parameter=name>"Save"</parameter>',
+        '<parameter=index>2</parameter>',
+        '<parameter=force>true</parameter>',
+        '<parameter=coordinates>[10,20]</parameter>',
+        '</function></tool_call>',
+      ].join(''),
+      expected: [{
+        name: 'click',
+        args: { name: 'Save', index: 2, force: true, coordinates: [10, 20] },
+      }],
+    },
+    {
+      label: 'multiple wrappers preserve order',
+      raw: [
+        '<tool_call>{"name":"read_page","arguments":{}}</tool_call>',
+        '<tool_call>{"name":"click_ax","arguments":{"ref_id":"ref_7"}}</tool_call>',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click_ax', args: { ref_id: 'ref_7' } },
+      ],
+    },
+  ];
+
+  for (const parser of [ToolCallParserCh, ToolCallParserFx]) {
+    for (const scenario of cases) {
+      const calls = parser.parseToolCallsFromText(scenario.raw, allowed);
+      assert.deepEqual(
+        calls.map(call => ({
+          name: call.function.name,
+          args: JSON.parse(call.function.arguments),
+        })),
+        scenario.expected,
+        scenario.label,
+      );
+      assert.equal(
+        calls.every((call, index) =>
+          new RegExp(`^fallback_call_\\d+_${index}$`).test(call.id)
+        ),
+        true,
+        `${scenario.label}: fallback IDs were not stable OpenAI-style call IDs`,
+      );
+    }
+
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '<tool_call>{"name":"execute_js","arguments":{"code":"alert(1)"}}</tool_call>',
+        allowed,
+      ),
+      [],
+      'disallowed tool name bypassed the allowlist',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText('x'.repeat(10001), allowed),
+      [],
+      'oversized model text was parsed',
+    );
   }
 });
 

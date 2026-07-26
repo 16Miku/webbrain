@@ -1,6 +1,7 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { handleDoneJson } from './cloud-output.js';
 import { LoopDetector } from './loop-detector.js';
+import { parseToolCallsFromText } from './tool-call-parser.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
@@ -14013,124 +14014,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * was found. Only tool names present in the allowed-name set are accepted.
    */
   _tryParseToolCallsFromText(text, allowedNames = AGENT_TOOL_NAMES) {
-    if (!text || text.length > 10000) return [];
-
-    const results = [];
-    const parseXmlParamValue = (value) => {
-      const cleaned = String(value || '')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-      if (!cleaned) return '';
-      try {
-        if (/^(?:"|'.*'|\{|\[|-?\d|true\b|false\b|null\b)/i.test(cleaned)) {
-          return JSON.parse(cleaned.replace(/^'([\s\S]*)'$/, '"$1"'));
-        }
-      } catch { /* fall through to string cleanup */ }
-      return cleaned.replace(/^["']+|["']+$/g, '');
-    };
-
-    const patterns = [
-      /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi,
-      /<\|tool_call\|?>\s*([\s\S]*?)\s*<\|?\/?tool_call\|?>/gi,
-      /<functioncall>\s*([\s\S]*?)\s*<\/functioncall>/gi,
-    ];
-
-    for (const re of patterns) {
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        const inner = m[1].trim();
-        // Try JSON first (most common).
-        try {
-          const obj = JSON.parse(inner);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-            continue;
-          }
-        } catch { /* not JSON — try call:name{} format below */ }
-
-        // call:toolName{key:<|"|>value<|"|>, ...} format.
-        const callMatch = /^call:(\w+)\s*\{([\s\S]*)\}$/.exec(inner);
-        if (callMatch && allowedNames.has(callMatch[1])) {
-          const toolName = callMatch[1];
-          let argsBody = callMatch[2]
-            .replace(/<\|"\|>/g, '"')
-            .replace(/<\|'\\?\|>/g, "'");
-          argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-          try {
-            const args = JSON.parse(`{${argsBody}}`);
-            results.push({ name: toolName, arguments: args });
-          } catch {
-            results.push({ name: toolName, arguments: {} });
-          }
-          continue;
-        }
-      }
-    }
-
-    // XML-ish tool-call format used by some local/chat-template models:
-    // <tool_call><function=click_ax><parameter=ref_id>ref_6</parameter>...
-    const xmlToolRe = /<tool_call>\s*<function(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/function>\s*<\/tool_call>/gi;
-    let xmlMatch;
-    while ((xmlMatch = xmlToolRe.exec(text)) !== null) {
-      const toolName = xmlMatch[1] || xmlMatch[2];
-      if (!allowedNames.has(toolName)) continue;
-      const body = xmlMatch[3] || '';
-      const args = {};
-      const paramRe = /<parameter(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/parameter>/gi;
-      let paramMatch;
-      while ((paramMatch = paramRe.exec(body)) !== null) {
-        const key = paramMatch[1] || paramMatch[2];
-        if (!key) continue;
-        args[key] = parseXmlParamValue(paramMatch[3]);
-      }
-      results.push({ name: toolName, arguments: args });
-    }
-
-    // Fallback: scan for bare JSON objects containing a "name" key.
-    if (results.length === 0) {
-      const bareRe = /\{[^{}]*"name"\s*:\s*"(\w+)"[^{}]*\}/g;
-      let m;
-      while ((m = bareRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        try {
-          const obj = JSON.parse(m[0]);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    // Last resort: call:toolName{...} outside of any wrapper tags.
-    if (results.length === 0) {
-      const callRe = /call:(\w+)\s*\{([\s\S]*?)\}/g;
-      let m;
-      while ((m = callRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        const toolName = m[1];
-        let argsBody = m[2]
-          .replace(/<\|"\|>/g, '"')
-          .replace(/<\|'\\?\|>/g, "'");
-        argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-        try {
-          const args = JSON.parse(`{${argsBody}}`);
-          results.push({ name: toolName, arguments: args });
-        } catch {
-          results.push({ name: toolName, arguments: {} });
-        }
-      }
-    }
-
-    return results.map((obj, i) => ({
-      id: `fallback_call_${Date.now()}_${i}`,
-      type: 'function',
-      function: {
-        name: obj.name,
-        arguments: typeof obj.arguments === 'string'
-          ? obj.arguments
-          : JSON.stringify(obj.arguments || obj.parameters || {}),
-      },
-    }));
+    return parseToolCallsFromText(text, allowedNames);
   }
   // ─────────────────────────────────────────────────────────────────────
 
