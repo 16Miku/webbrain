@@ -42,6 +42,7 @@ src/chrome/
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── loop-detector.js     # Browser-free loop detection, directly unit-tested
+│   │   ├── image-budget.js      # Browser-free screenshot sizing, directly unit-tested
 │   │   ├── mutation-tools.js    # This build's state-change + mutating tool sets
 │   │   ├── tools.js            # Tool schemas + system prompts
 │   │   ├── skills.js           # Settings skills + dynamic skill tool manifests

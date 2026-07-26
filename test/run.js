@@ -453,6 +453,16 @@ const ToolCallParserCh = await import(
 const ToolCallParserFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js').replace(/\\/g, '/')
 );
+const ImageBudgetCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/image-budget.js').replace(/\\/g, '/')
+);
+const ImageBudgetFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/image-budget.js').replace(/\\/g, '/')
+);
+const {
+  estimateImageTokens,
+  fitImageDimensions,
+} = ImageBudgetCh;
 // The mutating-tool surface differs per build, so it lives outside the
 // byte-identical loop-detector module. Import the real sets rather than
 // restating them here — a hand-copied list is exactly the drift this suite
@@ -5939,49 +5949,24 @@ test('failed API replay suppresses future bulk replay hints until a success clea
     }
   }
 });
-//
-// These mirror the static helpers on Agent exactly — keep them in sync
-// with src/chrome/src/agent/agent.js `_estimateImageTokens` and
-// `_fitImageDimensions`. We shim rather than import because agent.js
-// pulls in chrome.* and cdp-client.
-// ────────────────────────────────────────────────────────────────────────
-
-const IMAGE_BUDGET_DEFAULT = {
-  pxPerToken: 28,
-  maxTargetPx: 1568,
-  maxTargetTokens: 1568,
-};
-
-function estimateImageTokens(w, h, pxPerToken) {
-  return Math.ceil((w / pxPerToken) * (h / pxPerToken));
-}
-
-function fitImageDimensions(origW, origH, budget = IMAGE_BUDGET_DEFAULT) {
-  const { pxPerToken, maxTargetPx, maxTargetTokens } = budget;
-  if (origW <= maxTargetPx && origH <= maxTargetPx &&
-      estimateImageTokens(origW, origH, pxPerToken) <= maxTargetTokens) {
-    return [origW, origH];
-  }
-  if (origH > origW) {
-    const [h, w] = fitImageDimensions(origH, origW, budget);
-    return [w, h];
-  }
-  const aspect = origW / origH;
-  let hi = origW, lo = 1;
-  while (true) {
-    if (lo + 1 >= hi) return [lo, Math.max(Math.round(lo / aspect), 1)];
-    const mid = Math.floor((lo + hi) / 2);
-    const midH = Math.max(Math.round(mid / aspect), 1);
-    if (mid <= maxTargetPx &&
-        estimateImageTokens(mid, midH, pxPerToken) <= maxTargetTokens) {
-      lo = mid;
-    } else {
-      hi = mid;
-    }
-  }
-}
-
 console.log('\nimage budget');
+
+test('image budget helpers are production code shared by both browser agents', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/image-budget.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/image-budget.js'), 'utf8'),
+    'chrome and firefox image-budget modules must remain byte-identical',
+  );
+  assert.deepEqual(ImageBudgetFx.IMAGE_BUDGET, ImageBudgetCh.IMAGE_BUDGET);
+  assert.equal(
+    ImageBudgetFx.estimateImageTokens(1920, 1080, 28),
+    estimateImageTokens(1920, 1080, 28),
+  );
+  assert.deepEqual(
+    ImageBudgetFx.fitImageDimensions(3840, 2160),
+    fitImageDimensions(3840, 2160),
+  );
+});
 
 test('small viewport passes through unchanged (fast path)', () => {
   // 1280×800 at pxPerToken=28 → 1307 tokens < 1568 — no resize.
