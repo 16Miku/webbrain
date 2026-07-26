@@ -163,25 +163,27 @@
     <div class="nav-right">
       <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en">
         <option value="en">English</option>
-        <option value="es">Español</option>
-        <option value="fr">Français</option>
-        <option value="tr">Türkçe</option>
         <option value="zh">中文</option>
-        <option value="ru">Русский</option>
-        <option value="uk">Українська</option>
         <option value="ar">العربية</option>
-        <option value="ja">日本語</option>
-        <option value="ko">한국어</option>
-        <option value="id">Bahasa Indonesia</option>
-        <option value="th">ไทย</option>
-        <option value="ms">Bahasa Melayu</option>
+        <option value="bn">বাংলা</option>
+        <option value="nl">Nederlands</option>
         <option value="tl">Filipino</option>
+        <option value="fr">Français</option>
+        <option value="de">Deutsch</option>
         <option value="he">עברית</option>
         <option value="hi">हिन्दी</option>
-        <option value="pt">Português</option>
-        <option value="vi">Tiếng Việt</option>
-        <option value="bn">বাংলা</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="ms">Bahasa Melayu</option>
         <option value="fa">فارسی</option>
+        <option value="pt">Português</option>
+        <option value="ru">Русский</option>
+        <option value="es">Español</option>
+        <option value="th">ไทย</option>
+        <option value="tr">Türkçe</option>
+        <option value="uk">Українська</option>
+        <option value="vi">Tiếng Việt</option>
       </select>
       <a href="/" class="nav-back">← Back to home</a>
     </div>
@@ -307,7 +309,7 @@
      on a non-existent /xx/privacy. -->
 <script>
   (function () {
-    const LOCALES = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa'];
+    const LOCALES = ['en', 'zh', 'ar', 'bn', 'nl', 'tl', 'fr', 'de', 'he', 'hi', 'id', 'ja', 'ko', 'ms', 'fa', 'pt', 'ru', 'es', 'th', 'tr', 'uk', 'vi'];
     const sel = document.getElementById('lang-dropdown');
     if (!sel) return;
     sel.value = sel.dataset.current || 'en';
