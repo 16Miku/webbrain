@@ -8,8 +8,10 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
@@ -216,6 +218,9 @@ const { tracesToMarkdown } = await import(
 );
 const { tracesToMarkdown: tracesToMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
+);
+const { webbrainTraceToAtif } = await import(
+  'file://' + path.join(ROOT, 'scripts/trace-to-atif.mjs').replace(/\\/g, '/')
 );
 const SavedWorkflowsCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/workflows.js').replace(/\\/g, '/')
@@ -2715,6 +2720,253 @@ const TRACE_RUNS = [
     ],
   },
 ];
+
+test('ATIF export: maps a WebBrain run, LLM calls, tools, metrics, and final response', () => {
+  const input = {
+    schema: 'webbrain-trace/1',
+    exportedAt: 1_770_000_100_000,
+    exportedByWebBrainVersion: '23.4.0',
+    run: {
+      runId: 'atif-run-1',
+      conversationId: 'conversation-7',
+      startedAt: 1_770_000_000_000,
+      endedAt: 1_770_000_010_000,
+      userMessage: 'Find the current title',
+      model: 'test-model',
+      providerId: 'local-test',
+      providerClass: 'openai-compatible',
+      mode: 'act',
+      status: 'done',
+      webbrainVersion: '23.3.1',
+      totalInputTokens: 12,
+      totalOutputTokens: 7,
+      finalContent: 'The title is Example.',
+    },
+    events: [
+      {
+        runId: 'atif-run-1',
+        seq: 1,
+        ts: 1_770_000_001_000,
+        kind: 'llm_response',
+        data: {
+          step: 1,
+          content: '',
+          model: 'test-model-v2',
+          latencyMs: 120,
+          toolCalls: [{
+            id: 'call-1',
+            name: 'read_page',
+            args: '{"include":"title"}',
+          }],
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 3,
+            prompt_tokens_details: { cached_tokens: 2 },
+            cost: 0.001,
+          },
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 2,
+        ts: 1_770_000_002_000,
+        kind: 'tool',
+        data: {
+          step: 1,
+          name: 'read_page',
+          args: { include: 'title' },
+          result: { title: 'Example' },
+          latencyMs: 80,
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 3,
+        ts: 1_770_000_003_000,
+        kind: 'llm_response',
+        data: {
+          step: 2,
+          content: 'The title is Example.',
+          usage: { prompt_tokens: 0, completion_tokens: 4 },
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 4,
+        ts: 1_770_000_004_000,
+        kind: 'screenshot',
+        data: { caption: 'viewport', screenshot_base64: 'sensitive-bytes' },
+      },
+    ],
+  };
+
+  const atif = webbrainTraceToAtif(input);
+  assert.equal(atif.schema_version, 'ATIF-v1.7');
+  assert.equal(atif.session_id, 'atif-run-1');
+  assert.equal(atif.trajectory_id, 'atif-run-1');
+  assert.deepEqual(atif.agent, {
+    name: 'webbrain',
+    version: '23.3.1',
+    model_name: 'test-model',
+    extra: {
+      provider_id: 'local-test',
+      provider_class: 'openai-compatible',
+      mode: 'act',
+    },
+  });
+  assert.equal(atif.steps.length, 3);
+  assert.deepEqual(atif.steps[0], {
+    step_id: 1,
+    timestamp: '2026-02-02T02:40:00.000Z',
+    source: 'user',
+    message: 'Find the current title',
+  });
+  assert.equal(atif.steps[1].source, 'agent');
+  assert.equal(atif.steps[1].model_name, 'test-model-v2');
+  assert.deepEqual(atif.steps[1].tool_calls, [{
+    tool_call_id: 'call-1',
+    function_name: 'read_page',
+    arguments: { include: 'title' },
+  }]);
+  assert.deepEqual(atif.steps[1].observation.results, [{
+    source_call_id: 'call-1',
+    content: '{"title":"Example"}',
+    extra: { latency_ms: 80, webbrain_seq: 2 },
+  }]);
+  assert.deepEqual(atif.steps[1].metrics, {
+    prompt_tokens: 12,
+    completion_tokens: 3,
+    cached_tokens: 2,
+    extra: { webbrain_reported_cost: 0.001 },
+  });
+  assert.equal(atif.steps[2].message, 'The title is Example.');
+  assert.deepEqual(atif.final_metrics, {
+    total_prompt_tokens: 12,
+    total_completion_tokens: 7,
+    total_steps: 3,
+  });
+  assert.deepEqual(atif.extra.omitted_event_counts, { screenshot: 1 });
+  assert.ok(!JSON.stringify(atif).includes('sensitive-bytes'));
+});
+
+test('ATIF export: synthesizes deterministic tool calls and preserves malformed arguments safely', () => {
+  const input = {
+    schema: 'webbrain-trace/1',
+    exportedByWebBrainVersion: '23.4.0',
+    run: {
+      runId: 'standalone-tool',
+      userMessage: '',
+      model: '',
+      finalContent: 'Finished.',
+    },
+    events: [
+      {
+        seq: 7,
+        ts: 1_770_000_007_000,
+        kind: 'tool',
+        data: {
+          step: 1,
+          name: 'custom_tool',
+          args: '{not valid json',
+          result: undefined,
+        },
+      },
+    ],
+  };
+  const atif = webbrainTraceToAtif(input);
+  assert.equal(atif.agent.version, '23.4.0');
+  assert.equal(atif.steps[1].llm_call_count, 0);
+  assert.deepEqual(atif.steps[1].tool_calls, [{
+    tool_call_id: 'webbrain-standalone-tool-7-1',
+    function_name: 'custom_tool',
+    arguments: {},
+    extra: { raw_arguments: '{not valid json' },
+  }]);
+  assert.deepEqual(atif.steps[1].observation.results, [{
+    source_call_id: 'webbrain-standalone-tool-7-1',
+    content: '(missing tool result)',
+    extra: { webbrain_seq: 7 },
+  }]);
+  assert.equal(atif.steps[2].message, 'Finished.');
+});
+
+test('ATIF export: replaces repeated provider tool-call IDs deterministically', () => {
+  const atif = webbrainTraceToAtif({
+    schema: 'webbrain-trace/1',
+    run: { runId: 'duplicate-calls', userMessage: 'Run both tools' },
+    events: [
+      {
+        seq: 1,
+        kind: 'llm_response',
+        data: {
+          step: 1,
+          toolCalls: [
+            { id: 'duplicate', name: 'first', args: '{}' },
+            { id: 'duplicate', name: 'second', args: '{}' },
+          ],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    atif.steps[1].tool_calls.map((call) => call.tool_call_id),
+    ['duplicate', 'webbrain-duplicate-calls-1-2'],
+  );
+});
+
+test('ATIF export: rejects unsupported or malformed WebBrain exports', () => {
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'other/1', run: {}, events: [] }),
+    /Expected schema "webbrain-trace\/1"/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: {}, events: 'nope' }),
+    /events must be an array/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: {}, events: [] }),
+    /run\.runId must be a non-empty string/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: { runId: 7 }, events: [] }),
+    /run\.runId must be a non-empty string/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({
+      schema: 'webbrain-trace/1',
+      run: { runId: 'expected' },
+      events: [{ runId: 'foreign', kind: 'tool', data: {} }],
+    }),
+    /event runId "foreign" does not match/,
+  );
+});
+
+test('ATIF export: CLI writes a sibling .atif.json file', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webbrain-atif-'));
+  try {
+    const sourcePath = path.join(tempDir, 'trace.json');
+    fs.writeFileSync(sourcePath, JSON.stringify({
+      schema: 'webbrain-trace/1',
+      exportedByWebBrainVersion: '23.4.0',
+      run: { runId: 'cli-run', userMessage: 'Hello' },
+      events: [],
+    }));
+    const result = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts/trace-to-atif.mjs'), sourcePath],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /trace\.atif\.json/);
+    const output = JSON.parse(
+      fs.readFileSync(path.join(tempDir, 'trace.atif.json'), 'utf8'),
+    );
+    assert.equal(output.schema_version, 'ATIF-v1.7');
+    assert.equal(output.session_id, 'cli-run');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 test('trace export: renders the full tool chain from trace events, in order', () => {
   const { markdown, turnCount, toolCount } = tracesToMarkdown(TRACE_RUNS);
