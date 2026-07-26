@@ -23,7 +23,7 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
-![Claude Chrome vs WebBrain](assets/webbrain-vs-claude-chrome.gif)
+![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
 
 WebBrain is a browser extension that puts an AI agent in a side panel next to
 your tabs. Ask it about the page you're on, or hand it a task and let it click,

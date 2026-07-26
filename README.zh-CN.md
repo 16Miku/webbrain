@@ -23,7 +23,7 @@
   <a href="LICENSE">MIT 许可证</a>
 </p>
 
-![Claude Chrome vs WebBrain](assets/webbrain-vs-claude-chrome.gif)
+![WebBrain 阅读页面、填写表单并下载文件](assets/webbrain-demo.gif)
 
 WebBrain 是一个浏览器扩展，在标签页旁的侧边栏中放入一个 AI 智能体。你可以就当前页面
 向它提问，也可以交给它一项任务，让它自己点击、输入、导航完成。它运行在你选择的模型
