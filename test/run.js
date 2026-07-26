@@ -4885,6 +4885,86 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: shadow-rooted challenge did not persist a gate`);
     });
 
+    // A hidden challenge is disproof only for the same normalized label in
+    // the same frame. An unrelated hidden reCAPTCHA must not clear a visible
+    // tree-only challenge (for example one inside a closed shadow root).
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'reCAPTCHA',
+        hidden: true,
+      }),
+    ], async () => {
+      const agent = new AgentClass({});
+      const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
+        includeStatus: true,
+      });
+      assert.deepEqual(recheck.hiddenChallenges, [{
+        frameId: 0,
+        frameUrl: 'https://example.test/form',
+        label: 'reCAPTCHA',
+        normalizedLabel: 'recaptcha',
+      }], `${build}: hidden challenge evidence lost its frame or normalized label`);
+
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: unrelated hidden challenge cleared the tree-only CAPTCHA gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
+
+      const matchingAgent = new AgentClass({});
+      const matchingObservation = await matchingAgent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "reCAPTCHA" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.equal(
+        matchingObservation.gate,
+        null,
+        `${build}: matching hidden evidence did not clear the tree observation`,
+      );
+      assert.equal(
+        matchingAgent._captchaGateStates.has(1),
+        false,
+        `${build}: matching hidden evidence persisted a stale gate`,
+      );
+    });
+
+    const crossFrameAgent = new AgentClass({});
+    crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: null,
+      challengeHidden: true,
+      hiddenChallenges: [{
+        frameId: 7,
+        frameUrl: 'https://challenge.example.test/hidden',
+        label: 'Security verification',
+        normalizedLabel: 'security verification',
+      }],
+      inspectionComplete: true,
+    });
+    const crossFrameObservation = await crossFrameAgent._observeCaptchaChallenge(
+      1,
+      'get_accessibility_tree',
+      {
+        pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+        pageUrl: 'https://example.test/form',
+        captchaChallengeFrameId: 0,
+      },
+      {},
+    );
+    assert.ok(crossFrameObservation.gate, `${build}: hidden challenge from another frame cleared the gate`);
+    assert.equal(crossFrameAgent._captchaGateStates.has(1), true, `${build}: cross-frame hidden challenge failed open`);
+
     // Hidden ancestry must still win even across the shadow boundary: a
     // challenge dialog inside the shadow root of a hidden host stays inert.
     await withCaptchaFakePage(build, [
