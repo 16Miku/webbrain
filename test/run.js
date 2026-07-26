@@ -4752,7 +4752,7 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   }
 });
 
-test('CAPTCHA mutation preflight ignores hidden and off-viewport verification dialogs', async () => {
+test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fail closed', async () => {
   for (const [build, gate, AgentClass] of [
     ['chrome', CaptchaGateCh, AgentCh],
     ['firefox', CaptchaGateFx, AgentFx],
@@ -4787,8 +4787,15 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
           },
           {},
         );
-        assert.equal(observation.gate, null, `${build}: hidden dialog from an all-tree read armed the gate`);
-        assert.equal(agent._captchaGateStates.has(1), false, `${build}: hidden all-tree dialog persisted a gate`);
+        assert.ok(
+          observation.gate,
+          `${build}: ambiguous all-tree challenge was cleared by non-unique hidden evidence`,
+        );
+        assert.equal(
+          agent._captchaGateStates.has(1),
+          true,
+          `${build}: ambiguous all-tree challenge failed open`,
+        );
       });
     }
     await withCaptchaFakePage(build, [
@@ -4918,8 +4925,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       assert.ok(observation.gate, `${build}: unrelated hidden challenge cleared the tree-only CAPTCHA gate`);
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
 
-      const matchingAgent = new AgentClass({});
-      const matchingObservation = await matchingAgent._observeCaptchaChallenge(
+      const sameLabelAgent = new AgentClass({});
+      const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
         {
@@ -4928,15 +4935,14 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
         },
         {},
       );
-      assert.equal(
-        matchingObservation.gate,
-        null,
-        `${build}: matching hidden evidence did not clear the tree observation`,
+      assert.ok(
+        sameLabelObservation.gate,
+        `${build}: same-label hidden template cleared the tree-only CAPTCHA gate`,
       );
       assert.equal(
-        matchingAgent._captchaGateStates.has(1),
-        false,
-        `${build}: matching hidden evidence persisted a stale gate`,
+        sameLabelAgent._captchaGateStates.has(1),
+        true,
+        `${build}: same-label hidden template failed open`,
       );
     });
 

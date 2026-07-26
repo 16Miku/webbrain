@@ -2617,23 +2617,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? recheck.challenge.frameId
           : null;
         observedChallengeFrameUrl = String(recheck.challenge.frameUrl || '');
-      } else if (
-        recheck.inspectionComplete
-        && recheck.hiddenChallenges?.some(hidden => (
-          hidden.frameId === (
-            Number.isInteger(observedChallengeFrameId)
-              ? observedChallengeFrameId
-              : 0
-          )
-          && hidden.normalizedLabel === challenge.normalizedLabel
-        ))
-      ) {
-        challenge = null;
       }
-      // Only a completed scan that found the same dialog hidden in the same
-      // frame clears the tree observation. An unrelated hidden challenge,
-      // "not found", or an inconclusive scan cannot disprove a dialog in a
-      // closed shadow root or unreachable frame; keep the gate fail-closed.
+      // A DOM scan cannot prove that the tree-observed dialog is the same
+      // element as a hidden match: a page may retain a hidden template while
+      // rendering the active challenge in a closed shadow root. Hidden,
+      // missing, and inconclusive scan results therefore remain diagnostic
+      // only and keep the gate fail-closed.
     }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
