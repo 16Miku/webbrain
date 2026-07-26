@@ -13216,6 +13216,30 @@ test('extension language dropdowns pin English and Chinese before alphabetical l
   }
 });
 
+test('web language dropdowns pin English and Chinese before alphabetical languages', () => {
+  const expectedCodes = [
+    'en', 'zh',
+    'ar', 'bn', 'nl', 'tl', 'fr', 'de', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'fa', 'pt', 'ru', 'es', 'th', 'tr', 'uk', 'vi',
+  ];
+
+  for (const [label, rel] of [
+    ['landing template', 'web/build/template.html'],
+    ['generated landing page', 'web/index.html'],
+    ['privacy page', 'web/privacy.html'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const select = html.match(/<select\b[^>]*id="lang-dropdown"[^>]*>([\s\S]*?)<\/select>/);
+    assert.ok(select, `${label}: language dropdown missing`);
+    const codes = [...select[1].matchAll(/<option value="([^"]+)">/g)].map((match) => match[1]);
+    assert.deepEqual(
+      codes,
+      expectedCodes,
+      `${label}: language dropdown order should be English, Chinese, then alphabetical by English name`,
+    );
+  }
+});
+
 test('sidepanel language picker uses the provider-style accessible listbox with bundled SVG flags', async () => {
   const expectedFlagCodes = {
     en: 'us', zh: 'cn', ar: 'sa', bn: 'bd', nl: 'nl', tl: 'ph', fr: 'fr', de: 'de',
