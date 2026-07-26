@@ -23,7 +23,7 @@
   <a href="LICENSE">Licence MIT</a>
 </p>
 
-![Claude Chrome vs WebBrain](assets/webbrain-vs-claude-chrome.gif)
+![WebBrain lit une page, remplit un formulaire et télécharge un fichier](assets/webbrain-demo.gif)
 
 WebBrain est une extension de navigateur qui place un agent IA dans un panneau
 latéral, à côté de vos onglets. Posez-lui des questions sur la page où vous
