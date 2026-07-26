@@ -73,8 +73,19 @@ export function detectChallengeDialogInPage() {
     try {
       const style = getComputedStyle(element);
       if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
       const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const viewportWidth = typeof window !== 'undefined' && typeof window.innerWidth === 'number'
+        ? window.innerWidth
+        : (typeof innerWidth === 'number' ? innerWidth : rect.right);
+      const viewportHeight = typeof window !== 'undefined' && typeof window.innerHeight === 'number'
+        ? window.innerHeight
+        : (typeof innerHeight === 'number' ? innerHeight : rect.bottom);
+      return rect.bottom > 0
+        && rect.right > 0
+        && rect.top < viewportHeight
+        && rect.left < viewportWidth;
     } catch {
       return false;
     }

@@ -4728,6 +4728,38 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   }
 });
 
+test('CAPTCHA mutation preflight ignores hidden and off-viewport verification dialogs', async () => {
+  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+    const hiddenCases = [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification',
+        hidden: true,
+      }),
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification',
+        'aria-hidden': 'true',
+      }),
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Security verification',
+        rect: { left: 0, top: 800, right: 100, bottom: 840, width: 100, height: 40 },
+      }),
+    ];
+    for (const dialog of hiddenCases) {
+      await withCaptchaFakePage(build, [dialog], async () => {
+        assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+      });
+    }
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }),
+    ], async () => {
+      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Security verification', `${build}: visible dialog was missed`);
+    });
+  }
+});
+
 test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the one solve', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -52398,6 +52430,61 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
         `${build}: diagnostic frame URL retained its query string`,
       );
       assert.equal(agent._captchaGateBlockResult(1, 'click')?.solveCaptchaRequired, true, `${build}: Dismiss/Continue click was not blocked`);
+
+      const disabledAgent = new AgentClass({});
+      disabledAgent.captchaSolverEnabled = false;
+      disabledAgent._currentUrl = async () => 'https://example.test/signup';
+      const disabledObservation = await disabledAgent._observeCaptchaChallenge(
+        2,
+        'get_accessibility_tree',
+        { pageContent: result.pageContent },
+        { filter: 'visible' },
+      );
+      assert.equal(disabledObservation.gate?.status, 'manual_required', `${build}: disabled solver did not fail closed`);
+      assert.equal(disabledObservation.gate?.solverDisabled, true, `${build}: disabled-solver reason missing`);
+      disabledAgent.captchaSolverEnabled = true;
+      const enabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
+      assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
+
+      const transientAgent = new AgentClass({});
+      transientAgent.captchaSolverEnabled = true;
+      transientAgent._currentUrl = async () => 'https://example.test/signup';
+      transientAgent._captchaGateStates.set(3, {
+        key: 'https://example.test/signup\nsecurity verification',
+        status: 'manual_required',
+        publicGate: {
+          status: 'manual_required',
+          detectionFailed: true,
+          challengeDialog: { label: 'Security verification' },
+          diagnostics: { vendors: [], frames: [] },
+        },
+      });
+      const recoveredDetection = await transientAgent._observeCaptchaChallenge(
+        3,
+        'get_accessibility_tree',
+        { pageContent: result.pageContent },
+        { filter: 'visible' },
+      );
+      assert.equal(recoveredDetection.gate?.status, 'solve_required', `${build}: transient detection failure was permanently sticky`);
+
+      transientAgent._captchaGateStates.set(4, {
+        key: 'https://example.test/signup\nsecurity verification',
+        status: 'manual_required',
+        publicGate: {
+          status: 'manual_required',
+          detectionFailed: true,
+          solveFailed: true,
+          challengeDialog: { label: 'Security verification' },
+          diagnostics: { vendors: [], frames: [] },
+        },
+      });
+      const stickyPostSolve = await transientAgent._observeCaptchaChallenge(
+        4,
+        'get_accessibility_tree',
+        { pageContent: result.pageContent },
+        { filter: 'visible' },
+      );
+      assert.equal(stickyPostSolve.gate?.status, 'manual_required', `${build}: post-solve failure became retryable`);
     });
 
     const invisibleV3Nodes = [

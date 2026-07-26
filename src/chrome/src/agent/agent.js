@@ -2679,6 +2679,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return BROWSER_MUTATION_TOOLS.has(toolName);
   }
 
+  _shouldRetryCaptchaManualGate(gate) {
+    const publicGate = gate?.publicGate;
+    const postSolveFailure = publicGate?.solveAttempted === true
+      || publicGate?.solveFailed === true
+      || publicGate?.solveFailedToClearChallenge === true;
+    return gate?.status === 'manual_required'
+      && this.captchaSolverEnabled
+      && !postSolveFailure
+      && (
+        publicGate?.solverDisabled === true
+        || publicGate?.detectionFailed === true
+      );
+  }
+
   _captchaGateBlockResult(tabId, toolName, toolArgs = {}) {
     const gate = this._captchaGateStates.get(tabId);
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
@@ -2743,12 +2757,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
-    if (
-      !this.captchaSolverEnabled
-      || this._captchaGateStates.has(tabId)
-      || !gatedAction
-      || toolName === 'solve_captcha'
-    ) return null;
+    if (!this.captchaSolverEnabled || !gatedAction || toolName === 'solve_captcha') return null;
+    const activeGate = this._captchaGateStates.get(tabId);
+    if (activeGate && !this._shouldRetryCaptchaManualGate(activeGate)) return null;
     const challenge = await this._detectChallengeDialogBeforeMutation(tabId);
     if (!challenge?.label) return null;
     let pageUrl = '';
@@ -2840,7 +2851,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const key = captchaChallengeKey(pageUrl, challenge.normalizedLabel);
     const existing = activeGate;
-    if (existing?.status === 'manual_required') {
+    const retryManualDetection = existing?.status === 'manual_required'
+      && authoritativeRootRead
+      && this._shouldRetryCaptchaManualGate(existing);
+    if (existing?.status === 'manual_required' && !retryManualDetection) {
       const manualGate = {
         ...existing.publicGate,
         status: 'manual_required',
@@ -2908,7 +2922,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       toolResult.captchaGate = manualGate;
       return { gate: manualGate, loopCheck };
     }
-    if (existing?.key === key) {
+    if (existing?.key === key && !retryManualDetection) {
       toolResult.captchaGate = existing.publicGate;
       return { gate: existing.publicGate, loopCheck };
     }
