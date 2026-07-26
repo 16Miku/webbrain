@@ -11865,6 +11865,123 @@ test('custom skills stay out of prompts until explicitly activated', () => {
   }
 });
 
+test('Agent Skills frontmatter supplies routing metadata without leaking into loaded instructions', () => {
+  const content = `---
+name: pdf-processing
+description: >-
+  Extract PDF text and fill forms.
+  Use when working with PDF documents.
+license: Apache-2.0
+metadata:
+  author: example-org
+allowed-tools: Bash(*) Read
+---
+# PDF workflow
+
+Follow the visible browser workflow.`;
+  for (const [label, normalizeSkills, buildPrompt] of [
+    ['chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh],
+    ['firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx],
+  ]) {
+    const [skill] = normalizeSkills([{
+      id: 'portable-pdf',
+      sourceType: 'text',
+      content,
+    }]);
+    assert.equal(skill.name, 'pdf-processing', `${label}: standard frontmatter name was not used`);
+    assert.equal(
+      skill.summary,
+      'Extract PDF text and fill forms. Use when working with PDF documents.',
+      `${label}: folded description was not used as the routing summary`,
+    );
+    assert.deepEqual(skill.modes, ['act'], `${label}: Agent Skills metadata must not grant Ask eligibility`);
+    assert.deepEqual(skill.intents, [], `${label}: Agent Skills metadata must not invent WebBrain intents`);
+    assert.deepEqual(skill.tools, [], `${label}: allowed-tools must not become WebBrain runtime tools`);
+
+    const prompt = buildPrompt([skill], {
+      mode: 'act',
+      tier: 'full',
+      activeSkillIds: new Set(['portable-pdf']),
+    });
+    assert.match(prompt, /# PDF workflow[\s\S]*Follow the visible browser workflow/, `${label}: SKILL.md body missing`);
+    assert.doesNotMatch(prompt, /description:|allowed-tools:|author: example-org|Apache-2\.0/, `${label}: frontmatter leaked into instructions`);
+  }
+});
+
+test('Agent Skills frontmatter stays subordinate to explicit WebBrain metadata', () => {
+  const content = `---
+name: portable-research
+description: 'Researches sources and explains when they apply.'
+---
+# Research
+
+\`\`\`webbrain-skill
+{"summary":"Use WebBrain-specific routing.","modes":["ask","act"],"intents":["source_research"]}
+\`\`\`
+
+Compare primary sources.`;
+  for (const [label, normalizeSkills, buildPrompt] of [
+    ['chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh],
+    ['firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx],
+  ]) {
+    const [skill] = normalizeSkills([{
+      id: 'portable-research',
+      name: 'Local display name',
+      sourceType: 'text',
+      content,
+    }]);
+    assert.equal(skill.name, 'Local display name', `${label}: explicit local name lost precedence`);
+    assert.equal(skill.summary, 'Use WebBrain-specific routing.', `${label}: WebBrain summary lost precedence`);
+    assert.deepEqual(skill.modes, ['ask', 'act'], `${label}: WebBrain modes lost precedence`);
+    assert.deepEqual(skill.intents, ['source_research'], `${label}: WebBrain intents lost precedence`);
+
+    const prompt = buildPrompt([skill], {
+      mode: 'ask',
+      tier: 'full',
+      activeSkillIds: new Set(['portable-research']),
+    });
+    assert.match(prompt, /Compare primary sources/, `${label}: skill instructions missing`);
+    assert.doesNotMatch(prompt, /portable-research|Researches sources|webbrain-skill|source_research/, `${label}: metadata leaked into instructions`);
+  }
+});
+
+test('invalid Agent Skills frontmatter remains ordinary trusted skill text', () => {
+  const invalid = `---
+name: Invalid--Name
+description: This does not satisfy the Agent Skills name constraints.
+---
+# Fallback heading
+
+Keep this text unchanged.`;
+  for (const [label, normalizeSkills, buildPrompt] of [
+    ['chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh],
+    ['firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx],
+  ]) {
+    const [skill] = normalizeSkills([{ id: 'invalid-frontmatter', content: invalid }]);
+    assert.equal(skill.name, 'Fallback heading', `${label}: invalid standard metadata overrode fallback inference`);
+    const prompt = buildPrompt([skill], {
+      mode: 'act',
+      tier: 'full',
+      activeSkillIds: new Set(['invalid-frontmatter']),
+    });
+    assert.match(prompt, /name: Invalid--Name/, `${label}: invalid frontmatter was destructively stripped`);
+    assert.match(prompt, /Keep this text unchanged/, `${label}: invalid skill body missing`);
+
+    for (const [caseName, frontmatter] of [
+      ['duplicate fields', 'name: valid-name\nname: second-name\ndescription: Duplicate name.'],
+      ['implicit boolean name', 'name: true\ndescription: YAML booleans are not string names.'],
+      ['non-string description', 'name: valid-name\ndescription: [not, a, string]'],
+      ['oversized description', `name: valid-name\ndescription: ${'x'.repeat(1025)}`],
+    ]) {
+      const [rejected] = normalizeSkills([{
+        id: `invalid-${caseName}`,
+        content: `---\n${frontmatter}\n---\n# Safe fallback\n\nBody.`,
+      }]);
+      assert.equal(rejected.name, 'Safe fallback', `${label}: ${caseName} metadata was accepted`);
+    }
+  }
+});
+
 test('skill semantic intents are bounded, explicit, and shared by loader catalogs', () => {
   for (const [label, normalizeSkills, getCatalog, buildLoader, maxIntents, maxIntentChars] of [
     ['chrome', normalizeCustomSkillsCh, getEligibleSkillCatalogCh, buildSkillLoaderDefinitionCh, MAX_CUSTOM_SKILL_INTENTS_CH, MAX_CUSTOM_SKILL_INTENT_CHARS_CH],

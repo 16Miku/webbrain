@@ -87,6 +87,81 @@ function inferName(content, index) {
   return (firstLine || `Skill ${index + 1}`).slice(0, 80);
 }
 
+function parseAgentSkillScalar(value) {
+  const raw = String(value || '').trim();
+  if (
+    !raw
+    || /^[!&*\[{]/.test(raw)
+    || /^(?:null|~|true|false|yes|no|on|off)$/i.test(raw)
+    || /^[-+]?(?:\d+\.?\d*|\.\d+)$/.test(raw)
+    || /^\d{4}-\d{2}-\d{2}(?:[Tt ]|$)/.test(raw)
+  ) return null;
+  const singleQuoted = raw.match(/^'((?:''|[^'])*)'(?:\s+#.*)?$/);
+  if (singleQuoted) return singleQuoted[1].replace(/''/g, "'");
+  const doubleQuoted = raw.match(/^("(?:\\.|[^"\\])*")(?:\s+#.*)?$/);
+  if (doubleQuoted) {
+    try {
+      const parsed = JSON.parse(doubleQuoted[1]);
+      return typeof parsed === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return raw.replace(/\s+#.*$/, '').trim() || null;
+}
+
+function parseAgentSkillFrontmatter(content) {
+  const text = String(content || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const match = text.match(/^---\n([\s\S]{0,8192}?)\n---(?:\n|$)/);
+  if (!match) return null;
+
+  const lines = match[1].split('\n');
+  const values = {};
+  const seen = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || /^\s*#/.test(line) || /^\s/.test(line)) continue;
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$/);
+    if (!field) return null;
+    const key = field[1];
+    if (key !== 'name' && key !== 'description') continue;
+    if (seen.has(key)) return null;
+    seen.add(key);
+
+    const rawValue = field[2] || '';
+    if (/^[>|][+-]?$/.test(rawValue.trim())) {
+      const block = [];
+      while (index + 1 < lines.length) {
+        const next = lines[index + 1];
+        if (next.trim() && !/^\s/.test(next)) break;
+        block.push(next);
+        index += 1;
+      }
+      const nonEmpty = block.filter((item) => item.trim());
+      const indent = nonEmpty.length
+        ? Math.min(...nonEmpty.map((item) => item.match(/^\s*/)[0].length))
+        : 0;
+      values[key] = cleanText(block.map((item) => item.slice(indent)).join('\n'));
+    } else {
+      values[key] = parseAgentSkillScalar(rawValue);
+    }
+  }
+
+  const name = cleanSingleLine(values.name);
+  const description = cleanSingleLine(values.description);
+  if (
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)
+    || name.length > 64
+    || !description
+    || description.length > 1024
+  ) return null;
+  return {
+    name,
+    description,
+    body: cleanText(text.slice(match[0].length)),
+  };
+}
+
 function toolBlockRegex() {
   return /```(?:webbrain-tools|wb-tools)\s*\n([\s\S]*?)```/gi;
 }
@@ -96,7 +171,8 @@ function skillMetadataBlockRegex() {
 }
 
 export function stripSkillToolBlocks(content) {
-  return cleanText(content)
+  const agentSkill = parseAgentSkillFrontmatter(content);
+  return cleanText(agentSkill ? agentSkill.body : content)
     .replace(toolBlockRegex(), '')
     .replace(skillMetadataBlockRegex(), '')
     .trim();
@@ -454,7 +530,10 @@ function normalizeSkills(value, { maxSkills = MAX_CUSTOM_SKILLS } = {}) {
     const sourceUrl = sourceType === 'url' || sourceType === 'built-in'
       ? cleanSingleLine(item.sourceUrl || item.path).slice(0, 2048)
       : '';
-    const name = cleanSingleLine(item.name).slice(0, 80) || inferName(content, skills.length);
+    const agentSkill = parseAgentSkillFrontmatter(content);
+    const name = cleanSingleLine(item.name).slice(0, 80)
+      || agentSkill?.name
+      || inferName(content, skills.length);
     const metadata = parseSkillMetadataBlock(content);
     const trustedChromeWebStoreSkill = id === 'chrome-web-store-release'
       && sourceType === 'built-in'
@@ -472,7 +551,9 @@ function normalizeSkills(value, { maxSkills = MAX_CUSTOM_SKILLS } = {}) {
       sourceType,
       sourceUrl,
       content,
-      summary: metadata?.summary || inferSkillSummary(content, name),
+      summary: metadata?.summary
+        || agentSkill?.description.slice(0, MAX_CUSTOM_SKILL_SUMMARY_CHARS)
+        || inferSkillSummary(content, name),
       modes: metadata?.modes || ['act'],
       intents: metadata?.intents || [],
       tools: [...normalizedTools, ...privilegedTools],

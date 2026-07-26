@@ -32,6 +32,19 @@ correspondance littérale de mots-clés. Les compétences sans métadonnées
 déduisent leur résumé du premier paragraphe de prose, n'ont aucune intention
 déduite, et utilisent Act/Dev par défaut.
 
+WebBrain reconnaît également les métadonnées YAML obligatoires `name` et
+`description` d'un fichier
+[Agent Skills `SKILL.md`](https://agentskills.io/specification) importé. Le nom
+et la description alimentent le catalogue de routage, et les métadonnées sont
+retirées avant le chargement du corps Markdown. Un nom saisi dans Paramètres et
+un bloc `webbrain-skill` restent prioritaires.
+
+Cette compatibilité concerne uniquement les instructions. WebBrain importe un
+seul document texte ; il ne récupère pas les répertoires `scripts/`,
+`references/` ou `assets/`, n'exécute pas le code de la compétence et ne traite
+pas le champ Agent Skills `allowed-tools` comme une permission ou un manifeste
+d'outils WebBrain. Utilisez `webbrain-tools` pour les outils HTTP WebBrain.
+
 ## Outils de compétence
 
 Une compétence peut exposer des outils HTTP en lecture seule, ou des outils de

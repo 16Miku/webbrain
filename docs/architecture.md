@@ -298,12 +298,16 @@ new default IDs can still be migrated into existing installations.
   intents (40 characters each). Intents are cross-language meaning hints for
   the LLM, not literal keywords. Without metadata, the first prose paragraph
   becomes the summary, intents stay empty, and the skill defaults to Act/Dev.
+  An imported Agent Skills `SKILL.md` can instead supply its standard `name`
+  and `description` frontmatter for the name and summary; an explicit Settings
+  name and `webbrain-skill` metadata retain precedence.
   `getEligibleSkillCatalog()` produces the shared `{id,name,summary,intents}`
   records used by both the planner and `load_skill({skill_id})`. Ask sees only
   explicitly Ask-compatible skills, while Compact has no skill surface.
 - Prompt instructions: `buildCustomSkillsPrompt()` strips both metadata and
-  `webbrain-tools` fences, then appends full prose only for skills activated on
-  the current run. Active IDs reset before the next user turn. Trusted
+  `webbrain-tools` fences, strips valid Agent Skills frontmatter, then appends
+  full prose only for skills activated on the current run. Active IDs reset
+  before the next user turn. Trusted
   recommended actions can preactivate the skill that owns their first tool;
   NYTimes adapter runs narrowly preactivate FreeSkillz so its site-scoped,
   read-only article fallback is ready after a structured blocking `pageGate`.
