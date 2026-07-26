@@ -3,8 +3,10 @@
 
 // These defaults match Claude for Chrome. Pixel dimensions and approximate
 // vision-token area bound provider cost, while the byte/quality fields are
-// consumed by each browser's platform-specific image encoder.
-export const IMAGE_BUDGET = {
+// consumed by each browser's platform-specific image encoder. Frozen so an
+// accidental mutation of the shared default throws instead of silently
+// changing every caller; per-capture overrides spread into a fresh object.
+export const IMAGE_BUDGET = Object.freeze({
   pxPerToken: 28,
   maxTargetPx: 1568,
   maxTargetTokens: 1568,
@@ -12,7 +14,7 @@ export const IMAGE_BUDGET = {
   initialJpegQuality: 0.75,
   minJpegQuality: 0.10,
   jpegQualityStep: 0.05,
-};
+});
 
 export function estimateImageTokens(w, h, pxPerToken) {
   return Math.ceil((w / pxPerToken) * (h / pxPerToken));
