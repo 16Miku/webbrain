@@ -2836,9 +2836,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return includeStatus
         ? {
             challenge,
+            challengeHidden: entries.some(entry =>
+              entry.payload && typeof entry.payload === 'object' && entry.payload.hiddenChallenge?.label
+            ),
+            // With no expected frame, "complete" still requires at least one
+            // frame to have actually been inspected.
             inspectionComplete: expectedFrameId === null
-              || inspectedFrameIds.has(expectedFrameId)
-              || (navigationInspectionComplete && !expectedFrameStillExists),
+              ? inspectedFrameIds.size > 0
+              : (inspectedFrameIds.has(expectedFrameId)
+                || (navigationInspectionComplete && !expectedFrameStillExists)),
           }
         : challenge;
     };
@@ -2851,7 +2857,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return inspected(results);
       } catch {
         return includeStatus
-          ? { challenge: null, inspectionComplete: false }
+          ? { challenge: null, challengeHidden: false, inspectionComplete: false }
           : null;
       }
     }
@@ -2917,21 +2923,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && treeFilter !== 'visible'
       && toolResult.captchaChallengeVisibilityConfirmed !== true
     ) {
-      const visibleChallenge = await this._detectChallengeDialogBeforeMutation(tabId, {
+      const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: observedChallengeFrameId,
         allowGenericFailure: !!activeGate,
       });
-      if (visibleChallenge?.label) {
+      if (recheck.challenge?.label) {
         challenge = detectChallengeDialog(
-          `dialog ${JSON.stringify(String(visibleChallenge.label).slice(0, 200))}`,
+          `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
           { allowGenericFailure: !!activeGate },
         );
-        observedChallengeFrameId = Number.isInteger(visibleChallenge.frameId)
-          ? visibleChallenge.frameId
+        observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
+          ? recheck.challenge.frameId
           : null;
-        observedChallengeFrameUrl = String(visibleChallenge.frameUrl || '');
-      } else {
+        observedChallengeFrameUrl = String(recheck.challenge.frameUrl || '');
+      } else if (recheck.inspectionComplete && recheck.challengeHidden) {
         challenge = null;
       }
+      // Only a completed scan that positively found the dialog hidden clears
+      // the tree's observation. "Not found" is not disproof — the DOM scan
+      // cannot see closed shadow roots or unreachable frames the tree can —
+      // and an inconclusive scan proves nothing; keep the challenge rather
+      // than failing the gate open.
     }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {

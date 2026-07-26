@@ -4847,6 +4847,84 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
   }
 });
 
+test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate on inconclusive scans', async () => {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
+    // A visible challenge dialog rendered inside an open shadow root (the
+    // LinkedIn interop-outlet pattern): invisible to document.querySelectorAll
+    // but reported by the shadow-piercing accessibility tree.
+    const shadowDialogNodes = [
+      captchaEl('div', {
+        id: 'interop-outlet',
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+            captchaEl('h2', { textContent: 'Security verification' }),
+          ]),
+        ],
+      }),
+    ];
+    await withCaptchaFakePage(build, shadowDialogNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
+      );
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: shadow-rooted challenge from an all-tree read did not arm the gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: shadow-rooted challenge did not persist a gate`);
+    });
+
+    // Hidden ancestry must still win even across the shadow boundary: a
+    // challenge dialog inside the shadow root of a hidden host stays inert.
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        hidden: true,
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }),
+        ],
+      }),
+    ], async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: shadow dialog under a hidden host armed the preflight`,
+      );
+    });
+
+    // When script injection fails outright the scan proves nothing — the
+    // tree's observation must be kept rather than failing the gate open.
+    // (The "scan succeeds but cannot find the dialog at all" case is covered
+    // by the unsupported-Arkose routing test: absence is not disproof.)
+    await withCaptchaFakePage(build, [], async () => {
+      globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
+      globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: inconclusive DOM scan cleared the tree challenge and failed open`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive DOM scan did not persist a gate`);
+    });
+  }
+});
+
 test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the one solve', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -52440,6 +52518,21 @@ function captchaEl(tag, attrs = {}, children = []) {
     querySelectorAll: (sel) => captchaMatchAll(children, sel),
   };
   for (const child of children) child.parentElement = el;
+  if (Array.isArray(attrs.shadow)) {
+    // Open shadow root: content is reachable only via el.shadowRoot, never
+    // through document/parent querySelectorAll — mirroring the real DOM.
+    const shadowChildren = attrs.shadow;
+    el.shadowRoot = {
+      host: el,
+      children: shadowChildren,
+      querySelector: (sel) => captchaMatchAll(shadowChildren, sel)[0] || null,
+      querySelectorAll: (sel) => captchaMatchAll(shadowChildren, sel),
+    };
+    for (const child of shadowChildren) {
+      child.parentElement = null;
+      child.getRootNode = () => el.shadowRoot;
+    }
+  }
   el.contains = (candidate) => {
     if (candidate === el) return true;
     return children.some(child => child === candidate || child.contains?.(candidate));
@@ -52454,6 +52547,7 @@ function captchaMatchAll(roots, selectorList) {
   })(roots);
   const selectors = String(selectorList).split(',').map(s => s.trim()).filter(Boolean);
   const matchesOne = (el, sel) => {
+    if (sel === '*') return true;
     // Tokenize into tag / .class / [attr…] parts. Splitting naively on "."
     // would break selectors like script[src*="recaptcha/api.js"].
     const parts = sel.match(/\[[^\]]*\]|\.[\w-]+|^[a-zA-Z][\w-]*/g) || [];
