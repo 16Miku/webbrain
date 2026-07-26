@@ -29,6 +29,10 @@ import {
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
 import {
+  isValidCapsolverApiKey,
+  normalizeCapsolverApiKey,
+} from '../agent/capsolver-config.js';
+import {
   detectedCompatibilityPreset,
   normalizeProviderCompatibility,
   parseProviderExtraBodyJson,
@@ -154,7 +158,6 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
-const captchaEnabledToggle = document.getElementById('toggle-captcha-enabled');
 const captchaApiKeyInput = document.getElementById('captcha-api-key');
 const btnSaveCaptcha = document.getElementById('btn-save-captcha');
 const btnTestCaptcha = document.getElementById('btn-test-captcha');
@@ -496,9 +499,8 @@ async function init() {
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
 
-  // Load CapSolver config — off by default.
-  const captchaStored = await browser.storage.local.get(['captchaSolverEnabled', 'capsolverApiKey']);
-  if (captchaEnabledToggle) captchaEnabledToggle.checked = !!captchaStored.captchaSolverEnabled;
+  // A valid saved key is the CapSolver enable control.
+  const captchaStored = await browser.storage.local.get('capsolverApiKey');
   if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
 
   await loadCustomSkills();
@@ -1606,7 +1608,7 @@ if (btnImportUserMemory) {
 }
 
 // --- CapSolver (captcha solving) ---
-// Toggle persists immediately. The API key needs an explicit Save.
+// Saving a structurally valid API key enables CapSolver automatically.
 
 function showCaptchaResult(className, text, color = '') {
   if (!captchaTestResult) return;
@@ -1621,24 +1623,28 @@ function flashCaptchaResult(className, text) {
   if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
 }
 
-if (captchaEnabledToggle) {
-  captchaEnabledToggle.addEventListener('change', async () => {
-    await browser.storage.local.set({ captchaSolverEnabled: captchaEnabledToggle.checked }).catch(() => {});
-  });
-}
-
 if (btnSaveCaptcha) {
   btnSaveCaptcha.addEventListener('click', async () => {
-    const key = (captchaApiKeyInput?.value || '').trim();
-    await browser.storage.local.set({ capsolverApiKey: key });
+    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
+    if (!isValidCapsolverApiKey(key)) {
+      flashCaptchaResult('fail', t('st.captcha.need_key'));
+      return;
+    }
+    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
+    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
+    // as an internal consent bit so upgrades preserve an existing opt-out.
+    await browser.storage.local.set({
+      capsolverApiKey: key,
+      captchaSolverEnabled: true,
+    });
     flashCaptchaResult('ok', t('st.captcha.saved'));
   });
 }
 
 if (btnTestCaptcha) {
   btnTestCaptcha.addEventListener('click', async () => {
-    const key = (captchaApiKeyInput?.value || '').trim();
-    if (!key) {
+    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
+    if (!isValidCapsolverApiKey(key)) {
       flashCaptchaResult('fail', t('st.captcha.need_key'));
       return;
     }
@@ -1659,7 +1665,8 @@ if (btnTestCaptcha) {
 if (btnClearCaptcha) {
   btnClearCaptcha.addEventListener('click', async () => {
     if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    if (captchaEnabledToggle) captchaEnabledToggle.checked = false;
+    // Remove the legacy flag too so old exports cannot preserve a
+    // contradictory enabled-without-a-key state.
     await browser.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
     flashCaptchaResult('ok', t('st.captcha.cleared'));
   });
