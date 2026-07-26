@@ -960,7 +960,7 @@ body {
   display: inline-block;
   max-width: calc(100% - 36px);
   transform: translateX(-50%);
-  transition: transform 0.15s;
+  transition: transform 0.15s, opacity 0.4s ease;
 }
 
 .chat-navigation-action {
@@ -973,7 +973,7 @@ body {
   padding-inline: 12px 24px;
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   box-shadow: 0 5px 18px color-mix(in srgb, var(--overlay-bg-strong) 72%, transparent);
   backdrop-filter: blur(10px);
@@ -989,13 +989,24 @@ body {
   display: none;
 }
 
-.chat-navigation:hover {
+.chat-navigation:hover,
+.chat-navigation:focus-within {
   transform: translate(-50%, -1px);
+  opacity: 1;
+  transition: transform 0.15s, opacity 0.12s ease;
+}
+
+/* Idle at partial opacity so the control stops competing with the reply it
+   floats over; pointing at it brings it back to full strength. */
+@media (hover: hover) {
+  .chat-navigation {
+    opacity: 0.78;
+  }
 }
 
 .chat-navigation-action:hover {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary));
   color: var(--text-primary);
 }
 

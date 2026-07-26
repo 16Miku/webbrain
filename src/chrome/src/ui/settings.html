@@ -54,6 +54,13 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+    /* The title sits where a logo would, so it takes a pointer without
+       looking like a link or losing the gradient fill. */
+    h1 a {
+      color: inherit;
+      text-decoration: none;
+      -webkit-text-fill-color: inherit;
+    }
     .subtitle { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
 
     .header-row {
@@ -1100,7 +1107,7 @@
 <body>
   <div class="header-row">
     <div>
-      <h1 data-i18n="st.title"></h1>
+      <h1><a id="settings-title-link" href="#" data-i18n="st.title"></a></h1>
       <p class="subtitle" id="subtitle"></p>
     </div>
     <a class="support-link" href="https://webbrain.one/docs" target="_blank" rel="noopener noreferrer">
