@@ -203,6 +203,12 @@ function renderSubtitle() {
 }
 renderSubtitle();
 
+// The heading is a link only so it gets the pointer people expect from a
+// logo; swallow the click so it never leaves a stray '#' in the URL.
+document.getElementById('settings-title-link')?.addEventListener('click', (event) => {
+  event.preventDefault();
+});
+
 function normalizeGeneralSearchText(value) {
   return String(value || '')
     .toLowerCase()
