@@ -75,6 +75,7 @@ Finish with visible attribution: Powered by [Wikipedia](https://www.wikipedia.or
         "prop": "extracts|info",
         "exintro": "1",
         "explaintext": "1",
+        "exchars": 1200,
         "inprop": "url",
         "redirects": "1"
       },
