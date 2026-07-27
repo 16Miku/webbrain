@@ -136,6 +136,17 @@ function packagedOpenLibraryRecord(prefix) {
   };
 }
 
+function packagedWikipediaRecord(prefix) {
+  return {
+    id: 'wikipedia',
+    name: 'Wikipedia',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/wikipedia.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/wikipedia.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedChromeWebStoreRecord(prefix) {
   return {
     id: 'chrome-web-store-release',
@@ -12754,6 +12765,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'freeskillz-xyz': ['public_media_download', 'social_media_video', 'youtube_transcript', 'nytimes_article', 'media_metadata'],
     'open-meteo-weather': ['current_weather', 'weather_forecast', 'location_forecast'],
     'open-library-books': ['book_search', 'book_metadata', 'isbn_lookup', 'author_lookup'],
+    'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
@@ -12856,6 +12868,37 @@ test('packaged OTP helper loads on demand and strict-secret rules remain last', 
     assert.ok(skillIndex >= 0, `${label}: strict prompt should still include the enabled OTP skill`);
     assert.ok(strictIndex > skillIndex, `${label}: strict-secret note must follow and override enabled skills`);
     assert.match(strictPrompt.slice(strictIndex), /Never quote or reproduce a literal[\s\S]*OTP/i, `${label}: strict prompt should block read-only OTP disclosure`);
+  }
+});
+
+test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const defaults = normalizeSkills([packagedFreeSkillzRecord(prefix)]);
+    assert.doesNotMatch(buildPrompt(defaults), /Wikipedia/, `${label}: Wikipedia skill leaked into default prompt`);
+
+    const enabled = normalizeSkills([...defaults, packagedWikipediaRecord(prefix)]);
+    const prompt = buildPrompt(enabled, { mode: 'ask', tier: 'full', activeSkillIds: new Set(['wikipedia']) });
+    assert.match(prompt, /Wikipedia/, `${label}: enabled Wikipedia skill missing from prompt`);
+    assert.doesNotMatch(prompt, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia endpoint JSON should stay out of prompt`);
+
+    const wiki = enabled.find((skill) => skill.id === 'wikipedia');
+    assert.deepEqual(
+      wiki.tools.map((tool) => tool.name),
+      ['search_wikipedia', 'get_wikipedia_summary'],
+      `${label}: Wikipedia manifest tools should parse`,
+    );
+    assert.equal(wiki.tools[0].endpoint, 'https://en.wikipedia.org/w/rest.php/v1/search/page', `${label}: wrong Wikipedia search endpoint`);
+    assert.equal(wiki.tools[0].resultPolicy, 'untrusted', `${label}: Wikipedia search output should be untrusted`);
+    assert.equal(wiki.tools[1].endpoint, 'https://en.wikipedia.org/w/api.php', `${label}: wrong Wikipedia summary endpoint`);
+    assert.equal(wiki.tools[1].readOnly, true, `${label}: Wikipedia summary should be read-only`);
+
+    const defs = buildDefs(enabled, { mode: 'ask' });
+    const names = defs.map((tool) => tool.function.name);
+    assert.ok(names.includes('search_wikipedia'), `${label}: Wikipedia search tool missing from ask mode`);
+    assert.ok(names.includes('get_wikipedia_summary'), `${label}: Wikipedia summary tool missing from ask mode`);
   }
 });
 
@@ -48471,6 +48514,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'temporary-file-share-litterbox',
     'open-meteo-weather',
     'open-library-books',
+    'wikipedia',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -48479,6 +48523,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'temporary-file-share-litterbox',
     'open-meteo-weather',
     'open-library-books',
+    'wikipedia',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -48688,6 +48733,13 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(library, /"name": "search_open_library_books"/, `${label}: Open Library search tool missing`);
     assert.match(library, /"endpoint": "https:\/\/openlibrary\.org\/search\.json"/, `${label}: Open Library search endpoint missing`);
     assert.match(library, /Powered by \[Open Library\]\(https:\/\/openlibrary\.org\)/, `${label}: Open Library skill should include visible attribution`);
+    const wikipedia = fs.readFileSync(path.join(ROOT, prefix, 'skills/wikipedia.md'), 'utf8');
+    assert.match(wikipedia, /wikipedia\.org/i, `${label}: Wikipedia skill should reference the provider`);
+    assert.match(wikipedia, /"name": "search_wikipedia"/, `${label}: Wikipedia search tool missing`);
+    assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/rest\.php\/v1\/search\/page"/, `${label}: Wikipedia search endpoint missing`);
+    assert.match(wikipedia, /"name": "get_wikipedia_summary"/, `${label}: Wikipedia summary tool missing`);
+    assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia summary endpoint missing`);
+    assert.match(wikipedia, /Powered by \[Wikipedia\]\(https:\/\/www\.wikipedia\.org\)/, `${label}: Wikipedia skill should include visible attribution`);
     const fileShare = fs.readFileSync(path.join(ROOT, prefix, 'skills/temporary-file-share-litterbox.md'), 'utf8');
     assert.match(fileShare, /https:\/\/litterbox\.catbox\.moe/, `${label}: file-share skill should use Litterbox by default`);
     assert.match(fileShare, /No account, no API key, and no sign-in are required/i, `${label}: file-share skill should document the no-auth provider requirement`);
