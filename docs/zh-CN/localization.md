@@ -13,21 +13,32 @@ src/chrome/src/ui/
 ├── i18n.js                # 核心：t()、setLocale()、applyDOMTranslations()
 └── locales/
     ├── en.js              # 英语 — 标准版本，始终完整
-    ├── es.js              # 西班牙语
-    ├── fr.js              # 法语
-    ├── tr.js              # 土耳其语
-    ├── zh.js              # 中文
-    ├── ru.js              # 俄语
-    ├── uk.js              # 乌克兰语
     ├── ar.js              # 阿拉伯语
+    ├── bn.js              # 孟加拉语
+    ├── de.js              # 德语
+    ├── es.js              # 西班牙语
+    ├── fa.js              # 波斯语
+    ├── fr.js              # 法语
+    ├── he.js              # 希伯来语
+    ├── hi.js              # 印地语
+    ├── id.js              # 印尼语
     ├── ja.js              # 日语
     ├── ko.js              # 韩语
-    ├── id.js              # 印尼语
-    ├── th.js              # 泰语
     ├── ms.js              # 马来语
-    └── tl.js              # 菲律宾语
+    ├── nl.js              # 荷兰语
+    ├── pl.js              # 波兰语
+    ├── pt.js              # 葡萄牙语
+    ├── ru.js              # 俄语
+    ├── th.js              # 泰语
+    ├── tl.js              # 菲律宾语
+    ├── tr.js              # 土耳其语
+    ├── uk.js              # 乌克兰语
+    ├── vi.js              # 越南语
+    └── zh.js              # 中文
 ```
 
+设置 → 语言会列出 `i18n.js` 中 `LANGUAGES` 的全部 **23** 种语言（英语和中文置顶；
+其余按英文名排序）。
 ### 关键函数
 
 ```js

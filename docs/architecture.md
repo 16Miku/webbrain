@@ -374,6 +374,7 @@ tracks as a successful video or hand ffmpeg work to the user.
 | Read a YouTube transcript, fetch a blocked NYTimes article, or resolve/download supported public media | FreeSkillz.xyz | Ask, Act, Dev | Ask can load the skill but still cannot see its Act-only `download_public_media` tool. |
 | Look up weather or a short forecast | Open-Meteo weather | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Find books, ISBNs, authors, or publication data | Open Library | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
+| Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Read-only Wikipedia REST/Action API tools; results are untrusted. |
 | Upload one non-sensitive file to a short-lived public link | Temporary file share (Litterbox) | Act, Dev | Not shown to Ask; the skill uses existing browser upload tools. |
 
 The runtime enforces catalog membership, mode/tier eligibility, active-skill

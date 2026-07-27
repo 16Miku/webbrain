@@ -45,16 +45,27 @@ d'outils issus de contenu tiers doivent être marqués
 `resultPolicy: "untrusted"` afin d'être encapsulés comme des données et non
 comme des instructions.
 
+Les outils HTTP de compétence refusent les redirections (y compris les
+redirections opaques du navigateur) : les manifestes doivent utiliser un hôte
+HTTPS final qui ne renvoie pas de 3xx.
+
 Les outils de compétence ne font pas partie de la
 [matrice des outils](agent-tools.md#matrice-des-outils) statique : avant le
 chargement d'une compétence, ou après son retrait, ses outils sont absents.
 
 ## Compétences intégrées
 
-Les deux sont **activées par défaut** et peuvent être retirées dans Paramètres →
-Compétences.
+Les fichiers markdown packagés vivent sous `skills/` et sont enregistrés dans
+`PACKAGED_SKILL_SOURCES` (`agent/skills.js`). Paramètres → Compétences liste
+chaque compétence packagée ; seules les valeurs par défaut ci-dessous sont
+initialisées comme activées.
 
-### FreeSkillz.xyz
+### Activées par défaut
+
+Les deux peuvent être retirées dans Paramètres → Compétences. Une valeur par
+défaut retirée n'est pas restaurée silencieusement.
+
+#### FreeSkillz.xyz
 
 Peut exposer `read_youtube_transcript`, `fetch_nytimes_article`,
 `resolve_public_media` et `download_public_media` via son manifeste. Sur les
@@ -62,7 +73,7 @@ onglets NYTimes / The Athletic, elle est préactivée pour l'exécution en cours
 afin qu'un `pageGate` bloquant structuré puisse router directement vers le repli
 d'article sans identifiants.
 
-### Assistant OTP / code de vérification
+#### Assistant OTP / code de vérification
 
 Ne se charge que pour les demandes pertinentes et ne déclare aucun outil réseau.
 Sur l'onglet de l'exécution active, il privilégie le texte sélectionné ou un
@@ -75,6 +86,22 @@ requête normale envoyée au fournisseur LLM que vous avez configuré. Si
 **l'enregistrement des traces** est activé, les résultats d'outils bruts et les
 réponses du modèle sont également stockés localement jusqu'à la suppression de
 ces traces.
+
+### Compétences packagées à activer
+
+Ces compétences sont livrées avec l'extension et apparaissent dans Paramètres →
+Compétences comme disponibles. Elles ne sont pas activées par défaut.
+
+| Compétence | Modes | Outils réseau |
+|---|---|---|
+| E-mail jetable (Mail.tm) | Act, Dev | API HTTPS Mail.tm |
+| Partage de fichier temporaire (Litterbox) | Act, Dev | Outils d'upload du navigateur ; lien public de courte durée |
+| Météo Open-Meteo | Ask, Act, Dev | Géocodage + prévisions HTTPS |
+| Open Library | Ask, Act, Dev | Recherche Open Library HTTPS |
+| Wikipédia | Ask, Act, Dev | Recherche REST + résumé Action API HTTPS |
+
+N'activez une compétence que si vous voulez ses outils et instructions
+disponibles pour `load_skill` sur les exécutions éligibles.
 
 ## Voir aussi
 
