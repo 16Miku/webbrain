@@ -9311,6 +9311,66 @@ async function sendToBackground(action, data = {}) {
   return response;
 }
 
+async function handleGlobalKeydown(e) {
+  if (e.defaultPrevented) return;
+
+  // Don't steal shortcuts from other input elements (e.g. schedule form fields)
+  const tag = e.target?.tagName;
+  const isOtherFormField = e.target !== inputEl && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+
+  if (e.key === 'Escape') {
+    // IME Escape cancels a composition candidate — never abort the run for that.
+    if (e.isComposing) return;
+    const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
+    if (slashMenuOpen) return;
+    // Provider/language pickers close on Escape in bubble/target handlers; do not
+    // abort the active run while those listboxes are open.
+    const providerPickerOpen = !!providerPickerMenu && !providerPickerMenu.classList.contains('hidden');
+    if (providerPickerOpen) return;
+    const languagePickerOpen = !!languagePickerMenu && !languagePickerMenu.classList.contains('hidden');
+    if (languagePickerOpen) return;
+    if (isProcessing) {
+      e.preventDefault();
+      abortRun();
+      return;
+    }
+    if (isOtherFormField) return;
+  }
+
+  if (isOtherFormField) return;
+  // AltGr (Ctrl+Alt) and Option chords type international characters — never
+  // treat them as Ctrl/Cmd shortcuts.
+  if (e.altKey || e.getModifierState?.('AltGraph')) return;
+
+  const mod = e.ctrlKey || e.metaKey;
+
+  // Ctrl+/ (Cmd+/ on Mac): focus input
+  if (mod && e.key === '/') {
+    e.preventDefault();
+    inputEl.focus();
+    inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    return;
+  }
+  // Ctrl+Shift+A: switch to Ask mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'A' && !isProcessing) {
+    e.preventDefault();
+    setMode('ask');
+    return;
+  }
+  // Ctrl+Shift+X: switch to Act mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'X' && !isProcessing) {
+    e.preventDefault();
+    await ensureActMode();
+    return;
+  }
+  // Ctrl+Shift+D: switch to Dev mode (blocked while agent is running)
+  if (mod && e.shiftKey && e.key === 'D' && !isProcessing) {
+    e.preventDefault();
+    await ensureDevMode();
+    return;
+  }
+}
+
 // --- Mode Toggle ---
 
 function positionModeHighlight(btn, { instant = false } = {}) {
@@ -9822,6 +9882,8 @@ if (attachBtn && fileAttachInput) {
 // --- Event Listeners ---
 
 sendBtn.addEventListener('click', sendMessage);
+
+document.addEventListener('keydown', handleGlobalKeydown, true);
 
 queuedMessagesEl?.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-queue-action][data-queue-id]');
