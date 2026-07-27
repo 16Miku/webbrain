@@ -16277,6 +16277,22 @@ const ADAPTERS = [
 - Pre-orders / "Made to order" listings have a longer ship date — surface that to the user before buying.`,
   },
 
+  // ─── Regional — Mercado Libre / Mercado Livre (LATAM) ────────────────
+  // Start with the AR, MX, and BR storefronts requested in CONTRIBUTING.md.
+  // Other country sites need separate localization research before inclusion.
+  {
+    name: 'mercado-libre',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)*(?:mercadolibre\.com\.(?:ar|mx)|mercadolivre\.com\.br)\//.test(url),
+    notes: `
+- Mercado Libre/Livre is a multi-seller MARKETPLACE with localized UI. Argentina/Mexico use Spanish labels such as "Comprar ahora", "Agregar al carrito", and "Otras opciones de compra"; Brazil uses "Comprar agora", "Adicionar ao carrinho", and "Outras opções de compra". Follow the labels for the current country — do not mix the Spanish and Portuguese flows.
+- Catalog product pages can group the same product from many sellers. The main buy box represents ONE seller/offer, while "Otras opciones de compra"/"Outras opções de compra" may have a different price, seller reputation, shipping cost, or arrival date. Compare the active offer before quoting or adding it.
+- Variant trap: choose required color, size ("talle"/"talla"/"tamanho"), capacity, voltage, flavor, or other variation BEFORE adding. A variation can change stock, seller, price, and delivery; read back the selected variation from the product page or cart.
+- LOCATION-FIRST shipping: set the destination postal code ("código postal" in AR/MX, "CEP" in BR) before promising availability, freight, free shipping, pickup, or an arrival date. Re-check these in the cart because they depend on both destination and seller.
+- Displayed discounts and installment amounts ("cuotas"/"parcelas") may depend on the payment method, and the listing price can exclude shipping. Use "Agregar/Adicionar ao carrito" when choices still need review; verify seller, variations, quantity, shipping, and the final payable total before any consequential "Comprar ahora/agora" action.
+- Search/result hosts such as listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, and lista.mercadolivre.com.br may redirect automation to /gz/account-verification. If that verification wall appears, STOP and ask the user to complete it manually; do not retry, bypass it, or claim that results were inspected.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,
