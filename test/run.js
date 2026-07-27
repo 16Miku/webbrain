@@ -28177,7 +28177,7 @@ console.log('\nprovider categorization');
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -28236,7 +28236,7 @@ test('llama.cpp provider defaults to mid prompt tier for saved configs without c
 
 test('inferContextWindow: model-aware cloud/router defaults and local 16k fallback', () => {
   for (const infer of [inferContextWindowCh, inferContextWindowFx]) {
-    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
     for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
@@ -28928,7 +28928,7 @@ test('listProviderModels sends saved API keys for auth-enabled OpenAI-compatible
 
   try {
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-      for (const id of ['jan', 'vllm', 'sglang', 'localai']) {
+      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
         const mgr = new PM();
         const config = {
           ...mgr._defaultConfigs()[id],
@@ -29621,7 +29621,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(Object.keys(defaults).length, 103, `${label}: expected 27 original + 76 new providers`);
+    assert.equal(Object.keys(defaults).length, 104, `${label}: expected 28 original + 76 new providers`);
     for (const id of expectedIds) {
       const config = defaults[id];
       assert.ok(config, `${label}: missing ${id}`);
@@ -30415,7 +30415,7 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const mgr = new PM();
     const defaults = mgr._defaultConfigs();
-    for (const id of ['jan', 'vllm', 'sglang', 'localai']) {
+    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.ok(defaults[id], `${PM.name}: missing default config for ${id}`);
       assert.equal(defaults[id].type, 'openai', `${PM.name}: ${id} should use OpenAI-compatible provider`);
       assert.equal(defaults[id].category, 'local', `${PM.name}: ${id} should be local`);
@@ -30756,6 +30756,7 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     'vllm',
     'sglang',
     'localai',
+    'gpt4all',
     'azure_openai',
     'anthropic',
     'gemini',
@@ -31332,6 +31333,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
     'vllm',
     'sglang',
     'localai',
+    'gpt4all',
     'gemini',
     'mistral',
     'deepseek',
@@ -32504,6 +32506,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
       { category: 'local', providerName: 'vllm' },
       { category: 'local', providerName: 'sglang' },
       { category: 'local', providerName: 'localai' },
+      { category: 'local', providerName: 'gpt4all' },
       { category: 'local', providerName: 'openai' },
     ]) {
       const provider = new Provider(config);
@@ -32516,7 +32519,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
 
 test('OpenAI-compatible local providers always use legacy request token fields', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       const provider = new Provider({
         category: 'local',
         providerName,
