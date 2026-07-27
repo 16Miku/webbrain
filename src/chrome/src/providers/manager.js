@@ -25,7 +25,7 @@ import {
 } from './context-windows.js';
 
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
@@ -256,6 +256,19 @@ export class ProviderManager {
         label: 'LocalAI (Local)',
         providerName: 'localai',
         baseUrl: 'http://localhost:8080/v1',
+        model: '',
+        contextWindow: 16384,
+        apiKey: '',
+        supportsAskStreaming: true,
+        supportsVision: true,
+        enabled: true,
+      },
+      gpt4all: {
+        type: 'openai',
+        category: 'local',
+        label: 'GPT4All (Local)',
+        providerName: 'gpt4all',
+        baseUrl: 'http://localhost:4891/v1',
         model: '',
         contextWindow: 16384,
         apiKey: '',
@@ -632,7 +645,7 @@ export class ProviderManager {
 
   /**
    * Provider category for filter UI. Returns one of:
-   *   'local'  — runs on the user's machine (llama.cpp, ollama, lmstudio, jan, vllm, sglang, localai)
+   *   'local'  — runs on the user's machine (llama.cpp, ollama, lmstudio, jan, vllm, sglang, localai, gpt4all)
    *   'cloud'  — first-party API endpoint (openai, anthropic, gemini, etc.)
    *   'router' — multi-model gateways that fan out to many backends (openrouter, cloudflare, nvidia, groq)
    * Reads `config.category` first; falls back to a per-id table so configs
@@ -641,7 +654,7 @@ export class ProviderManager {
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
     if (config?.type === 'llamacpp') return 'local';
-    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai'].includes(id)) return 'local';
+    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }

@@ -96,7 +96,7 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **103 built-in provider cards** with base URLs and default models
+Settings ships **104 built-in provider cards** with base URLs and default models
 pre-filled — see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
 ## Features
@@ -179,7 +179,7 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | [Architecture](docs/architecture.md) | System overview, turn flow, subsystems |
 | [Agent tools](docs/agent-tools.md) | Tiers, modes, and the full tool matrix |
 | [Slash commands](docs/slash-commands.md) | Every command and flag |
-| [Providers and models](docs/providers-and-models.md) | All 103 provider cards, local setup, tiers |
+| [Providers and models](docs/providers-and-models.md) | All 104 provider cards, local setup, tiers |
 | [Skills](docs/skills.md) | Bundled skills, importing, skill tools |
 | [Security model](docs/security-model.md) | Permissions, credentials, trust boundaries |
 | [Prompt-injection defense](docs/prompt-injection-defense.md) | Defense layers and known gaps |
