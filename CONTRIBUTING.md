@@ -177,12 +177,12 @@ the FAQ on the main page. If you've benchmarked a model that should be on
 that list (or shouldn't, for a stated reason), open an issue with the
 benchmark setup, the trace, and the comparison data.
 
-### Code: prompt tier system, Firefox parity, recorder fixes
+### Code: prompt tier system and Firefox parity
 
 See [`TODOs.md`](TODOs.md) for engineering items we know we want to do but
-haven't gotten to. Some of those (e.g. small-tier ACT prompt, `upload_file`
-in Firefox, missing step numbers on tool events in traces) are well-scoped
-and a good first PR if you want a code task.
+haven't gotten to. Some of those (e.g. the small-tier ACT prompt and
+`full_page_screenshot` in Firefox) are well-scoped and a good first PR if you
+want a code task.
 
 ---
 

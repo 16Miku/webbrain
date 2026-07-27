@@ -92,7 +92,7 @@ Firefox 不包含 Chrome 独有的 Dev 工具和 `shadow_dom_query`；其余核�
 | 读取/提取 | `read_page`、`read_pdf`、`read_page_source`、`extract_data`、`inspect_element_styles`、`get_selection` |
 | Dev 编辑与诊断 | `inject_css`、`remove_injected_css`、`patch_element`、`revert_patch`、`execute_js`、`read_console`、`inspect_network_requests`、`inspect_event_listeners`、`highlight_element` |
 | Shadow DOM 和框架 | `get_shadow_dom`、`shadow_dom_query`（Chrome）、`get_frames`、`iframe_read`、`iframe_click`、`iframe_type` |
-| 网络和文件 | `fetch_url`、`research_url`、`list_downloads`、`read_downloaded_file`、`download_resource_from_page`、`download_files`、`upload_file`（Chrome） |
+| 网络和文件 | `fetch_url`、`research_url`、`list_downloads`、`read_downloaded_file`、`download_resource_from_page`、`download_files`、`upload_file` |
 | 长时间运行的工作 | `schedule_resume`、`schedule_task`、`scratchpad_write`、`progress_update`、`progress_read` |
 | 安全/工作流 | `verify_form`、`clarify`、`done`、`solve_captcha` |
 | 媒体 | `download_social_media`，以及启用时的动态技能工具 |
@@ -182,7 +182,7 @@ W               等待页面稳定
 | 控制台/网络检查 | WebBrain 核心工具列表中没有专用的控制台日志读取器。存在用于 API 观察的网络快捷方式，但没有面向模型的请求日志读取器。 | 专用的 `read_console_messages` 和 `read_network_requests`。 |
 | 下载 | 多个浏览器下载/文件工具加上动态下载作业技能工具。 | `downloads` 权限存在，`gif_creator` 可以下载导出内容，但未找到通用的下载管理器等效功能。 |
 | 媒体下载 | 首选 `download_public_media` 技能；浏览器回退 `download_social_media`。 | 未找到公共媒体下载等效功能。 |
-| 文件上传 | Chrome 有基于 downloadId/路径的 `upload_file` 流程；Firefox 没有。 | `file_upload` 直接在文件输入上设置本地绝对路径；`upload_image` 通过引用或坐标上传捕获/用户图像。 |
+| 文件上传 | 两个浏览器都有 `upload_file`。Chrome 支持 `downloadId` 与绝对 `filePath`；Firefox 支持 `downloadId` 重新拉取以及侧栏用户文件选择器（无 CDP，因此不能设置任意本地路径）。 | `file_upload` 直接在文件输入上设置本地绝对路径；`upload_image` 通过引用或坐标上传捕获/用户图像。 |
 | 调度器 | `schedule_resume` 和 `schedule_task`。 | 存在定时任务 UI/提示字符串，但在可见工具列表中未恢复模型可调用的调度器模式。 |
 | 验证码 | 配置 CapSolver 后的 `solve_captcha`。 | 明确的安全提示要求尊重验证码，绝不绕过；未恢复求解工具。 |
 | 持久代理记忆 | `scratchpad_write`、`progress_update`、`progress_read`。 | 存在对话压缩；未恢复等效的草稿板/进度工具。 |
