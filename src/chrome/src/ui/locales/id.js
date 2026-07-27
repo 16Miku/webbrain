@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': 'Tampilkan catatan saat ini',
   'sp.slash.clear_scratchpad': 'Kosongkan bak pasir saat ini',
   'sp.slash.allow_api': 'Izinkan mutasi API untuk percakapan ini',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Nonaktifkan permintaan izin secara global',
   'sp.slash.compact': 'Kompak konteks percakapan ini',
   'sp.slash.verbose': 'Beralih tampilan alat antara verbose dan kompak',

@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': "Salve a última execução registrada com sucesso",
   'sp.slash.delete_workflow': "Excluir um fluxo de trabalho salvo por ID",
   'sp.slash.allow_api': "Permitir mutações de API para esta conversa",
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': "Desabilitar prompts de permissão globalmente",
   'sp.slash.compact': "Compacte este contexto de conversa",
   'sp.slash.verbose': "Alternar exibição de ferramenta detalhada ou compacta",

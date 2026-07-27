@@ -567,6 +567,7 @@ export default {
   'sp.slash.show_scratchpad': 'Tunjukkan pad nota semasa',
   'sp.slash.clear_scratchpad': 'Kosongkan pad nota semasa',
   'sp.slash.allow_api': 'Benarkan mutasi API untuk perbualan ini',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Nyahaktifkan gesaan kebenaran secara global',
   'sp.slash.compact': 'Padatkan konteks perbualan ini',
   'sp.slash.verbose': 'Togol paparan alat antara terperinci dan padat',

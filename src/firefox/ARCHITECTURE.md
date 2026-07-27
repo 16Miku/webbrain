@@ -1,16 +1,15 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 25.9.7 · Manifest V2 · Background Page
+> Version 26.0.1 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
 - **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
-- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureVisibleTab()` instead of CDP `Page.captureScreenshot`.
+- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's Firefox 109 minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
-- **No duplicate-submit guard** — the per-tab submit-throttle (Chrome v3.6.5+) is still Chrome-only. Firefox's agent loop does not block rapid duplicate Create/Submit clicks. `blockedDone` and the ambiguous-click candidate payload were ported to Firefox in v4.0.1 (see "Overlay defenses" below).
 - **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
 
 Everything else — the agent loop, LLM providers, site adapters, Ask/Act/Dev mode routing, Plan before Act, loop detection, API shortcut observer, trace recorder, scheduler, context management — is architecturally identical to Chrome unless noted below.
@@ -55,6 +54,7 @@ src/firefox/
 │   ├── agent/
 │   │   ├── agent.js                # Core agent loop
 │   │   ├── loop-detector.js        # Browser-free loop detection, directly unit-tested
+│   │   ├── image-budget.js         # Browser-free screenshot sizing, directly unit-tested
 │   │   ├── mutation-tools.js       # This build's state-change + mutating tool sets
 │   │   ├── tools.js                # Tool schemas + system prompts (incl. 4 AX tools)
 │   │   ├── skills.js               # Settings skills + dynamic skill tool manifests
@@ -172,10 +172,9 @@ Firefox's AX tools use synthetic events only — there is no trusted-event path.
 
 ### What was intentionally skipped in the Firefox port
 
-These Chrome v3.6.x features depend on CDP or agent-level state and were not ported — they can be re-evaluated later:
+These Chrome v3.6.x features depend on CDP and were not ported — they can be re-evaluated later:
 
 - **CDP-enriched `click_ax` frontmost resolution** — when `click_ax` lands on a node that overlaps many candidates, Chrome re-queries via CDP to pick the frontmost hit. Firefox relies on the initial ref_id resolution plus the v4.0.1 occlusion hit-test (see below).
-- **Duplicate-submit guard** — Chrome's agent.js tracks recent submit tool calls and blocks duplicates within a short window. Not in Firefox's agent loop.
 - **Offscreen fetch fallback** — Chrome falls through to an offscreen-document proxy when direct fetch fails (common for localhost LLM servers and private-network destinations). Firefox has no offscreen API; local servers must handle CORS themselves.
 
 ### Overlay defenses (v4.0.1+)
@@ -189,6 +188,16 @@ Brought to Chrome parity in v4.0.1 — same three layers, synthetic-event-safe s
 **`blockedDone` heuristic (ported in v4.0.1).** Firefox's `done` now probes open dialogs, visible forms, and live-region messages via `browser.tabs.executeScript` (MV2 equivalent of Chrome's CDP probe). If the summary claims completion while a modal or form is still visible, returns `{blockedDone: true}` up to 2× per tab before letting `done` through with a loud verification note. Block count cleared on `clearConversation`.
 
 System prompt has a new "MODALS & DIALOGS" section describing the intended flow and the "dialog still open" failure pattern.
+
+### Duplicate-submit guard
+
+Submit-like text clicks use the same browser-free guard as Chrome. The first
+click is recorded by tab, normalized label, and current URL; another matching
+click within 45 seconds is blocked unless `_allowResubmit` explicitly
+acknowledges the retry. An acknowledged retry re-arms the window, so a further
+rapid duplicate needs its own acknowledgement. Navigation, expired entries,
+ordinary labels, and validation-rejected submits remain eligible for a fresh
+click.
 
 ---
 
@@ -399,7 +408,7 @@ document.dispatchEvent(ev);
 
 ### Verify form
 
-Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureVisibleTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
+Reads all form field values via `browser.tabs.executeScript()` and captures a viewport screenshot via `browser.tabs.captureTab()`. The system prompt guides the LLM to call this before submitting important multi-field forms.
 
 ---
 
@@ -447,10 +456,12 @@ Uses `browser.storage.local` instead of `chrome.storage.local` for config persis
 
 ## Scheduled Tasks (`scheduler.js`)
 
-Firefox ships the same `ScheduledJobManager` class (`src/firefox/src/agent/scheduler.js`), using `browser.alarms` instead of `chrome.alarms`. Feature parity with the Chrome build except for two differences:
+Firefox ships the same `ScheduledJobManager` class (`src/firefox/src/agent/scheduler.js`), using `browser.alarms` instead of `chrome.alarms`. Feature parity with the Chrome build except for one difference:
 
 - **No service-worker keepalive.** Chrome pings `chrome.runtime.getPlatformInfo` every 20 s during a job run to prevent the MV3 service worker from dying mid-run. Firefox has a persistent background page (MV2) that is always alive, so no keepalive is needed.
-- **URL-target tabs open active.** On Firefox, URL-target tasks open their tab with `active: true` (Chrome opens them in the background). This is a cosmetic difference with no behavioural impact.
+
+Like Chrome, Firefox opens URL-target task tabs inactive and does not activate
+an existing target tab before a scheduled run.
 
 All job kinds (`resume`, `task`), lifecycle states, retry/deferral logic, schedule types (`once`, `recurring`), LLM tools (`schedule_resume`, `schedule_task`), and storage key (`wb_scheduled_jobs`) are identical to Chrome. See `docs/architecture.md § Scheduled Tasks` for the full reference.
 
@@ -546,7 +557,6 @@ when the tab conversation already has `/allow-api`.
 | No full-page screenshot | Only visible viewport | Scroll + multiple captures |
 | No shadow-root piercing (closed) | Can't read closed shadow roots | Dev-mode `execute_js` with manual traversal |
 | No arbitrary-path/CDP upload | Cannot attach an arbitrary local path silently | Use a prior `downloadId` re-fetch or WebBrain's user file picker |
-| No duplicate-submit guard | Agent may submit twice if LLM loops | Rely on site-level idempotence / user watches |
 | No ambiguous-click CDP enrichment | Overlapping hit-target ambiguity resolved by ref_id only | Prompting / adapter guidance |
 | MV2 background page | Less efficient than MV3 service worker | `persistent: false` helps |
 

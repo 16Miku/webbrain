@@ -300,6 +300,7 @@ function candidateSummary(candidate) {
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
     callbackName: candidate?.callbackName || null,
+    responseTokenPresent: candidate?.responseTokenPresent === true,
     responseFieldId: candidate?.responseFieldId || null,
     responseFieldIndex: Number.isInteger(candidate?.responseFieldIndex)
       ? candidate.responseFieldIndex
@@ -407,6 +408,8 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
         dialogAssociated: previous.dialogAssociated === true || candidate.dialogAssociated === true,
         responseField: previous.responseField === true || candidate.responseField === true,
+        responseTokenPresent: previous.responseTokenPresent === true
+          || candidate.responseTokenPresent === true,
       };
       for (const field of taskParameterFields) {
         const previousValue = previous[field];
@@ -627,11 +630,22 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const visibleElement = (element) => {
     if (!element) return false;
     try {
-      const style = typeof pageWindow?.getComputedStyle === 'function'
+      const elementStyle = typeof pageWindow?.getComputedStyle === 'function'
         ? pageWindow.getComputedStyle(element)
         : null;
-      if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
-      if (element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
+      if (
+        elementStyle
+        && (elementStyle.visibility === 'hidden' || elementStyle.visibility === 'collapse')
+      ) return false;
+      let current = element;
+      for (let depth = 0; current && depth < 30; depth += 1) {
+        const style = typeof pageWindow?.getComputedStyle === 'function'
+          ? pageWindow.getComputedStyle(current)
+          : null;
+        if (style && (style.display === 'none' || Number(style.opacity) === 0)) return false;
+        if (current.hidden || current.getAttribute?.('aria-hidden') === 'true') return false;
+        current = current.parentElement || null;
+      }
       if (typeof element.getBoundingClientRect === 'function') {
         const rect = element.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) return false;
@@ -657,13 +671,21 @@ export function detectCaptchaCandidatesInPage(scope = null) {
         .map(id => pageDocument.getElementById?.(id)?.textContent || '')
         .join(' ');
     } catch (_) {}
+    let renderedHeadings = '';
+    try {
+      renderedHeadings = Array.from(
+        element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
+      )
+        .filter(visibleElement)
+        .map(heading => heading.textContent || '')
+        .join(' ');
+    } catch (_) {}
     return [
       element.getAttribute?.('aria-label'),
       labelledBy,
-      element.querySelector?.('h1, h2, h3, [role="heading"]')?.textContent,
+      renderedHeadings,
       element.getAttribute?.('title'),
       element.innerText,
-      element.textContent,
     ].some(value => challengeDialogRe.test(String(value || '')));
   });
   const elementInChallengeDialog = (element) => {
@@ -686,6 +708,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     const {
       responseFieldDialogAssociated,
       alsoResponseFieldDialogAssociated,
+      alsoResponseTokenPresent,
       ...serializableCandidate
     } = candidate;
     candidates.push({
@@ -693,6 +716,8 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       frameUrl,
       challengeFrame,
       responseField,
+      responseTokenPresent: candidate.responseTokenPresent === true
+        || alsoResponseTokenPresent === true,
       documentTimeOrigin,
       dialogAssociated: candidate.dialogAssociated === true
         || responseFieldDialogAssociated === true
@@ -728,9 +753,12 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     const responseFieldIndex = fields.indexOf(field);
     let responseFieldId = '';
     try { responseFieldId = String(field.id || field.getAttribute?.('id') || ''); } catch (_) {}
+    let responseTokenPresent = false;
+    try { responseTokenPresent = String(field.value || '').trim().length > 0; } catch (_) {}
     return {
       ...(responseFieldId ? { responseFieldId } : {}),
       ...(responseFieldIndex >= 0 ? { responseFieldIndex } : {}),
+      responseTokenPresent,
       ...(elementInChallengeDialog(field) ? { responseFieldDialogAssociated: true } : {}),
     };
   };
@@ -741,6 +769,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       ...(Number.isInteger(identity.responseFieldIndex)
         ? { alsoResponseFieldIndex: identity.responseFieldIndex }
         : {}),
+      alsoResponseTokenPresent: identity.responseTokenPresent === true,
       ...(identity.responseFieldDialogAssociated
         ? { alsoResponseFieldDialogAssociated: true }
         : {}),

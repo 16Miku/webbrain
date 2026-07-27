@@ -8,8 +8,10 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
@@ -216,6 +218,9 @@ const { tracesToMarkdown } = await import(
 );
 const { tracesToMarkdown: tracesToMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/trace-export.js').replace(/\\/g, '/')
+);
+const { webbrainTraceToAtif } = await import(
+  'file://' + path.join(ROOT, 'scripts/trace-to-atif.mjs').replace(/\\/g, '/')
 );
 const SavedWorkflowsCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/workflows.js').replace(/\\/g, '/')
@@ -442,6 +447,28 @@ const CaptchaGateCh = await import(
 const CaptchaGateFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js').replace(/\\/g, '/')
 );
+const ToolCallParserCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js').replace(/\\/g, '/')
+);
+const ToolCallParserFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js').replace(/\\/g, '/')
+);
+const ImageBudgetCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/image-budget.js').replace(/\\/g, '/')
+);
+const ImageBudgetFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/image-budget.js').replace(/\\/g, '/')
+);
+const {
+  estimateImageTokens,
+  fitImageDimensions,
+} = ImageBudgetCh;
+const SubmitClickGuardCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/submit-click-guard.js').replace(/\\/g, '/')
+);
+const SubmitClickGuardFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/submit-click-guard.js').replace(/\\/g, '/')
+);
 // The mutating-tool surface differs per build, so it lives outside the
 // byte-identical loop-detector module. Import the real sets rather than
 // restating them here — a hand-copied list is exactly the drift this suite
@@ -553,6 +580,9 @@ const {
   listZipEntryNames,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
+);
+const { traceExportToOtlp, parseTraceToOtlpArgs } = await import(
+  'file://' + path.join(ROOT, 'scripts/trace-to-otlp.mjs').replace(/\\/g, '/')
 );
 
 // providers/manager.js — pure ESM at module load (chrome.* only inside
@@ -1093,6 +1123,79 @@ test('remaining model-facing screenshot fallbacks apply redaction', () => {
     'Firefox done verification should redact before tracing the screenshot');
   assert.doesNotMatch(firefoxBody, /screenshot:\s*dataUrl/,
     'Firefox done verification should not embed base64 in the done result');
+});
+
+test('Firefox done verifies inactive scheduled tabs before accepting completion', async () => {
+  const originalBrowser = globalThis.browser;
+  const tabId = 417;
+  let executeScriptCalls = 0;
+  const captures = [];
+  try {
+    globalThis.browser = {
+      tabs: {
+        get: async () => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/items/new',
+          title: 'Create item',
+        }),
+        executeScript: async () => {
+          executeScriptCalls += 1;
+          return [{
+            url: 'https://example.test/items/new',
+            title: 'Create item',
+            openDialogCount: 1,
+            dialogTitles: ['Create item'],
+            visibleFormCount: 1,
+            relevantFormCount: 1,
+            formDescriptors: [{
+              label: 'Create item',
+              relevant: true,
+              utility: false,
+              editableCount: 2,
+              submitCount: 1,
+            }],
+            liveRegionMessages: [],
+            successMessages: [],
+          }];
+        },
+        captureTab: async (capturedTabId, options) => {
+          captures.push({ tabId: capturedTabId, options });
+          return 'data:image/png;base64,AA==';
+        },
+        sendMessage: async () => ({}),
+      },
+    };
+
+    const agent = new AgentFx({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent.conversationModes.set(tabId, 'act');
+
+    const result = await agent.executeTool(tabId, 'done', {
+      summary: 'Created the item.',
+      outcome: 'success',
+    });
+
+    assert.equal(executeScriptCalls, 1,
+      'inactive Firefox runs should still probe dialogs and forms before done');
+    assert.deepEqual(captures, [{
+      tabId,
+      options: { format: 'png', quality: 80 },
+    }], 'inactive Firefox runs should capture their own tab for done verification');
+    assert.equal(result.blockedDone, true,
+      'an unfinished inactive-tab form should block a successful done result');
+
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+    const doneStart = source.indexOf("if (name === 'done')");
+    const doneEnd = source.indexOf('// Network & download tools', doneStart);
+    assert.doesNotMatch(source.slice(doneStart, doneEnd), /if \(tab\?\.active\)/,
+      'Firefox done verification must not be gated on active-tab state');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
 });
 
 test('firefox auto and media screenshot helpers redact model-facing data URLs', () => {
@@ -2716,6 +2819,253 @@ const TRACE_RUNS = [
   },
 ];
 
+test('ATIF export: maps a WebBrain run, LLM calls, tools, metrics, and final response', () => {
+  const input = {
+    schema: 'webbrain-trace/1',
+    exportedAt: 1_770_000_100_000,
+    exportedByWebBrainVersion: '23.4.0',
+    run: {
+      runId: 'atif-run-1',
+      conversationId: 'conversation-7',
+      startedAt: 1_770_000_000_000,
+      endedAt: 1_770_000_010_000,
+      userMessage: 'Find the current title',
+      model: 'test-model',
+      providerId: 'local-test',
+      providerClass: 'openai-compatible',
+      mode: 'act',
+      status: 'done',
+      webbrainVersion: '23.3.1',
+      totalInputTokens: 12,
+      totalOutputTokens: 7,
+      finalContent: 'The title is Example.',
+    },
+    events: [
+      {
+        runId: 'atif-run-1',
+        seq: 1,
+        ts: 1_770_000_001_000,
+        kind: 'llm_response',
+        data: {
+          step: 1,
+          content: '',
+          model: 'test-model-v2',
+          latencyMs: 120,
+          toolCalls: [{
+            id: 'call-1',
+            name: 'read_page',
+            args: '{"include":"title"}',
+          }],
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 3,
+            prompt_tokens_details: { cached_tokens: 2 },
+            cost: 0.001,
+          },
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 2,
+        ts: 1_770_000_002_000,
+        kind: 'tool',
+        data: {
+          step: 1,
+          name: 'read_page',
+          args: { include: 'title' },
+          result: { title: 'Example' },
+          latencyMs: 80,
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 3,
+        ts: 1_770_000_003_000,
+        kind: 'llm_response',
+        data: {
+          step: 2,
+          content: 'The title is Example.',
+          usage: { prompt_tokens: 0, completion_tokens: 4 },
+        },
+      },
+      {
+        runId: 'atif-run-1',
+        seq: 4,
+        ts: 1_770_000_004_000,
+        kind: 'screenshot',
+        data: { caption: 'viewport', screenshot_base64: 'sensitive-bytes' },
+      },
+    ],
+  };
+
+  const atif = webbrainTraceToAtif(input);
+  assert.equal(atif.schema_version, 'ATIF-v1.7');
+  assert.equal(atif.session_id, 'atif-run-1');
+  assert.equal(atif.trajectory_id, 'atif-run-1');
+  assert.deepEqual(atif.agent, {
+    name: 'webbrain',
+    version: '23.3.1',
+    model_name: 'test-model',
+    extra: {
+      provider_id: 'local-test',
+      provider_class: 'openai-compatible',
+      mode: 'act',
+    },
+  });
+  assert.equal(atif.steps.length, 3);
+  assert.deepEqual(atif.steps[0], {
+    step_id: 1,
+    timestamp: '2026-02-02T02:40:00.000Z',
+    source: 'user',
+    message: 'Find the current title',
+  });
+  assert.equal(atif.steps[1].source, 'agent');
+  assert.equal(atif.steps[1].model_name, 'test-model-v2');
+  assert.deepEqual(atif.steps[1].tool_calls, [{
+    tool_call_id: 'call-1',
+    function_name: 'read_page',
+    arguments: { include: 'title' },
+  }]);
+  assert.deepEqual(atif.steps[1].observation.results, [{
+    source_call_id: 'call-1',
+    content: '{"title":"Example"}',
+    extra: { latency_ms: 80, webbrain_seq: 2 },
+  }]);
+  assert.deepEqual(atif.steps[1].metrics, {
+    prompt_tokens: 12,
+    completion_tokens: 3,
+    cached_tokens: 2,
+    extra: { webbrain_reported_cost: 0.001 },
+  });
+  assert.equal(atif.steps[2].message, 'The title is Example.');
+  assert.deepEqual(atif.final_metrics, {
+    total_prompt_tokens: 12,
+    total_completion_tokens: 7,
+    total_steps: 3,
+  });
+  assert.deepEqual(atif.extra.omitted_event_counts, { screenshot: 1 });
+  assert.ok(!JSON.stringify(atif).includes('sensitive-bytes'));
+});
+
+test('ATIF export: synthesizes deterministic tool calls and preserves malformed arguments safely', () => {
+  const input = {
+    schema: 'webbrain-trace/1',
+    exportedByWebBrainVersion: '23.4.0',
+    run: {
+      runId: 'standalone-tool',
+      userMessage: '',
+      model: '',
+      finalContent: 'Finished.',
+    },
+    events: [
+      {
+        seq: 7,
+        ts: 1_770_000_007_000,
+        kind: 'tool',
+        data: {
+          step: 1,
+          name: 'custom_tool',
+          args: '{not valid json',
+          result: undefined,
+        },
+      },
+    ],
+  };
+  const atif = webbrainTraceToAtif(input);
+  assert.equal(atif.agent.version, '23.4.0');
+  assert.equal(atif.steps[1].llm_call_count, 0);
+  assert.deepEqual(atif.steps[1].tool_calls, [{
+    tool_call_id: 'webbrain-standalone-tool-7-1',
+    function_name: 'custom_tool',
+    arguments: {},
+    extra: { raw_arguments: '{not valid json' },
+  }]);
+  assert.deepEqual(atif.steps[1].observation.results, [{
+    source_call_id: 'webbrain-standalone-tool-7-1',
+    content: '(missing tool result)',
+    extra: { webbrain_seq: 7 },
+  }]);
+  assert.equal(atif.steps[2].message, 'Finished.');
+});
+
+test('ATIF export: replaces repeated provider tool-call IDs deterministically', () => {
+  const atif = webbrainTraceToAtif({
+    schema: 'webbrain-trace/1',
+    run: { runId: 'duplicate-calls', userMessage: 'Run both tools' },
+    events: [
+      {
+        seq: 1,
+        kind: 'llm_response',
+        data: {
+          step: 1,
+          toolCalls: [
+            { id: 'duplicate', name: 'first', args: '{}' },
+            { id: 'duplicate', name: 'second', args: '{}' },
+          ],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    atif.steps[1].tool_calls.map((call) => call.tool_call_id),
+    ['duplicate', 'webbrain-duplicate-calls-1-2'],
+  );
+});
+
+test('ATIF export: rejects unsupported or malformed WebBrain exports', () => {
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'other/1', run: {}, events: [] }),
+    /Expected schema "webbrain-trace\/1"/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: {}, events: 'nope' }),
+    /events must be an array/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: {}, events: [] }),
+    /run\.runId must be a non-empty string/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({ schema: 'webbrain-trace/1', run: { runId: 7 }, events: [] }),
+    /run\.runId must be a non-empty string/,
+  );
+  assert.throws(
+    () => webbrainTraceToAtif({
+      schema: 'webbrain-trace/1',
+      run: { runId: 'expected' },
+      events: [{ runId: 'foreign', kind: 'tool', data: {} }],
+    }),
+    /event runId "foreign" does not match/,
+  );
+});
+
+test('ATIF export: CLI writes a sibling .atif.json file', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webbrain-atif-'));
+  try {
+    const sourcePath = path.join(tempDir, 'trace.json');
+    fs.writeFileSync(sourcePath, JSON.stringify({
+      schema: 'webbrain-trace/1',
+      exportedByWebBrainVersion: '23.4.0',
+      run: { runId: 'cli-run', userMessage: 'Hello' },
+      events: [],
+    }));
+    const result = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts/trace-to-atif.mjs'), sourcePath],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /trace\.atif\.json/);
+    const output = JSON.parse(
+      fs.readFileSync(path.join(tempDir, 'trace.atif.json'), 'utf8'),
+    );
+    assert.equal(output.schema_version, 'ATIF-v1.7');
+    assert.equal(output.session_id, 'cli-run');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('trace export: renders the full tool chain from trace events, in order', () => {
   const { markdown, turnCount, toolCount } = tracesToMarkdown(TRACE_RUNS);
   assert.equal(turnCount, 1);
@@ -2940,6 +3290,189 @@ test('trace export: renders Ask streaming decisions and aggregate lifecycle metr
     assert.match(markdown, /Ask stream completed · chat_completions · terminal_event_received · 7 text deltas · 128 chars · first delta 42 ms · 310 ms total · 0 tool calls/, `${label}: completion metrics missing`);
     assert.match(markdown, /Ask stream fallback · responses · missing_terminal_event · code missing_response_completed · 2 text deltas/, `${label}: fallback reason missing`);
   }
+});
+
+const OTLP_TRACE_FIXTURE = {
+  schema: 'webbrain-trace/1',
+  exportedAt: 1_784_937_600_000,
+  exportedByWebBrainVersion: '25.9.7',
+  run: {
+    runId: 'run_otlp_fixture',
+    conversationId: 'conversation_fixture',
+    startedAt: 1_784_937_600_000,
+    endedAt: 1_784_937_601_500,
+    durationMs: 1500,
+    status: 'loop_stopped',
+    model: 'test-model',
+    providerId: 'test-provider',
+    webbrainVersion: '25.9.6',
+    userMessage: 'Private user request',
+    finalContent: 'Private final answer',
+  },
+  events: [
+    {
+      runId: 'run_otlp_fixture',
+      seq: 1,
+      ts: 1_784_937_600_500,
+      kind: 'llm_response',
+      data: {
+        step: 1,
+        model: 'response-model',
+        latencyMs: 200,
+        usage: { prompt_tokens: 31, completion_tokens: 12 },
+        content: 'Private model response',
+      },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 2,
+      ts: 1_784_937_600_900,
+      kind: 'tool',
+      data: {
+        step: 1,
+        name: 'fetch_url',
+        latencyMs: 75,
+        args: { url: 'https://private.example/account' },
+        result: { success: false, error: 'Private tool failure' },
+      },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 3,
+      ts: 1_784_937_601_000,
+      kind: 'error',
+      data: { step: 1, phase: 'loop', message: 'Stopped after repeated failures.' },
+    },
+    {
+      runId: 'run_otlp_fixture',
+      seq: 4,
+      ts: 1_784_937_601_100,
+      kind: 'screenshot',
+      data: { step: 1, screenshot_base64: 'data:image/png;base64,PRIVATE_SCREENSHOT' },
+    },
+  ],
+};
+
+function otlpAttributes(items = []) {
+  return Object.fromEntries(items.map(({ key, value }) => {
+    const entry = value || {};
+    const field = Object.keys(entry)[0];
+    return [key, entry[field]];
+  }));
+}
+
+test('OTLP trace converter emits valid ID, hierarchy, timing, and GenAI span shapes', () => {
+  const payload = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  assert.equal(payload.resourceSpans.length, 1);
+  const [{ resource, scopeSpans }] = payload.resourceSpans;
+  assert.equal(otlpAttributes(resource.attributes)['service.name'], 'webbrain');
+  assert.equal(scopeSpans.length, 1);
+  assert.equal(scopeSpans[0].scope.name, 'webbrain.trace-export');
+
+  const spans = scopeSpans[0].spans;
+  assert.equal(spans.length, 3);
+  const [root, inference, tool] = spans;
+  assert.match(root.traceId, /^[0-9a-f]{32}$/);
+  assert.match(root.spanId, /^[0-9a-f]{16}$/);
+  assert.equal(root.parentSpanId, undefined);
+  assert.equal(root.name, 'invoke_agent WebBrain');
+  assert.equal(root.kind, 1);
+  assert.equal(root.startTimeUnixNano, '1784937600000000000');
+  assert.equal(root.endTimeUnixNano, '1784937601500000000');
+  assert.equal(root.status.code, 2);
+
+  for (const child of [inference, tool]) {
+    assert.equal(child.traceId, root.traceId);
+    assert.equal(child.parentSpanId, root.spanId);
+    assert.match(child.spanId, /^[0-9a-f]{16}$/);
+  }
+  assert.equal(inference.name, 'chat response-model');
+  assert.equal(inference.kind, 3);
+  assert.equal(inference.startTimeUnixNano, '1784937600300000000');
+  assert.equal(inference.endTimeUnixNano, '1784937600500000000');
+  assert.deepEqual(otlpAttributes(inference.attributes), {
+    'gen_ai.operation.name': 'chat',
+    'gen_ai.provider.name': 'test-provider',
+    'gen_ai.request.model': 'response-model',
+    'gen_ai.usage.input_tokens': '31',
+    'gen_ai.usage.output_tokens': '12',
+    'webbrain.event.sequence': '1',
+    'webbrain.step': '1',
+  });
+
+  assert.equal(tool.name, 'execute_tool fetch_url');
+  assert.equal(tool.kind, 1);
+  assert.equal(tool.status.code, 2);
+  assert.equal(otlpAttributes(tool.attributes)['error.type'], 'tool_error');
+  assert.equal(otlpAttributes(tool.attributes)['gen_ai.tool.name'], 'fetch_url');
+});
+
+test('OTLP trace converter is deterministic and private-by-default', () => {
+  const first = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  const second = traceExportToOtlp(OTLP_TRACE_FIXTURE);
+  assert.deepEqual(second, first);
+  const serialized = JSON.stringify(first);
+  assert.doesNotMatch(serialized, /Private user request|Private final answer|Private model response/);
+  assert.doesNotMatch(serialized, /private\.example|Private tool failure/);
+  assert.doesNotMatch(serialized, /gen_ai\.tool\.call\.(?:arguments|result)/);
+
+  const withContent = traceExportToOtlp(OTLP_TRACE_FIXTURE, { includeContent: true });
+  const contentText = JSON.stringify(withContent);
+  assert.match(contentText, /Private user request/);
+  assert.match(contentText, /Private final answer/);
+  assert.match(contentText, /Private model response/);
+  assert.match(contentText, /gen_ai\.tool\.call\.arguments/);
+  assert.match(contentText, /gen_ai\.tool\.call\.result/);
+  assert.doesNotMatch(contentText, /PRIVATE_SCREENSHOT/);
+});
+
+test('OTLP trace converter rejects other schemas and malformed records', () => {
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, schema: 'webbrain-trace/2' }),
+    /webbrain-trace\/1/,
+  );
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, run: null }),
+    /run object/,
+  );
+  assert.throws(
+    () => traceExportToOtlp({ ...OTLP_TRACE_FIXTURE, events: {} }),
+    /events array/,
+  );
+  const legacy = traceExportToOtlp({
+    schema: 'webbrain-trace/1',
+    run: { runId: 'legacy-run' },
+    events: [{
+      seq: 1,
+      ts: 1234,
+      kind: 'tool',
+      data: { name: 'read_page' },
+    }],
+  }, { includeContent: true });
+  const [root, tool] = legacy.resourceSpans[0].scopeSpans[0].spans;
+  assert.equal(root.startTimeUnixNano, '1234000000');
+  assert.equal(tool.startTimeUnixNano, '1234000000');
+  assert.doesNotMatch(JSON.stringify(legacy), /stringValue\":\"(?:undefined|null)\"/);
+});
+
+test('OTLP trace converter CLI parsing keeps content opt-in and output explicit', () => {
+  assert.deepEqual(parseTraceToOtlpArgs(['trace.json']), {
+    input: 'trace.json',
+    output: '',
+    includeContent: false,
+  });
+  assert.deepEqual(parseTraceToOtlpArgs([
+    'trace.json',
+    '--output',
+    'trace.otlp.json',
+    '--include-content',
+  ]), {
+    input: 'trace.json',
+    output: 'trace.otlp.json',
+    includeContent: true,
+  });
+  assert.throws(() => parseTraceToOtlpArgs([]), /input trace JSON/);
+  assert.throws(() => parseTraceToOtlpArgs(['a.json', '--upload']), /Unknown option/);
 });
 
 test('/export --traces is wired in both side panels and backgrounds', () => {
@@ -4754,8 +5287,11 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   }
 });
 
-test('CAPTCHA mutation preflight ignores hidden and off-viewport verification dialogs', async () => {
-  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fail closed', async () => {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
     const hiddenCases = [
       captchaEl('div', {
         role: 'dialog',
@@ -4776,8 +5312,73 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        const agent = new AgentClass({});
+        const observation = await agent._observeCaptchaChallenge(
+          1,
+          'get_accessibility_tree',
+          {
+            pageContent: 'dialog "Security verification" [ref_1]\n button "Dismiss" [ref_2]',
+            pageUrl: 'https://example.test/form',
+          },
+          {},
+        );
+        assert.ok(
+          observation.gate,
+          `${build}: ambiguous all-tree challenge was cleared by non-unique hidden evidence`,
+        );
+        assert.equal(
+          agent._captchaGateStates.has(1),
+          true,
+          `${build}: ambiguous all-tree challenge failed open`,
+        );
       });
     }
+    const visibilityOverrideNodes = [
+      captchaEl('div', { 'data-test-visibility': 'hidden' }, [
+        captchaEl('div', {
+          role: 'dialog',
+          innerText: 'Security verification',
+          'data-test-visibility': 'visible',
+        }, [
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+          captchaEl('iframe', {
+            src: 'https://www.google.com/recaptcha/api2/anchor?k=VISIBILITY_OVERRIDE_KEY',
+            'data-test-visibility': 'visible',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
+      );
+      const runtime = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
+      ).href);
+      const detected = runtime.detectCaptchaCandidatesInPage({
+        window: {
+          location: globalThis.location,
+          innerWidth: globalThis.innerWidth,
+          innerHeight: globalThis.innerHeight,
+          getComputedStyle: globalThis.getComputedStyle,
+        },
+        document: globalThis.document,
+      });
+      const candidate = detected.candidates.find(
+        entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
+      );
+      assert.equal(
+        candidate?.visible,
+        true,
+        `${build}: visible CAPTCHA widget under visibility-hidden ancestor was demoted`,
+      );
+    });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
@@ -4797,6 +5398,196 @@ test('CAPTCHA mutation preflight ignores hidden and off-viewport verification di
         'Email verification failed',
         `${build}: active-gate failure context was ignored`,
       );
+    });
+
+    const hiddenStageNodes = [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'Account details',
+        textContent: 'Account details Security verification',
+      }, [
+        captchaEl('h2', { textContent: 'Account details' }),
+        captchaEl('section', {
+          hidden: true,
+          innerText: 'Security verification',
+        }, [
+          captchaEl('h2', { textContent: 'Security verification' }),
+          captchaEl('div', {
+            class: 'g-recaptcha',
+            'data-sitekey': 'INACTIVE_STAGE_KEY',
+          }),
+        ]),
+      ]),
+    ];
+    await withCaptchaFakePage(build, hiddenStageNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
+      );
+    });
+    const hiddenStageCandidate = await detectCaptchaOnFakePage(build, hiddenStageNodes);
+    assert.equal(
+      hiddenStageCandidate?.dialogAssociated,
+      false,
+      `${build}: hidden CAPTCHA stage associated its widget with the visible modal`,
+    );
+  }
+});
+
+test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate on inconclusive scans', async () => {
+  for (const [build, gate, AgentClass] of [
+    ['chrome', CaptchaGateCh, AgentCh],
+    ['firefox', CaptchaGateFx, AgentFx],
+  ]) {
+    // A visible challenge dialog rendered inside an open shadow root (the
+    // LinkedIn interop-outlet pattern): invisible to document.querySelectorAll
+    // but reported by the shadow-piercing accessibility tree.
+    const shadowDialogNodes = [
+      captchaEl('div', {
+        id: 'interop-outlet',
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+            captchaEl('h2', { textContent: 'Security verification' }),
+          ]),
+        ],
+      }),
+    ];
+    await withCaptchaFakePage(build, shadowDialogNodes, async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage()?.label,
+        'Security verification',
+        `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
+      );
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: shadow-rooted challenge from an all-tree read did not arm the gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: shadow-rooted challenge did not persist a gate`);
+    });
+
+    // A hidden challenge is disproof only for the same normalized label in
+    // the same frame. An unrelated hidden reCAPTCHA must not clear a visible
+    // tree-only challenge (for example one inside a closed shadow root).
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        role: 'dialog',
+        innerText: 'reCAPTCHA',
+        hidden: true,
+      }),
+    ], async () => {
+      const agent = new AgentClass({});
+      const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
+        includeStatus: true,
+      });
+      assert.deepEqual(recheck.hiddenChallenges, [{
+        frameId: 0,
+        frameUrl: 'https://example.test/form',
+        label: 'reCAPTCHA',
+        normalizedLabel: 'recaptcha',
+      }], `${build}: hidden challenge evidence lost its frame or normalized label`);
+
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: unrelated hidden challenge cleared the tree-only CAPTCHA gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
+
+      const sameLabelAgent = new AgentClass({});
+      const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "reCAPTCHA" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(
+        sameLabelObservation.gate,
+        `${build}: same-label hidden template cleared the tree-only CAPTCHA gate`,
+      );
+      assert.equal(
+        sameLabelAgent._captchaGateStates.has(1),
+        true,
+        `${build}: same-label hidden template failed open`,
+      );
+    });
+
+    const crossFrameAgent = new AgentClass({});
+    crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: null,
+      challengeHidden: true,
+      hiddenChallenges: [{
+        frameId: 7,
+        frameUrl: 'https://challenge.example.test/hidden',
+        label: 'Security verification',
+        normalizedLabel: 'security verification',
+      }],
+      inspectionComplete: true,
+    });
+    const crossFrameObservation = await crossFrameAgent._observeCaptchaChallenge(
+      1,
+      'get_accessibility_tree',
+      {
+        pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+        pageUrl: 'https://example.test/form',
+        captchaChallengeFrameId: 0,
+      },
+      {},
+    );
+    assert.ok(crossFrameObservation.gate, `${build}: hidden challenge from another frame cleared the gate`);
+    assert.equal(crossFrameAgent._captchaGateStates.has(1), true, `${build}: cross-frame hidden challenge failed open`);
+
+    // Hidden ancestry must still win even across the shadow boundary: a
+    // challenge dialog inside the shadow root of a hidden host stays inert.
+    await withCaptchaFakePage(build, [
+      captchaEl('div', {
+        hidden: true,
+        shadow: [
+          captchaEl('div', { role: 'dialog', innerText: 'Security verification' }),
+        ],
+      }),
+    ], async () => {
+      assert.equal(
+        gate.detectChallengeDialogInPage(),
+        null,
+        `${build}: shadow dialog under a hidden host armed the preflight`,
+      );
+    });
+
+    // When script injection fails outright the scan proves nothing — the
+    // tree's observation must be kept rather than failing the gate open.
+    // (The "scan succeeds but cannot find the dialog at all" case is covered
+    // by the unsupported-Arkose routing test: absence is not disproof.)
+    await withCaptchaFakePage(build, [], async () => {
+      globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
+      globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
+      const agent = new AgentClass({});
+      const observation = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        {
+          pageContent: 'dialog "Security verification" [ref_1]\n button "Verify" [ref_2]',
+          pageUrl: 'https://example.test/form',
+        },
+        {},
+      );
+      assert.ok(observation.gate, `${build}: inconclusive DOM scan cleared the tree challenge and failed open`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive DOM scan did not persist a gate`);
     });
   }
 });
@@ -5495,49 +6286,24 @@ test('failed API replay suppresses future bulk replay hints until a success clea
     }
   }
 });
-//
-// These mirror the static helpers on Agent exactly — keep them in sync
-// with src/chrome/src/agent/agent.js `_estimateImageTokens` and
-// `_fitImageDimensions`. We shim rather than import because agent.js
-// pulls in chrome.* and cdp-client.
-// ────────────────────────────────────────────────────────────────────────
-
-const IMAGE_BUDGET_DEFAULT = {
-  pxPerToken: 28,
-  maxTargetPx: 1568,
-  maxTargetTokens: 1568,
-};
-
-function estimateImageTokens(w, h, pxPerToken) {
-  return Math.ceil((w / pxPerToken) * (h / pxPerToken));
-}
-
-function fitImageDimensions(origW, origH, budget = IMAGE_BUDGET_DEFAULT) {
-  const { pxPerToken, maxTargetPx, maxTargetTokens } = budget;
-  if (origW <= maxTargetPx && origH <= maxTargetPx &&
-      estimateImageTokens(origW, origH, pxPerToken) <= maxTargetTokens) {
-    return [origW, origH];
-  }
-  if (origH > origW) {
-    const [h, w] = fitImageDimensions(origH, origW, budget);
-    return [w, h];
-  }
-  const aspect = origW / origH;
-  let hi = origW, lo = 1;
-  while (true) {
-    if (lo + 1 >= hi) return [lo, Math.max(Math.round(lo / aspect), 1)];
-    const mid = Math.floor((lo + hi) / 2);
-    const midH = Math.max(Math.round(mid / aspect), 1);
-    if (mid <= maxTargetPx &&
-        estimateImageTokens(mid, midH, pxPerToken) <= maxTargetTokens) {
-      lo = mid;
-    } else {
-      hi = mid;
-    }
-  }
-}
-
 console.log('\nimage budget');
+
+test('image budget helpers are production code shared by both browser agents', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/image-budget.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/image-budget.js'), 'utf8'),
+    'chrome and firefox image-budget modules must remain byte-identical',
+  );
+  assert.deepEqual(ImageBudgetFx.IMAGE_BUDGET, ImageBudgetCh.IMAGE_BUDGET);
+  assert.equal(
+    ImageBudgetFx.estimateImageTokens(1920, 1080, 28),
+    estimateImageTokens(1920, 1080, 28),
+  );
+  assert.deepEqual(
+    ImageBudgetFx.fitImageDimensions(3840, 2160),
+    fitImageDimensions(3840, 2160),
+  );
+});
 
 test('small viewport passes through unchanged (fast path)', () => {
   // 1280×800 at pxPerToken=28 → 1307 tokens < 1568 — no resize.
@@ -5984,6 +6750,79 @@ test('blank screenshot retry: skips retry when a blank page has no content signa
     assert.equal(result.blankFrameRetry, undefined);
     assert.equal(recaptures, 0);
   }
+});
+
+test('Chrome background capture emulates focus without foregrounding and restores CDP state', async () => {
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const calls = [];
+  cdpClientCh.sendCommand = async (tabId, method, params) => {
+    calls.push({ tabId, method, params });
+    return {};
+  };
+  try {
+    const agent = new AgentCh({});
+    const tabId = 42;
+
+    agent._runningTabs.add(tabId);
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: false, focusEmulated: true },
+    );
+    assert.deepEqual(calls, [{
+      tabId,
+      method: 'Emulation.setFocusEmulationEnabled',
+      params: { enabled: true },
+    }]);
+
+    await agent._clearBackgroundFocusEmulation(tabId);
+    assert.deepEqual(calls.at(-1), {
+      tabId,
+      method: 'Emulation.setFocusEmulationEnabled',
+      params: { enabled: false },
+    });
+
+    calls.length = 0;
+    agent._configureCapturePolicyForRun(tabId, { foreground: true });
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: true, focusEmulated: false },
+    );
+    assert.deepEqual(calls, [{ tabId, method: 'Page.bringToFront', params: undefined }]);
+
+    calls.length = 0;
+    agent._configureCapturePolicyForRun(tabId, { cloudRun: true });
+    await agent._preparePageForCapture(tabId);
+    assert.deepEqual(calls, [{ tabId, method: 'Page.bringToFront', params: undefined }],
+      'managed cloud runs should retain foreground capture behavior');
+
+    calls.length = 0;
+    agent._runningTabs.delete(tabId);
+    agent._configureCapturePolicyForRun(tabId, {});
+    assert.deepEqual(
+      await agent._preparePageForCapture(tabId),
+      { foreground: false, focusEmulated: false },
+    );
+    assert.deepEqual(calls, [], 'capture outside a run should not mutate focus state');
+  } finally {
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+});
+
+test('local screenshot implementations do not foreground ordinary run tabs', () => {
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  const firefoxScheduler = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/scheduler.js'), 'utf8');
+
+  assert.equal(
+    [...chromeAgent.matchAll(/Page\.bringToFront/g)].length,
+    2,
+    'Chrome should mention bringToFront only in policy documentation and its foreground compatibility branch',
+  );
+  assert.match(chromeAgent, /if \(this\._foregroundCaptureTabs\.has\(tabId\)\)[\s\S]*?'Page\.bringToFront'/);
+  assert.doesNotMatch(firefoxAgent, /captureVisibleTab/);
+  assert.match(firefoxAgent, /browser\.tabs\.captureTab\(tabId,/);
+  assert.doesNotMatch(firefoxScheduler, /active:\s*job\.source !== 'watch'/);
+  assert.match(firefoxScheduler, /tabs\.create\(\{ url: job\.target\.url, active: false \}\)/);
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -14036,6 +14875,12 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   const scheduleList = chrome.parseSlashInvocation('  /SCHEDULE   --LIST  ');
   assert.equal(scheduleList.action, 'list');
   assert.equal(chrome.slashInvocationIsOutOfBand(scheduleList), true);
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const foreground = runtime.parseSlashInvocation('/FoReGrOuNd finish the checkout');
+    assert.equal(foreground.action, 'enable', `${label}: /foreground should select the compatibility action`);
+    assert.equal(foreground.payload, 'finish the checkout', `${label}: /foreground should preserve the task payload`);
+    assert.equal(foreground.command.acceptsPayload, true, `${label}: /foreground should accept an inline prompt`);
+  }
   for (const command of chrome.SLASH_COMMANDS.filter((item) => !item.unsupported)) {
     const invocation = chrome.parseSlashInvocation(`${command.value} --help`);
     assert.equal(invocation.action, 'help', `${command.value} --help should route to command help`);
@@ -14113,6 +14958,57 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.match(panel, /if \(match\?\.kind === 'base-action'\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return activateSlashCommandBaseAction\(\);/, `${label}: Enter should run the selected base-action row`);
     assert.match(panel, /if \(e\.key === 'Enter'\) \{[\s\S]*?const match = slashCommandMatches\[slashCommandSelectedIndex\];[\s\S]*?match\?\.kind === 'option'[\s\S]*?applySlashCommandCompletion\(\)/, `${label}: Enter should accept an option suggestion before submitting the parent command`);
     assert.match(panel, /if \(e\.key === 'Tab'\) \{[\s\S]*?const completionIndex =[\s\S]*?if \(!slashCommandMatches\[completionIndex\]\) return false;\s*e\.preventDefault\(\);[\s\S]*?applySlashCommandCompletion\(completionIndex\);/, `${label}: Tab should retain its default focus behavior when the Enter row is the only match`);
+  }
+});
+
+test('/foreground is a run-scoped compatibility override in both local builds', () => {
+  for (const [label, panelRel, backgroundRel, apiName] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/background.js', 'chrome'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/background.js', 'browser'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+
+    assert.match(panel, /const foregroundForSend = retryOptions[\s\S]*?\^\\\/foreground\\b/i,
+      `${label}: send flow should recognize /foreground before slash parsing`);
+    assert.match(panel, /foreground: foregroundForSend,[\s\S]*?sendRunWithReconnect\('chat_start',[\s\S]*?foreground: foregroundForSend,/,
+      `${label}: fresh runs and retries should carry the foreground bit`);
+    assert.match(panel, /case 'max_steps_reached':[\s\S]*?showContinueButton\(\{ foreground: retryPayload\?\.foreground === true \}\)/,
+      `${label}: max-step continuations should inherit foreground mode`);
+    assert.match(panel, /function showContinueButton\(options = \{\}\)[\s\S]*?continueBtn\.dataset\.foreground[\s\S]*?continueAgent\(\{[\s\S]*?foreground:/,
+      `${label}: persisted Continue buttons should retain foreground mode`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\)[\s\S]*?const foregroundForSend = options\?\.foreground === true;[\s\S]*?dataset\.retryForeground = foregroundForSend[\s\S]*?sendRunWithReconnect\('continue_start',[\s\S]*?foreground: foregroundForSend,/,
+      `${label}: continuation runs should forward and retain foreground mode`);
+    assert.match(panel, /async function adoptRestoredRunState\([\s\S]*?sendRunWithReconnect\('continue_start', \{[\s\S]*?foreground: runUi\.foreground === true,/,
+      `${label}: remounted runs should recover foreground mode from the durable journal`);
+    assert.match(panel, /async function applyActiveRunState\([\s\S]*?dataset\.retryForeground = runUi\.foreground === true/,
+      `${label}: replayed max-step events should rebuild foreground continuation state`);
+    assert.match(background, new RegExp(
+      `async function activateForegroundCompatibilityTab\\(tabId\\)[\\s\\S]*?${apiName}\\.tabs\\.update\\(tabId, \\{ active: true \\}\\)[\\s\\S]*?${apiName}\\.windows\\.update\\(tab\\.windowId, \\{ focused: true \\}\\)`,
+    ), `${label}: compatibility mode should activate the run tab and focus its window`);
+    assert.match(background, /if \(msg\.foreground\) await activateForegroundCompatibilityTab\(tabId\);[\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
+      `${label}: background dispatch should scope foreground behavior to the requested run`);
+    assert.match(background, /case 'continue':[\s\S]*?foreground: msg\.foreground === true,[\s\S]*?agent\.continueProcessing\([\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
+      `${label}: background continuations should persist foreground mode and configure the agent`);
+
+    for (const [caseName, nextCaseName] of [
+      ['chat', 'chat_stream'],
+      ['chat_stream', 'continue'],
+      ['continue', 'clear_conversation'],
+    ]) {
+      const start = background.indexOf(`case '${caseName}': {`);
+      const end = background.indexOf(`case '${nextCaseName}': {`, start);
+      const body = background.slice(start, end);
+      const tryIndex = body.indexOf('try {');
+      const activationIndex = body.indexOf('await activateForegroundCompatibilityTab(tabId)');
+      const finallyIndex = body.lastIndexOf('finally {');
+      const releaseIndex = body.lastIndexOf('releaseRunKeepalive();');
+      assert.ok(start >= 0 && end > start, `${label}: ${caseName} handler should be extractable`);
+      assert.ok(tryIndex >= 0 && activationIndex > tryIndex,
+        `${label}: ${caseName} activation failures should enter run cleanup`);
+      assert.ok(finallyIndex > activationIndex && releaseIndex > finallyIndex,
+        `${label}: ${caseName} should release its keepalive after activation failures`);
+    }
   }
 });
 
@@ -14198,7 +15094,7 @@ test('hidden trailing run-capture suffixes wrap normal prompts without entering 
   assert.match(host, /const filename = recordingState\.filename \|\| `webbrain-recording-\$\{stamp\}\.webm`;/, 'chrome: custom filename should override only the default timestamped recording name');
 });
 
-test('run screenshot capture reactivates the originating tab before saving', async () => {
+test('run screenshot capture keeps Firefox backgrounded while Chrome retains its diagnostic activation path', async () => {
   for (const [label, captureRel] of [
     ['chrome', 'src/chrome/src/run-capture.js'],
     ['firefox', 'src/firefox/src/run-capture.js'],
@@ -14219,6 +15115,10 @@ test('run screenshot capture reactivates the originating tab before saving', asy
           captures.push({ windowId, options });
           return 'data:image/png;base64,capture';
         },
+        captureTab: async (tabId, options) => {
+          captures.push({ tabId, options });
+          return 'data:image/png;base64,capture';
+        },
       },
       downloads: {
         download: async (options) => {
@@ -14235,8 +15135,13 @@ test('run screenshot capture reactivates the originating tab before saving', asy
     const runtime = await loadRunCaptureRuntime(captureRel);
     const result = await runtime.captureAndSaveRunScreenshot(api, 42, 'run-after.png');
 
-    assert.deepEqual(updates, [{ tabId: 42, changes: { active: true } }], `${label}: inactive run tab should be reactivated`);
-    assert.deepEqual(captures, [{ windowId: 7, options: { format: 'png' } }], `${label}: capture should use the reactivated tab's window`);
+    if (label === 'chrome') {
+      assert.deepEqual(updates, [{ tabId: 42, changes: { active: true } }], 'chrome: diagnostic capture should retain its existing activation path');
+      assert.deepEqual(captures, [{ windowId: 7, options: { format: 'png' } }], 'chrome: diagnostic capture should use the activated tab window');
+    } else {
+      assert.deepEqual(updates, [], 'firefox: inactive run tab should not be activated for capture');
+      assert.deepEqual(captures, [{ tabId: 42, options: { format: 'png' } }], 'firefox: capture should target the run tab directly');
+    }
     assert.equal(downloads[0].filename, 'run-after.png', `${label}: after screenshot should be saved under the requested filename`);
     assert.deepEqual(result, {
       filename: '/Users/test/Downloads/WebBrain/run-after.png',
@@ -15119,7 +16024,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.match(body, /resumeBtn\.textContent = t\('sp\.subscribe\.resume'\);/, `${label}: subscribe card should render a localized resume action`);
     assert.match(body, /resumeBtn\.dataset\.resumeMode = \['ask', 'act', 'dev'\]\.includes\(resumeMode\)[\s\S]*?\? resumeMode[\s\S]*?: \(textEl\.closest\('\.message\.assistant'\)\?\.dataset\.runMode \|\| agentMode\);/, `${label}: resume action should prefer an explicitly captured failed run mode`);
     assert.match(body, /resumeAfterSubscription\(resumeBtn\)/, `${label}: subscribe card should use the shared resume handler`);
-    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{ mode \}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode before continuing`);
+    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?const mode = \['ask', 'act', 'dev'\]\.includes\(btn\?\.dataset\?\.resumeMode\)[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(\{[\s\S]*?mode,[\s\S]*?foreground: btn\?\.dataset\?\.resumeForeground === 'true',[\s\S]*?\}\);[\s\S]*?\}/, `${label}: subscribe resume should synchronize the visible mode and preserve foreground mode before continuing`);
     assert.match(panel, /btn\.addEventListener\('click', \(\) => resumeAfterSubscription\(btn\)\);/, `${label}: restored subscribe cards should use the shared resume handler`);
     const errorUpdateStart = panel.indexOf('function renderAgentErrorUpdate(');
     const errorUpdateEnd = panel.indexOf('\n}\n\nfunction rebindRestoredMessageControls', errorUpdateStart);
@@ -15873,7 +16778,7 @@ test('sidepanel rebinds interactive controls after restoring serialized tab chat
     assert.match(panel, /function bindMessageCopyButton\(btn\) \{[\s\S]*?addEventListener\('click'/, `${label}: message copy rebinding should attach a click listener`);
     assert.match(panel, /btn\.__wbCopyBound = true;/, `${label}: message copy binding should use an in-memory flag so restored HTML can rebind`);
     assert.match(panel, /document\.querySelectorAll\('\.code-copy-btn'\)[\s\S]*?addEventListener\('click'/, `${label}: code copy buttons should be rebound`);
-    assert.match(panel, /function rebindContinueButtons\(\) \{[\s\S]*?document\.querySelectorAll\('\.continue-btn'\)[\s\S]*?addEventListener\('click', continueAgent\)/, `${label}: restored Continue buttons should be rebound`);
+    assert.match(panel, /function rebindContinueButtons\(\) \{[\s\S]*?document\.querySelectorAll\('\.continue-btn'\)[\s\S]*?addEventListener\('click', \(\) => continueAgent\(\{[\s\S]*?foreground: btn\.dataset\.foreground === 'true'/, `${label}: restored Continue buttons should be rebound with their foreground mode`);
     assert.match(panel, /function rebindClarifyCards\(\) \{[\s\S]*?document\.querySelectorAll\('\.clarify-card'\)[\s\S]*?submitClarify\(card, tabId, clarifyId/, `${label}: restored clarify cards should be rebound`);
     assert.match(panel, /function rebindScheduleComposers\(\) \{[\s\S]*?document\.querySelectorAll\('form\.schedule-composer'\)[\s\S]*?bindScheduleComposer\(form\)/, `${label}: restored schedule composers should be rebound`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?rebindCopyButtons\(\);[\s\S]*?rebindContinueButtons\(\);[\s\S]*?rebindClarifyCards\(\);[\s\S]*?rebindScheduleComposers\(\);[\s\S]*?\}/, `${label}: restored tab chat should rebind all durable message controls`);
@@ -19928,7 +20833,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /function showContinueButton\(\) \{[\s\S]*?resetChatNavigation\(\);[\s\S]*?messagesEl\.appendChild\(bar\);[\s\S]*?scrollToBottom\(\{ force: true \}\);/,
+      /function showContinueButton\(options = \{\}\) \{[\s\S]*?resetChatNavigation\(\);[\s\S]*?messagesEl\.appendChild\(bar\);[\s\S]*?scrollToBottom\(\{ force: true \}\);/,
       `${label}: the blocking Continue prompt should replace turn navigation instead of being covered by it`,
     );
     assert.match(
@@ -21291,16 +22196,19 @@ test('Chrome ScheduledJobManager keeps alarm-triggered runs alive until completi
   assert.equal(keepAliveStops, 1, 'keepalive should stop after the run settles');
 });
 
-test('Firefox ScheduledJobManager activates URL-target tabs before running', async () => {
+test('Firefox ScheduledJobManager keeps URL-target tabs inactive while running', async () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);
   let h;
+  let observedInactiveTarget = false;
   h = makeSchedulerHarness(SchedulerFx, {
     now,
     processMessage: async (tabId) => {
-      assert.equal(h.tabs.get(tabId)?.active, true, 'Firefox URL-target scheduled runs need an active tab for screenshots');
+      assert.equal(h.tabs.get(tabId)?.active, false, 'Firefox URL-target scheduled runs should stay in the background');
+      observedInactiveTarget = true;
       return 'done';
     },
   });
+  h.tabs.set(77, { ...h.tabs.get(77), active: false });
   const created = await h.manager.createTaskJob({
     tabId: 77,
     conversationId: 'conv-1',
@@ -21316,8 +22224,7 @@ test('Firefox ScheduledJobManager activates URL-target tabs before running', asy
   });
 
   await h.manager.handleAlarm(h.alarmName(created.jobId));
-  const helperTab = [...h.tabs.values()].find((tab) => tab.url === 'https://example.org/app');
-  assert.equal(helperTab?.active, true, 'new Firefox URL helper tabs should be active');
+  assert.equal(observedInactiveTarget, true, 'Firefox should run the scheduled task against its inactive helper tab');
 });
 
 test('ScheduledJobManager restoreAlarms requeues stranded transient jobs', async () => {
@@ -24954,7 +25861,7 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
       warning: 'Full-page screenshot assembly failed (canvas too large). Showing the first captured tile instead.',
     });
     const agent = new AgentCh({});
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
 
     const result = await agent.captureFullPageScreenshotForUser(42);
@@ -24964,6 +25871,135 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;
+  }
+});
+
+test('Chrome full-page screenshot paths reject blank background captures after retries', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/background',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'Ymxhbms=' };
+    };
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
+
+    const agent = new AgentCh({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 200,
+      visibleTextChars: 100,
+      domNodes: 50,
+      imageCount: 0,
+      scrollHeight: 1200,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const userResult = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(userResult, {
+      ok: false,
+      error: 'Background full-page screenshot remained blank after retries',
+    });
+
+    const toolResult = await agent.executeTool(42, 'full_page_screenshot', {});
+    assert.deepEqual(toolResult, {
+      success: false,
+      error: 'Full page screenshot failed: Background full-page screenshot remained blank after retries',
+    });
+    assert.equal(captureCalls, 4, 'each full-page path should retry once before rejecting the blank frame');
+  } finally {
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome full-page blank guard ignores document length as the lone content signal', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  let captureCalls = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async (tabId) => ({
+          id: tabId,
+          active: false,
+          url: 'https://example.test/uniform-long-page',
+        }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: 'dW5pZm9ybQ==' };
+    };
+
+    const agent = new AgentCh({});
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      readyState: 'complete',
+      documentTextChars: 0,
+      visibleTextChars: 0,
+      domNodes: 20,
+      imageCount: 0,
+      scrollHeight: 5000,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({
+      blank: true,
+      reason: 'near-all-white frame',
+      meanLuma: 255,
+      lumaStdDev: 0,
+      whiteRatio: 1,
+      blackRatio: 0,
+    });
+
+    const result = await agent.captureFullPageScreenshotForUser(42);
+    assert.deepEqual(result, {
+      ok: true,
+      dataUrl: 'data:image/png;base64,dW5pZm9ybQ==',
+      warning: null,
+    });
+    assert.equal(captureCalls, 1, 'a uniform long page should not retry from scroll length alone');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
   }
 });
 
@@ -24990,7 +26026,7 @@ test('user full-page screenshots apply adapter capture policy without LLM adapte
     };
     const agent = new AgentCh({});
     agent.useSiteAdapters = false;
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
 
     const result = await agent.captureFullPageScreenshotForUser(42);
@@ -25040,7 +26076,7 @@ test('agent full-page screenshot tool applies adapter capture policy without LLM
     });
     agent.useSiteAdapters = false;
     agent.screenshotRedaction = true;
-    agent._bringToFrontForCapture = async () => {};
+    agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
     agent._shrinkImageForBudget = async (dataUrl) => ({ dataUrl, width: 400, height: 1500 });
     agent._redactScreenshotDataUrl = async (_tabId, dataUrl, options) => {
@@ -34118,6 +35154,199 @@ test('execute_js submissions receive form validation feedback', async () => {
     const result = JSON.parse(agent._unwrapUntrusted(messages[0].content));
     assert.equal(result.formValidationFailed, true, `${AgentClass.name}: execute_js validation failure was not returned`);
     assert.match(result.error, /correct the payment details/i);
+  }
+});
+
+test('duplicate submit-click guard is production code with Chrome/Firefox parity', async () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/submit-click-guard.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/submit-click-guard.js'), 'utf8'),
+    'chrome and firefox duplicate-submit guards must remain byte-identical',
+  );
+
+  for (const guardModule of [SubmitClickGuardCh, SubmitClickGuardFx]) {
+    const recentClicks = new Map();
+    const tabId = 6201;
+    let now = 100_000;
+    let currentUrl = 'https://example.test/products';
+    let urlReads = 0;
+    const getCurrentUrl = async () => {
+      urlReads += 1;
+      return currentUrl;
+    };
+
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: '  Save changes  ' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'first submit-like click should be recorded and allowed',
+    );
+    assert.deepEqual(recentClicks.get(tabId), [{
+      key: 'save changes|https://example.test/products',
+      ts: 100_000,
+      url: 'https://example.test/products',
+      text: 'Save changes',
+    }]);
+
+    now += 10_400;
+    const duplicate = await guardModule.guardRecentSubmitClick(
+      recentClicks,
+      tabId,
+      { text: 'SAVE changes' },
+      getCurrentUrl,
+      () => now,
+    );
+    assert.equal(duplicate.success, false);
+    assert.equal(duplicate.dispatched, false);
+    assert.equal(duplicate.blockedDuplicateSubmit, true);
+    assert.equal(duplicate.previousClickUrl, 'https://example.test/products');
+    assert.equal(duplicate.currentUrl, 'https://example.test/products');
+    assert.equal(duplicate.secondsSincePrevious, 10);
+    assert.match(duplicate.error, /pass _allowResubmit: true/i);
+
+    currentUrl = 'https://example.test/products/new';
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'the same label after navigation should be allowed',
+    );
+
+    now += guardModule.SUBMIT_CLICK_WINDOW_MS;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'an entry exactly at the expiry boundary should be allowed',
+    );
+    assert.equal(recentClicks.get(tabId).length, 1, 'expired submit-click entries were not pruned');
+
+    now += 30_000;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Save changes', _allowResubmit: true },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'explicit resubmit acknowledgement should bypass the guard',
+    );
+    assert.equal(
+      recentClicks.get(tabId)[0].ts,
+      now,
+      'an acknowledged resubmit should re-record the entry',
+    );
+
+    now += 30_000;
+    const thirdRapidClick = await guardModule.guardRecentSubmitClick(
+      recentClicks,
+      tabId,
+      { text: 'Save changes' },
+      getCurrentUrl,
+      () => now,
+    );
+    assert.equal(
+      thirdRapidClick.blockedDuplicateSubmit,
+      true,
+      'a rapid duplicate after an acknowledged resubmit should be blocked by the re-armed window',
+    );
+    assert.equal(thirdRapidClick.secondsSincePrevious, 30);
+
+    const readsBeforeIgnoredCalls = urlReads;
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        recentClicks,
+        tabId,
+        { text: 'Continue' },
+        getCurrentUrl,
+        () => now,
+      ),
+      null,
+      'non-submit-like labels should bypass the guard',
+    );
+    assert.equal(urlReads, readsBeforeIgnoredCalls, 'non-submit-like clicks should not query the tab URL');
+
+    const failedLookupClicks = new Map();
+    const failingUrlLookup = async () => {
+      throw new Error('tab closed');
+    };
+    assert.equal(
+      await guardModule.guardRecentSubmitClick(
+        failedLookupClicks,
+        tabId,
+        { text: 'Publish' },
+        failingUrlLookup,
+        () => now,
+      ),
+      null,
+    );
+    assert.equal(
+      (
+        await guardModule.guardRecentSubmitClick(
+          failedLookupClicks,
+          tabId,
+          { text: 'Publish' },
+          failingUrlLookup,
+          () => now,
+        )
+      ).blockedDuplicateSubmit,
+      true,
+      'URL lookup failures should retain the existing empty-URL guard behavior',
+    );
+  }
+});
+
+test('Firefox blocks a duplicate submit click before content-script dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  const tabId = 6202;
+  const url = 'https://example.test/products';
+  let dispatches = 0;
+
+  try {
+    globalThis.browser = {
+      tabs: {
+        get: async () => ({ id: tabId, url }),
+        sendMessage: async () => {
+          dispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+
+    const agent = new AgentFx({ getVisionProvider: async () => null });
+    agent._isPdfTab = async () => false;
+    agent._recentSubmitClicks.set(tabId, [{
+      key: `save|${url}`,
+      ts: Date.now(),
+      url,
+      text: 'Save',
+    }]);
+
+    const result = await agent.executeTool(tabId, 'click', { text: 'Save' });
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.blockedDuplicateSubmit, true);
+    assert.equal(dispatches, 0, 'Firefox dispatched a duplicate submit click to the content script');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -43919,6 +45148,103 @@ test('streamed plain final answers cannot bypass unresolved progress rows', asyn
   }
 });
 
+test('text tool-call parser is production code with format and allowlist coverage', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
+    'chrome and firefox tool-call parsers must remain byte-identical',
+  );
+  const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page']);
+  const cases = [
+    {
+      label: 'tool_call JSON with nested arguments',
+      raw: '<tool_call>{"name":"click","arguments":{"text":"Save","meta":{"source":"dialog"}}}</tool_call>',
+      expected: [{ name: 'click', args: { text: 'Save', meta: { source: 'dialog' } } }],
+    },
+    {
+      label: 'token wrapper',
+      raw: '<|tool_call|>{"name":"read_page","arguments":{}}<|/tool_call|>',
+      expected: [{ name: 'read_page', args: {} }],
+    },
+    {
+      label: 'functioncall wrapper',
+      raw: '<functioncall>{"name":"navigate","arguments":{"url":"https://example.test/path"}}</functioncall>',
+      expected: [{ name: 'navigate', args: { url: 'https://example.test/path' } }],
+    },
+    {
+      label: 'custom quote tokens',
+      raw: 'call:click{text:<|"|>Save<|"|>}',
+      expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'bare JSON with string arguments',
+      raw: '{"name":"read_page","arguments":"[]"}',
+      expected: [{ name: 'read_page', args: [] }],
+    },
+    {
+      label: 'XML typed parameters',
+      raw: [
+        '<tool_call><function=click>',
+        '<parameter=name>"Save"</parameter>',
+        '<parameter=index>2</parameter>',
+        '<parameter=force>true</parameter>',
+        '<parameter=coordinates>[10,20]</parameter>',
+        '</function></tool_call>',
+      ].join(''),
+      expected: [{
+        name: 'click',
+        args: { name: 'Save', index: 2, force: true, coordinates: [10, 20] },
+      }],
+    },
+    {
+      label: 'multiple wrappers preserve order',
+      raw: [
+        '<tool_call>{"name":"read_page","arguments":{}}</tool_call>',
+        '<tool_call>{"name":"click_ax","arguments":{"ref_id":"ref_7"}}</tool_call>',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click_ax', args: { ref_id: 'ref_7' } },
+      ],
+    },
+  ];
+
+  for (const parser of [ToolCallParserCh, ToolCallParserFx]) {
+    for (const scenario of cases) {
+      const calls = parser.parseToolCallsFromText(scenario.raw, allowed);
+      assert.deepEqual(
+        calls.map(call => ({
+          name: call.function.name,
+          args: JSON.parse(call.function.arguments),
+        })),
+        scenario.expected,
+        scenario.label,
+      );
+      assert.equal(
+        calls.every((call, index) =>
+          new RegExp(`^fallback_call_\\d+_${index}$`).test(call.id)
+        ),
+        true,
+        `${scenario.label}: fallback IDs were not stable OpenAI-style call IDs`,
+      );
+    }
+
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '<tool_call>{"name":"execute_js","arguments":{"code":"alert(1)"}}</tool_call>',
+        allowed,
+      ),
+      [],
+      'disallowed tool name bypassed the allowlist',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText('x'.repeat(10001), allowed),
+      [],
+      'oversized model text was parsed',
+    );
+  }
+});
+
 test('agent parses XML-style raw tool calls with ref_id parameters', () => {
   const raw = [
     '<tool_call>',
@@ -49324,12 +50650,13 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
 test('run UI journal: resumed requests preserve sequence and replay boundaries', () => {
   for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
     const journal = new Journal();
-    journal.begin(7, 'resume-request');
+    journal.begin(7, 'resume-request', { foreground: true });
     journal.record(7, 'resume-request', 'thinking', { content: 'Before restart' }, 'run-before');
     journal.record(7, 'resume-request', 'plan_review', { planId: 'plan-before' }, 'run-before');
     journal.acknowledge(7, 'resume-request', 1);
 
     const before = journal.get(7);
+    assert.equal(before.foreground, true, `${label}: foreground mode should be part of the durable run snapshot`);
     assert.equal(before.seq, 2, `${label}: fixture should start above sequence zero`);
     assert.equal(before.ackedSeq, 1, `${label}: fixture should retain an acknowledged replay boundary`);
 
@@ -49337,6 +50664,7 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
     restarted.restore(7, structuredClone(before));
     const resumed = restarted.resume(7, 'resume-request');
     assert.ok(resumed, `${label}: matching request should resume its existing journal`);
+    assert.equal(resumed.foreground, true, `${label}: restored continuations should retain foreground mode`);
     assert.equal(resumed.seq, 2, `${label}: resume must preserve the prior sequence`);
     assert.equal(resumed.ackedSeq, 1, `${label}: resume must preserve the acknowledged replay boundary`);
     assert.equal(resumed.truncatedBeforeSeq, 1, `${label}: resume must preserve the compaction boundary`);
@@ -49350,6 +50678,9 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
 
     const next = restarted.record(7, 'resume-request', 'thinking', { content: 'After restart' }, 'run-after');
     assert.equal(next.seq, 3, `${label}: first resumed event should advance beyond the old sequence`);
+
+    const backgroundRun = new Journal().begin(8, 'background-request');
+    assert.equal(backgroundRun.foreground, false, `${label}: ordinary runs should remain background by default`);
     assert.deepEqual(
       restarted.get(7).events.map(event => event.seq),
       [2, 3],
@@ -52671,6 +54002,7 @@ function captchaEl(tag, attrs = {}, children = []) {
     src: attrs.src,
     innerText: attrs.innerText || '',
     textContent: attrs.textContent || attrs.innerText || '',
+    value: attrs.value || '',
     hidden: attrs.hidden === true,
     style: {},
     classList: { contains: (c) => String(attrs.class || '').split(/\s+/).includes(c) },
@@ -52681,6 +54013,21 @@ function captchaEl(tag, attrs = {}, children = []) {
     querySelectorAll: (sel) => captchaMatchAll(children, sel),
   };
   for (const child of children) child.parentElement = el;
+  if (Array.isArray(attrs.shadow)) {
+    // Open shadow root: content is reachable only via el.shadowRoot, never
+    // through document/parent querySelectorAll — mirroring the real DOM.
+    const shadowChildren = attrs.shadow;
+    el.shadowRoot = {
+      host: el,
+      children: shadowChildren,
+      querySelector: (sel) => captchaMatchAll(shadowChildren, sel)[0] || null,
+      querySelectorAll: (sel) => captchaMatchAll(shadowChildren, sel),
+    };
+    for (const child of shadowChildren) {
+      child.parentElement = null;
+      child.getRootNode = () => el.shadowRoot;
+    }
+  }
   el.contains = (candidate) => {
     if (candidate === el) return true;
     return children.some(child => child === candidate || child.contains?.(candidate));
@@ -52695,6 +54042,7 @@ function captchaMatchAll(roots, selectorList) {
   })(roots);
   const selectors = String(selectorList).split(',').map(s => s.trim()).filter(Boolean);
   const matchesOne = (el, sel) => {
+    if (sel === '*') return true;
     // Tokenize into tag / .class / [attr…] parts. Splitting naively on "."
     // would break selectors like script[src*="recaptcha/api.js"].
     const parts = sel.match(/\[[^\]]*\]|\.[\w-]+|^[a-zA-Z][\w-]*/g) || [];
@@ -52742,7 +54090,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
   globalThis.innerHeight = 720;
   globalThis.getComputedStyle = (element) => ({
     display: element.hidden ? 'none' : 'block',
-    visibility: 'visible',
+    visibility: element.getAttribute?.('data-test-visibility') || 'visible',
     opacity: '1',
   });
   // The detector reaches for the extension API by name; give each build the
@@ -52799,6 +54147,13 @@ async function detectCaptchaOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
     return (await mod.detectCaptcha(1)).selected;
+  });
+}
+
+async function detectCaptchaDetailsOnFakePage(build, nodes) {
+  return withCaptchaFakePage(build, nodes, async () => {
+    const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
+    return mod.detectCaptcha(1);
   });
 }
 
@@ -53253,11 +54608,16 @@ test('challenge dialog with no enabled supported solver stops the batch for manu
   }
 });
 
-test('CAPTCHA gate helper stays byte-identical and cloud traces retain gate diagnostics outside update rollover', () => {
+test('CAPTCHA helpers stay byte-identical and cloud traces retain gate diagnostics outside update rollover', () => {
   assert.equal(
     fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/captcha-gate.js'), 'utf8'),
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js'), 'utf8'),
     'chrome and firefox CAPTCHA gate helpers must remain byte-identical',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/captcha-frame-runtime.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/captcha-frame-runtime.js'), 'utf8'),
+    'chrome and firefox CAPTCHA frame runtimes must remain byte-identical',
   );
   const cloudSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
   assert.match(cloudSource, /if \(type === 'captcha_gate'\)[\s\S]*?run\.captchaDiagnostics = \{ \.\.\.scrubbedData, observedAt: run\.updatedAt \};/);
@@ -53515,6 +54875,110 @@ test('captcha detection binds the selected widget to its own response field', as
       `${build}: hCaptcha compatibility field identity missing`,
     );
     assert.equal(hcaptcha.alsoResponseFieldIndex, 0, `${build}: hCaptcha compatibility field index missing`);
+  }
+});
+
+test('captcha detection reports exact response token state without exposing token values', async () => {
+  const token = 'RAW_CAPTCHA_TOKEN_MUST_NOT_ESCAPE_7fc2';
+  for (const build of ['chrome', 'firefox']) {
+    const solvedField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-solved',
+      name: 'g-recaptcha-response',
+      value: token,
+    });
+    const pendingField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-pending',
+      name: 'g-recaptcha-response',
+    });
+    const solvedHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_SOLVED_WIDGET',
+      hidden: true,
+    }, [solvedField]);
+    const pendingHost = captchaEl('div', {
+      class: 'g-recaptcha',
+      'data-sitekey': 'KEY_PENDING_WIDGET',
+    }, [pendingField]);
+
+    const pendingDetection = await detectCaptchaDetailsOnFakePage(build, [
+      solvedHost,
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      pendingDetection.selected.responseTokenPresent,
+      false,
+      `${build}: a solved sibling widget contaminated the selected pending widget`,
+    );
+    assert.equal(
+      pendingDetection.candidates.find(candidate =>
+        candidate.websiteKey === 'KEY_SOLVED_WIDGET'
+      )?.responseTokenPresent,
+      true,
+      `${build}: non-empty exact response field was not reported as solved`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(pendingDetection),
+      new RegExp(token),
+      `${build}: raw response token escaped through detection`,
+    );
+
+    pendingField.value = token;
+    const solvedDetection = await detectCaptchaDetailsOnFakePage(build, [
+      solvedHost,
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      solvedDetection.selected.responseTokenPresent,
+      true,
+      `${build}: selected non-empty response field was not reported as solved`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(solvedDetection),
+      new RegExp(token),
+      `${build}: selected raw response token escaped through detection`,
+    );
+
+    const primaryField = captchaEl('textarea', {
+      id: 'h-captcha-response-primary',
+      name: 'h-captcha-response',
+    });
+    const compatibilityField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-compatibility',
+      name: 'g-recaptcha-response',
+      value: token,
+    });
+    const hcaptcha = await detectCaptchaOnFakePage(build, [
+      captchaEl('div', {
+        class: 'h-captcha',
+        'data-sitekey': 'HKEY_SOLVED_COMPATIBILITY',
+      }, [primaryField, compatibilityField]),
+    ]);
+    assert.equal(
+      hcaptcha.responseTokenPresent,
+      true,
+      `${build}: solved hCaptcha compatibility field was ignored`,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(hcaptcha),
+      new RegExp(token),
+      `${build}: hCaptcha compatibility token escaped through detection`,
+    );
+
+    Object.defineProperty(pendingField, 'value', {
+      configurable: true,
+      get() { throw new Error('hostile response field getter'); },
+    });
+    const unreadable = await detectCaptchaOnFakePage(build, [
+      pendingHost,
+      captchaEl('script', { src: 'https://www.google.com/recaptcha/api.js' }),
+    ]);
+    assert.equal(
+      unreadable.responseTokenPresent,
+      false,
+      `${build}: unreadable response field did not fail closed`,
+    );
   }
 });
 

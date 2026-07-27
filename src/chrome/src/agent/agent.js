@@ -1,7 +1,10 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
 import { handleDoneJson } from './cloud-output.js';
 import { LoopDetector } from './loop-detector.js';
+import { parseToolCallsFromText } from './tool-call-parser.js';
+import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
+import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -362,6 +365,13 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
+    // Ordinary runs capture and act in their original tab without activating
+    // it. Managed cloud runs and the explicit /foreground compatibility
+    // override retain the old Page.bringToFront behavior for their lifetime.
+    this._foregroundCaptureTabs = new Set();
+    // Focus emulation is enabled lazily for background screenshot paths. CDP
+    // sessions outlive individual runs, so every run cleanup must disable it.
+    this._focusEmulatedTabs = new Set();
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
     this._completionRunCounter = 0;
     this.scheduler = null;
@@ -770,19 +780,48 @@ export class Agent extends LoopDetector {
     }
   }
 
+  async _captureFullPageWithBlankRetry(tabId, capturePolicy) {
+    const probe = await this._captureViewportProbe(tabId);
+    const captureOnce = async () => {
+      const capture = await this._withIndicatorsHidden(tabId, () =>
+        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
+      );
+      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      if (!imageData) return null;
+      return {
+        dataUrl: `data:image/png;base64,${imageData}`,
+        capture,
+      };
+    };
+    return this._retryBlankScreenshotCapture(
+      await captureOnce(),
+      captureOnce,
+      {
+        probe,
+        // A full-page image is expected to reflect the whole scroll extent.
+        // Document length alone therefore cannot distinguish a legitimate
+        // uniform page from a blank background compositor frame.
+        includeDocumentLengthSignal: false,
+      },
+    );
+  }
+
   async captureFullPageScreenshotForUser(tabId) {
     if (!tabId) return { ok: false, error: 'No tab ID' };
     try {
       const capturePolicy = await this._getFullPageCapturePolicy(tabId);
       await cdpClient.attach(tabId);
-      await this._bringToFrontForCapture(tabId);
-      const capture = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-      );
-      const imageData = typeof capture === 'string' ? capture : capture?.data;
+      await this._preparePageForCapture(tabId);
+      const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+      const capture = captured?.capture;
       const warning = typeof capture === 'object' ? capture?.warning || null : null;
-      if (!imageData) return { ok: false, error: 'Full-page screenshot returned no image data' };
-      return { ok: true, dataUrl: `data:image/png;base64,${imageData}`, warning };
+      if (!captured?.dataUrl) {
+        return { ok: false, error: 'Full-page screenshot returned no image data' };
+      }
+      if (captured?.blankFrameRetry?.finalBlank) {
+        return { ok: false, error: 'Background full-page screenshot remained blank after retries' };
+      }
+      return { ok: true, dataUrl: captured.dataUrl, warning };
     } catch (e) {
       return { ok: false, error: e?.message || String(e) };
     }
@@ -2828,6 +2867,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         frameId: Number.isInteger(entry?.frameId) ? entry.frameId : 0,
         payload: entry?.result,
       }));
+      const hiddenChallenges = entries.flatMap(entry => {
+        const label = String(entry.payload?.hiddenChallenge?.label || '');
+        if (!label) return [];
+        const normalized = detectChallengeDialog(
+          `dialog ${JSON.stringify(label.slice(0, 200))}`,
+          { allowGenericFailure: options?.allowGenericFailure === true },
+        );
+        if (!normalized?.normalizedLabel) return [];
+        return [{
+          frameId: entry.frameId,
+          frameUrl: String(entry.payload?.frameContext?.frameUrl || ''),
+          label: normalized.label,
+          normalizedLabel: normalized.normalizedLabel,
+        }];
+      });
       const inspectedFrameIds = new Set(entries
         .filter(entry => entry.payload && typeof entry.payload === 'object')
         .map(entry => entry.frameId));
@@ -2837,9 +2891,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return includeStatus
         ? {
             challenge,
+            challengeHidden: hiddenChallenges.length > 0,
+            hiddenChallenges,
+            // With no expected frame, "complete" still requires at least one
+            // frame to have actually been inspected.
             inspectionComplete: expectedFrameId === null
-              || inspectedFrameIds.has(expectedFrameId)
-              || (navigationInspectionComplete && !expectedFrameStillExists),
+              ? inspectedFrameIds.size > 0
+              : (inspectedFrameIds.has(expectedFrameId)
+                || (navigationInspectionComplete && !expectedFrameStillExists)),
           }
         : challenge;
     };
@@ -2852,7 +2911,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return inspected(results);
       } catch {
         return includeStatus
-          ? { challenge: null, inspectionComplete: false }
+          ? {
+              challenge: null,
+              challengeHidden: false,
+              hiddenChallenges: [],
+              inspectionComplete: false,
+            }
           : null;
       }
     }
@@ -2880,6 +2944,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? challenge.frameId
           : null,
         captchaChallengeFrameUrl: challenge.frameUrl || '',
+        captchaChallengeVisibilityConfirmed: true,
       },
       {},
     );
@@ -2898,6 +2963,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const activeGate = this._captchaGateStates.get(tabId);
+    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
+    let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
+      ? toolResult.captchaChallengeFrameId
+      : null;
+    let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
     let challenge = detectChallengeDialog(toolResult.pageContent, {
       allowGenericFailure: !!activeGate,
     });
@@ -2907,11 +2977,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { allowGenericFailure: !!activeGate },
       );
     }
+    if (
+      challenge
+      && treeFilter !== 'visible'
+      && toolResult.captchaChallengeVisibilityConfirmed !== true
+    ) {
+      const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: observedChallengeFrameId,
+        allowGenericFailure: !!activeGate,
+      });
+      if (recheck.challenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
+          { allowGenericFailure: !!activeGate },
+        );
+        observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
+          ? recheck.challenge.frameId
+          : null;
+        observedChallengeFrameUrl = String(recheck.challenge.frameUrl || '');
+      }
+      // A DOM scan cannot prove that the tree-observed dialog is the same
+      // element as a hidden match: a page may retain a hidden template while
+      // rendering the active challenge in a closed shadow root. Hidden,
+      // missing, and inconclusive scan results therefore remain diagnostic
+      // only and keep the gate fail-closed.
+    }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
-    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     const requestedPage = toolArgs?.page;
     const requestedMaxDepth = toolArgs?.maxDepth;
     const parsedMaxDepth = Number(requestedMaxDepth);
@@ -3109,10 +3204,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       key,
       status: publicGate.status,
       publicGate,
-      ...(Number.isInteger(toolResult.captchaChallengeFrameId)
+      ...(Number.isInteger(observedChallengeFrameId)
         ? {
-            challengeFrameId: toolResult.captchaChallengeFrameId,
-            challengeFrameUrl: String(toolResult.captchaChallengeFrameUrl || ''),
+            challengeFrameId: observedChallengeFrameId,
+            challengeFrameUrl: observedChallengeFrameUrl,
           }
         : {}),
     });
@@ -4993,7 +5088,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  _pageSignalsContentBehindBlank(probe) {
+  _pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal = true } = {}) {
     if (!probe) return true;
     const textChars = Number(probe.documentTextChars || 0);
     const visibleTextChars = Number(probe.visibleTextChars || 0);
@@ -5007,15 +5102,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       visibleTextChars > 20 ||
       imageCount > 0 ||
       domNodes > 150 ||
-      (innerHeight > 0 && scrollHeight > innerHeight + 200)
+      (
+        includeDocumentLengthSignal
+        && innerHeight > 0
+        && scrollHeight > innerHeight + 200
+      )
     );
   }
 
-  async _retryBlankScreenshotCapture(firstShot, captureOnce, { probe = null } = {}) {
+  async _retryBlankScreenshotCapture(
+    firstShot,
+    captureOnce,
+    { probe = null, includeDocumentLengthSignal = true } = {},
+  ) {
     if (!firstShot?.dataUrl || typeof captureOnce !== 'function') return firstShot;
     let shot = firstShot;
     let blankness = await this._analyzeScreenshotBlankness(shot.dataUrl);
-    if (!blankness?.blank || !this._pageSignalsContentBehindBlank(probe)) return shot;
+    if (
+      !blankness?.blank
+      || !this._pageSignalsContentBehindBlank(probe, { includeDocumentLengthSignal })
+    ) return shot;
 
     const meta = {
       detected: true,
@@ -5110,7 +5216,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       await cdpClient.attach(tabId);
       await cdpClient.sendCommand(tabId, 'Page.enable');
-      await this._bringToFrontForCapture(tabId);
+      await this._preparePageForCapture(tabId);
 
       // Probe the CSS viewport first so we can either (a) clip exactly
       // to it for pixel-accurate captures, or (b) compute a budget-aware
@@ -5155,7 +5261,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { dataUrl: redacted, width: cssW, height: cssH, coordAligned: true };
         };
         const first = await captureOnce();
-        return await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+        const captured = await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+        // A persistently blank background frame is worse than no image: the
+        // normal page-reading/AX context remains available to the planner,
+        // while a blank image can falsely imply that the page itself is empty.
+        return captured?.blankFrameRetry?.finalBlank ? null : captured;
       }
 
       // Non-coord-aligned mode: pre-compute target dims via the budget
@@ -5190,7 +5300,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       };
       const first = await captureOnce();
-      return await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+      const captured = await this._retryBlankScreenshotCapture(first, captureOnce, { probe });
+      return captured?.blankFrameRetry?.finalBlank ? null : captured;
     } catch (e) {
       return null;
     }
@@ -5443,39 +5554,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       await cdpClient.attach(tabId);
       await cdpClient.sendCommand(tabId, 'Page.enable');
-      await this._bringToFrontForCapture(tabId);
-      const vp = await cdpClient.evaluate(tabId, '({w: window.innerWidth, h: window.innerHeight})');
-      const cssW = Math.max(1, Math.round(vp?.result?.value?.w || 1024));
-      const cssH = Math.max(1, Math.round(vp?.result?.value?.h || 768));
-      const shot = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-          format: 'png',
-          fromSurface: true,
-          clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
-        })
-      );
-      if (!shot?.data) return null;
-      const cropDataUrl = `data:image/png;base64,${shot.data}`;
-      // Model-facing path honors maxImageDimension (issue #311). Keep the raw
-      // `cropDataUrl` at full CSS resolution for the local download crop;
-      // `_locateVisibleMediaWithVision` maps vision boxes back to that space.
-      const shrunk = await this._shrinkImageForBudget(cropDataUrl, cssW, cssH, this._budgetForCapture());
-      let dataUrl = shrunk.dataUrl;
-      // Local screenshot redaction (issue #312): the model-facing `dataUrl`
-      // is sent to vision for media localization, so pixelate PII on it.
-      // The raw `cropDataUrl` is kept untouched for the local download.
-      if (this.screenshotRedaction) {
-        dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
-      }
-      return {
-        dataUrl,
-        cropDataUrl,
-        width: cssW,
-        height: cssH,
-        visionWidth: shrunk.width,
-        visionHeight: shrunk.height,
-        coordAligned: true,
+      await this._preparePageForCapture(tabId);
+      const probe = await this._captureViewportProbe(tabId);
+      const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
+      const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
+      const captureOnce = async () => {
+        const shot = await this._withIndicatorsHidden(tabId, () =>
+          cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+            format: 'png',
+            fromSurface: true,
+            clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+          })
+        );
+        if (!shot?.data) return null;
+        const cropDataUrl = `data:image/png;base64,${shot.data}`;
+        // Model-facing path honors maxImageDimension (issue #311). Keep the raw
+        // `cropDataUrl` at full CSS resolution for the local download crop;
+        // `_locateVisibleMediaWithVision` maps vision boxes back to that space.
+        const shrunk = await this._shrinkImageForBudget(cropDataUrl, cssW, cssH, this._budgetForCapture());
+        let dataUrl = shrunk.dataUrl;
+        // Local screenshot redaction (issue #312): the model-facing `dataUrl`
+        // is sent to vision for media localization, so pixelate PII on it.
+        // The raw `cropDataUrl` is kept untouched for the local download.
+        if (this.screenshotRedaction) {
+          dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
+        }
+        return {
+          dataUrl,
+          cropDataUrl,
+          width: cssW,
+          height: cssH,
+          visionWidth: shrunk.width,
+          visionHeight: shrunk.height,
+          coordAligned: true,
+        };
       };
+      const captured = await this._retryBlankScreenshotCapture(
+        await captureOnce(),
+        captureOnce,
+        { probe },
+      );
+      return captured?.blankFrameRetry?.finalBlank ? null : captured;
     } catch (_) {
       const fallback = await this._captureAutoScreenshot(tabId, { coordAligned: true });
       return fallback ? { ...fallback, cropDataUrl: fallback.dataUrl } : null;
@@ -5718,15 +5837,58 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Try to bring a tab to the front via CDP before capturing. The surface
-   * screenshot path (`fromSurface: true`) can produce stale/blank frames if
-   * the page is occluded or backgrounded in some compositor states. This is
-   * best-effort — ignore failures and let the capture proceed.
+   * Prepare a page for capture without changing the user's selected tab.
+   *
+   * Focus emulation makes background pages report themselves as focused and
+   * active without activating their tab. It is scoped to the current run and
+   * disabled in the run's finally block because debugger sessions persist.
+   * Cloud runs and /foreground deliberately retain the old activation path.
    */
-  async _bringToFrontForCapture(tabId) {
+  async _preparePageForCapture(tabId) {
+    if (this._foregroundCaptureTabs.has(tabId)) {
+      try {
+        await cdpClient.sendCommand(tabId, 'Page.bringToFront');
+        return { foreground: true, focusEmulated: false };
+      } catch {
+        return { foreground: false, focusEmulated: false };
+      }
+    }
+    if (!this._runningTabs.has(tabId)) {
+      return { foreground: false, focusEmulated: false };
+    }
     try {
-      await cdpClient.sendCommand(tabId, 'Page.bringToFront');
-    } catch { /* ignore */ }
+      await cdpClient.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+      this._focusEmulatedTabs.add(tabId);
+      return { foreground: false, focusEmulated: true };
+    } catch {
+      // Older Chromium builds may not expose the experimental command.
+      // Background capture can still succeed, so do not activate the tab.
+      return { foreground: false, focusEmulated: false };
+    }
+  }
+
+  async _clearBackgroundFocusEmulation(tabId) {
+    if (!this._focusEmulatedTabs.has(tabId)) return;
+    this._focusEmulatedTabs.delete(tabId);
+    try {
+      await cdpClient.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
+    } catch { /* detached/closed tabs need no cleanup */ }
+  }
+
+  _configureCapturePolicyForRun(tabId, runOptions = {}) {
+    const previousForeground = this._foregroundCaptureTabs.has(tabId);
+    if (runOptions?.cloudRun === true || runOptions?.foreground === true) {
+      this._foregroundCaptureTabs.add(tabId);
+    } else {
+      this._foregroundCaptureTabs.delete(tabId);
+    }
+    return previousForeground;
+  }
+
+  async _restoreCapturePolicyAfterRun(tabId, previousForeground) {
+    await this._clearBackgroundFocusEmulation(tabId);
+    if (previousForeground) this._foregroundCaptureTabs.add(tabId);
+    else this._foregroundCaptureTabs.delete(tabId);
   }
 
   // ───────────── Image-budget (token-conscious screenshots) ─────────────
@@ -5746,15 +5908,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // are tuned to Claude's native vision encoder and happen to be
   // reasonable for most other endpoints too. Override per-capture if you
   // need sharper (coord_aligned) or looser (full_page) constraints.
-  static IMAGE_BUDGET = {
-    pxPerToken: 28,        // rough px² per vision token across providers
-    maxTargetPx: 1568,     // no dimension bigger than this
-    maxTargetTokens: 1568, // total image tokens budget
-    maxBase64Chars: 1398100, // ~1.4 MB base64, matches Anthropic's cap
-    initialJpegQuality: 0.75,
-    minJpegQuality: 0.10,
-    jpegQualityStep: 0.05,
-  };
+  static IMAGE_BUDGET = IMAGE_BUDGET;
 
   /**
    * Anthropic's token-cost approximation: ceil((w*h) / pxPerToken²).
@@ -5762,7 +5916,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * exact for any specific provider's tokenizer, but better than eyeballing.
    */
   static _estimateImageTokens(w, h, pxPerToken) {
-    return Math.ceil((w / pxPerToken) * (h / pxPerToken));
+    return estimateImageTokens(w, h, pxPerToken);
   }
 
   /**
@@ -5772,33 +5926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Claude-for-Chrome's `C(w, h, params)` (same algorithm, clearer names).
    */
   static _fitImageDimensions(origW, origH, budget = Agent.IMAGE_BUDGET) {
-    const { pxPerToken, maxTargetPx, maxTargetTokens } = budget;
-    // Already fits — no work.
-    if (origW <= maxTargetPx && origH <= maxTargetPx &&
-        Agent._estimateImageTokens(origW, origH, pxPerToken) <= maxTargetTokens) {
-      return [origW, origH];
-    }
-    // Search the long side; the other follows from aspect ratio.
-    if (origH > origW) {
-      const [h, w] = Agent._fitImageDimensions(origH, origW, budget);
-      return [w, h];
-    }
-    const aspect = origW / origH;
-    let hi = origW, lo = 1;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (lo + 1 >= hi) {
-        return [lo, Math.max(Math.round(lo / aspect), 1)];
-      }
-      const mid = Math.floor((lo + hi) / 2);
-      const midH = Math.max(Math.round(mid / aspect), 1);
-      if (mid <= maxTargetPx &&
-          Agent._estimateImageTokens(mid, midH, pxPerToken) <= maxTargetTokens) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
+    return fitImageDimensions(origW, origH, budget);
   }
 
   /**
@@ -9475,6 +9603,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.screenshotClickScale.delete(tabId);
+    void this._clearBackgroundFocusEmulation(tabId);
+    this._foregroundCaptureTabs.delete(tabId);
     this.lastSeenAdapter.delete(tabId);
     this.activeSkillIds.delete(tabId);
     this._runModeOverrides.delete(tabId);
@@ -13423,6 +13553,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.conversationModes.set(tabId, 'act');
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     const startUrl = await this._currentUrl(tabId);
     const conversationId = await this.ensureConversationId(tabId, 'act');
     const traceRunId = await trace.startRun({
@@ -13613,6 +13744,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._planExecutionGuards.delete(tabId);
       this._resetActiveSkillsForRun(tabId);
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks?.delete(tabId);
@@ -14175,7 +14307,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await cdpClient.attach(tabId);
           await cdpClient.sendCommand(tabId, 'Page.enable');
           probe = await this._captureViewportProbe(tabId);
-          await this._bringToFrontForCapture(tabId);
+          await this._preparePageForCapture(tabId);
           coordAligned = !!(args && args.coord_aligned);
           const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
           const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
@@ -14270,12 +14402,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           description = captured.description || '';
           coordDownscaled = !!captured.coordDownscaled;
           blankFrameRetry = captured.blankFrameRetry || null;
+          if (captured?.blankFrameRetry?.finalBlank) {
+            throw new Error('Background screenshot remained blank after retries');
+          }
         } catch {
           const tab = await chrome.tabs.get(tabId);
           if (!tab?.active) {
             return {
               success: false,
-              error: 'Cannot capture screenshot: this tab is not the active tab in its window. Switch to the tab before using /screenshot, or use a page-reading tool.',
+              error: 'Background screenshot capture was unavailable. Continue with get_accessibility_tree, get_interactive_elements, or read_page, or rerun the task with /foreground for visual compatibility.',
             };
           }
           // Tabs API fallback: no clip/scale available. Capture full, then
@@ -14333,6 +14468,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           description = captured?.description || '';
           coordDownscaled = !!captured?.coordDownscaled;
           blankFrameRetry = captured?.blankFrameRetry || null;
+        }
+        if (blankFrameRetry?.finalBlank) {
+          return {
+            success: false,
+            error: 'Screenshot remained blank after retries. Continue with page-reading tools or rerun the task with /foreground for visual compatibility.',
+          };
         }
         if (!dataUrl) {
           return {
@@ -14480,29 +14621,41 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let imageDataUrl = null;
           let annotatedRect = null;
           if (plannerCanSeeImages) {
-            await this._bringToFrontForCapture(tabId);
-            const shot = await this._withIndicatorsHidden(tabId, () =>
-              cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-                format: 'png', quality: 80, fromSurface: true,
-              })
-            );
-            imageDataUrl = `data:image/png;base64,${shot.data}`;
-            // Local screenshot redaction (issue #312): pixelate form fields +
-            // email/phone text BEFORE this verification screenshot reaches the
-            // planner model. Runs before the optional interaction-rect outline.
-            if (this.screenshotRedaction) {
-              imageDataUrl = await this._redactScreenshotDataUrl(tabId, imageDataUrl, { coordinateSpace: 'viewport' });
-            }
-            // If we remember the rect of the last ax interaction on this tab,
-            // outline it on the screenshot so the model can anchor its review
-            // to the element it actually touched.
-            const last = this._lastInteractionRect.get(tabId);
-            if (last) {
-              const cssViewport = probe
-                ? { width: probe.innerWidth, height: probe.innerHeight }
+            await this._preparePageForCapture(tabId);
+            const captureOnce = async () => {
+              const shot = await this._withIndicatorsHidden(tabId, () =>
+                cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+                  format: 'png', quality: 80, fromSurface: true,
+                })
+              );
+              return shot?.data
+                ? { dataUrl: `data:image/png;base64,${shot.data}` }
                 : null;
-              imageDataUrl = await this._annotateScreenshot(imageDataUrl, last, cssViewport);
-              annotatedRect = { x: last.x, y: last.y, w: last.w, h: last.h };
+            };
+            const captured = await this._retryBlankScreenshotCapture(
+              await captureOnce(),
+              captureOnce,
+              { probe },
+            );
+            if (captured?.dataUrl && !captured?.blankFrameRetry?.finalBlank) {
+              imageDataUrl = captured.dataUrl;
+              // Local screenshot redaction (issue #312): pixelate form fields +
+              // email/phone text BEFORE this verification screenshot reaches the
+              // planner model. Runs before the optional interaction-rect outline.
+              if (this.screenshotRedaction) {
+                imageDataUrl = await this._redactScreenshotDataUrl(tabId, imageDataUrl, { coordinateSpace: 'viewport' });
+              }
+              // If we remember the rect of the last ax interaction on this tab,
+              // outline it on the screenshot so the model can anchor its review
+              // to the element it actually touched.
+              const last = this._lastInteractionRect.get(tabId);
+              if (last) {
+                const cssViewport = probe
+                  ? { width: probe.innerWidth, height: probe.innerHeight }
+                  : null;
+                imageDataUrl = await this._annotateScreenshot(imageDataUrl, last, cssViewport);
+                annotatedRect = { x: last.x, y: last.y, w: last.w, h: last.h };
+              }
             }
           }
 
@@ -14962,15 +15115,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         const capturePolicy = await this._getFullPageCapturePolicy(tabId);
         await cdpClient.attach(tabId);
-        await this._bringToFrontForCapture(tabId);
-        const capture = await this._withIndicatorsHidden(tabId, () =>
-          cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-        );
-        const imageData = typeof capture === 'string' ? capture : capture?.data;
+        await this._preparePageForCapture(tabId);
+        const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+        const capture = captured?.capture;
         const captureWarning = typeof capture === 'object' ? capture?.warning || null : null;
         const captureBounds = typeof capture === 'object' ? capture?.captureBounds || null : null;
-        if (!imageData) throw new Error('Full-page screenshot returned no image data');
-        const rawUrl = `data:image/png;base64,${imageData}`;
+        if (!captured?.dataUrl) throw new Error('Full-page screenshot returned no image data');
+        if (captured?.blankFrameRetry?.finalBlank) {
+          throw new Error('Background full-page screenshot remained blank after retries');
+        }
+        const rawUrl = captured.dataUrl;
         const warningNote = captureWarning ? `\nWarning: ${captureWarning}` : '';
 
         // If the caller asked to save, do it with the RAW (uncompressed,
@@ -15141,18 +15295,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // 2. Capture screenshot
         try {
           await cdpClient.sendCommand(tabId, 'Page.enable');
-          await this._bringToFrontForCapture(tabId);
-          const shot = await this._withIndicatorsHidden(tabId, () =>
-            cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-              format: 'png', quality: 100, fromSurface: true,
-            })
+          await this._preparePageForCapture(tabId);
+          const probe = await this._captureViewportProbe(tabId);
+          const captureOnce = async () => {
+            const shot = await this._withIndicatorsHidden(tabId, () =>
+              cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+                format: 'png', quality: 100, fromSurface: true,
+              })
+            );
+            return shot?.data
+              ? { dataUrl: `data:image/png;base64,${shot.data}` }
+              : null;
+          };
+          const captured = await this._retryBlankScreenshotCapture(
+            await captureOnce(),
+            captureOnce,
+            { probe },
           );
+          if (!captured?.dataUrl || captured?.blankFrameRetry?.finalBlank) {
+            throw new Error('Screenshot was blank or unavailable');
+          }
           // Route the screenshot through `_attachImage` (like the `screenshot`
           // tool) so the batch loop strips it and re-attaches it as an
           // image_url block. Left inline as `result.image`, the base64 blob
           // blows past the tool-result char cap and gets truncated to garbage
           // that the vision model can never read.
-          let verifyShotUrl = `data:image/png;base64,${shot.data}`;
+          let verifyShotUrl = captured.dataUrl;
           // Apply the user's image budget (issue #311) before the image
           // reaches the model, then run local redaction (issue #312) on the
           // budget-fit copy so PII is pixelated at the size the model sees.
@@ -15856,41 +16024,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         await cdpClient.attach(tabId);
 
-        // ── Duplicate submit-click guard ────────────────────────────────
-        // The model often mistakes the modal-open link and the in-modal
-        // submit button on Stripe-style UIs (both labeled "Create product",
-        // "Add product", etc.) — clicking twice creates duplicate records.
-        // Track clicks whose text matches a submit-like pattern and block
-        // a second one on the same tab+URL within a short window, UNLESS
-        // the URL has changed (real navigation) or the model explicitly
-        // acknowledges the duplicate via args._allowResubmit = true.
-        if (args.text && !args._allowResubmit) {
-          const rawText = String(args.text).trim();
-          const submitLikeRE = /^(create|save|submit|add|post|publish|send|confirm|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i;
-          if (submitLikeRE.test(rawText)) {
-            let curUrl = '';
-            try { const t = await chrome.tabs.get(tabId); curUrl = t?.url || ''; } catch (e) {}
-            const buf = this._recentSubmitClicks.get(tabId) || [];
-            const key = `${rawText.toLowerCase()}|${curUrl}`;
-            const now = Date.now();
-            // Keep entries from the last 45 seconds
-            const fresh = buf.filter(e => now - e.ts < 45000);
-            const match = fresh.find(e => e.key === key);
-            if (match) {
-              return {
-                success: false,
-                dispatched: false,
-                blockedDuplicateSubmit: true,
-                error: `Blocked: you already clicked "${rawText}" on this page ${Math.round((now - match.ts) / 1000)}s ago and the URL has not changed since. Stripe-style UIs often reuse the same label for the modal-OPEN button and the SUBMIT button inside the modal — a second click typically creates a duplicate record. Before clicking "${rawText}" again, verify: (a) that all required fields are actually filled by reading the form/page, (b) that this click is intended as a FIRST submit and not a retry. If the previous click did nothing because a field was empty, fill the field first. If you genuinely need to retry, pass _allowResubmit: true in the args.`,
-                previousClickUrl: match.url,
-                currentUrl: curUrl,
-                secondsSincePrevious: Math.round((now - match.ts) / 1000),
-              };
-            }
-            fresh.push({ key, ts: now, url: curUrl, text: rawText });
-            this._recentSubmitClicks.set(tabId, fresh);
-          }
-        }
+        const duplicateSubmit = await guardRecentSubmitClick(
+          this._recentSubmitClicks,
+          tabId,
+          args,
+          async () => {
+            const tab = await chrome.tabs.get(tabId);
+            return tab?.url || '';
+          },
+        );
+        if (duplicateSubmit) return duplicateSubmit;
 
         // ── Global SELECT guard ─────────────────────────────────────────
         // Inject a capture-phase mousedown+click listener that prevents
@@ -18715,136 +18858,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    *   smaller set (e.g. COMPACT_TOOL_NAMES) to restrict in compact mode.
    */
   _tryParseToolCallsFromText(text, allowedNames = AGENT_TOOL_NAMES) {
-    if (!text || text.length > 10000) return [];
-
-    const results = [];
-    const parseXmlParamValue = (value) => {
-      const cleaned = String(value || '')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-      if (!cleaned) return '';
-      try {
-        if (/^(?:"|'.*'|\{|\[|-?\d|true\b|false\b|null\b)/i.test(cleaned)) {
-          return JSON.parse(cleaned.replace(/^'([\s\S]*)'$/, '"$1"'));
-        }
-      } catch { /* fall through to string cleanup */ }
-      return cleaned.replace(/^["']+|["']+$/g, '');
-    };
-
-    // Collect candidate JSON strings from known wrapper patterns.
-    const patterns = [
-      // <tool_call>JSON</tool_call>
-      /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi,
-      // <|tool_call|>JSON<|/tool_call|>  or  <|tool_call>JSON<tool_call|>
-      /<\|tool_call\|?>\s*([\s\S]*?)\s*<\|?\/?tool_call\|?>/gi,
-      // <functioncall>JSON</functioncall>
-      /<functioncall>\s*([\s\S]*?)\s*<\/functioncall>/gi,
-    ];
-
-    for (const re of patterns) {
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        const inner = m[1].trim();
-        // Try JSON first (most common).
-        try {
-          const obj = JSON.parse(inner);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-            continue;
-          }
-        } catch { /* not JSON — try call:name{} format below */ }
-
-        // call:toolName{key:<|"|>value<|"|>, ...} format.
-        // Some local models use <|"|> as quote tokens and call:name as the
-        // invocation syntax.  Normalize to JSON and parse.
-        const callMatch = /^call:(\w+)\s*\{([\s\S]*)\}$/.exec(inner);
-        if (callMatch && allowedNames.has(callMatch[1])) {
-          const toolName = callMatch[1];
-          let argsBody = callMatch[2]
-            .replace(/<\|"\|>/g, '"')  // replace quote tokens with real quotes
-            .replace(/<\|'\\?\|>/g, "'");  // handle single-quote tokens if any
-          // argsBody is now like: url:"https://example.com",text:"hello"
-          // Wrap unquoted keys to make valid JSON: key:"val" → "key":"val"
-          argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-          try {
-            const args = JSON.parse(`{${argsBody}}`);
-            results.push({ name: toolName, arguments: args });
-          } catch {
-            // If JSON parse still fails, try treating entire body as single
-            // string argument for zero-arg or simple calls.
-            results.push({ name: toolName, arguments: {} });
-          }
-          continue;
-        }
-      }
-    }
-
-    // XML-ish tool-call format used by some local/chat-template models:
-    // <tool_call><function=click_ax><parameter=ref_id>ref_6</parameter>...
-    const xmlToolRe = /<tool_call>\s*<function(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/function>\s*<\/tool_call>/gi;
-    let xmlMatch;
-    while ((xmlMatch = xmlToolRe.exec(text)) !== null) {
-      const toolName = xmlMatch[1] || xmlMatch[2];
-      if (!allowedNames.has(toolName)) continue;
-      const body = xmlMatch[3] || '';
-      const args = {};
-      const paramRe = /<parameter(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/parameter>/gi;
-      let paramMatch;
-      while ((paramMatch = paramRe.exec(body)) !== null) {
-        const key = paramMatch[1] || paramMatch[2];
-        if (!key) continue;
-        args[key] = parseXmlParamValue(paramMatch[3]);
-      }
-      results.push({ name: toolName, arguments: args });
-    }
-
-    // Fallback: scan for bare JSON objects containing a "name" key with a
-    // known tool name. Only look for top-level objects (starts with {).
-    if (results.length === 0) {
-      const bareRe = /\{[^{}]*"name"\s*:\s*"(\w+)"[^{}]*\}/g;
-      let m;
-      while ((m = bareRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        try {
-          const obj = JSON.parse(m[0]);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    // Last resort: call:toolName{...} outside of any wrapper tags.
-    if (results.length === 0) {
-      const callRe = /call:(\w+)\s*\{([\s\S]*?)\}/g;
-      let m;
-      while ((m = callRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        const toolName = m[1];
-        let argsBody = m[2]
-          .replace(/<\|"\|>/g, '"')
-          .replace(/<\|'\\?\|>/g, "'");
-        argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-        try {
-          const args = JSON.parse(`{${argsBody}}`);
-          results.push({ name: toolName, arguments: args });
-        } catch {
-          results.push({ name: toolName, arguments: {} });
-        }
-      }
-    }
-
-    // Convert to OpenAI tool_calls format.
-    return results.map((obj, i) => ({
-      id: `fallback_call_${Date.now()}_${i}`,
-      type: 'function',
-      function: {
-        name: obj.name,
-        arguments: typeof obj.arguments === 'string'
-          ? obj.arguments
-          : JSON.stringify(obj.arguments || obj.parameters || {}),
-      },
-    }));
+    return parseToolCallsFromText(text, allowedNames);
   }
   // ─────────────────────────────────────────────────────────────────────
 
@@ -18863,6 +18877,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
@@ -18881,6 +18896,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
         else this.cloudRunContexts.delete(tabId);
       }
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
@@ -19695,6 +19711,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
+    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
@@ -19713,6 +19730,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (previousCloudContext) this.cloudRunContexts.set(tabId, previousCloudContext);
         else this.cloudRunContexts.delete(tabId);
       }
+      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);

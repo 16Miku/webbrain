@@ -31,6 +31,7 @@ d'une espace ouvre l'autocomplétion de ses options disponibles.
 | `/workflow --export <id>` | Télécharger un fichier JSON portable `webbrain-workflow/1` assaini |
 | `/workflow --import --file` | Importer un fichier de workflow portable comme nouveau workflow local |
 | `/allow-api` | **Dérogation de mutation API par conversation.** Voir [plus bas](#allow-api). |
+| `/foreground [invite]` | Exécuter une tâche locale au premier plan pour assurer la compatibilité visuelle |
 | `/dangerously-skip-permissions` | **Contournement global des demandes d'autorisation.** Désactive `Ask before consequential actions` sans ouvrir les Paramètres. WebBrain agira sans demandes par site jusqu'à ce que vous réactiviez le réglage. |
 | `/compact` | Force le compactage du contexte pour la conversation actuelle |
 | `/verbose` | Bascule l'affichage verbeux/compact des outils |
@@ -64,6 +65,22 @@ quitter la page initiale ne la ramène pas vers l'URL surveillée, et l'onglet
 auxiliaire est fermé à la fin du watch. Les échecs d'interrogation transitoires
 sont tolérés ; trois échecs consécutifs arrêtent le watch.
 
+## `/foreground`
+
+Les exécutions locales ordinaires restent liées à leur onglet d'origine et
+fonctionnent sans activer cet onglet ni donner le focus à sa fenêtre. Chrome
+effectue les captures via CDP avec une émulation du focus limitée à l'exécution ;
+Firefox capture directement l'onglet cible avec `tabs.captureTab`. Si Chrome
+renvoie plusieurs fois une image vide en arrière-plan, WebBrain l'écarte et
+continue à partir du DOM et des données d'accessibilité.
+
+Utilisez `/foreground <invite>` comme solution de compatibilité pour une seule
+exécution lorsqu'un site ne restitue pas correctement son état visuel en
+arrière-plan. Cette commande rétablit l'activation de l'onglet et le focus de la
+fenêtre pour cette exécution uniquement. Elle n'est pas persistante, et les
+exécutions Cloud gérées conservent leur comportement actuel au premier plan car
+leur navigateur est dédié à la tâche.
+
 ## `/allow-api`
 
 `/allow-api` lève la restriction UI-d'abord pour la conversation en cours, afin
@@ -92,10 +109,11 @@ zone visible juste avant et après l'exécution (Chrome et Firefox). Par exemple
 `checkout-before.png` et `checkout-after.png` ; sans `--save-as`, WebBrain
 utilise des noms horodatés.
 
-Si l'exécution ouvre un autre onglet, WebBrain réactive l'onglet d'origine avant
-d'enregistrer la capture « après ». Si l'enregistrement ou la capture initiale ne
-peut pas être démarré et sauvegardé, l'exécution n'est pas envoyée. Les
-`/record` et `/screenshot` autonomes conservent leur comportement existant.
+Pour ce suffixe de diagnostic, Chrome peut réactiver l'onglet d'origine avant
+d'enregistrer la capture « après ». Firefox capture directement cet onglet sans
+l'activer. Si l'enregistrement ou la capture initiale ne peut pas être démarré
+et sauvegardé, l'exécution n'est pas envoyée. Les `/record` et `/screenshot`
+autonomes conservent leur comportement existant.
 
 ## Exports, instantanés et workflows
 

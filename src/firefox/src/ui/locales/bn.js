@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': "সর্বশেষ সফল রেকর্ড করা রান সংরক্ষণ করুন",
   'sp.slash.delete_workflow': "আইডি দ্বারা একটি সংরক্ষিত ওয়ার্কফ্লো মুছুন",
   'sp.slash.allow_api': "এই কথোপকথনের জন্য API মিউটেশনের অনুমতি দিন",
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': "বিশ্বব্যাপী অনুমতি প্রম্পট অক্ষম করুন",
   'sp.slash.compact': "এই কথোপকথন প্রসঙ্গে কম্প্যাক্ট",
   'sp.slash.verbose': "ভার্বোজ বা কমপ্যাক্ট টুল ডিসপ্লে টগল করুন",

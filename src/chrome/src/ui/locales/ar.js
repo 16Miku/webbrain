@@ -576,6 +576,7 @@ export default {
   'sp.slash.show_scratchpad': 'عرض لوحة المسودة الحالية',
   'sp.slash.clear_scratchpad': 'مسح منطقة المسودة الحالية',
   'sp.slash.allow_api': 'السماح بتعديلات API لهذه المحادثة',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'تعطيل مطالبات الأذونات عالميًا',
   'sp.slash.compact': 'ضغط سياق هذه المحادثة',
   'sp.slash.verbose': 'تبديل عرض الأدوات بين مفصل ومضغوط',

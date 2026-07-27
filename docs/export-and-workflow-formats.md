@@ -59,6 +59,79 @@ Screenshot events can include `screenshot_base64` or `screenshot_dataUrl`.
 Consumers should check `schema`, tolerate additional fields, and avoid relying
 on undocumented event internals.
 
+### Convert a trace to ATIF v1.7
+
+The dependency-free converter turns one Traces-page JSON export into the
+[Agent Trajectory Interchange Format (ATIF)](https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md):
+
+```bash
+node scripts/trace-to-atif.mjs webbrain-trace-model-run.json
+```
+
+By default this writes `webbrain-trace-model-run.atif.json` next to the source
+file. Pass a second path to choose another destination, or `-` to write the
+trajectory to standard output:
+
+```bash
+node scripts/trace-to-atif.mjs trace.json trajectory.json
+node scripts/trace-to-atif.mjs trace.json -
+```
+
+The converter maps user and agent messages, tool calls and observations, token
+metrics, errors, model metadata, and final content. It does not upload data.
+Screenshots and verbose diagnostic event kinds are counted in
+`extra.omitted_event_counts` but are not copied: ATIF represents images as
+files referenced alongside the trajectory, while a WebBrain JSON export embeds
+them as data URLs or base64. The converted trajectory remains sensitive because
+it still contains prompts, tool arguments, URLs, and results.
+
+### Convert a trace to OpenTelemetry OTLP JSON
+
+The repository includes an offline converter for sending an exported
+`webbrain-trace/1` run through an OpenTelemetry-compatible observability
+pipeline:
+
+```sh
+npm run trace:otlp -- webbrain-trace-example.json \
+  --output webbrain-trace-example.otlp.json
+```
+
+The output is an
+[OTLP/HTTP JSON](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding)
+`ExportTraceServiceRequest`. It contains one `invoke_agent WebBrain` root span,
+child model-call and `execute_tool` spans, and lightweight lifecycle events.
+The mappings follow the current
+[OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md),
+which are still marked development and may change.
+
+The converter does not upload anything. To send the result to a collector, use
+that collector's OTLP/HTTP traces endpoint; for example, for a trusted local
+collector:
+
+```sh
+curl -H 'Content-Type: application/json' \
+  --data-binary @webbrain-trace-example.otlp.json \
+  http://127.0.0.1:4318/v1/traces
+```
+
+Content capture is off by default. User messages, assistant text, error
+messages, tool arguments, and tool results are omitted, while operational
+metadata such as model, provider, timings, token counts, tool names, and run
+identifiers remains. Screenshots are never embedded in the OTLP output. Add
+`--include-content` only when the destination is trusted and the trace has been
+reviewed:
+
+```sh
+npm run trace:otlp -- webbrain-trace-example.json \
+  --output webbrain-trace-example.otlp.json \
+  --include-content
+```
+
+This is a post-run conversion, not live OpenTelemetry instrumentation. Child
+span start times are reconstructed from the recorder's completion timestamp and
+reported latency, so they should be used for diagnostics rather than
+distributed context propagation.
+
 ## Settings snapshots: `webbrain-config/1`
 
 `/export --config` creates a versioned Settings snapshot:

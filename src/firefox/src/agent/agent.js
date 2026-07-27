@@ -1,7 +1,10 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { handleDoneJson } from './cloud-output.js';
 import { LoopDetector } from './loop-detector.js';
+import { parseToolCallsFromText } from './tool-call-parser.js';
+import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
+import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -2508,6 +2511,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const successfulEntries = frameEntries.filter(entry =>
       entry?.payload && typeof entry.payload === 'object'
     );
+    const hiddenChallenges = successfulEntries.flatMap(entry => {
+      const label = String(entry.payload?.hiddenChallenge?.label || '');
+      if (!label) return [];
+      const normalized = detectChallengeDialog(
+        `dialog ${JSON.stringify(label.slice(0, 200))}`,
+        { allowGenericFailure: options?.allowGenericFailure === true },
+      );
+      if (!normalized?.normalizedLabel) return [];
+      return [{
+        frameId: entry.frameId,
+        frameUrl: String(entry.payload?.frameContext?.frameUrl || ''),
+        label: normalized.label,
+        normalizedLabel: normalized.normalizedLabel,
+      }];
+    });
     const challenge = this._visibleChallengeDialogFromFrames(
       successfulEntries,
       navigationFrames,
@@ -2518,9 +2536,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && navigationFrames.some(frame => frame?.frameId === expectedFrameId);
     return {
       challenge,
+      challengeHidden: hiddenChallenges.length > 0,
+      hiddenChallenges,
+      // With no expected frame, "complete" still requires at least one frame
+      // to have actually been inspected.
       inspectionComplete: expectedFrameId === null
-        || inspectedFrameIds.has(expectedFrameId)
-        || (navigationInspectionComplete && !expectedFrameStillExists),
+        ? inspectedFrameIds.size > 0
+        : (inspectedFrameIds.has(expectedFrameId)
+          || (navigationInspectionComplete && !expectedFrameStillExists)),
     };
   }
 
@@ -2546,6 +2569,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? challenge.frameId
           : null,
         captchaChallengeFrameUrl: challenge.frameUrl || '',
+        captchaChallengeVisibilityConfirmed: true,
       },
       {},
     );
@@ -2564,6 +2588,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const activeGate = this._captchaGateStates.get(tabId);
+    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
+    let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
+      ? toolResult.captchaChallengeFrameId
+      : null;
+    let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
     let challenge = detectChallengeDialog(toolResult.pageContent, {
       allowGenericFailure: !!activeGate,
     });
@@ -2573,11 +2602,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { allowGenericFailure: !!activeGate },
       );
     }
+    if (
+      challenge
+      && treeFilter !== 'visible'
+      && toolResult.captchaChallengeVisibilityConfirmed !== true
+    ) {
+      const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: observedChallengeFrameId,
+        allowGenericFailure: !!activeGate,
+      });
+      if (recheck.challenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
+          { allowGenericFailure: !!activeGate },
+        );
+        observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
+          ? recheck.challenge.frameId
+          : null;
+        observedChallengeFrameUrl = String(recheck.challenge.frameUrl || '');
+      }
+      // A DOM scan cannot prove that the tree-observed dialog is the same
+      // element as a hidden match: a page may retain a hidden template while
+      // rendering the active challenge in a closed shadow root. Hidden,
+      // missing, and inconclusive scan results therefore remain diagnostic
+      // only and keep the gate fail-closed.
+    }
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
-    const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     const requestedPage = toolArgs?.page;
     const requestedMaxDepth = toolArgs?.maxDepth;
     const parsedMaxDepth = Number(requestedMaxDepth);
@@ -2775,10 +2829,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       key,
       status: publicGate.status,
       publicGate,
-      ...(Number.isInteger(toolResult.captchaChallengeFrameId)
+      ...(Number.isInteger(observedChallengeFrameId)
         ? {
-            challengeFrameId: toolResult.captchaChallengeFrameId,
-            challengeFrameUrl: String(toolResult.captchaChallengeFrameUrl || ''),
+            challengeFrameId: observedChallengeFrameId,
+            challengeFrameUrl: observedChallengeFrameUrl,
           }
         : {}),
     });
@@ -4061,44 +4115,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // and can use regular <canvas> / toBlob instead of OffscreenCanvas.
   // Constants match Anthropic's Claude-for-Chrome defaults and the Chrome
   // Agent's IMAGE_BUDGET — keep them in sync.
-  static IMAGE_BUDGET = {
-    pxPerToken: 28,
-    maxTargetPx: 1568,
-    maxTargetTokens: 1568,
-    maxBase64Chars: 1398100,
-    initialJpegQuality: 0.75,
-    minJpegQuality: 0.10,
-    jpegQualityStep: 0.05,
-  };
+  static IMAGE_BUDGET = IMAGE_BUDGET;
 
   static _estimateImageTokens(w, h, pxPerToken) {
-    return Math.ceil((w / pxPerToken) * (h / pxPerToken));
+    return estimateImageTokens(w, h, pxPerToken);
   }
 
   static _fitImageDimensions(origW, origH, budget = Agent.IMAGE_BUDGET) {
-    const { pxPerToken, maxTargetPx, maxTargetTokens } = budget;
-    if (origW <= maxTargetPx && origH <= maxTargetPx &&
-        Agent._estimateImageTokens(origW, origH, pxPerToken) <= maxTargetTokens) {
-      return [origW, origH];
-    }
-    if (origH > origW) {
-      const [h, w] = Agent._fitImageDimensions(origH, origW, budget);
-      return [w, h];
-    }
-    const aspect = origW / origH;
-    let hi = origW, lo = 1;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (lo + 1 >= hi) return [lo, Math.max(Math.round(lo / aspect), 1)];
-      const mid = Math.floor((lo + hi) / 2);
-      const midH = Math.max(Math.round(mid / aspect), 1);
-      if (mid <= maxTargetPx &&
-          Agent._estimateImageTokens(mid, midH, pxPerToken) <= maxTargetTokens) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
+    return fitImageDimensions(origW, origH, budget);
   }
 
   /**
@@ -4863,10 +4887,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Capture a viewport screenshot via the WebExtension tabs API. Firefox
-   * supports `scale: 1` on captureVisibleTab to force a CSS-pixel-aligned
-   * image (otherwise it captures at devicePixelRatio, causing the same
-   * coordinate-mismatch loop chrome had pre-1.5.1). Returns
+   * Capture a viewport screenshot for the run's tab without activating it.
+   * `tabs.captureTab()` has been available since Firefox 59; WebBrain's
+   * minimum is Firefox 109 and its `<all_urls>` permission authorizes capture.
+   * Firefox supports `scale: 1` here to force a CSS-pixel-aligned image
+   * (otherwise it captures at devicePixelRatio, causing the same coordinate-
+   * mismatch loop Chrome had pre-1.5.1). Returns
    * { dataUrl, width, height } in (possibly budget-resized) pixels, or null.
    * `opts` accepted for Chrome call-site parity; capture is always CSS-locked.
    */
@@ -4874,12 +4900,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       const tab = await browser.tabs.get(tabId);
       if (!tab) return null;
-      // captureVisibleTab takes a windowId and snapshots whatever is currently
-      // visible in that window — it does NOT take a tabId. If the agent's
-      // tab isn't the active tab, we'd silently capture an unrelated page
-      // and feed misleading visual context to the model. Skip in that case;
-      // the model will plan from text only this turn.
-      if (!tab.active) return null;
       const probe = await this._captureViewportProbe(tabId);
       const w = Math.max(1, Math.round(probe?.innerWidth || 1024));
       const h = Math.max(1, Math.round(probe?.innerHeight || 768));
@@ -4890,7 +4910,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // scale: 1 forces 1 image pixel per CSS pixel (Firefox-specific option,
         // ignored by Chrome but Chrome path uses CDP anyway).
         const rawDataUrl = await this._withIndicatorsHidden(tabId, () =>
-          browser.tabs.captureVisibleTab(tab.windowId, {
+          browser.tabs.captureTab(tabId, {
             format: 'jpeg',
             quality: 60,
             scale: 1,
@@ -4898,7 +4918,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
         if (!rawDataUrl) return null;
 
-        // Firefox's captureVisibleTab doesn't take a clip/scale in a way that
+        // Firefox's captureTab doesn't take a clip/scale in a way that
         // lets us downsize during capture (scale:1 is viewport-lock, not a
         // factor). Capture at CSS size; shrink only when a side exceeds
         // maxImageDimension (coord-aligned budget).
@@ -5040,7 +5060,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _captureVisibleMediaScreenshot(tabId) {
     try {
       const tab = await browser.tabs.get(tabId);
-      if (!tab?.active) return null;
+      if (!tab) return null;
       let width = 1024;
       let height = 768;
       try {
@@ -5054,7 +5074,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       } catch (_) {}
       const cropDataUrl = await this._withIndicatorsHidden(tabId, () =>
-        browser.tabs.captureVisibleTab(tab.windowId, {
+        browser.tabs.captureTab(tabId, {
           format: 'png',
           scale: 1,
         })
@@ -12397,27 +12417,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'screenshot') {
       try {
-        // Get the tab's window to capture. Firefox captureVisibleTab takes
-        // a windowId and snapshots whatever's currently visible in that
-        // window — not the tab we ask for. If the agent's tab isn't the
-        // active tab, refuse rather than capture an unrelated page.
+        // Firefox captureTab targets the run tab directly, so the user can
+        // continue working in another tab while the agent gathers vision.
         const tab = await browser.tabs.get(tabId);
-        if (!tab?.active) {
-          return {
-            success: false,
-            error: 'Cannot capture screenshot: this tab is not the active tab in its window. Switch to the tab before using /screenshot, or use a page-reading tool.',
-          };
-        }
+        if (!tab) return { success: false, error: 'Screenshot failed: run tab is unavailable.' };
         const probe = await this._captureViewportProbe(tabId);
         const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
         const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
         const captureOnce = async () => {
           // scale: 1 CSS-locks the capture (Firefox-specific option). Without
-          // it captureVisibleTab snapshots at native devicePixelRatio, so on
+          // it captureTab snapshots at native devicePixelRatio, so on
           // hi-DPI displays the image would be DPR× the CSS viewport and any
           // pixel coordinate read off it would miss.
           const rawUrl = await this._withIndicatorsHidden(tabId, () =>
-            browser.tabs.captureVisibleTab(tab.windowId, {
+            browser.tabs.captureTab(tabId, {
               format: 'png',
               quality: 80,
               scale: 1,
@@ -12510,7 +12523,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isActionMode(mode)) {
         try {
           const tab = await browser.tabs.get(tabId);
-          if (tab?.active) {
+          // Scheduled URL-target tabs intentionally stay inactive. Firefox can
+          // execute scripts in and capture those tabs directly, so completion
+          // verification must not depend on active-tab state.
+          if (tab) {
             // Probe page URL, title, and "work in progress" signals: open
             // dialogs/modals and visible forms. If any of these are present
             // while the model claims it created/added/saved/submitted, the
@@ -12578,7 +12594,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const plannerCanSeeImages = !!provider?.supportsVision;
             let dataUrl = plannerCanSeeImages
               ? await this._withIndicatorsHidden(tabId, () =>
-                  browser.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 80 })
+                  browser.tabs.captureTab(tabId, { format: 'png', quality: 80 })
                 )
               : null;
             if (dataUrl && this.screenshotRedaction) {
@@ -13526,16 +13542,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         } catch {}
 
-        // Capture screenshot (requires active tab)
+        // Capture the run tab directly without activating it.
         try {
           const tab = await browser.tabs.get(tabId);
-          if (tab?.active) {
+          if (tab) {
             // Route through `_attachImage` (like the `screenshot` tool) so the
             // batch loop strips it and re-attaches it as an image_url block.
             // Left inline as `result.image`, the base64 data URL blows past the
             // tool-result char cap and gets truncated to unreadable garbage.
             let verifyShotUrl = await this._withIndicatorsHidden(tabId, () =>
-              browser.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 80 })
+              browser.tabs.captureTab(tabId, { format: 'png', quality: 80 })
             );
             // Budget-resize for the model (issue #311 maxImageDimension).
             verifyShotUrl = (await this._shrinkImageForBudget(verifyShotUrl, 0, 0, this._budgetForCapture())).dataUrl;
@@ -13848,6 +13864,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
+    if (name === 'click') {
+      const duplicateSubmit = await guardRecentSubmitClick(
+        this._recentSubmitClicks,
+        tabId,
+        args,
+        async () => {
+          const tab = await browser.tabs.get(tabId);
+          return tab?.url || '';
+        },
+      );
+      if (duplicateSubmit) return duplicateSubmit;
+    }
+
     const axScope = this._lastAxScopes.get(tabId);
     const contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
       ? {
@@ -14013,124 +14042,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * was found. Only tool names present in the allowed-name set are accepted.
    */
   _tryParseToolCallsFromText(text, allowedNames = AGENT_TOOL_NAMES) {
-    if (!text || text.length > 10000) return [];
-
-    const results = [];
-    const parseXmlParamValue = (value) => {
-      const cleaned = String(value || '')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-      if (!cleaned) return '';
-      try {
-        if (/^(?:"|'.*'|\{|\[|-?\d|true\b|false\b|null\b)/i.test(cleaned)) {
-          return JSON.parse(cleaned.replace(/^'([\s\S]*)'$/, '"$1"'));
-        }
-      } catch { /* fall through to string cleanup */ }
-      return cleaned.replace(/^["']+|["']+$/g, '');
-    };
-
-    const patterns = [
-      /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi,
-      /<\|tool_call\|?>\s*([\s\S]*?)\s*<\|?\/?tool_call\|?>/gi,
-      /<functioncall>\s*([\s\S]*?)\s*<\/functioncall>/gi,
-    ];
-
-    for (const re of patterns) {
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        const inner = m[1].trim();
-        // Try JSON first (most common).
-        try {
-          const obj = JSON.parse(inner);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-            continue;
-          }
-        } catch { /* not JSON — try call:name{} format below */ }
-
-        // call:toolName{key:<|"|>value<|"|>, ...} format.
-        const callMatch = /^call:(\w+)\s*\{([\s\S]*)\}$/.exec(inner);
-        if (callMatch && allowedNames.has(callMatch[1])) {
-          const toolName = callMatch[1];
-          let argsBody = callMatch[2]
-            .replace(/<\|"\|>/g, '"')
-            .replace(/<\|'\\?\|>/g, "'");
-          argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-          try {
-            const args = JSON.parse(`{${argsBody}}`);
-            results.push({ name: toolName, arguments: args });
-          } catch {
-            results.push({ name: toolName, arguments: {} });
-          }
-          continue;
-        }
-      }
-    }
-
-    // XML-ish tool-call format used by some local/chat-template models:
-    // <tool_call><function=click_ax><parameter=ref_id>ref_6</parameter>...
-    const xmlToolRe = /<tool_call>\s*<function(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/function>\s*<\/tool_call>/gi;
-    let xmlMatch;
-    while ((xmlMatch = xmlToolRe.exec(text)) !== null) {
-      const toolName = xmlMatch[1] || xmlMatch[2];
-      if (!allowedNames.has(toolName)) continue;
-      const body = xmlMatch[3] || '';
-      const args = {};
-      const paramRe = /<parameter(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/parameter>/gi;
-      let paramMatch;
-      while ((paramMatch = paramRe.exec(body)) !== null) {
-        const key = paramMatch[1] || paramMatch[2];
-        if (!key) continue;
-        args[key] = parseXmlParamValue(paramMatch[3]);
-      }
-      results.push({ name: toolName, arguments: args });
-    }
-
-    // Fallback: scan for bare JSON objects containing a "name" key.
-    if (results.length === 0) {
-      const bareRe = /\{[^{}]*"name"\s*:\s*"(\w+)"[^{}]*\}/g;
-      let m;
-      while ((m = bareRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        try {
-          const obj = JSON.parse(m[0]);
-          if (obj && obj.name && allowedNames.has(obj.name)) {
-            results.push(obj);
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    // Last resort: call:toolName{...} outside of any wrapper tags.
-    if (results.length === 0) {
-      const callRe = /call:(\w+)\s*\{([\s\S]*?)\}/g;
-      let m;
-      while ((m = callRe.exec(text)) !== null) {
-        if (!allowedNames.has(m[1])) continue;
-        const toolName = m[1];
-        let argsBody = m[2]
-          .replace(/<\|"\|>/g, '"')
-          .replace(/<\|'\\?\|>/g, "'");
-        argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
-        try {
-          const args = JSON.parse(`{${argsBody}}`);
-          results.push({ name: toolName, arguments: args });
-        } catch {
-          results.push({ name: toolName, arguments: {} });
-        }
-      }
-    }
-
-    return results.map((obj, i) => ({
-      id: `fallback_call_${Date.now()}_${i}`,
-      type: 'function',
-      function: {
-        name: obj.name,
-        arguments: typeof obj.arguments === 'string'
-          ? obj.arguments
-          : JSON.stringify(obj.arguments || obj.parameters || {}),
-      },
-    }));
+    return parseToolCallsFromText(text, allowedNames);
   }
   // ─────────────────────────────────────────────────────────────────────
 

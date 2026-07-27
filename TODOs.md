@@ -194,15 +194,15 @@ parity regressions likely.
 
 ## 9. Test the real shared logic instead of copied shims
 
-**Status:** Partially resolved. Loop detection now lives in the browser-free
-`agent/loop-detector.js` module in both builds. `Agent` inherits that production
-class, `test/run.js` imports it directly, and a parity assertion keeps the
-Chrome and Firefox copies byte-identical.
+**Status:** Partially resolved. Loop detection and image-budget sizing now live
+in browser-free modules in both builds. `Agent` consumes the production logic,
+`test/run.js` imports it directly, and parity assertions keep the Chrome and
+Firefox copies byte-identical.
 
 **Concrete next steps:**
-1. Move image budget sizing and other remaining pure logic into browser-free
-   modules and import those modules directly from `agent.js` and `test/run.js`.
-2. Add regression tests for the text tool-call parser and context trimming,
+1. Move other remaining pure logic into browser-free modules and import those
+   modules directly from `agent.js` and `test/run.js`.
+2. Add broader regression tests for the text tool-call parser and context trimming,
    since both are high-impact agent reliability code.
 
 ---

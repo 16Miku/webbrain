@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': 'Save the latest successful recorded run',
   'sp.slash.delete_workflow': 'Delete a saved workflow by ID',
   'sp.slash.allow_api': 'Allow API mutations for this conversation',
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': 'Disable permission prompts globally',
   'sp.slash.compact': 'Compact this conversation context',
   'sp.slash.verbose': 'Toggle verbose or compact tool display',

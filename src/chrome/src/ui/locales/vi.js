@@ -129,6 +129,7 @@ export default {
   'sp.slash.save_workflow': "Lưu lần chạy được ghi thành công mới nhất",
   'sp.slash.delete_workflow': "Xóa quy trình làm việc đã lưu theo ID",
   'sp.slash.allow_api': "Cho phép đột biến API cho cuộc trò chuyện này",
+  'sp.slash.foreground': 'Run this task in the foreground for visual compatibility',
   'sp.slash.dangerously_skip_permissions': "Tắt lời nhắc cấp phép trên toàn cầu",
   'sp.slash.compact': "Thu gọn bối cảnh hội thoại này",
   'sp.slash.verbose': "Chuyển đổi hiển thị công cụ dài dòng hoặc nhỏ gọn",

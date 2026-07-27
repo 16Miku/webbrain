@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 25.9.7 · Manifest V3 · Service Worker background
+> Version 26.0.1 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -42,6 +42,7 @@ src/chrome/
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── loop-detector.js     # Browser-free loop detection, directly unit-tested
+│   │   ├── image-budget.js      # Browser-free screenshot sizing, directly unit-tested
 │   │   ├── mutation-tools.js    # This build's state-change + mutating tool sets
 │   │   ├── tools.js            # Tool schemas + system prompts
 │   │   ├── skills.js           # Settings skills + dynamic skill tool manifests
@@ -419,7 +420,7 @@ System prompt has a new "MODALS & DIALOGS" section that describes the intended f
 
 ### Duplicate-submit guard (v3.6.5+)
 
-Before any `click` whose resolved text matches `^(create|save|submit|add|post|publish|send|confirm|place order|pay|checkout|update|finish|done)\b` the agent checks a per-tab+URL 45-second window. Duplicate clicks in that window are blocked unless `_allowResubmit` is set. Prevents the "clicked Create three times → three products created" failure mode.
+Before any submit-like text `click`, the agent checks a per-tab+URL 45-second window. Duplicate clicks in that window are blocked unless `_allowResubmit` is set; an acknowledged retry re-arms the window, so a further rapid duplicate needs its own acknowledgement. The browser-free guard is byte-identical in Chrome and Firefox, preventing the "clicked Create three times → three products created" failure mode in both builds.
 
 ### API shortcut observer (v18.0.0)
 
