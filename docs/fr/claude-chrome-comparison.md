@@ -99,7 +99,7 @@ de la surface de base, y compris `execute_js` réservé au mode Dev, est partag�
 | Lecture/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection` |
 | Édition et diagnostic Dev | `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `execute_js`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, `highlight_element` |
 | Shadow DOM et cadres | `get_shadow_dom`, `shadow_dom_query` sur Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` |
-| Réseau et fichiers | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` sur Chrome |
+| Réseau et fichiers | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` |
 | Travail longue durée | `schedule_resume`, `schedule_task`, `scratchpad_write`, `progress_update`, `progress_read` |
 | Sécurité/flux de travail | `verify_form`, `clarify`, `done`, `solve_captcha` |
 | Média | `download_social_media`, plus les outils de compétences dynamiques lorsqu'ils sont activés |
@@ -198,7 +198,7 @@ synthétiques avec une nouvelle capture d'écran.
 | Inspection console/réseau | Pas de lecteur de logs console dédié dans la liste des outils de base WebBrain. Des raccourcis réseau existent pour l'observation d'API, mais pas un lecteur de logs de requêtes orienté modèle. | `read_console_messages` et `read_network_requests` dédiés. |
 | Téléchargements | Plusieurs outils de téléchargement/fichier navigateur plus des outils de compétences de tâche de téléchargement dynamiques. | La permission `downloads` existe et `gif_creator` peut télécharger des exports, mais aucun gestionnaire de téléchargement général équivalent n'a été trouvé. |
 | Téléchargement média | Compétence `download_public_media` d'abord ; `download_social_media` en repli navigateur. | Aucun équivalent de téléchargement de média public trouvé. |
-| Téléchargement de fichier | Chrome dispose de `upload_file` par flux orienté downloadId/chemin ; Firefox ne l'a pas. | `file_upload` définit directement des chemins absolus locaux sur une entrée fichier ; `upload_image` télécharge des images capturées/utilisateur par référence ou coordonnée. |
+| Téléchargement de fichier | Les deux navigateurs ont `upload_file`. Chrome accepte `downloadId` et un `filePath` absolu ; Firefox accepte le re-fetch par `downloadId` et un sélecteur de fichier dans le panneau latéral (pas de chemins locaux arbitraires sans CDP). | `file_upload` définit directement des chemins absolus locaux sur une entrée fichier ; `upload_image` télécharge des images capturées/utilisateur par référence ou coordonnée. |
 | Planificateur | `schedule_resume` et `schedule_task`. | L'interface utilisateur/les chaînes d'invite de tâches planifiées existent, mais aucun schéma de planificateur appelable par le modèle équivalent n'a été trouvé dans la liste d'outils visible. |
 | CAPTCHA | `solve_captcha` lorsque CapSolver est configuré. | L'invite de sécurité explicite demande de respecter les CAPTCHA et de ne jamais les contourner ; aucun outil de résolution trouvé. |
 | Mémoire persistante de l'agent | `scratchpad_write`, `progress_update`, `progress_read`. | La compaction de conversation existe ; aucun outil équivalent de bloc-notes/progression trouvé. |

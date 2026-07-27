@@ -72,7 +72,7 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `read_downloaded_file` | No | No | Yes | Yes | - |
 | `download_files` | No | No | Yes | Yes | - |
 | `download_resource_from_page` | No | No | Yes | Yes | - |
-| `upload_file` | No | No | C | C | - |
+| `upload_file` | No | No | Yes | Yes | - |
 | `verify_form` | No | No | Yes | Yes | - |
 | `hover` | No | No | No | Yes | - |
 | `drag_drop` | No | No | No | Yes | - |

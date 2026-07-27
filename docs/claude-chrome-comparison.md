@@ -97,7 +97,7 @@ core surface, including Dev-only `execute_js`, is shared.
 | Reading/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection` |
 | Dev editing and diagnostics | `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `execute_js`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, `highlight_element` |
 | Shadow DOM and frames | `get_shadow_dom`, `shadow_dom_query` on Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` |
-| Network and files | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` on Chrome |
+| Network and files | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` |
 | Long-running work | `schedule_resume`, `schedule_task`, `scratchpad_write`, `progress_update`, `progress_read` |
 | Safety/workflow | `verify_form`, `clarify`, `done`, `solve_captcha` |
 | Media | `download_social_media`, plus dynamic skill tools when enabled |
@@ -194,7 +194,7 @@ fresh screenshot.
 | Console/network inspection | No dedicated console log reader in the core WebBrain tool list. Network shortcuts exist for API observation, but not a model-facing request-log reader in the same way. | Dedicated `read_console_messages` and `read_network_requests`. |
 | Downloads | Several browser download/file tools plus dynamic download-job skill tools. | `downloads` permission exists and `gif_creator` can download exports, but no general download manager equivalent was recovered. |
 | Media download | `download_public_media` skill first; `download_social_media` browser fallback. | No public-media download equivalent recovered. |
-| File upload | Chrome has `upload_file` by downloadId/path-oriented flow; Firefox lacks it. | `file_upload` directly sets local absolute paths on a file input; `upload_image` uploads captured/user images by ref or coordinate. |
+| File upload | Both browsers have `upload_file`. Chrome supports `downloadId` and absolute `filePath`; Firefox supports `downloadId` re-fetch and a sidepanel user file picker (no arbitrary local paths without CDP). | `file_upload` directly sets local absolute paths on a file input; `upload_image` uploads captured/user images by ref or coordinate. |
 | Scheduler | `schedule_resume` and `schedule_task`. | Scheduled task UI/prompt strings exist, but no equivalent model-callable scheduler schema was recovered in the visible tool list. |
 | CAPTCHA | `solve_captcha` when CapSolver is configured. | Explicit security prompt says respect CAPTCHAs and never bypass; no solver tool recovered. |
 | Persistent agent memory | `scratchpad_write`, `progress_update`, `progress_read`. | Conversation compaction exists; no equivalent scratchpad/progress tools recovered. |
