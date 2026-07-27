@@ -51,6 +51,11 @@ export const PACKAGED_SKILL_SOURCES = Object.freeze([
     name: 'Wikipedia',
     path: 'skills/wikipedia.md',
   }),
+  Object.freeze({
+    id: 'frankfurter-fx',
+    name: 'Frankfurter FX',
+    path: 'skills/frankfurter-fx.md',
+  }),
 ]);
 export const DEFAULT_SKILL_SOURCES = Object.freeze(
   PACKAGED_SKILL_SOURCES.filter((source) => [

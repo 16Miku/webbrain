@@ -147,6 +147,17 @@ function packagedWikipediaRecord(prefix) {
   };
 }
 
+function packagedFrankfurterRecord(prefix) {
+  return {
+    id: 'frankfurter-fx',
+    name: 'Frankfurter FX',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/frankfurter-fx.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/frankfurter-fx.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedChromeWebStoreRecord(prefix) {
   return {
     id: 'chrome-web-store-release',
@@ -12810,6 +12821,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'open-meteo-weather': ['current_weather', 'weather_forecast', 'location_forecast'],
     'open-library-books': ['book_search', 'book_metadata', 'isbn_lookup', 'author_lookup'],
     'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
+    'frankfurter-fx': ['currency_conversion', 'exchange_rate', 'fx_lookup', 'currency_list'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
@@ -13024,6 +13036,45 @@ test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP
     assert.ok(names.includes('search_weather_location'), `${label}: weather geocoding tool missing from ask mode`);
     assert.ok(names.includes('get_weather_forecast'), `${label}: weather forecast tool missing from ask mode`);
     assert.ok(names.includes('search_open_library_books'), `${label}: Open Library search tool missing from ask mode`);
+  }
+});
+
+test('packaged Frankfurter FX skill is opt-in with read-only HTTPS tools on api.frankfurter.dev', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const defaults = normalizeSkills([packagedFreeSkillzRecord(prefix)]);
+    assert.doesNotMatch(buildPrompt(defaults), /Frankfurter FX/, `${label}: Frankfurter skill leaked into default prompt`);
+
+    const enabled = normalizeSkills([
+      ...defaults,
+      packagedFrankfurterRecord(prefix),
+    ]);
+    const prompt = buildPrompt(enabled, { mode: 'ask', tier: 'full', activeSkillIds: new Set(['frankfurter-fx']) });
+    assert.match(prompt, /Frankfurter FX/, `${label}: enabled Frankfurter skill missing from prompt`);
+    assert.doesNotMatch(prompt, /"endpoint": "https:\/\/api\.frankfurter\.dev\/v1\/latest"/, `${label}: Frankfurter endpoint JSON should stay out of prompt`);
+    assert.match(prompt, /api\.frankfurter\.dev/, `${label}: skill body should require non-redirecting Frankfurter host`);
+    assert.match(prompt, /api\.frankfurter\.app/, `${label}: skill body should warn against redirecting Frankfurter host`);
+
+    const fx = enabled.find((skill) => skill.id === 'frankfurter-fx');
+    assert.deepEqual(
+      fx.tools.map((tool) => tool.name),
+      ['list_frankfurter_currencies', 'get_frankfurter_rates'],
+      `${label}: Frankfurter manifest tools should parse`,
+    );
+    assert.equal(fx.tools[0].endpoint, 'https://api.frankfurter.dev/v1/currencies', `${label}: wrong currencies endpoint`);
+    assert.equal(fx.tools[1].endpoint, 'https://api.frankfurter.dev/v1/latest', `${label}: wrong rates endpoint`);
+    assert.equal(fx.tools[0].readOnly, true, `${label}: currencies tool should be read-only`);
+    assert.equal(fx.tools[1].readOnly, true, `${label}: rates tool should be read-only`);
+    assert.equal(fx.tools[1].defaultArgs?.base, 'EUR', `${label}: rates default base should be EUR`);
+    assert.equal(fx.tools[0].resultPolicy, 'untrusted', `${label}: currencies output should be untrusted`);
+    assert.equal(fx.tools[1].resultPolicy, 'untrusted', `${label}: rates output should be untrusted`);
+
+    const defs = buildDefs(enabled, { mode: 'ask' });
+    const names = defs.map((tool) => tool.function.name);
+    assert.ok(names.includes('list_frankfurter_currencies'), `${label}: currencies tool missing from ask mode`);
+    assert.ok(names.includes('get_frankfurter_rates'), `${label}: rates tool missing from ask mode`);
   }
 });
 
@@ -48562,6 +48613,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-meteo-weather',
     'open-library-books',
     'wikipedia',
+    'frankfurter-fx',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -48571,6 +48623,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-meteo-weather',
     'open-library-books',
     'wikipedia',
+    'frankfurter-fx',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
