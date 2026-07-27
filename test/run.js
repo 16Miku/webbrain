@@ -16614,6 +16614,17 @@ test('firefox sidepanel implements documented global keyboard shortcuts', () => 
   assert.match(panel, /mod && e\.shiftKey && e\.key === 'D'/, 'firefox: Dev mode shortcut missing');
   assert.match(panel, /await ensureActMode\(\)/, 'firefox: Act shortcut should call ensureActMode');
   assert.match(panel, /await ensureDevMode\(\)/, 'firefox: Dev shortcut should call ensureDevMode');
+  // Review P1s: AltGr / IME / open pickers must not steal Escape or slash entry
+  assert.match(panel, /e\.altKey \|\| e\.getModifierState\?\.\('AltGraph'\)/, 'firefox: AltGr/Option chords must not trigger Ctrl shortcuts');
+  assert.match(panel, /if \(e\.isComposing\) return;/, 'firefox: IME Escape must not abort the active run');
+  assert.match(panel, /providerPickerMenu && !providerPickerMenu\.classList\.contains\('hidden'\)/, 'firefox: open provider picker Escape must not abort');
+  assert.match(panel, /languagePickerMenu && !languagePickerMenu\.classList\.contains\('hidden'\)/, 'firefox: open language picker Escape must not abort');
+  const composingGuard = panel.indexOf('if (e.isComposing) return;', globalHandlerStart);
+  const providerPickerGuard = panel.indexOf("providerPickerMenu && !providerPickerMenu.classList.contains('hidden')", globalHandlerStart);
+  const languagePickerGuard = panel.indexOf("languagePickerMenu && !languagePickerMenu.classList.contains('hidden')", globalHandlerStart);
+  assert.equal(composingGuard !== -1 && composingGuard < abortCall, true, 'firefox: IME guard must precede abortRun');
+  assert.equal(providerPickerGuard !== -1 && providerPickerGuard < abortCall, true, 'firefox: provider picker guard must precede abortRun');
+  assert.equal(languagePickerGuard !== -1 && languagePickerGuard < abortCall, true, 'firefox: language picker guard must precede abortRun');
 
   for (const shortcut of ['Ctrl/Cmd+/', 'Ctrl/Cmd+Shift+A', 'Ctrl/Cmd+Shift+X', 'Ctrl/Cmd+Shift+D', 'Escape']) {
     assert.match(locale, new RegExp(escapeRegExpLiteral(shortcut)), `firefox: /help should mention ${shortcut}`);

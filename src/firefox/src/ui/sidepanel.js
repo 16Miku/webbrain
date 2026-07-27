@@ -9319,8 +9319,16 @@ async function handleGlobalKeydown(e) {
   const isOtherFormField = e.target !== inputEl && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 
   if (e.key === 'Escape') {
+    // IME Escape cancels a composition candidate — never abort the run for that.
+    if (e.isComposing) return;
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
+    // Provider/language pickers close on Escape in bubble/target handlers; do not
+    // abort the active run while those listboxes are open.
+    const providerPickerOpen = !!providerPickerMenu && !providerPickerMenu.classList.contains('hidden');
+    if (providerPickerOpen) return;
+    const languagePickerOpen = !!languagePickerMenu && !languagePickerMenu.classList.contains('hidden');
+    if (languagePickerOpen) return;
     if (isProcessing) {
       e.preventDefault();
       abortRun();
@@ -9330,6 +9338,9 @@ async function handleGlobalKeydown(e) {
   }
 
   if (isOtherFormField) return;
+  // AltGr (Ctrl+Alt) and Option chords type international characters — never
+  // treat them as Ctrl/Cmd shortcuts.
+  if (e.altKey || e.getModifierState?.('AltGraph')) return;
 
   const mod = e.ctrlKey || e.metaKey;
 
