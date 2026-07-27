@@ -78,7 +78,7 @@ Finish with visible attribution: Powered by [Wikipedia](https://www.wikipedia.or
         "exchars": 1200,
         "inprop": "url",
         "redirects": "1"
-      }
+      },
       "resultPolicy": "untrusted",
       "responseLimits": {
         "maxTextChars": 40000
