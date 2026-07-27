@@ -16596,6 +16596,30 @@ test('chrome sidepanel Escape abort honors slash autocomplete dismissal', () => 
   assert.equal(abortCall < recordingEscapeCall, true, 'chrome: agent-run Escape abort should take precedence over recording stop');
 });
 
+test('firefox sidepanel implements documented global keyboard shortcuts', () => {
+  const panel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
+  const locale = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
+
+  const globalHandlerStart = panel.indexOf('async function handleGlobalKeydown(e)');
+  const defaultPreventedGuard = panel.indexOf('if (e.defaultPrevented) return;', globalHandlerStart);
+  const abortCall = panel.indexOf('abortRun();', globalHandlerStart);
+  assert.notEqual(globalHandlerStart, -1, 'firefox: global keydown handler missing');
+  assert.notEqual(defaultPreventedGuard, -1, 'firefox: global keydown handler should honor consumed key events');
+  assert.notEqual(abortCall, -1, 'firefox: Escape abort shortcut missing');
+  assert.equal(defaultPreventedGuard < abortCall, true, 'firefox: consumed slash-menu Escape should not reach abortRun');
+  assert.match(panel, /document\.addEventListener\('keydown', handleGlobalKeydown, true\)/, 'firefox: shortcuts should run in capture phase');
+  assert.match(panel, /mod && e\.key === '\/'/, 'firefox: Ctrl/Cmd+/ focus shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'A'/, 'firefox: Ask mode shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'X'/, 'firefox: Act mode shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'D'/, 'firefox: Dev mode shortcut missing');
+  assert.match(panel, /await ensureActMode\(\)/, 'firefox: Act shortcut should call ensureActMode');
+  assert.match(panel, /await ensureDevMode\(\)/, 'firefox: Dev shortcut should call ensureDevMode');
+
+  for (const shortcut of ['Ctrl/Cmd+/', 'Ctrl/Cmd+Shift+A', 'Ctrl/Cmd+Shift+X', 'Ctrl/Cmd+Shift+D', 'Escape']) {
+    assert.match(locale, new RegExp(escapeRegExpLiteral(shortcut)), `firefox: /help should mention ${shortcut}`);
+  }
+});
+
 test('chrome double Escape stops active recordings from sidepanel and content pages', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   const content = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/content.js'), 'utf8');
