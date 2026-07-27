@@ -784,6 +784,7 @@ const {
   removeRetiredPackagedSkills: removeRetiredPackagedSkillsCh,
   refreshBuiltInSkillRecord: refreshBuiltInSkillRecordCh,
   readSkillImportText: readSkillImportTextCh,
+  stripSkillToolBlocks: stripSkillToolBlocksCh,
   buildCustomSkillsPrompt: buildCustomSkillsPromptCh,
   getEligibleSkillCatalog: getEligibleSkillCatalogCh,
   buildSkillLoaderDefinition: buildSkillLoaderDefinitionCh,
@@ -808,6 +809,7 @@ const {
   removeRetiredPackagedSkills: removeRetiredPackagedSkillsFx,
   refreshBuiltInSkillRecord: refreshBuiltInSkillRecordFx,
   readSkillImportText: readSkillImportTextFx,
+  stripSkillToolBlocks: stripSkillToolBlocksFx,
   buildCustomSkillsPrompt: buildCustomSkillsPromptFx,
   getEligibleSkillCatalog: getEligibleSkillCatalogFx,
   buildSkillLoaderDefinition: buildSkillLoaderDefinitionFx,
@@ -12818,6 +12820,70 @@ Keep this text unchanged.`;
       }]);
       assert.equal(rejected.name, 'Safe fallback', `${label}: ${caseName} metadata was accepted`);
     }
+  }
+});
+
+test('Agent Skills parsing rejects unsupported YAML without data loss and normalizes raw input', () => {
+  const wrappedPlain = `---
+name: pdf-processing
+description: Extract PDF text and fill forms.
+  Use when working with PDF documents.
+---
+# Safe fallback
+
+Keep the complete source.`;
+  const explicitIndent = `---
+name: pdf-processing
+description: >2-
+  Extract PDF text and fill forms.
+---
+# Safe fallback
+
+Keep the explicit block source.`;
+  const supportedRaw = '\uFEFF\r\n\r\n---\r\nname: pdf-processing\r\ndescription: Extract PDF text.\r\n---\r\n# PDF workflow\r\n\r\nFollow it.';
+  const oversizedFrontmatter = `---
+name: pdf-processing
+description: Extract PDF text.
+metadata: ${'x'.repeat(8200)}
+---
+# Safe fallback
+
+Keep the oversized source.`;
+
+  for (const [label, normalizeSkills, buildPrompt, stripBlocks] of [
+    ['chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, stripSkillToolBlocksCh],
+    ['firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, stripSkillToolBlocksFx],
+  ]) {
+    for (const [caseName, content, preservedText] of [
+      ['wrapped plain scalar', wrappedPlain, 'Use when working with PDF documents.'],
+      ['explicit indentation indicator', explicitIndent, 'description: >2-'],
+    ]) {
+      const id = `unsupported-${caseName.replace(/\s+/g, '-')}`;
+      const [skill] = normalizeSkills([{ id, content }]);
+      assert.equal(skill.name, 'Safe fallback', `${label}: ${caseName} was partially accepted`);
+      const prompt = buildPrompt([skill], {
+        mode: 'act',
+        tier: 'full',
+        activeSkillIds: new Set([id]),
+      });
+      assert.match(prompt, new RegExp(preservedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${label}: ${caseName} source was lost`);
+      assert.match(prompt, /Keep the .* source\./, `${label}: ${caseName} body was lost`);
+    }
+
+    const stripped = stripBlocks(supportedRaw);
+    assert.equal(
+      stripped,
+      '# PDF workflow\n\nFollow it.',
+      `${label}: raw BOM/CRLF/leading whitespace changed frontmatter handling`,
+    );
+
+    const [oversized] = normalizeSkills([{ id: 'oversized-frontmatter', content: oversizedFrontmatter }]);
+    assert.equal(oversized.name, 'Safe fallback', `${label}: oversized frontmatter was partially accepted`);
+    assert.match(
+      stripBlocks(oversizedFrontmatter),
+      /metadata: x{100}/,
+      `${label}: oversized frontmatter was destructively stripped`,
+    );
   }
 });
 

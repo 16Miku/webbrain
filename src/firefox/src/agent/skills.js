@@ -111,7 +111,7 @@ function parseAgentSkillScalar(value) {
 }
 
 function parseAgentSkillFrontmatter(content) {
-  const text = String(content || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const text = String(content || '').replace(/\r\n?/g, '\n').trimStart();
   const match = text.match(/^---\n([\s\S]{0,8192}?)\n---(?:\n|$)/);
   if (!match) return null;
 
@@ -129,7 +129,11 @@ function parseAgentSkillFrontmatter(content) {
     seen.add(key);
 
     const rawValue = field[2] || '';
-    if (/^[>|][+-]?$/.test(rawValue.trim())) {
+    const scalarIndicator = rawValue.trim();
+    if (/^[>|]/.test(scalarIndicator) && !/^[>|][+-]?$/.test(scalarIndicator)) {
+      return null;
+    }
+    if (/^[>|][+-]?$/.test(scalarIndicator)) {
       const block = [];
       while (index + 1 < lines.length) {
         const next = lines[index + 1];
@@ -144,6 +148,12 @@ function parseAgentSkillFrontmatter(content) {
       values[key] = cleanText(block.map((item) => item.slice(indent)).join('\n'));
     } else {
       values[key] = parseAgentSkillScalar(rawValue);
+      for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+        const next = lines[nextIndex];
+        if (!next.trim() || /^\s*#/.test(next)) continue;
+        if (/^\s/.test(next)) return null;
+        break;
+      }
     }
   }
 
