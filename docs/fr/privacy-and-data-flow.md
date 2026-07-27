@@ -164,6 +164,18 @@ de l'URL et des arguments d'outil déclarés. Les utilisateurs peuvent supprimer
 cette compétence, ou tout outil de compétence importé par l'utilisateur, depuis
 Paramètres → Compétences pour arrêter complètement ce flux de données.
 
+### Compétences packagées à activer
+
+D'autres compétences packagées sont livrées désactivées jusqu'à ce que
+l'utilisateur les active dans Paramètres → Compétences. Une fois activées et
+chargées pour une exécution, leurs outils HTTPS déclarés peuvent appeler des
+points de terminaison tiers (par exemple Mail.tm, Open-Meteo, Open Library ou
+Wikipédia). Ces appels n'envoient que les arguments d'outil déclarés dans le
+manifeste — pas l'historique de navigation ni le chat non lié — et traitent les
+réponses comme non fiables sauf indication contraire du manifeste. Retirer ou
+désactiver une compétence arrête ce flux. Voir
+[Compétences](skills.md#compétences-intégrées) pour le catalogue packagé.
+
 ---
 
 ## Diagrammes de flux de données

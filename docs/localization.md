@@ -13,23 +13,32 @@ src/chrome/src/ui/
 ├── i18n.js                # Core: t(), setLocale(), applyDOMTranslations()
 └── locales/
     ├── en.js              # English — canonical, always complete
-    ├── es.js              # Spanish
-    ├── fr.js              # French
-    ├── tr.js              # Turkish
-    ├── zh.js              # Chinese
-    ├── ru.js              # Russian
-    ├── uk.js              # Ukrainian
     ├── ar.js              # Arabic
+    ├── bn.js              # Bengali
+    ├── de.js              # German
+    ├── es.js              # Spanish
+    ├── fa.js              # Persian
+    ├── fr.js              # French
+    ├── he.js              # Hebrew
+    ├── hi.js              # Hindi
+    ├── id.js              # Indonesian
     ├── ja.js              # Japanese
     ├── ko.js              # Korean
-    ├── id.js              # Indonesian
-    ├── th.js              # Thai
     ├── ms.js              # Malay
-    ├── tl.js              # Filipino
+    ├── nl.js              # Dutch
     ├── pl.js              # Polish
-    └── he.js              # Hebrew
+    ├── pt.js              # Portuguese
+    ├── ru.js              # Russian
+    ├── th.js              # Thai
+    ├── tl.js              # Filipino
+    ├── tr.js              # Turkish
+    ├── uk.js              # Ukrainian
+    ├── vi.js              # Vietnamese
+    └── zh.js              # Chinese
 ```
 
+Settings → Language lists all **23** locales from `LANGUAGES` in `i18n.js`
+(English and Chinese pinned first; the rest sorted by English name).
 ### Key Functions
 
 ```js

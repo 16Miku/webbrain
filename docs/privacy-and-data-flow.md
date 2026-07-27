@@ -321,6 +321,17 @@ retention before reading, treat message content as untrusted, honor Strict
 secret handling, reject ambiguous numeric strings and recovery tokens, and
 prohibit intentionally copying the code into scratchpad or user memory.
 
+### Opt-in packaged skills
+
+Additional packaged skills ship disabled until the user enables them in
+Settings → Skills. When enabled and activated for a run, their declared HTTPS
+skill tools may call third-party endpoints (for example Mail.tm, Open-Meteo,
+Open Library, or Wikipedia). Those calls send only the tool arguments declared
+in the skill manifest — not browsing history or unrelated chat — and treat
+responses as untrusted unless the manifest says otherwise. Removing or
+disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
+for the full packaged catalog.
+
 ---
 
 ## Data Flow Diagrams
