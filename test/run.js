@@ -2424,6 +2424,10 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.match(adapter?.notes || '', /Outras opções de compra/);
   assert.match(adapter?.notes || '', /CEP/);
   assert.match(adapter?.notes || '', /account-verification/);
+  // Checkout leaves the matched hosts, so the notes must hand the total off.
+  assert.match(adapter?.notes || '', /Mercado Pago/);
+  // Blended ES/PT labels match no real control on either storefront.
+  assert.doesNotMatch(adapter?.notes || '', /Agregar\/Adicionar|ahora\/agora|carrito\/carrinho/);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
