@@ -2398,6 +2398,50 @@ test('matches apple store pages', () => {
   assert.equal(getActiveAdapter('https://secure.store.apple.com/shop/checkout')?.name, 'apple');
 });
 
+test('matches Mercado Libre LATAM storefronts and includes marketplace guidance', () => {
+  const trustedUrls = [
+    'https://mercadolibre.com.ar/',
+    'https://www.mercadolibre.com.ar/notebook/p/MLA123',
+    'https://listado.mercadolibre.com.ar/notebook',
+    'https://articulo.mercadolibre.com.ar/MLA-123-notebook-_JM',
+    'https://www.mercadolibre.com.mx/notebook/p/MLM123',
+    'https://listado.mercadolibre.com.mx/notebook',
+    'https://mercadolivre.com.br/',
+    'https://www.mercadolivre.com.br/notebook/p/MLB123',
+    'https://lista.mercadolivre.com.br/notebook',
+    'https://produto.mercadolivre.com.br/MLB-123-notebook-_JM',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'mercado-libre');
+    assert.equal(getActiveAdapterFx(url)?.name, 'mercado-libre');
+  }
+
+  const rejectedUrls = [
+    'https://mercadolibre.com.ar.phishing.example/notebook',
+    'https://mercadolivre.com.br.evil.example/notebook',
+    'https://example.com/mercadolibre.com.mx/notebook',
+    // Other country storefronts need their own localized research before inclusion.
+    'https://www.mercadolibre.cl/notebook',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'mercado-libre');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'mercado-libre');
+  }
+
+  const adapter = getActiveAdapter('https://www.mercadolibre.com.mx/notebook/p/MLM123');
+  const firefoxAdapter = getActiveAdapterFx('https://www.mercadolivre.com.br/notebook/p/MLB123');
+  assert.match(adapter?.notes || '', /MARKETPLACE/);
+  assert.match(adapter?.notes || '', /Otras opciones de compra/);
+  assert.match(adapter?.notes || '', /Outras opções de compra/);
+  assert.match(adapter?.notes || '', /CEP/);
+  assert.match(adapter?.notes || '', /account-verification/);
+  // Checkout leaves the matched hosts, so the notes must hand the total off.
+  assert.match(adapter?.notes || '', /Mercado Pago/);
+  // Blended ES/PT labels match no real control on either storefront.
+  assert.doesNotMatch(adapter?.notes || '', /Agregar\/Adicionar|ahora\/agora|carrito\/carrinho/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
