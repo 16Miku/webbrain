@@ -16285,11 +16285,10 @@ const ADAPTERS = [
     category: 'general',
     matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)*(?:mercadolibre\.com\.(?:ar|mx)|mercadolivre\.com\.br)\//.test(url),
     notes: `
-- Multi-seller MARKETPLACE, localized per country. As of 2026-07 — AR/MX (Spanish): "Comprar ahora", "Agregar al carrito", "Otras opciones de compra". BR (Portuguese): "Comprar agora", "Adicionar ao carrinho", "Outras opções de compra". Use the current site's language only; a blended label matches no control on either storefront.
-- Catalog pages (path contains /p/MLA…, /p/MLM…, /p/MLB…) group MANY sellers under one product: the buy box is ONE seller's offer, and the "otras opciones"/"outras opções" list holds others at a different price, shipping cost, and reputation — compare before quoting. Single-seller listings (articulo.mercadolibre.com.*/…-_JM, produto.mercadolivre.com.br/…-_JM) have no such list; don't hunt for it there.
-- Variant trap: pick every required option — color, size ("talle" AR / "talla" MX / "tamanho" BR), capacity, voltage, flavor — BEFORE adding. A variation can change stock, price, seller, and delivery; read the selection back from the cart.
-- LOCATION-FIRST: set the destination postal code ("código postal" AR/MX, "CEP" BR) before stating availability, shipping cost, free shipping, pickup, or arrival date. Re-check in the cart — these depend on destination AND seller.
-- Listed prices exclude shipping, and headline discounts/installments ("cuotas" AR/MX, "parcelas" BR) can depend on payment method. Add to cart while choices are open; confirm seller, variation, quantity, shipping, and final payable total before buy-now. Checkout then continues on a Mercado Pago host, where this guidance no longer applies — confirm the total there too.
+- Multi-seller MARKETPLACE. As of 2026-07 the buy controls are AR/MX "Comprar ahora" / "Agregar al carrito" / "Otras opciones de compra"; BR "Comprar agora" / "Adicionar ao carrinho" / "Outras opções de compra". Use one locale's labels, never a blend of the two.
+- Catalog pages (path contains /p/MLA…, /p/MLM…, /p/MLB…) group MANY sellers under one product: the buy box is ONE offer, and "Otras opciones de compra"/"Outras opções de compra" lists the rest at different prices and arrival dates — open it before quoting a price. Single-seller listings (articulo.mercadolibre.com.*, produto.mercadolivre.com.br, paths ending -_JM) have no such list.
+- Shipping cost and arrival date are computed from the destination "código postal" (AR/MX) / "CEP" (BR) and differ per seller. Set it before stating either, and re-check in the cart.
+- Buy-now hands off to a Mercado Pago host where this guidance stops applying — confirm the final total there.
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
