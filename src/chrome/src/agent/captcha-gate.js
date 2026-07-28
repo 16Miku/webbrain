@@ -134,17 +134,42 @@ export function detectChallengeDialogInPage(options = null) {
       return false;
     }
   };
+  // This detector is serialized into the page, so it cannot call the exported
+  // classifier below. Keep the vendor-specific routes aligned with it.
+  const activeFrameVendor = (value) => {
+    try {
+      const parsed = new URL(String(value || ''));
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      if (
+        (/(^|\.)google\.com$/.test(host) || /(^|\.)recaptcha\.net$/.test(host))
+        && /\/recaptcha\/(?:api2|enterprise)\/bframe(?:\/|$)/.test(path)
+      ) return 'recaptcha';
+      if (/(^|\.)hcaptcha\.com$/.test(host)) {
+        const frame = new URLSearchParams(String(parsed.hash || '').replace(/^#/, '')).get('frame');
+        if (frame === 'challenge') return 'hcaptcha';
+      }
+      if (
+        /(^|\.)(?:arkoselabs|funcaptcha)\.com$/.test(host)
+        && /\/fc\/gc(?:\/|$)/.test(path)
+      ) return 'arkose';
+    } catch {}
+    return '';
+  };
   const childFrames = Array.from(document.querySelectorAll('iframe')).map((element, index) => {
     let loadedUrl = '';
     try {
       loadedUrl = String(element.contentWindow?.location?.href || '');
     } catch {}
+    const url = String(element.getAttribute?.('src') || element.src || '');
+    const activeChallengeVendor = activeFrameVendor(loadedUrl || url);
     return {
       index,
-      url: String(element.getAttribute?.('src') || element.src || ''),
+      url,
       loadedUrl,
       name: String(element.getAttribute?.('name') || element.name || ''),
       visible: visible(element),
+      ...(activeChallengeVendor ? { activeChallengeVendor } : {}),
     };
   });
   // A challenge dialog that exists in the DOM but is hidden or off-viewport
@@ -250,6 +275,20 @@ export function detectChallengeDialogInPage(options = null) {
       if (label) return finish({ label });
     }
   }
+  const activeChallengeFrame = childFrames.find(frame =>
+    frame.visible === true && frame.activeChallengeVendor
+  );
+  if (activeChallengeFrame) {
+    const vendorLabel = activeChallengeFrame.activeChallengeVendor === 'recaptcha'
+      ? 'reCAPTCHA'
+      : activeChallengeFrame.activeChallengeVendor === 'hcaptcha'
+        ? 'hCaptcha'
+        : 'Arkose';
+    return finish({
+      label: `Visible ${vendorLabel} challenge frame`,
+      languageNeutralFrame: true,
+    });
+  }
   return finish(null);
 }
 
@@ -302,7 +341,14 @@ export function buildCaptchaDiagnostics({
 } = {}) {
   const rows = [];
   const seen = new Set();
-  const addFrame = ({ frameId = null, parentFrameId = null, frameUrl = '', source, visible = null }) => {
+  const addFrame = ({
+    frameId = null,
+    parentFrameId = null,
+    frameUrl = '',
+    source,
+    visible = null,
+    activeChallengeFrame = false,
+  }) => {
     const sanitizedUrl = sanitizeCaptchaFrameUrl(frameUrl);
     if (!sanitizedUrl) return;
     const vendor = captchaVendorFromUrl(frameUrl);
@@ -315,6 +361,7 @@ export function buildCaptchaDiagnostics({
       frameUrl: sanitizedUrl,
       vendor,
       source,
+      ...(activeChallengeFrame ? { activeChallengeFrame: true } : {}),
       ...(typeof visible === 'boolean' ? { visible } : {}),
     });
   };
@@ -338,6 +385,7 @@ export function buildCaptchaDiagnostics({
         frameUrl: child?.loadedUrl || child?.url,
         source: 'embedded',
         visible: child?.visible,
+        activeChallengeFrame: child?.activeChallengeFrame === true,
       });
     }
   }
@@ -347,6 +395,7 @@ export function buildCaptchaDiagnostics({
       frameUrl: candidate?.frameUrl,
       source: 'candidate',
       visible: candidate?.visible,
+      activeChallengeFrame: candidate?.activeChallengeFrame === true,
     });
   }
 

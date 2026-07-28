@@ -54419,6 +54419,185 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
   }
 });
 
+test('language-neutral CAPTCHA challenge frames arm the gate without matching dialog copy', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const supportedCases = [
+      {
+        label: 'reCAPTCHA bframe',
+        status: 'solve_required',
+        selectedType: 'recaptcha_v2',
+        nodes: [
+          captchaEl('div', { role: 'dialog', innerText: 'Sicherheitsüberprüfung' }, [
+            captchaEl('h2', { textContent: 'Sicherheitsüberprüfung' }),
+            captchaEl('textarea', {
+              id: 'g-recaptcha-response-localized',
+              name: 'g-recaptcha-response',
+            }),
+            captchaEl('iframe', {
+              src: 'https://www.google.com/recaptcha/api2/bframe?k=LOCALIZED_RECAPTCHA_KEY',
+            }),
+          ]),
+        ],
+      },
+      {
+        label: 'hCaptcha challenge frame',
+        status: 'solve_required',
+        selectedType: 'hcaptcha',
+        nodes: [
+          captchaEl('div', { role: 'dialog', innerText: 'Güvenlik doğrulaması' }, [
+            captchaEl('h2', { textContent: 'Güvenlik doğrulaması' }),
+            captchaEl('textarea', {
+              id: 'h-captcha-response-localized',
+              name: 'h-captcha-response',
+            }),
+            captchaEl('iframe', {
+              src: 'https://newassets.hcaptcha.com/captcha/v1/hcaptcha.html#frame=challenge&sitekey=LOCALIZED_HCAPTCHA_KEY',
+            }),
+          ]),
+        ],
+      },
+      {
+        label: 'Arkose enforcement frame',
+        status: 'manual_required',
+        nodes: [
+          captchaEl('div', { role: 'dialog', innerText: 'Vérification de sécurité' }, [
+            captchaEl('h2', { textContent: 'Vérification de sécurité' }),
+            captchaEl('iframe', {
+              src: 'https://client-api.arkoselabs.com/fc/gc/?token=LOCALIZED_ARKOSE_TOKEN',
+            }),
+          ]),
+        ],
+      },
+    ];
+
+    for (const example of supportedCases) {
+      await withCaptchaFakePage(build, example.nodes, async () => {
+        const agent = new AgentClass({});
+        agent.captchaSolverEnabled = true;
+        agent._currentUrl = async () => 'https://example.test/signup';
+        const observed = await agent._observeCaptchaChallenge(
+          1,
+          'get_accessibility_tree',
+          {
+            pageContent: 'dialog "Sicherheitsüberprüfung" [ref_300]\n button "Weiter" [ref_301]',
+          },
+          { filter: 'visible' },
+        );
+        assert.equal(
+          observed.gate?.status,
+          example.status,
+          `${build}: ${example.label} did not arm the localized challenge gate`,
+        );
+        if (example.selectedType) {
+          assert.equal(
+            observed.gate?.selectedType,
+            example.selectedType,
+            `${build}: ${example.label} selected the wrong solver type`,
+          );
+        } else {
+          assert.equal(
+            observed.gate?.unsupportedVendors?.includes('arkose'),
+            true,
+            `${build}: ${example.label} did not report the unsupported vendor`,
+          );
+        }
+        assert.equal(
+          observed.gate?.languageNeutralFrameTrigger,
+          true,
+          `${build}: ${example.label} did not report the language-neutral trigger`,
+        );
+
+        const disabledAgent = new AgentClass({});
+        disabledAgent.captchaSolverEnabled = false;
+        disabledAgent._currentUrl = async () => 'https://example.test/signup';
+        const disabled = await disabledAgent._observeCaptchaChallenge(
+          4,
+          'get_accessibility_tree',
+          { pageContent: 'dialog "Sicherheitsüberprüfung" [ref_302]' },
+          { filter: 'visible' },
+        );
+        assert.equal(
+          disabled.gate?.status,
+          'manual_required',
+          `${build}: ${example.label} bypassed the gate when the solver was disabled`,
+        );
+        assert.equal(
+          disabled.gate?.solverDisabled,
+          true,
+          `${build}: ${example.label} did not explain manual routing`,
+        );
+
+        const preflightAgent = new AgentClass({});
+        preflightAgent.captchaSolverEnabled = true;
+        preflightAgent._currentUrl = async () => 'https://example.test/signup';
+        const preflight = await preflightAgent._captchaMutationPreflight(2, 'click_ax');
+        assert.equal(
+          preflight?.status,
+          example.status,
+          `${build}: ${example.label} did not block the first mutation`,
+        );
+      });
+    }
+
+    const inactiveCases = [
+      {
+        label: 'ordinary reCAPTCHA anchor',
+        node: captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/api2/anchor?k=IDLE_RECAPTCHA_KEY',
+        }),
+      },
+      {
+        label: 'hCaptcha checkbox frame',
+        node: captchaEl('iframe', {
+          src: 'https://newassets.hcaptcha.com/captcha/v1/hcaptcha.html#frame=checkbox&sitekey=IDLE_HCAPTCHA_KEY',
+        }),
+      },
+      {
+        label: 'hidden reCAPTCHA challenge frame',
+        node: captchaEl('iframe', {
+          src: 'https://www.google.com/recaptcha/api2/bframe?k=HIDDEN_RECAPTCHA_KEY',
+          hidden: true,
+        }),
+      },
+      {
+        label: 'generic application CAPTCHA route',
+        node: captchaEl('iframe', {
+          src: 'https://example.test/checkpoint/captcha/challenge',
+        }),
+      },
+      {
+        label: 'spoofed reCAPTCHA vendor host',
+        node: captchaEl('iframe', {
+          src: 'https://google.com.example.test/recaptcha/api2/bframe?k=SPOOFED_KEY',
+        }),
+      },
+    ];
+    for (const example of inactiveCases) {
+      await withCaptchaFakePage(build, [
+        captchaEl('div', { role: 'dialog', innerText: 'Sicherheitsüberprüfung' }, [
+          captchaEl('h2', { textContent: 'Sicherheitsüberprüfung' }),
+          example.node,
+        ]),
+      ], async () => {
+        const agent = new AgentClass({});
+        agent.captchaSolverEnabled = true;
+        agent._currentUrl = async () => 'https://example.test/signup';
+        const observed = await agent._observeCaptchaChallenge(
+          3,
+          'get_accessibility_tree',
+          { pageContent: 'dialog "Sicherheitsüberprüfung" [ref_310]' },
+          { filter: 'visible' },
+        );
+        assert.equal(
+          observed.gate,
+          null,
+          `${build}: ${example.label} armed a language-neutral challenge gate`,
+        );
+      });
+    }
+  }
+});
+
 test('enabled CAPTCHA gate performs a read-only dialog preflight before the first mutation', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const challengeLabel = 'Complete "Security verification" now';
@@ -55494,6 +55673,7 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       visible: true,
       normalCheckbox: true,
       challengeFrame: true,
+      activeChallengeFrame: true,
       detectedVia: 'host',
     };
     const navigationFrames = [
@@ -55793,6 +55973,7 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
       websiteKey: 'KEY_HIDDEN',
       visible: false,
       challengeFrame: true,
+      activeChallengeFrame: true,
       responseField: true,
       detectedVia: 'script',
     };
