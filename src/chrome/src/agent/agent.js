@@ -761,29 +761,38 @@ export class Agent extends LoopDetector {
     return this.conversationIds.get(tabId) || null;
   }
 
+  /**
+   * Snapshot the effective runtime settings for a run. Anything we cannot
+   * observe is omitted rather than guessed: an absent field reads as "unknown"
+   * in a dump, while a hard `false`/'ask' would assert a setting the run never
+   * actually had — exactly the misattribution this metadata exists to prevent.
+   */
   _runtimeTraceConfig(provider, { tabId = null, mode = null } = {}) {
     let extensionVersion = '';
-    let promptTier = 'full';
     try { extensionVersion = chrome.runtime.getManifest().version || ''; } catch {}
-    try { promptTier = provider?.promptTier || 'full'; } catch {}
-    const effectiveMode = mode
-      || (tabId != null ? this._effectiveRunMode(tabId) : 'ask');
+    const effectiveMode = mode || (tabId != null ? this._effectiveRunMode(tabId) : null);
     return normalizeRuntimeTraceConfig({
       extension_version: extensionVersion,
       browser_target: 'chrome',
-      mode: effectiveMode,
-      prompt_tier: promptTier,
+      ...(effectiveMode ? { mode: effectiveMode } : {}),
+      prompt_tier: this._resolvePromptTier(provider),
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
       auto_screenshot: this.autoScreenshot,
       use_site_adapters: this.useSiteAdapters === true,
       web_mcp_enabled: this.webMcpEnabled === true,
-      api_mutations_allowed: tabId != null && this.apiAllowedTabs.has(tabId),
       user_memory_enabled: this.userMemoryEnabled === true,
-      selection_grounded: tabId != null && this.selectionGroundingScopes.has(tabId),
+      // Per-tab authorizations only mean something in a tab's context.
+      ...(tabId != null ? {
+        api_mutations_allowed: this.apiAllowedTabs.has(tabId),
+        selection_grounded: this.selectionGroundingScopes.has(tabId),
+      } : {}),
       image_detail: this.imageDetail,
-      max_agent_steps: this.maxSteps,
+      // The steps slider stores 0 for "unlimited", which the agent hydrates as
+      // Infinity. Round-trip that back to 0 so an unlimited run records as
+      // unlimited instead of being dropped as a non-integer.
+      max_agent_steps: Number.isFinite(this.maxSteps) ? this.maxSteps : 0,
       max_image_dimension: this.maxImageDimension,
       max_screenshots_per_turn: this.maxScreenshotsPerTurn,
     });
@@ -9357,14 +9366,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Resolve the active provider's prompt tier ('compact' | 'mid' | 'full').
-   * The provider getter already forces 'full' for cloud providers and applies
-   * the per-category defaults (local → 'mid'); we just guard the case where
-   * no provider is ready yet (fall back to the full prompt).
+   * Resolve a provider's prompt tier ('compact' | 'mid' | 'full'), defaulting
+   * to the active provider. The provider getter already forces 'full' for
+   * cloud providers and applies the per-category defaults (local → 'mid'); we
+   * just guard the case where no provider is ready yet (fall back to the full
+   * prompt).
    */
-  _resolvePromptTier() {
+  _resolvePromptTier(provider = null) {
     try {
-      return this.providerManager.getActive().promptTier || 'full';
+      return (provider || this.providerManager.getActive()).promptTier || 'full';
     } catch { return 'full'; }
   }
 
