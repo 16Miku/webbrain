@@ -12,14 +12,14 @@
 
 ### 匹配
 
-`getActiveAdapter(url)` 遍历 `ADAPTERS` 数组，返回第一个 `match(url)` 返回 `true` 的适配器：
+`getActiveAdapter(url)` 遍历 `ADAPTERS` 数组，返回第一个 `matches(url)` 返回 `true` 的适配器：
 
 ```js
 export function getActiveAdapter(url) {
   if (!url) return null;
   for (const a of ADAPTERS) {
     try {
-      if (a.match(url)) return a;
+      if (a.matches(url)) return a;
     } catch (e) { /* 跳过格式错误的匹配器 */ }
   }
   return null;
@@ -51,7 +51,7 @@ export function getActiveAdapter(url) {
 {
   name: 'my-site',          // 唯一短标识符
   category: 'general',       // 'general' | 'finance'
-  match: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
   notes: `
 - 要点 1：可操作的建议。
 - 要点 2：另一个建议。
@@ -66,7 +66,7 @@ export function getActiveAdapter(url) {
 |---|---|---|
 | `name` | string | 适配器的唯一标识符。用于系统提示的标题。 |
 | `category` | `'general'` 或 `'finance'` | `'finance'` 会在标题中添加 `[FINANCE / HIGH-STAKES]` 横幅，并在系统提示中触发额外的安全指导。 |
-| `match` | `(url) => boolean` | 当适配器应为该 URL 触发时返回 `true`。推荐使用正则表达式——保持足够具体以避免错误匹配。 |
+| `matches` | `(url) => boolean` | 当适配器应为该 URL 触发时返回 `true`。推荐使用正则表达式——保持足够具体以避免错误匹配。 |
 | `notes` | string | 注入到第一条用户消息中的要点式指导。**最多保持 4–8 行。** 参见下面的风格指南。 |
 
 ### 排序
@@ -107,7 +107,7 @@ export function getActiveAdapter(url) {
 {
   name: 'twitter',
   category: 'general',
-  match: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
   notes: `
 - 编辑器是一个 contenteditable，而不是 textarea。字符数由客户端强制限制。
 - 时间线是虚拟化的——推文会滚动出 DOM。使用搜索而不是滚动来查找推文。
@@ -123,7 +123,7 @@ export function getActiveAdapter(url) {
 {
   name: 'stripe',
   category: 'finance',
-  match: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
   notes: `
 - LIVE 与 TEST 模式切换在右上角。始终确认当前模式。
 - 退款默认为部分退款——请仔细检查金额。
@@ -160,7 +160,7 @@ export function getActiveAdapter(url) {
 
 - [ ] 将适配器对象添加到 `src/chrome/src/agent/adapters.js` 的 `ADAPTERS` 数组中
 - [ ] 将完全相同的更改同步到 `src/firefox/src/agent/adapters.js`
-- [ ] 确保 `match()` 正则表达式具体且不会遮蔽相邻的适配器
+- [ ] 确保 `matches()` 正则表达式具体且不会遮蔽相邻的适配器
 - [ ] 如果 `category: 'finance'`，将其放在数组中 `finance-generic` 之前
 - [ ] 验证 notes 是 4–8 条简洁的要点
 - [ ] 使用 `getActiveAdapter(url)` 测试匹配

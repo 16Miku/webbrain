@@ -12,14 +12,14 @@ Les adaptateurs de site sont la **contribution la plus recherchée n°1** (voir 
 
 ### Correspondance
 
-`getActiveAdapter(url)` parcourt le tableau `ADAPTERS` et retourne le **premier** adaptateur dont `match(url)` retourne `true` :
+`getActiveAdapter(url)` parcourt le tableau `ADAPTERS` et retourne le **premier** adaptateur dont `matches(url)` retourne `true` :
 
 ```js
 export function getActiveAdapter(url) {
   if (!url) return null;
   for (const a of ADAPTERS) {
     try {
-      if (a.match(url)) return a;
+      if (a.matches(url)) return a;
     } catch (e) { /* ignorer les matchers mal formés */ }
   }
   return null;
@@ -52,7 +52,7 @@ d'injecter les conseils Mastodon plus largement.
 {
   name: 'my-site',          // identifiant court unique
   category: 'general',       // 'general' | 'finance'
-  match: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
   notes: `
 - Point 1 : le conseil actionnable.
 - Point 2 : un autre conseil.
@@ -67,7 +67,7 @@ d'injecter les conseils Mastodon plus largement.
 |---|---|---|
 | `name` | string | Identifiant unique pour l'adaptateur. Utilisé dans les en-têtes d'invite système. |
 | `category` | `'general'` ou `'finance'` | `'finance'` ajoute une bannière `[FINANCE / ENJEUX ÉLEVÉS]` à l'en-tête et déclenche des consignes de sécurité supplémentaires dans l'invite système. |
-| `match` | `(url) => boolean` | Retourne `true` quand l'adaptateur doit se déclencher pour cette URL. L'expression régulière est préférée — gardez-la assez spécifique pour éviter les faux positifs. |
+| `matches` | `(url) => boolean` | Retourne `true` quand l'adaptateur doit se déclencher pour cette URL. L'expression régulière est préférée — gardez-la assez spécifique pour éviter les faux positifs. |
 | `notes` | string | Conseils sous forme de puces injectés dans le premier message utilisateur. **Maximum 4 à 8 lignes.** Voir les consignes de style ci-dessous. |
 
 ### Ordre
@@ -108,7 +108,7 @@ Les adaptateurs sont ordonnés par catégorie/site dans le tableau `ADAPTERS`. *
 {
   name: 'twitter',
   category: 'general',
-  match: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
   notes: `
 - Le composeur est un contenteditable, pas un textarea. Le nombre de caractères est appliqué côté client.
 - La timeline est virtualisée — les tweets disparaissent du DOM. Utilisez la recherche, pas le défilement, pour trouver un tweet.
@@ -124,7 +124,7 @@ Les adaptateurs sont ordonnés par catégorie/site dans le tableau `ADAPTERS`. *
 {
   name: 'stripe',
   category: 'finance',
-  match: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
   notes: `
 - Bascule LIVE vs TEST en haut à droite. Toujours confirmer le mode.
 - Les remboursements sont partiels par défaut — vérifier le montant attentivement.
@@ -161,7 +161,7 @@ Ouvrez chaque site adapté et vérifiez :
 
 - [ ] Ajouter l'objet adaptateur au tableau `ADAPTERS` dans `src/chrome/src/agent/adapters.js`
 - [ ] Refléter exactement la même modification dans `src/firefox/src/agent/adapters.js`
-- [ ] S'assurer que la regex `match()` est spécifique et ne masque pas les adaptateurs voisins
+- [ ] S'assurer que la regex `matches()` est spécifique et ne masque pas les adaptateurs voisins
 - [ ] Si `category: 'finance'`, le placer AVANT `finance-generic` dans le tableau
 - [ ] Vérifier que les notes sont concises (4 à 8 puces)
 - [ ] Tester la correspondance avec `getActiveAdapter(url)`
