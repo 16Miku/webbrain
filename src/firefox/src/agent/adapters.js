@@ -16277,6 +16277,21 @@ const ADAPTERS = [
 - Pre-orders / "Made to order" listings have a longer ship date — surface that to the user before buying.`,
   },
 
+  // ─── Regional — Mercado Libre / Mercado Livre (LATAM) ────────────────
+  // Start with the AR, MX, and BR storefronts requested in CONTRIBUTING.md.
+  // Other country sites need separate localization research before inclusion.
+  {
+    name: 'mercado-libre',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)*(?:mercadolibre\.com\.(?:ar|mx)|mercadolivre\.com\.br)\//.test(url),
+    notes: `
+- Multi-seller MARKETPLACE. As of 2026-07 the buy controls are AR/MX "Comprar ahora" / "Agregar al carrito" / "Otras opciones de compra"; BR "Comprar agora" / "Adicionar ao carrinho" / "Outras opções de compra". Use one locale's labels, never a blend of the two.
+- Catalog pages (path contains /p/MLA…, /p/MLM…, /p/MLB…) group MANY sellers under one product: the buy box is ONE offer, and "Otras opciones de compra"/"Outras opções de compra" lists the rest at different prices and arrival dates — open it before quoting a price. Single-seller listings (articulo.mercadolibre.com.*, produto.mercadolivre.com.br, paths ending -_JM) have no such list.
+- Shipping cost and arrival date are computed from the destination "código postal" (AR/MX) / "CEP" (BR) and differ per seller. Set it before stating either, and re-check in the cart.
+- Buy-now hands off to a Mercado Pago host where this guidance stops applying — confirm the final total there.
+- Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,

@@ -51,14 +51,24 @@ permission gate before saving files. Tool results derived from third-party
 content should be marked `resultPolicy: "untrusted"` so they are wrapped as
 data, not instructions.
 
+Skill HTTP tools reject redirects (including opaque browser redirects), so
+manifests must use a final HTTPS host that does not 3xx.
+
 Skill tools are not part of the static [tool matrix](agent-tools.md#tool-matrix):
 before a skill is loaded, or after it is removed, its tools are absent.
 
 ## Bundled skills
 
-Both ship **enabled by default** and can be removed from Settings → Skills.
+Packaged skill markdown lives under `skills/` and is registered in
+`PACKAGED_SKILL_SOURCES` (`agent/skills.js`). Settings → Skills lists every
+packaged skill; only the defaults below are seeded enabled.
 
-### FreeSkillz.xyz
+### Enabled by default
+
+Both can be removed from Settings → Skills. A removed default is not silently
+restored.
+
+#### FreeSkillz.xyz
 
 Can expose `read_youtube_transcript`, `fetch_nytimes_article`,
 `resolve_public_media`, and `download_public_media` through its skill manifest.
@@ -66,7 +76,7 @@ On NYTimes / The Athletic tabs it is preactivated for the current run so a
 structured blocking `pageGate` can route directly to the credentialless article
 fallback.
 
-### OTP / verification-code helper
+#### OTP / verification-code helper
 
 Loads only for relevant requests and declares no network tool. On the active run
 tab it prefers selected text or a bounded accessibility-tree subtree, matches
@@ -77,6 +87,22 @@ When used, the scoped page content and the code are included in the normal
 request to your configured LLM provider. If **Record traces** is enabled, raw
 tool results and model responses are also stored locally until those traces are
 deleted.
+
+### Opt-in packaged skills
+
+These ship in the extension and appear under Settings → Skills as available to
+enable. They are not seeded on by default.
+
+| Skill | Modes | Network tools |
+|---|---|---|
+| Disposable email (Mail.tm) | Act, Dev | Mail.tm HTTPS API |
+| Temporary file share (Litterbox) | Act, Dev | Uses browser upload tools; short-lived public link |
+| Open-Meteo weather | Ask, Act, Dev | Geocoding + forecast HTTPS |
+| Open Library | Ask, Act, Dev | Open Library search HTTPS |
+| Wikipedia | Ask, Act, Dev | Wikipedia REST search + Action API summary HTTPS |
+
+Enable a skill only when you want its tools and instructions available for
+`load_skill` on eligible runs.
 
 ## See also
 

@@ -102,7 +102,7 @@ compacte la conversation à mesure qu'elle se remplit. Il existe aussi un relais
 **API cloud** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter et
-d'autres. Les Paramètres embarquent **103 cartes de fournisseurs** avec URL de
+d'autres. Les Paramètres embarquent **104 cartes de fournisseurs** avec URL de
 base et modèle par défaut préremplis — voir le
 [catalogue complet](docs/fr/providers-and-models.md#catalogue-étendu-de-fournisseurs).
 
@@ -195,7 +195,7 @@ WebBrain a le focus.
 | [Architecture](docs/fr/architecture.md) | Vue d'ensemble, flux d'un tour, sous-systèmes |
 | [Outils de l'agent](docs/fr/agent-tools.md) | Niveaux, modes et matrice complète |
 | [Commandes slash](docs/fr/slash-commands.md) | Toutes les commandes et options |
-| [Fournisseurs et modèles](docs/fr/providers-and-models.md) | Les 103 cartes, configuration locale, niveaux |
+| [Fournisseurs et modèles](docs/fr/providers-and-models.md) | Les 104 cartes, configuration locale, niveaux |
 | [Compétences](docs/fr/skills.md) | Compétences intégrées, import, outils de compétence |
 | [Modèle de sécurité](docs/fr/security-model.md) | Permissions, identifiants, frontières de confiance |
 | [Défense contre l'injection de prompt](docs/fr/prompt-injection-defense.md) | Couches de défense et limites connues |

@@ -73,11 +73,11 @@ Per-model-class prompt selection wired through `_getActPrompt()`. Tier inferred 
 
 The Firefox build is meaningfully weaker than Chrome (already noted in the README's "Known Issues"). Some gaps are platform-real (no CDP, no Manifest V3 service worker), but several are just unported features. Worth ticking off one at a time:
 
-- **`upload_file`** — not yet in Firefox. The dispatcher path exists for downloads but not for uploads. Likely a few hours of work; webextensions has the same `<input type="file">` mechanics.
 - **`full_page_screenshot`** — Chrome uses CDP `captureBeyondViewport`; Firefox would need `tabs.captureFullPage` or a scroll-and-stitch fallback. Lower priority.
 - **`shadow_dom_query`** — CDP-dependent. Hardest port; may not be worth it until a concrete user case emerges.
 
 Recently closed Firefox parity items:
+- **`upload_file`** — Firefox now supports `downloadId` re-fetch and a sidepanel user file picker (no arbitrary local `filePath` without CDP). Shipped via the Firefox upload_file port.
 - Firefox now has `downloads` permission and `download_files`; the old singular `download_file` TODO is obsolete because the tool surface was consolidated on plural `download_files`.
 - Firefox Ask mode can access the accessibility tree again (10.0.2).
 

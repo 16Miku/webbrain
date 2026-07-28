@@ -136,6 +136,28 @@ function packagedOpenLibraryRecord(prefix) {
   };
 }
 
+function packagedWikipediaRecord(prefix) {
+  return {
+    id: 'wikipedia',
+    name: 'Wikipedia',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/wikipedia.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/wikipedia.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
+function packagedFrankfurterRecord(prefix) {
+  return {
+    id: 'frankfurter-fx',
+    name: 'Frankfurter FX',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/frankfurter-fx.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/frankfurter-fx.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedChromeWebStoreRecord(prefix) {
   return {
     id: 'chrome-web-store-release',
@@ -2387,6 +2409,50 @@ test('matches apple store pages', () => {
   assert.equal(getActiveAdapter('https://www.apple.com/shop/buy-mac/macbook-air')?.name, 'apple');
   assert.equal(getActiveAdapter('https://www.apple.com/uk/shop/refurbished')?.name, 'apple');
   assert.equal(getActiveAdapter('https://secure.store.apple.com/shop/checkout')?.name, 'apple');
+});
+
+test('matches Mercado Libre LATAM storefronts and includes marketplace guidance', () => {
+  const trustedUrls = [
+    'https://mercadolibre.com.ar/',
+    'https://www.mercadolibre.com.ar/notebook/p/MLA123',
+    'https://listado.mercadolibre.com.ar/notebook',
+    'https://articulo.mercadolibre.com.ar/MLA-123-notebook-_JM',
+    'https://www.mercadolibre.com.mx/notebook/p/MLM123',
+    'https://listado.mercadolibre.com.mx/notebook',
+    'https://mercadolivre.com.br/',
+    'https://www.mercadolivre.com.br/notebook/p/MLB123',
+    'https://lista.mercadolivre.com.br/notebook',
+    'https://produto.mercadolivre.com.br/MLB-123-notebook-_JM',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'mercado-libre');
+    assert.equal(getActiveAdapterFx(url)?.name, 'mercado-libre');
+  }
+
+  const rejectedUrls = [
+    'https://mercadolibre.com.ar.phishing.example/notebook',
+    'https://mercadolivre.com.br.evil.example/notebook',
+    'https://example.com/mercadolibre.com.mx/notebook',
+    // Other country storefronts need their own localized research before inclusion.
+    'https://www.mercadolibre.cl/notebook',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'mercado-libre');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'mercado-libre');
+  }
+
+  const adapter = getActiveAdapter('https://www.mercadolibre.com.mx/notebook/p/MLM123');
+  const firefoxAdapter = getActiveAdapterFx('https://www.mercadolivre.com.br/notebook/p/MLB123');
+  assert.match(adapter?.notes || '', /MARKETPLACE/);
+  assert.match(adapter?.notes || '', /Otras opciones de compra/);
+  assert.match(adapter?.notes || '', /Outras opções de compra/);
+  assert.match(adapter?.notes || '', /CEP/);
+  assert.match(adapter?.notes || '', /account-verification/);
+  // Checkout leaves the matched hosts, so the notes must hand the total off.
+  assert.match(adapter?.notes || '', /Mercado Pago/);
+  // Blended ES/PT labels match no real control on either storefront.
+  assert.doesNotMatch(adapter?.notes || '', /Agregar\/Adicionar|ahora\/agora|carrito\/carrinho/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
 test('matches sahibinden.com and includes anti-bot guidance', () => {
@@ -12937,6 +13003,8 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'freeskillz-xyz': ['public_media_download', 'social_media_video', 'youtube_transcript', 'nytimes_article', 'media_metadata'],
     'open-meteo-weather': ['current_weather', 'weather_forecast', 'location_forecast'],
     'open-library-books': ['book_search', 'book_metadata', 'isbn_lookup', 'author_lookup'],
+    'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
+    'frankfurter-fx': ['currency_conversion', 'exchange_rate', 'fx_lookup', 'currency_list'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
@@ -13042,6 +13110,37 @@ test('packaged OTP helper loads on demand and strict-secret rules remain last', 
   }
 });
 
+test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const defaults = normalizeSkills([packagedFreeSkillzRecord(prefix)]);
+    assert.doesNotMatch(buildPrompt(defaults), /Wikipedia/, `${label}: Wikipedia skill leaked into default prompt`);
+
+    const enabled = normalizeSkills([...defaults, packagedWikipediaRecord(prefix)]);
+    const prompt = buildPrompt(enabled, { mode: 'ask', tier: 'full', activeSkillIds: new Set(['wikipedia']) });
+    assert.match(prompt, /Wikipedia/, `${label}: enabled Wikipedia skill missing from prompt`);
+    assert.doesNotMatch(prompt, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia endpoint JSON should stay out of prompt`);
+
+    const wiki = enabled.find((skill) => skill.id === 'wikipedia');
+    assert.deepEqual(
+      wiki.tools.map((tool) => tool.name),
+      ['search_wikipedia', 'get_wikipedia_summary'],
+      `${label}: Wikipedia manifest tools should parse`,
+    );
+    assert.equal(wiki.tools[0].endpoint, 'https://en.wikipedia.org/w/rest.php/v1/search/page', `${label}: wrong Wikipedia search endpoint`);
+    assert.equal(wiki.tools[0].resultPolicy, 'untrusted', `${label}: Wikipedia search output should be untrusted`);
+    assert.equal(wiki.tools[1].endpoint, 'https://en.wikipedia.org/w/api.php', `${label}: wrong Wikipedia summary endpoint`);
+    assert.equal(wiki.tools[1].readOnly, true, `${label}: Wikipedia summary should be read-only`);
+
+    const defs = buildDefs(enabled, { mode: 'ask' });
+    const names = defs.map((tool) => tool.function.name);
+    assert.ok(names.includes('search_wikipedia'), `${label}: Wikipedia search tool missing from ask mode`);
+    assert.ok(names.includes('get_wikipedia_summary'), `${label}: Wikipedia summary tool missing from ask mode`);
+  }
+});
+
 test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP tools', () => {
   for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
     ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
@@ -13120,6 +13219,45 @@ test('packaged Open-Meteo and Open Library skills are opt-in with read-only HTTP
     assert.ok(names.includes('search_weather_location'), `${label}: weather geocoding tool missing from ask mode`);
     assert.ok(names.includes('get_weather_forecast'), `${label}: weather forecast tool missing from ask mode`);
     assert.ok(names.includes('search_open_library_books'), `${label}: Open Library search tool missing from ask mode`);
+  }
+});
+
+test('packaged Frankfurter FX skill is opt-in with read-only HTTPS tools on api.frankfurter.dev', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const defaults = normalizeSkills([packagedFreeSkillzRecord(prefix)]);
+    assert.doesNotMatch(buildPrompt(defaults), /Frankfurter FX/, `${label}: Frankfurter skill leaked into default prompt`);
+
+    const enabled = normalizeSkills([
+      ...defaults,
+      packagedFrankfurterRecord(prefix),
+    ]);
+    const prompt = buildPrompt(enabled, { mode: 'ask', tier: 'full', activeSkillIds: new Set(['frankfurter-fx']) });
+    assert.match(prompt, /Frankfurter FX/, `${label}: enabled Frankfurter skill missing from prompt`);
+    assert.doesNotMatch(prompt, /"endpoint": "https:\/\/api\.frankfurter\.dev\/v1\/latest"/, `${label}: Frankfurter endpoint JSON should stay out of prompt`);
+    assert.match(prompt, /api\.frankfurter\.dev/, `${label}: skill body should require non-redirecting Frankfurter host`);
+    assert.match(prompt, /api\.frankfurter\.app/, `${label}: skill body should warn against redirecting Frankfurter host`);
+
+    const fx = enabled.find((skill) => skill.id === 'frankfurter-fx');
+    assert.deepEqual(
+      fx.tools.map((tool) => tool.name),
+      ['list_frankfurter_currencies', 'get_frankfurter_rates'],
+      `${label}: Frankfurter manifest tools should parse`,
+    );
+    assert.equal(fx.tools[0].endpoint, 'https://api.frankfurter.dev/v1/currencies', `${label}: wrong currencies endpoint`);
+    assert.equal(fx.tools[1].endpoint, 'https://api.frankfurter.dev/v1/latest', `${label}: wrong rates endpoint`);
+    assert.equal(fx.tools[0].readOnly, true, `${label}: currencies tool should be read-only`);
+    assert.equal(fx.tools[1].readOnly, true, `${label}: rates tool should be read-only`);
+    assert.equal(fx.tools[1].defaultArgs?.base, 'EUR', `${label}: rates default base should be EUR`);
+    assert.equal(fx.tools[0].resultPolicy, 'untrusted', `${label}: currencies output should be untrusted`);
+    assert.equal(fx.tools[1].resultPolicy, 'untrusted', `${label}: rates output should be untrusted`);
+
+    const defs = buildDefs(enabled, { mode: 'ask' });
+    const names = defs.map((tool) => tool.function.name);
+    assert.ok(names.includes('list_frankfurter_currencies'), `${label}: currencies tool missing from ask mode`);
+    assert.ok(names.includes('get_frankfurter_rates'), `${label}: rates tool missing from ask mode`);
   }
 });
 
@@ -16777,6 +16915,41 @@ test('chrome sidepanel Escape abort honors slash autocomplete dismissal', () => 
   assert.notEqual(abortCall, -1, 'chrome: Escape abort shortcut missing');
   assert.equal(defaultPreventedGuard < abortCall, true, 'chrome: consumed slash-menu Escape should not reach abortRun');
   assert.equal(abortCall < recordingEscapeCall, true, 'chrome: agent-run Escape abort should take precedence over recording stop');
+});
+
+test('firefox sidepanel implements documented global keyboard shortcuts', () => {
+  const panel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
+  const locale = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
+
+  const globalHandlerStart = panel.indexOf('async function handleGlobalKeydown(e)');
+  const defaultPreventedGuard = panel.indexOf('if (e.defaultPrevented) return;', globalHandlerStart);
+  const abortCall = panel.indexOf('abortRun();', globalHandlerStart);
+  assert.notEqual(globalHandlerStart, -1, 'firefox: global keydown handler missing');
+  assert.notEqual(defaultPreventedGuard, -1, 'firefox: global keydown handler should honor consumed key events');
+  assert.notEqual(abortCall, -1, 'firefox: Escape abort shortcut missing');
+  assert.equal(defaultPreventedGuard < abortCall, true, 'firefox: consumed slash-menu Escape should not reach abortRun');
+  assert.match(panel, /document\.addEventListener\('keydown', handleGlobalKeydown, true\)/, 'firefox: shortcuts should run in capture phase');
+  assert.match(panel, /mod && e\.key === '\/'/, 'firefox: Ctrl/Cmd+/ focus shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'A'/, 'firefox: Ask mode shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'X'/, 'firefox: Act mode shortcut missing');
+  assert.match(panel, /mod && e\.shiftKey && e\.key === 'D'/, 'firefox: Dev mode shortcut missing');
+  assert.match(panel, /await ensureActMode\(\)/, 'firefox: Act shortcut should call ensureActMode');
+  assert.match(panel, /await ensureDevMode\(\)/, 'firefox: Dev shortcut should call ensureDevMode');
+  // Review P1s: AltGr / IME / open pickers must not steal Escape or slash entry
+  assert.match(panel, /e\.altKey \|\| e\.getModifierState\?\.\('AltGraph'\)/, 'firefox: AltGr/Option chords must not trigger Ctrl shortcuts');
+  assert.match(panel, /if \(e\.isComposing\) return;/, 'firefox: IME Escape must not abort the active run');
+  assert.match(panel, /providerPickerMenu && !providerPickerMenu\.classList\.contains\('hidden'\)/, 'firefox: open provider picker Escape must not abort');
+  assert.match(panel, /languagePickerMenu && !languagePickerMenu\.classList\.contains\('hidden'\)/, 'firefox: open language picker Escape must not abort');
+  const composingGuard = panel.indexOf('if (e.isComposing) return;', globalHandlerStart);
+  const providerPickerGuard = panel.indexOf("providerPickerMenu && !providerPickerMenu.classList.contains('hidden')", globalHandlerStart);
+  const languagePickerGuard = panel.indexOf("languagePickerMenu && !languagePickerMenu.classList.contains('hidden')", globalHandlerStart);
+  assert.equal(composingGuard !== -1 && composingGuard < abortCall, true, 'firefox: IME guard must precede abortRun');
+  assert.equal(providerPickerGuard !== -1 && providerPickerGuard < abortCall, true, 'firefox: provider picker guard must precede abortRun');
+  assert.equal(languagePickerGuard !== -1 && languagePickerGuard < abortCall, true, 'firefox: language picker guard must precede abortRun');
+
+  for (const shortcut of ['Ctrl/Cmd+/', 'Ctrl/Cmd+Shift+A', 'Ctrl/Cmd+Shift+X', 'Ctrl/Cmd+Shift+D', 'Escape']) {
+    assert.match(locale, new RegExp(escapeRegExpLiteral(shortcut)), `firefox: /help should mention ${shortcut}`);
+  }
 });
 
 test('chrome double Escape stops active recordings from sidepanel and content pages', () => {
@@ -28273,7 +28446,7 @@ console.log('\nprovider categorization');
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -28332,7 +28505,7 @@ test('llama.cpp provider defaults to mid prompt tier for saved configs without c
 
 test('inferContextWindow: model-aware cloud/router defaults and local 16k fallback', () => {
   for (const infer of [inferContextWindowCh, inferContextWindowFx]) {
-    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
     for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
@@ -29024,7 +29197,7 @@ test('listProviderModels sends saved API keys for auth-enabled OpenAI-compatible
 
   try {
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-      for (const id of ['jan', 'vllm', 'sglang', 'localai']) {
+      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
         const mgr = new PM();
         const config = {
           ...mgr._defaultConfigs()[id],
@@ -29717,7 +29890,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(Object.keys(defaults).length, 103, `${label}: expected 27 original + 76 new providers`);
+    assert.equal(Object.keys(defaults).length, 104, `${label}: expected 28 original + 76 new providers`);
     for (const id of expectedIds) {
       const config = defaults[id];
       assert.ok(config, `${label}: missing ${id}`);
@@ -30511,7 +30684,7 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const mgr = new PM();
     const defaults = mgr._defaultConfigs();
-    for (const id of ['jan', 'vllm', 'sglang', 'localai']) {
+    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.ok(defaults[id], `${PM.name}: missing default config for ${id}`);
       assert.equal(defaults[id].type, 'openai', `${PM.name}: ${id} should use OpenAI-compatible provider`);
       assert.equal(defaults[id].category, 'local', `${PM.name}: ${id} should be local`);
@@ -30852,6 +31025,7 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     'vllm',
     'sglang',
     'localai',
+    'gpt4all',
     'azure_openai',
     'anthropic',
     'gemini',
@@ -31428,6 +31602,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
     'vllm',
     'sglang',
     'localai',
+    'gpt4all',
     'gemini',
     'mistral',
     'deepseek',
@@ -32600,6 +32775,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
       { category: 'local', providerName: 'vllm' },
       { category: 'local', providerName: 'sglang' },
       { category: 'local', providerName: 'localai' },
+      { category: 'local', providerName: 'gpt4all' },
       { category: 'local', providerName: 'openai' },
     ]) {
       const provider = new Provider(config);
@@ -32612,7 +32788,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
 
 test('OpenAI-compatible local providers always use legacy request token fields', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai']) {
+    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       const provider = new Provider({
         category: 'local',
         providerName,
@@ -48654,6 +48830,8 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'temporary-file-share-litterbox',
     'open-meteo-weather',
     'open-library-books',
+    'wikipedia',
+    'frankfurter-fx',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -48662,6 +48840,8 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'temporary-file-share-litterbox',
     'open-meteo-weather',
     'open-library-books',
+    'wikipedia',
+    'frankfurter-fx',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -48871,6 +49051,13 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(library, /"name": "search_open_library_books"/, `${label}: Open Library search tool missing`);
     assert.match(library, /"endpoint": "https:\/\/openlibrary\.org\/search\.json"/, `${label}: Open Library search endpoint missing`);
     assert.match(library, /Powered by \[Open Library\]\(https:\/\/openlibrary\.org\)/, `${label}: Open Library skill should include visible attribution`);
+    const wikipedia = fs.readFileSync(path.join(ROOT, prefix, 'skills/wikipedia.md'), 'utf8');
+    assert.match(wikipedia, /wikipedia\.org/i, `${label}: Wikipedia skill should reference the provider`);
+    assert.match(wikipedia, /"name": "search_wikipedia"/, `${label}: Wikipedia search tool missing`);
+    assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/rest\.php\/v1\/search\/page"/, `${label}: Wikipedia search endpoint missing`);
+    assert.match(wikipedia, /"name": "get_wikipedia_summary"/, `${label}: Wikipedia summary tool missing`);
+    assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia summary endpoint missing`);
+    assert.match(wikipedia, /Powered by \[Wikipedia\]\(https:\/\/www\.wikipedia\.org\)/, `${label}: Wikipedia skill should include visible attribution`);
     const fileShare = fs.readFileSync(path.join(ROOT, prefix, 'skills/temporary-file-share-litterbox.md'), 'utf8');
     assert.match(fileShare, /https:\/\/litterbox\.catbox\.moe/, `${label}: file-share skill should use Litterbox by default`);
     assert.match(fileShare, /No account, no API key, and no sign-in are required/i, `${label}: file-share skill should document the no-auth provider requirement`);

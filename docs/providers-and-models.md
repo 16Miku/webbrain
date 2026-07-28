@@ -44,6 +44,7 @@ class BaseLLMProvider {
 | `vllm` | `openai` | local | (loaded model) | Yes (default on) |
 | `sglang` | `openai` | local | (loaded model) | Yes (default on) |
 | `localai` | `openai` | local | (loaded model) | Yes (default on) |
+| `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -68,8 +69,8 @@ class BaseLLMProvider {
 
 WebBrain also ships 76 disabled-by-default provider cards sourced from the
 OpenCode provider catalog snapshot at commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the 27 original
-cards, Settings contains **103 built-in providers**.
+`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the 28 original
+cards, Settings contains **104 built-in providers**.
 
 | IDs |
 |---|

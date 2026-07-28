@@ -71,7 +71,7 @@ WebBrain 将**模型层级**与**对话模式**分开。
 | `read_downloaded_file` | 否 | 否 | 是 | 是 | - |
 | `download_files` | 否 | 否 | 是 | 是 | - |
 | `download_resource_from_page` | 否 | 否 | 是 | 是 | - |
-| `upload_file` | 否 | 否 | C | C | - |
+| `upload_file` | 否 | 否 | 是 | 是 | - |
 | `verify_form` | 否 | 否 | 是 | 是 | - |
 | `hover` | 否 | 否 | 否 | 是 | - |
 | `drag_drop` | 否 | 否 | 否 | 是 | - |

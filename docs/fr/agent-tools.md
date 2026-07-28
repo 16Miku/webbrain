@@ -72,7 +72,7 @@ uniquement · **Dev** = module Dev (fournisseurs Mid/Full ; pas Compact).
 | `read_downloaded_file` | Non | Non | Oui | Oui | - |
 | `download_files` | Non | Non | Oui | Oui | - |
 | `download_resource_from_page` | Non | Non | Oui | Oui | - |
-| `upload_file` | Non | Non | C | C | - |
+| `upload_file` | Non | Non | Oui | Oui | - |
 | `verify_form` | Non | Non | Oui | Oui | - |
 | `hover` | Non | Non | Non | Oui | - |
 | `drag_drop` | Non | Non | Non | Oui | - |
