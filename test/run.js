@@ -259,6 +259,12 @@ const ConfigTransferCh = await import(
 const ConfigTransferFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/config-transfer.js').replace(/\\/g, '/')
 );
+const RuntimeTraceConfigCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/trace/runtime-config.js').replace(/\\/g, '/')
+);
+const RuntimeTraceConfigFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/trace/runtime-config.js').replace(/\\/g, '/')
+);
 const DownloadDirectoryCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/download-directory.js').replace(/\\/g, '/')
 );
@@ -4062,10 +4068,70 @@ test('trace record and JSON exports carry WebBrain version metadata', () => {
     const traceUi = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/traces.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(recorder, /webbrainVersion: meta\.webbrainVersion \|\| ''/, `${label}: run record should retain the recording version`);
+    assert.match(recorder, /runtimeConfig: normalizeRuntimeTraceConfig\(meta\.runtimeConfig\)/, `${label}: run record should retain only allowlisted runtime settings`);
     assert.match(agent, new RegExp(`webbrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: trace start should read the runtime manifest`);
+    assert.match(agent, /runtimeConfig: this\._runtimeTraceConfig\(provider, \{ tabId, mode \}\)/, `${label}: trace start should snapshot effective runtime settings`);
     assert.match(traceUi, new RegExp(`exportedByWebBrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: JSON export should identify the exporting build`);
     assert.match(traceUi, /schema: 'webbrain-trace\/1'/, `${label}: additive version metadata should retain the v1 schema`);
   }
+});
+
+test('runtime trace config is versioned, bounded, and secret-free in both browsers', () => {
+  const candidate = {
+    schema_version: 99,
+    extension_version: '24.7.0-beta.1',
+    browser_target: 'chrome',
+    mode: 'act',
+    prompt_tier: 'compact',
+    plan_before_act_mode: 'try',
+    auto_screenshot: 'state_change',
+    image_detail: 'low',
+    screenshot_redaction: true,
+    strict_secret_mode: false,
+    use_site_adapters: true,
+    web_mcp_enabled: false,
+    api_mutations_allowed: true,
+    user_memory_enabled: true,
+    selection_grounded: false,
+    max_agent_steps: 130,
+    max_image_dimension: 1568,
+    max_screenshots_per_turn: 4,
+    api_key: 'must-not-leak',
+    profile_text: 'must-not-leak',
+    arbitrary_nested_settings: { token: 'must-not-leak' },
+  };
+  const expected = {
+    schema_version: 1,
+    extension_version: '24.7.0-beta.1',
+    browser_target: 'chrome',
+    mode: 'act',
+    prompt_tier: 'compact',
+    plan_before_act_mode: 'try',
+    auto_screenshot: 'state_change',
+    image_detail: 'low',
+    screenshot_redaction: true,
+    strict_secret_mode: false,
+    use_site_adapters: true,
+    web_mcp_enabled: false,
+    api_mutations_allowed: true,
+    user_memory_enabled: true,
+    selection_grounded: false,
+    max_agent_steps: 130,
+    max_image_dimension: 1568,
+    max_screenshots_per_turn: 4,
+  };
+  assert.deepEqual(RuntimeTraceConfigCh.normalizeRuntimeTraceConfig(candidate), expected);
+  assert.deepEqual(RuntimeTraceConfigFx.normalizeRuntimeTraceConfig(candidate), expected);
+
+  const rejected = RuntimeTraceConfigCh.normalizeRuntimeTraceConfig({
+    extension_version: 'bad version with spaces',
+    browser_target: 'safari',
+    mode: 'admin',
+    max_agent_steps: Infinity,
+    max_image_dimension: 42,
+    screenshot_redaction: 'yes',
+  });
+  assert.deepEqual(rejected, { schema_version: 1 });
 });
 
 test('trace recorders normalize done only from explicit loop error evidence', () => {
@@ -32281,6 +32347,9 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     const tabId = label === 'chrome' ? 731 : 732;
     const agent = new AgentClass({});
     agent.getConversation(tabId, 'ask');
+    agent.screenshotRedaction = true;
+    agent.strictSecretMode = true;
+    agent.apiAllowedTabs.add(tabId);
     const firstConversationId = agent.conversationIds.get(tabId);
     assert.match(firstConversationId, /^conv_/, `${label}: new conversation should mint an id`);
 
@@ -32290,6 +32359,13 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     assert.equal(main.webbrainSessionId, firstConversationId, `${label}: main call should carry the conversation id`);
     assert.equal(planner.webbrainSessionId, firstConversationId, `${label}: planner call should share the main session`);
     assert.equal(planner.webbrainGenerationName, 'planner', `${label}: planner call should be labeled`);
+    assert.equal(main.webbrainRuntimeConfig?.schema_version, 1, `${label}: runtime trace schema missing`);
+    assert.equal(main.webbrainRuntimeConfig?.browser_target, label, `${label}: browser target missing`);
+    assert.equal(main.webbrainRuntimeConfig?.mode, 'ask', `${label}: effective mode missing`);
+    assert.equal(main.webbrainRuntimeConfig?.screenshot_redaction, true, `${label}: screenshot redaction setting missing`);
+    assert.equal(main.webbrainRuntimeConfig?.strict_secret_mode, true, `${label}: strict secret setting missing`);
+    assert.equal(main.webbrainRuntimeConfig?.api_mutations_allowed, true, `${label}: per-tab API authorization missing`);
+    assert.ok(!JSON.stringify(main.webbrainRuntimeConfig).includes('apiKey'), `${label}: runtime metadata must remain an allowlist`);
 
     const byoOptions = agent._cloudGenerationOptions({ config: { providerName: 'openai' } }, { temperature: 0 }, { tabId, generationName: 'memory' });
     assert.deepEqual(byoOptions, { temperature: 0 }, `${label}: BYO provider received Cloud collection fields`);
@@ -32306,9 +32382,16 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     cloudProvider._addWebBrainCloudContext(cloudBody, {
       webbrainSessionId: firstConversationId,
       webbrainGenerationName: 'compaction',
+      webbrainRuntimeConfig: {
+        ...main.webbrainRuntimeConfig,
+        api_key: 'must-not-leak',
+        profile_text: 'must-not-leak',
+      },
     });
     assert.equal(cloudBody.session_id, firstConversationId, `${label}: Cloud request body should include session_id`);
     assert.equal(cloudBody.trace?.generation_name, 'compaction', `${label}: Cloud request body should include the generation label`);
+    assert.deepEqual(cloudBody.trace?.runtime_config, main.webbrainRuntimeConfig, `${label}: Cloud request body should include only allowlisted runtime settings`);
+    assert.ok(!JSON.stringify(cloudBody).includes('must-not-leak'), `${label}: arbitrary settings leaked into Cloud trace context`);
 
     const byoProvider = new Provider({ providerName: 'openai', apiKey: 'test-key' });
     const byoBody = {};

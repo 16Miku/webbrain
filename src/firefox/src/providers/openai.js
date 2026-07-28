@@ -5,6 +5,7 @@ import {
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
 } from './provider-compatibility.js';
+import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 
 const OPENAI_RESPONSES_MIN_MAX_OUTPUT_TOKENS = 16;
 const KIMI_CURRENT_TOOL_REASONING_MODELS = new Set([
@@ -235,11 +236,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     const sessionId = String(options.webbrainSessionId || '').trim();
     if (sessionId) body.session_id = sessionId.slice(0, 200);
     const generationName = String(options.webbrainGenerationName || '').trim().toLowerCase();
-    if (generationName) {
+    const runtimeConfig = normalizeRuntimeTraceConfig(options.webbrainRuntimeConfig);
+    if (generationName || runtimeConfig) {
       const trace = body.trace && typeof body.trace === 'object' && !Array.isArray(body.trace)
         ? body.trace
         : {};
-      body.trace = { ...trace, generation_name: generationName.slice(0, 64) };
+      body.trace = {
+        ...trace,
+        ...(generationName ? { generation_name: generationName.slice(0, 64) } : {}),
+        ...(runtimeConfig ? { runtime_config: runtimeConfig } : {}),
+      };
     }
   }
 
