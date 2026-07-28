@@ -10153,7 +10153,7 @@ test('completion form classification ignores passive localized utility shells wi
     assert.deepEqual(
       classify({
         editable: [{ tag: 'input', type: 'search', role: '', name: '', value: '' }],
-        submits: [{ label: 'Buscar' }],
+        submits: [],
       }),
       {
         label: '',
@@ -10161,9 +10161,28 @@ test('completion form classification ignores passive localized utility shells wi
         utility: true,
         utilityReason: 'semantic_search',
         editableCount: 1,
+        submitCount: 0,
+      },
+      `${label}: semantic search input without a submit control was not recognized structurally`,
+    );
+    assert.deepEqual(
+      classify({
+        outsidePrimaryContent: false,
+        editable: [
+          { tag: 'input', type: 'search', role: '', name: '', value: '' },
+          { tag: 'select', type: '', role: '', name: 'filter', value: '' },
+        ],
+        submits: [{ label: 'Filter' }],
+      }),
+      {
+        label: '',
+        relevant: false,
+        utility: true,
+        utilityReason: 'semantic_search',
+        editableCount: 2,
         submitCount: 1,
       },
-      `${label}: semantic search input depended on an English submit label`,
+      `${label}: mixed semantic and conventional search fields regressed`,
     );
 
     for (const [caseName, override] of [
@@ -10180,6 +10199,37 @@ test('completion form classification ignores passive localized utility shells wi
       const result = classify({ ...passiveSidebarSearch, ...override });
       assert.equal(result.relevant, true, `${label}: ${caseName} was hidden as utility UI`);
       assert.equal(result.utility, false, `${label}: ${caseName} received a utility classification`);
+    }
+
+    const semanticTaskSelector = {
+      outsidePrimaryContent: true,
+      insideDialog: false,
+      method: 'get',
+      hiddenNamedCount: 0,
+      editable: [{
+        tag: 'input',
+        type: 'search',
+        role: 'searchbox',
+        name: '',
+        value: '',
+        required: false,
+        focused: false,
+      }],
+      submits: [],
+    };
+    for (const [caseName, override] of [
+      ['dialog search selector', { insideDialog: true }],
+      ['POST search selector', { method: 'post' }],
+      ['search selector with hidden submitted state', { hiddenNamedCount: 1 }],
+      ['required search selector', { editable: [{ ...semanticTaskSelector.editable[0], required: true }] }],
+      ['focused search selector', { editable: [{ ...semanticTaskSelector.editable[0], focused: true }] }],
+      ['draft-bearing search selector', { editable: [{ ...semanticTaskSelector.editable[0], value: 'alice' }] }],
+      ['named task search selector', { editable: [{ ...semanticTaskSelector.editable[0], name: 'assignee' }] }],
+      ['search selector with non-search submit', { submits: [{ label: 'Add' }] }],
+    ]) {
+      const result = classify({ ...semanticTaskSelector, ...override });
+      assert.equal(result.relevant, true, `${label}: ${caseName} was hidden as semantic search UI`);
+      assert.equal(result.utility, false, `${label}: ${caseName} received a semantic utility classification`);
     }
 
     const agentSource = fs.readFileSync(path.join(ROOT, agentRel), 'utf8');

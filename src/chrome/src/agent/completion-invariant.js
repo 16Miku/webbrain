@@ -127,15 +127,31 @@ export function classifyCompletionForm({
     label: String(control?.label || '').trim(),
   }));
 
-  const semanticSearchOnly = normalizedFields.length > 0
-    && normalizedFields.every(field => field.type === 'search' || field.role === 'searchbox');
-  // Preserve compatibility with conventional query field names. Unlike the
-  // structural branches, this legacy fallback intentionally requires a
-  // search-like submit label so an unrelated named field cannot hide a task
-  // form merely because its name happens to be short.
-  const conventionalSearchOnly = normalizedFields.length > 0
-    && normalizedFields.every(field => /^(q|query|search|filter)$/i.test(field.name))
-    && normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
+  const semanticSearchField = field => field.type === 'search' || field.role === 'searchbox';
+  const conventionalSearchField = field => /^(q|query|search|filter)$/i.test(field.name);
+  // Preserve the previous per-field semantic-or-conventional behavior so a
+  // search input plus a named filter control remains utility UI. Task evidence
+  // gates the whole shortcut: semantic markup alone must not hide an assignee
+  // picker, dialog, POST form, populated draft, or non-search submission.
+  const searchFieldsOnly = normalizedFields.length > 0
+    && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
+  const searchSubmitsOnly = normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
+  const searchHasTaskEvidence = !!(
+    insideDialog
+    || normalizedMethod !== 'get'
+    || Number(hiddenNamedCount || 0) !== 0
+    || !searchSubmitsOnly
+    || normalizedFields.some(field => (
+      field.required
+      || field.focused
+      || !!field.value
+      || (!!field.name && !conventionalSearchField(field))
+    ))
+  );
+  // Primary content alone is not task evidence: result pages commonly place
+  // genuine search/filter forms there.
+  const safeSearchOnly = searchFieldsOnly && !searchHasTaskEvidence;
+  const hasSemanticSearchField = normalizedFields.some(semanticSearchField);
 
   const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
   const passiveUtilityShell = !!(
@@ -155,10 +171,10 @@ export function classifyCompletionForm({
 
   const utilityReason = utilityRegion
     ? 'utility_region'
-    : semanticSearchOnly
-      ? 'semantic_search'
-      : conventionalSearchOnly
-        ? 'conventional_search'
+    : safeSearchOnly
+      ? hasSemanticSearchField
+        ? 'semantic_search'
+        : 'conventional_search'
         : passiveUtilityShell
           ? 'passive_utility_shell'
           : null;
