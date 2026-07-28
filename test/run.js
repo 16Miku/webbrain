@@ -4887,6 +4887,8 @@ test('tool-free response and recovery calls honor Stop before rendering model ou
 
       assert.deepEqual(result, { content: '[Stopped by user]', status: 'cancelled' }, `${label}: ${phase} ignored Stop`);
       assert.equal(messages.at(-1)?.content, '[Stopped by user]', `${label}: ${phase} persisted late model output`);
+      assert.equal(messages.at(-1)?.webbrainLocalStatus, 'cancelled', `${label}: ${phase} cancellation was not marked UI-only`);
+      assert.equal(agent._modelVisibleConversationMessages(messages).includes(messages.at(-1)), false, `${label}: ${phase} cancellation remained model-visible`);
       assert.equal(updates.some(update => /late model output/.test(update.data?.content || '')), false, `${label}: ${phase} rendered late model output`);
       assert.equal(agent.abortFlags.has(tabId), false, `${label}: ${phase} left the abort flag pending`);
     }
@@ -41266,6 +41268,46 @@ function executionToolResponses(prefix = 'execution') {
   ];
 }
 
+test('local cancellation statuses stay visible but are excluded from model and planner context', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const marked = agent._localCancellationMessage('[Stopped by user]');
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'First task.' },
+      marked,
+      { role: 'assistant', content: '[Stopped by user' },
+      { role: 'user', content: 'How should I respond to this?' },
+    ];
+
+    const modelMessages = agent._messagesForSourceGroundedRun(messages);
+    const digest = agent._buildPlannerHistoryDigest(messages);
+
+    assert.equal(marked.webbrainLocalStatus, 'cancelled', `${AgentClass.name}: cancellation lacks local status metadata`);
+    assert.equal(messages.length, 5, `${AgentClass.name}: model filtering mutated visible history`);
+    assert.equal(
+      modelMessages.some(message => agent._isLocalCancellationText(message.content)),
+      false,
+      `${AgentClass.name}: cancellation leaked into model context`,
+    );
+    assert.doesNotMatch(digest, /Stopped by user/, `${AgentClass.name}: cancellation leaked into planner digest`);
+    assert.match(digest, /How should I respond to this\?/, `${AgentClass.name}: latest real user task was filtered`);
+    assert.equal(
+      agent._modelVisibleConversationMessages([marked]).length,
+      0,
+      `${AgentClass.name}: marked cancellation was not treated as UI-only`,
+    );
+  }
+});
+
 test('Act rejects planner-shaped plain finals and continues into a real tool', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const responses = [
@@ -41346,6 +41388,113 @@ test('Act routes ordinary plain finals through the language-neutral done protoco
       agent.conversations.get(tabId).some(message => message.role === 'user' && String(message.content || '').startsWith('[PLAN EXECUTION BLOCK')),
       `${AgentClass.name}: plain final missing protocol recovery nudge`,
     );
+  }
+});
+
+test('Act omits a stale cancellation echo and recovers into tools', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      ...executionToolResponses(`stale_cancel_${index}`),
+    ];
+    const requests = [];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        const next = responses.shift();
+        assert.ok(next, `${AgentClass.name}: stale-cancellation recovery called the model too many times`);
+        return next;
+      },
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8650 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.equal(final, 'Executed and verified.', `${AgentClass.name}: stale cancellation stopped execution`);
+    assert.equal(responses.length, 0, `${AgentClass.name}: stale cancellation did not recover through tools`);
+    assert.equal(
+      requests[1].some(message => agent._isLocalCancellationText(message.content)),
+      false,
+      `${AgentClass.name}: stale cancellation was replayed to the recovery turn`,
+    );
+    assert.ok(
+      requests[1].some(message => message.role === 'assistant' && /Stale local cancellation status omitted/.test(message.content || '')),
+      `${AgentClass.name}: recovery context lacks the neutral replacement`,
+    );
+    assert.ok(
+      requests[1].some(message => message.role === 'user' && /No current user stop was received/.test(message.content || '')),
+      `${AgentClass.name}: recovery nudge did not distinguish a stale status from a real abort`,
+    );
+  }
+});
+
+test('Act fails transparently when a stale cancellation echo repeats', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      { content: '[Stopped by user', toolCalls: [] },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8655 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.match(final, /No current user stop was received/, `${AgentClass.name}: failure implied the user cancelled`);
+    assert.match(final, /no successful action was verified/i, `${AgentClass.name}: failure claimed execution evidence`);
+  }
+});
+
+test('Act preserves successful tool evidence when a stale cancellation echo repeats', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      {
+        content: null,
+        toolCalls: [{
+          id: `stale_evidence_${index}`,
+          function: { name: 'read_page', arguments: '{}' },
+        }],
+      },
+      { content: '[Stopped by user]', toolCalls: [] },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8657 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.match(final, /Some task tools completed/, `${AgentClass.name}: successful tool evidence was discarded`);
+    assert.match(final, /Inspect the current state before retrying/, `${AgentClass.name}: retry warning was omitted`);
+    assert.doesNotMatch(final, /no successful action was verified/i, `${AgentClass.name}: failure contradicted verified tool evidence`);
   }
 });
 
@@ -47594,6 +47743,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_SYSTEM_PROMPT, /attached JSON\/TXT\/CSV text file content/);
   assert.match(PLANNER_SYSTEM_PROMPT, /brief neutral scratchpad_notes/);
   assert.match(PLANNER_SYSTEM_PROMPT, /Do not plan to copy the full file/);
+  assert.match(PLANNER_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /precise fixed interval.*every five minutes.*start now/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /Calendar\/cron recurrence.*not supported/i);
@@ -47609,6 +47760,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /use find_text to select one page-text match instead of Ctrl\/Cmd\+F/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Each call replaces the previous selection/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /cannot create simultaneous highlights or browser Find UI/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT_FX, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /Calendar\/cron recurrence.*unsupported/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /"use_progress_ledger": boolean/);
@@ -47802,6 +47955,227 @@ test('planner routes existing-context artifact requests to a tool-free response'
       }, `${label}: existing-context response should bypass browser tools`);
       assert.match(plannerMessages?.[1]?.content || '', /Prior user request[\s\S]*Draft and send Gary/, `${label}: planner lost the original email task`);
       assert.match(plannerMessages?.[1]?.content || '', /source="agent_scratchpad"[\s\S]*\[pending draft\]/, `${label}: planner lost the pending draft checkpoint`);
+    }
+  });
+});
+
+test('planner rechecks tool-dependent respond and plan-only intents before routing', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        for (const [kindIndex, requestKind] of ['respond', 'plan_only'].entries()) {
+          const responses = [
+            plannerFixtureJson({
+              request_kind: requestKind,
+              requires_state_change: false,
+              summary: 'Read the open email and draft a response.',
+              steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
+              localized: {
+                locale: 'en',
+                summary: 'Read the open email and draft a response.',
+                steps: [{ id: '1', action: 'Read the open email.' }],
+                risks: [],
+              },
+            }),
+            plannerFixtureJson({
+              request_kind: 'execute',
+              requires_state_change: false,
+              summary: 'Read the open email and draft a response.',
+              steps: [
+                { id: '1', action: 'Read the open email.', tools: ['read_page'] },
+                { id: '2', action: 'Return reply drafts.', tools: ['done'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Read the open email and draft a response.',
+                steps: [
+                  { id: '1', action: 'Read the open email.' },
+                  { id: '2', action: 'Return reply drafts.' },
+                ],
+                risks: [],
+              },
+            }),
+          ];
+          const plannerRequests = [];
+          const provider = {
+            promptTier: 'full',
+            model: 'planner-test',
+            name: 'planner-test',
+            chat: async (messages) => {
+              plannerRequests.push(messages);
+              const content = responses.shift();
+              assert.ok(content, `${AgentClass.name}: ${route}/${requestKind} planner called too many times`);
+              return { content, usage: {} };
+            },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 9280 + (agentIndex * 20) + (routeIndex * 10) + kindIndex;
+          const args = [
+            tabId,
+            { role: 'user', content: 'How should I respond to this?' },
+            () => {},
+            null,
+            null,
+            '',
+            { tabUrl: 'https://mail.google.com/', tabTitle: 'The Next New Thing' },
+          ];
+          const gate = route === 'intent'
+            ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+            : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
+
+          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${requestKind} did not recover`);
+          assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: ${route}/${requestKind} stayed tool-free`);
+          assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: read-only repair gained mutation authority`);
+          assert.equal(plannerRequests.length, 2, `${AgentClass.name}: ${route}/${requestKind} should get one consistency repair`);
+          assert.match(
+            plannerRequests[1].at(-1)?.content || '',
+            new RegExp(requestKind === 'respond' ? 'respond_with_tools' : 'plan_only_with_execution_tools'),
+            `${AgentClass.name}: ${route}/${requestKind} missing focused consistency guidance`,
+          );
+          assert.equal(responses.length, 0, `${AgentClass.name}: ${route}/${requestKind} left an unused response`);
+        }
+      }
+    }
+  });
+});
+
+test('planner consistency repair keeps model-derived plan fields out of trusted messages', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const provider = {
+      promptTier: 'full',
+      model: 'planner-test',
+      name: 'planner-test',
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const plannerMessages = [
+      { role: 'system', content: 'Planner system prompt.' },
+      { role: 'user', content: 'Authoritative user task.' },
+    ];
+    const plan = {
+      request_kind: 'respond',
+      summary: 'MODEL_DERIVED_INJECTION_TEXT',
+      steps: [{
+        id: '1',
+        action: 'MODEL_DERIVED_INJECTION_TEXT',
+        tools: ['MODEL_DERIVED_INJECTION_TOOL'],
+      }],
+    };
+    const issue = agent._plannerIntentConsistencyIssue(plan);
+    const repairMessages = agent._plannerIntentConsistencyRepairMessages(plannerMessages, issue);
+    const appendedMessages = repairMessages.slice(plannerMessages.length);
+
+    assert.equal(appendedMessages.length, 1, `${AgentClass.name}: repair replayed the prior planner output`);
+    assert.equal(appendedMessages[0]?.role, 'user', `${AgentClass.name}: repair added a trusted assistant replay`);
+    assert.match(appendedMessages[0]?.content || '', /respond_with_tools/, `${AgentClass.name}: repair lost the controlled issue kind`);
+    assert.doesNotMatch(
+      appendedMessages[0]?.content || '',
+      /MODEL_DERIVED_INJECTION/,
+      `${AgentClass.name}: model-derived plan data crossed the trust boundary`,
+    );
+  }
+});
+
+test('planner falls back safely when repaired respond intent still lists tools', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        for (const [scenarioIndex, [scenarioLabel, firstResponse]] of [
+          ['repeated', null],
+          ['json_repair', 'not valid planner JSON'],
+        ].entries()) {
+          const inconsistentRespond = plannerFixtureJson({
+            request_kind: 'respond',
+            requires_state_change: false,
+            summary: 'Read the open email and draft a response.',
+            steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
+            localized: {
+              locale: 'en',
+              summary: 'Read the open email and draft a response.',
+              steps: [{ id: '1', action: 'Read the open email.' }],
+              risks: [],
+            },
+          });
+          const responses = [
+            firstResponse ?? inconsistentRespond,
+            inconsistentRespond,
+          ];
+          let calls = 0;
+          const provider = {
+            promptTier: 'full',
+            model: 'planner-test',
+            name: 'planner-test',
+            chat: async () => {
+              calls++;
+              return { content: responses.shift(), usage: {} };
+            },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 9310 + (agentIndex * 20) + (routeIndex * 10) + scenarioIndex;
+          const args = [
+            tabId,
+            { role: 'user', content: 'How should I respond to this?' },
+            () => {},
+            null,
+            null,
+            '',
+            { tabUrl: 'https://mail.google.com/', tabTitle: 'The Next New Thing' },
+          ];
+          const gate = route === 'intent'
+            ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+            : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
+
+          assert.equal(calls, 2, `${AgentClass.name}: ${route}/${scenarioLabel} exceeded the one-repair budget`);
+          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${scenarioLabel} did not enter the safe fallback`);
+          assert.equal(gate.readOnlyFallback, true, `${AgentClass.name}: ${route}/${scenarioLabel} accepted an unresolved intent`);
+          assert.notEqual(gate.responseOnly, true, `${AgentClass.name}: ${route}/${scenarioLabel} still routed tool-dependent work response-only`);
+          assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: ${route}/${scenarioLabel} fallback gained mutation authority`);
+        }
+      }
+    }
+  });
+});
+
+test('planner consistency repair preserves an explicit plan-only request', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const planOnly = plannerFixtureJson({
+        request_kind: 'plan_only',
+        requires_state_change: false,
+        summary: 'Outline how to review the open email later.',
+        steps: [{ id: '1', action: 'Plan a later email read.', tools: ['read_page'] }],
+        localized: {
+          locale: 'en',
+          summary: 'Outline how to review the open email later.',
+          steps: [{ id: '1', action: 'Plan a later email read.' }],
+          risks: [],
+        },
+      });
+      let calls = 0;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-test',
+        name: 'planner-test',
+        chat: async () => {
+          calls++;
+          return { content: planOnly, usage: {} };
+        },
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      const gate = await agent._runPlannerIntentGate(
+        9330 + index,
+        { role: 'user', content: 'Only give me a plan for reviewing this email later.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://mail.google.com/', tabTitle: 'Inbox' },
+        'act',
+        { locale: 'en' },
+      );
+
+      assert.equal(calls, 2, `${AgentClass.name}: ambiguous plan-only output was not rechecked once`);
+      assert.equal(gate.proceed, false, `${AgentClass.name}: explicit plan-only request was silently authorized`);
+      assert.equal(gate.reason, 'plan_only', `${AgentClass.name}: explicit plan-only intent changed`);
     }
   });
 });

@@ -86,6 +86,7 @@ const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
 const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
+const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
 // Appended to the system prompt of every selection-grounded model request.
 // The scope hides the page and disables tools, so the model must explain the
 // boundary instead of guessing when a follow-up reaches beyond the selection.
@@ -5730,12 +5731,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * planner can resolve follow-up references ("continue", "open the first
    * result"). Skips system / scratchpad / progress-ledger bookkeeping turns.
    */
+  _isLocalCancellationText(content) {
+    return typeof content === 'string'
+      && LOCAL_CANCELLATION_ASSISTANT_RE.test(content.trim());
+  }
+
+  _localCancellationMessage(content) {
+    return {
+      role: 'assistant',
+      content,
+      webbrainLocalStatus: 'cancelled',
+    };
+  }
+
+  _isLocalConversationStatusMessage(message) {
+    if (message?.role !== 'assistant') return false;
+    return message.webbrainLocalStatus === 'cancelled'
+      || this._isLocalCancellationText(message.content);
+  }
+
+  _modelVisibleConversationMessages(messages) {
+    if (!Array.isArray(messages)) return [];
+    return messages.filter(message => !this._isLocalConversationStatusMessage(message));
+  }
+
   _buildPlannerHistoryDigest(messages, maxChars = 1500) {
     if (!Array.isArray(messages) || messages.length === 0) return '';
     const lines = [];
     for (const m of messages.slice(-10)) {
       if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
       if (this._isPinnedAgentStateMessage(m)) continue;
+      if (this._isLocalConversationStatusMessage(m)) continue;
       const rawText = userMessageToText(m);
       const taskText = m.role === 'user' ? this._stripInjectedTaskContext(rawText) : rawText;
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
@@ -6176,6 +6202,60 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ];
   }
 
+  _plannerIntentConsistencyIssue(plan) {
+    if (!plan || !Array.isArray(plan.steps)) return null;
+    const tools = [...new Set(
+      plan.steps.flatMap(step => Array.isArray(step?.tools) ? step.tools : [])
+        .map(tool => String(tool || '').trim())
+        .filter(Boolean)
+    )];
+    if (plan.request_kind === 'respond' && tools.length > 0) {
+      return { kind: 'respond_with_tools', tools };
+    }
+    const executionTools = tools.filter(tool => tool !== 'done');
+    if (plan.request_kind === 'plan_only' && executionTools.length > 0) {
+      return { kind: 'plan_only_with_execution_tools', tools: executionTools };
+    }
+    return null;
+  }
+
+  _plannerIntentConsistencyRepairMessages(plannerMessages, issue) {
+    const issueKind = issue?.kind === 'respond_with_tools'
+      || issue?.kind === 'plan_only_with_execution_tools'
+      ? issue.kind
+      : 'unknown';
+    return [
+      ...plannerMessages,
+      {
+        role: 'user',
+        content:
+          '/no_think\n' +
+          `The previous JSON was parseable but its intent needs one consistency check (${issueKind}). ` +
+          'Re-read only the authoritative User task above and output one corrected JSON object. ' +
+          'Keep plan_only only when the user asked merely for a plan, outline, strategy, or discussion without authorizing execution. ' +
+          'Use execute when producing the requested answer needs a fresh page, browser, network, memory, or scheduling tool; read-only execution still has requires_state_change false. ' +
+          'Use respond only when existing conversation or working-note context is sufficient and list no tools. ' +
+          'Do not infer permission for a mutation that the current user task did not authorize. No prose, markdown, tool calls, or reasoning text.',
+      },
+    ];
+  }
+
+  _plannerIntentUnresolvedConsistencyIssue(plan, recheckedIssueKind = null) {
+    const issue = this._plannerIntentConsistencyIssue(plan);
+    if (!issue) return null;
+    // Repeating plan_only after the focused semantic recheck confirms that the
+    // user asked only for a plan. A respond plan that still lists tools can
+    // never be routed response-only, and a new issue after either repair has
+    // not received the focused consistency check.
+    if (
+      issue.kind === 'plan_only_with_execution_tools'
+      && recheckedIssueKind === issue.kind
+    ) {
+      return null;
+    }
+    return issue;
+  }
+
   _plannerIntentFailureMessage(runOptions = {}) {
     return sanitizePlannerText(
       runOptions?.intentFailureMessage
@@ -6350,8 +6430,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
 
+      let plannerRepairUsed = false;
+      let consistencyRepairKind = null;
       let plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       if (!plan) {
+        plannerRepairUsed = true;
         onUpdate('thinking', { step: plannerStep, note: 'Understanding request… retrying JSON output' });
         result = await this._chatWithCostAllowance(
           provider,
@@ -6362,8 +6445,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
+      const consistencyIssue = !plannerRepairUsed
+        ? this._plannerIntentConsistencyIssue(plan)
+        : null;
+      if (consistencyIssue) {
+        plannerRepairUsed = true;
+        consistencyRepairKind = consistencyIssue.kind;
+        onUpdate('thinking', { step: plannerStep, note: 'Understanding request… rechecking tool-dependent intent' });
+        result = await this._chatWithCostAllowance(
+          provider,
+          this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue),
+          this._plannerChatOptions(provider, true, true),
+          costState,
+          { tabId, generationName: 'planner_intent' },
+        );
+        plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
+      }
       if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       if (!plan) {
+        return this._plannerReadOnlyFallback(runOptions, onUpdate);
+      }
+      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind)) {
         return this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (plan.request_kind === 'respond') {
@@ -6458,16 +6560,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._checkAbort(tabId)) {
         return { proceed: false, message: '[Stopped by user]' };
       }
+      let plannerRepairUsed = false;
+      let consistencyRepairKind = null;
       let plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       // Retry whenever the first attempt yields no parseable plan — empty
       // output, thinking-only output, OR non-JSON prose ("Sure, here's the
       // plan…"). The repair prompt exists precisely to coerce JSON out of that
       // prose case, so it must not be gated on emptiness/reasoning. (#1)
       if (!plan) {
+        plannerRepairUsed = true;
         onUpdate('thinking', { step: 0, note: 'Planning… retrying JSON output' });
         result = await this._chatWithCostAllowance(
           provider,
           this._plannerRepairMessages(plannerMessages),
+          this._plannerChatOptions(provider, true),
+          costState,
+          { tabId, generationName: 'planner' },
+        );
+        plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
+      }
+      const consistencyIssue = !plannerRepairUsed
+        ? this._plannerIntentConsistencyIssue(plan)
+        : null;
+      if (consistencyIssue) {
+        plannerRepairUsed = true;
+        consistencyRepairKind = consistencyIssue.kind;
+        onUpdate('thinking', { step: 0, note: 'Planning… rechecking tool-dependent intent' });
+        result = await this._chatWithCostAllowance(
+          provider,
+          this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue),
           this._plannerChatOptions(provider, true),
           costState,
           { tabId, generationName: 'planner' },
@@ -6481,6 +6602,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]' };
       }
       if (!plan) {
+        return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
+          ? this._strictPlannerFailure(onUpdate)
+          : this._plannerReadOnlyFallback(runOptions, onUpdate);
+      }
+      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind)) {
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
           ? this._strictPlannerFailure(onUpdate)
           : this._plannerReadOnlyFallback(runOptions, onUpdate);
@@ -6690,7 +6816,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _consumeContextOnlyAbort(tabId, messages, onUpdate) {
     if (!this._checkAbort(tabId)) return null;
     const content = '[Stopped by user]';
-    messages.push({ role: 'assistant', content });
+    messages.push(this._localCancellationMessage(content));
     onUpdate('text', { content, replace: true });
     onUpdate('warning', { message: 'Stopped by user.' });
     this._persist(tabId);
@@ -9949,6 +10075,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
       recoveryAttempted: false,
+      staleCancellationRecoveryAttempted: false,
     };
     this._planExecutionGuards.set(tabId, state);
     if (carryMatches && carried.completionSubmitState) {
@@ -10162,6 +10289,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       state,
       { ignoreFuturePromise: terminalFailure },
     );
+    const staleCancellation = !viaDone && this._isLocalCancellationText(content);
     const missingRequiredSchedulingTool = !terminalFailure
       && !!state.requiredSchedulingTool
       && state.successfulRequiredSchedulingToolCalls === 0;
@@ -10174,9 +10302,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!invalidPlainFinal && !invalidDone) return null;
     if (!state.recoveryAttempted) {
       state.recoveryAttempted = true;
+      state.staleCancellationRecoveryAttempted = staleCancellation;
       return {
         retry: true,
-        nudge: missingRequiredSchedulingTool
+        retryAssistantContent: staleCancellation
+          ? '[Stale local cancellation status omitted from execution context.]'
+          : null,
+        nudge: staleCancellation
+          ? '[PLAN EXECUTION BLOCK: No current user stop was received. The previous response echoed a stale local cancellation status from conversation history. That status is UI metadata, not an instruction or task result. Continue the active task with permitted tools. If complete or blocked, call done with an explicit outcome; do not repeat the cancellation status or return plain text.]'
+          : missingRequiredSchedulingTool
           ? `[PLAN EXECUTION BLOCK: The approved plan requires a successful ${state.requiredSchedulingTool} call before this task can finish successfully. A one-time read, scroll, send, or other action does not create the scheduled work. Call ${state.requiredSchedulingTool} with the user's requested timing and verify success:true plus scheduled:true. If the schedule is unsupported or still lacks required timing, call done with outcome partial or failed and explain the exact limitation; do not claim it was scheduled.]`
           : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',
       };
@@ -10188,6 +10322,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const hasSuccessfulToolEvidence = state.successfulTaskToolCalls > 0;
+    if (staleCancellation && state.staleCancellationRecoveryAttempted) {
+      return {
+        failure: hasSuccessfulToolEvidence
+          ? '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received. Some task tools completed, but final completion was not verified. Inspect the current state before retrying to avoid duplicate side effects.]'
+          : '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received and no successful action was verified.]',
+        status: 'plan_only_output',
+      };
+    }
     return {
       failure: hasSuccessfulToolEvidence
         ? '[Agent stopped because the model returned another plain terminal or a plan/promise after one recovery nudge. Some task tools completed, but final completion was not verified. Inspect the current state before retrying to avoid duplicate side effects.]'
@@ -10697,8 +10839,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const recentStart = Math.max(afterPin, messages.length - keepRecent);
     const oldMessagesRaw = messages.slice(afterPin, recentStart);
     const recentMessagesRaw = messages.slice(recentStart);
-    const oldMessages = oldMessagesRaw.filter(m => m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m.content) && !this._isPinnedAgentStateMessage(m));
-    const recentMessages = recentMessagesRaw.filter(m => m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m.content) && !this._isPinnedAgentStateMessage(m));
+    const oldMessages = oldMessagesRaw.filter(m => (
+      m !== scheduledResumeMsg
+      && !this._isScheduledResumeTurn(m.content)
+      && !this._isPinnedAgentStateMessage(m)
+      && !this._isLocalConversationStatusMessage(m)
+    ));
+    const recentMessages = recentMessagesRaw.filter(m => (
+      m !== scheduledResumeMsg
+      && !this._isScheduledResumeTurn(m.content)
+      && !this._isPinnedAgentStateMessage(m)
+      && !this._isLocalConversationStatusMessage(m)
+    ));
 
     // Boundary fix: the recent slice must not begin in the middle of a
     // tool-call group. If the cutoff lands right after an assistant
@@ -11337,7 +11489,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     currentUserMessage = null,
     priorMessageSet = null,
   ) {
-    if (runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING) return messages;
+    if (runOptions?.sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING) {
+      return this._modelVisibleConversationMessages(messages);
+    }
 
     const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
     const currentTurnIndex = currentUserMessage ? messages.indexOf(currentUserMessage) : -1;
@@ -11354,7 +11508,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const scopedSystemMessage = systemMessage && typeof systemMessage.content === 'string'
       ? { ...systemMessage, content: `${systemMessage.content}\n\n${SELECTION_SCOPE_SYSTEM_NOTE}` }
       : systemMessage;
-    return [
+    return this._modelVisibleConversationMessages([
       ...(scopedSystemMessage ? [scopedSystemMessage] : []),
       // Selection shortcuts run in Ask mode and never need durable agent
       // notes. Exclude them structurally as well as by the persisted prior
@@ -11363,7 +11517,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...currentRunMessages.filter(message =>
         message !== systemMessage && !this._isPinnedAgentStateMessage(message)
       ),
-    ];
+    ]);
   }
 
   _emergencyTrimModelCopy(messages) {
@@ -14492,7 +14646,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         finalResponse = finalResponse || '[Stopped by user]';
         _traceStatus = 'cancelled';
         onUpdate('warning', { message: 'Stopped by user.' });
-        messages.push({ role: 'assistant', content: finalResponse });
+        messages.push(this._localCancellationMessage(finalResponse));
         break;
       }
 
@@ -14637,7 +14791,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : '[Stopped by user]';
         _traceStatus = 'cancelled';
         onUpdate('warning', { message: 'Stopped by user.' });
-        messages.push({ role: 'assistant', content: finalResponse });
+        messages.push(this._localCancellationMessage(finalResponse));
         break;
       }
 
@@ -14803,7 +14957,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const planOnlyDecision = this._planOnlyTerminalDecision(tabId, result.content);
       if (planOnlyDecision?.retry) {
-        messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
+        messages.push(this._withResponseItems(
+          {
+            role: 'assistant',
+            content: planOnlyDecision.retryAssistantContent ?? result.content,
+          },
+          planOnlyDecision.retryAssistantContent ? null : result.responseItems,
+          planOnlyDecision.retryAssistantContent ? '' : result.reasoningContent,
+          provider,
+        ));
         messages.push({ role: 'user', content: planOnlyDecision.nudge });
         // Clear any already-rendered plan/promise so recovery does not leave
         // rejected terminal text in the assistant bubble (and so run-complete
@@ -15056,8 +15218,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     while (steps < this.maxSteps) {
       if (this._checkAbort(tabId)) {
+        const content = '[Stopped by user]';
+        messages.push(this._localCancellationMessage(content));
+        this._persist(tabId);
         onUpdate('warning', { message: 'Stopped by user.' });
-        return finish('[Stopped by user]', 'cancelled');
+        return finish(content, 'cancelled');
       }
 
       if (steps > 0 && !selectionOnly) {
@@ -15295,7 +15460,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const planOnlyDecision = this._planOnlyTerminalDecision(tabId, fullText);
         if (planOnlyDecision?.retry) {
-          messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
+          messages.push(this._withResponseItems(
+            {
+              role: 'assistant',
+              content: planOnlyDecision.retryAssistantContent ?? fullText,
+            },
+            planOnlyDecision.retryAssistantContent ? null : responseItems,
+            planOnlyDecision.retryAssistantContent ? '' : reasoningContent,
+            provider,
+          ));
           messages.push({ role: 'user', content: planOnlyDecision.nudge });
           // Streamed plan text already landed via text_delta. Replace it before
           // the recovery turn so later deltas do not append onto the plan and
