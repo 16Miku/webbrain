@@ -15942,6 +15942,21 @@ const ADAPTERS = [
 - Login pages (\`wp-login.php\`) have a stable shape: \`#user_login\` (username/email), \`#user_pass\` (password), \`#wp-submit\` (submit). The password field is type=password — when the user provides credentials, do not echo them in any summary.`,
   },
 
+  {
+    name: 'wechat-official-account',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mp\.weixin\.qq\.com\//.test(url),
+    notes: `
+- Confirm the current official account name in the top bar before editing or publishing; an old tab or session-token URL may belong to a different account.
+- The article editor has separate title and body editable regions. The body uses ProseMirror/contenteditable; focus each region separately and verify its text after writing so the title is not inserted into the body or vice versa.
+- "保存为草稿" (Save as draft) and "发表" (Publish) are different outcomes. A saved draft is not publicly visible and must never be reported as published.
+- Under "封面" (Cover), "从正文选择" (Select from article) can reuse an inline image. Confirm the intended image and crop instead of accepting the first thumbnail automatically.
+- Before clicking "发表", re-check the account, title, author/byline, summary, and cover because publishing is externally visible.
+- Publishing can open stacked confirmation dialogs followed by "微信验证" with a QR code. Pause for the user to complete verification; do not dismiss, bypass, or repeatedly retry the dialog.
+- Treat publishing as successful only when "发表记录" shows the new article (or a final public article URL is available), not when the editor closes or a confirmation button was clicked.
+- Dashboard links contain short-lived session tokens. If a deep link expires or redirects, navigate from the current dashboard instead of inventing or reusing a tokenized URL.`,
+  },
+
   // ─── Commerce ─────────────────────────────────────────────────────────
   {
     name: 'amazon',
