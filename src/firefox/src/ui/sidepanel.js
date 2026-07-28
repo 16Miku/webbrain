@@ -3589,11 +3589,10 @@ async function adoptRestoredRunState(tabId, state) {
     });
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
-      const targetAssistantEl = assistantEl || currentAssistantEl;
       renderPlannerRequestFailure(
-        targetAssistantEl,
+        assistantEl,
         returnedPlannerFailure.data,
-        retryPayloadForRunAssistant(targetAssistantEl),
+        retryPayloadForRunAssistant(assistantEl),
       );
     }
     const returnedErrorUpdate = Array.isArray(res?.updates)
@@ -5088,6 +5087,10 @@ function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
   assistantEl.classList.add('planner-request-failure');
   textEl.classList.add('planner-request-failure-content');
   textEl.replaceChildren();
+  // Set the role on the empty container first: screen readers announce
+  // content inserted into an existing live region, not a region that arrives
+  // already populated. A restored card stays silent, which is what we want.
+  textEl.setAttribute('role', 'alert');
 
   const message = document.createElement('div');
   message.className = 'planner-request-failure-message';
@@ -8506,7 +8509,8 @@ function configureRetryButton(btn, retryPayload) {
 }
 
 function addErrorRetryButton(msgEl, retryPayload) {
-  if (!msgEl || !retryPayload?.text || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn')) return;
+  if (!msgEl || !retryPayload?.text
+      || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn, .planner-request-failure-retry-btn')) return;
   msgEl.classList.add('retryable');
   const btn = document.createElement('button');
   btn.type = 'button';

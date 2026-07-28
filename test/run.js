@@ -49737,6 +49737,16 @@ test('planner request failures expose provider settings and retry actions in bot
       /if \(data\.provider\) \{[\s\S]*?providerName\.className = 'planner-request-failure-provider';[\s\S]*?providerName\.textContent = data\.provider;/,
       `${label}: the failing provider is never named, so "open Providers" does not say which one to fix`,
     );
+    assert.match(
+      panel,
+      /textEl\.replaceChildren\(\);[\s\S]*?textEl\.setAttribute\('role', 'alert'\);[\s\S]*?const message = document\.createElement\('div'\);/,
+      `${label}: the failure card is not announced, and the role must precede its content to be spoken`,
+    );
+    assert.match(
+      panel,
+      /msgEl\.querySelector\('\.error-retry-btn, \.cost-allowance-retry-btn, \.planner-request-failure-retry-btn'\)/,
+      `${label}: a planner failure card can be given a second, duplicate Retry affordance`,
+    );
     assert.match(css, /\.planner-request-failure-actions \{/, `${label}: planner failure action row is not styled`);
     assert.match(css, /\.planner-request-failure-action\.primary \{/, `${label}: planner failure primary action is not styled`);
     assert.match(css, /\.planner-request-failure-provider \{/, `${label}: planner failure provider label is not styled`);
