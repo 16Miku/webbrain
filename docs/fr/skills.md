@@ -44,6 +44,10 @@ seul document texte ; il ne récupère pas les répertoires `scripts/`,
 `references/` ou `assets/`, n'exécute pas le code de la compétence et ne traite
 pas le champ Agent Skills `allowed-tools` comme une permission ou un manifeste
 d'outils WebBrain. Utilisez `webbrain-tools` pour les outils HTTP WebBrain.
+WebBrain ne reconnaît les blocs `webbrain-skill` et `webbrain-tools` que dans
+le corps Markdown après des métadonnées valides ; du texte ressemblant à un
+bloc dans les métadonnées ne peut ni autoriser le routage ni enregistrer
+d'outil.
 
 ## Outils de compétence
 

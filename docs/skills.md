@@ -38,7 +38,10 @@ removed before the Markdown body is loaded. A name entered in Settings and a
 This is instruction-only compatibility. WebBrain imports one text document; it
 does not fetch bundled `scripts/`, `references/`, or `assets/`, execute skill
 code, or treat the Agent Skills `allowed-tools` field as a WebBrain permission
-or tool manifest. Use `webbrain-tools` for WebBrain HTTP tools.
+or tool manifest. Use `webbrain-tools` for WebBrain HTTP tools. WebBrain
+recognizes `webbrain-skill` and `webbrain-tools` fences only in the Markdown
+body after valid frontmatter; fence-like text inside frontmatter cannot grant
+routing eligibility or register tools.
 
 ## Skill tools
 

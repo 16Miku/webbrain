@@ -33,7 +33,9 @@ Markdown 正文前会移除 frontmatter。在设置中输入的名称及 `webbra
 这仅属于指令兼容。WebBrain 只导入一个文本文档；它不会获取打包的 `scripts/`、
 `references/` 或 `assets/`，不会执行技能代码，也不会把 Agent Skills 的
 `allowed-tools` 字段当作 WebBrain 权限或工具清单。WebBrain HTTP 工具仍应使用
-`webbrain-tools`。
+`webbrain-tools`。WebBrain 只识别有效 frontmatter 之后 Markdown 正文中的
+`webbrain-skill` 和 `webbrain-tools` 围栏；frontmatter 内形似围栏的文本不能授予
+路由资格或注册工具。
 
 ## 技能工具
 

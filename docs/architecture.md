@@ -312,8 +312,9 @@ new default IDs can still be migrated into existing installations.
   NYTimes adapter runs narrowly preactivate FreeSkillz so its site-scoped,
   read-only article fallback is ready after a structured blocking `pageGate`.
 - Tool exposure: `buildSkillToolDefinitions()` reads manifests only from active
-  skills and appends compatible schemas to `getToolsForMode(...)` at LLM-call
-  time, respecting mode, tier, and site adapter. Download-job tools remain
+  skills' Markdown bodies (never from Agent Skills frontmatter) and appends
+  compatible schemas to `getToolsForMode(...)` at LLM-call time, respecting
+  mode, tier, and site adapter. Download-job tools remain
   hidden in Ask and require their normal permission gate in action modes.
 
 Loading is idempotent and multiple relevant skills can be active in one run.
