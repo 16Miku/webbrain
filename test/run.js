@@ -49084,8 +49084,8 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
         calls += 1;
         throw new Error('401 invalid API key');
       };
-      let warning = '';
-      const onUpdate = (type, data) => { if (type === 'warning') warning = data?.message || ''; };
+      let warning = null;
+      const onUpdate = (type, data) => { if (type === 'warning') warning = data || null; };
 
       const intent = await agent._runPlannerIntentGate(
         tabId,
@@ -49099,10 +49099,15 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
       assert.equal(intent.requestKind, 'respond', `${label}: provider failure was mislabeled as ambiguous intent`);
       assert.equal(intent.readOnlyFallback, undefined, `${label}: provider failure was treated as invalid JSON`);
       assert.match(intent.message || '', /Planner request failed.*401 invalid API key/i, `${label}: intent request error hid the provider failure`);
-      assert.equal(warning, intent.message, `${label}: intent request warning diverged from the terminal error`);
+      assert.match(intent.message || '', /No tools ran\.$/, `${label}: planner failure did not state that execution never began`);
+      assert.equal(intent.failureKind, 'auth', `${label}: 401 planner failure was not classified as an authentication problem`);
+      assert.equal(warning?.code, 'planner_request_failed', `${label}: planner request failure warning lacks a stable UI code`);
+      assert.equal(warning?.failureKind, 'auth', `${label}: planner request failure warning lost its authentication category`);
+      assert.equal(warning?.provider, 'broken-provider', `${label}: planner request failure warning lost its provider label`);
+      assert.equal(warning?.message, intent.message, `${label}: intent request warning diverged from the terminal error`);
 
       calls = 0;
-      warning = '';
+      warning = null;
       const full = await agent._runPlannerGate(
         tabId,
         { role: 'user', content: 'Perform this task.' },
@@ -49114,9 +49119,91 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
       assert.equal(full.reason, 'planner_error', `${label}: full planner request error lost its planner status`);
       assert.equal(full.readOnlyFallback, undefined, `${label}: full planner provider failure was treated as invalid JSON`);
       assert.match(full.message || '', /Planner request failed.*401 invalid API key/i, `${label}: full planner request error hid the provider failure`);
-      assert.equal(warning, full.message, `${label}: full planner warning diverged from the terminal error`);
+      assert.equal(warning?.message, full.message, `${label}: full planner warning diverged from the terminal error`);
+
+      agent._chatWithCostAllowance = async () => {
+        throw new Error('openrouter error 503: temporarily unavailable');
+      };
+      warning = null;
+      const transient = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Perform this task later.' },
+        onUpdate,
+        null,
+      );
+      assert.equal(transient.failureKind, 'transient', `${label}: 503 planner failure was not classified as transient`);
+      assert.equal(warning?.failureKind, 'transient', `${label}: transient category was not exposed to the sidepanel`);
     }
   });
+});
+
+test('planner request failures expose provider settings and retry actions in both sidepanels', () => {
+  for (const [label, panelRel, backgroundRel, cssRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/background.js', 'src/chrome/styles/sidepanel.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/background.js', 'src/firefox/styles/sidepanel.css'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+
+    assert.match(
+      background,
+      /function isPlannerRequestFailureUpdate\(update\) \{[\s\S]*?update\?\.type === 'warning'[\s\S]*?update\?\.data\?\.code === 'planner_request_failed';[\s\S]*?\}/,
+      `${label}: background cannot identify structured planner request failures`,
+    );
+    assert.match(
+      background,
+      /function runUpdatesSucceeded\(updates = \[\]\) \{[\s\S]*?isPlannerRequestFailureUpdate\(update\)[\s\S]*?\}/,
+      `${label}: planner request failure is still counted as a successful run`,
+    );
+    assert.match(
+      background,
+      /if \(updates\.some\(update => update\?\.type === 'error' \|\| isPlannerRequestFailureUpdate\(update\)\)\) return 'failed';/,
+      `${label}: planner request failure does not produce a failed terminal run status`,
+    );
+    assert.match(
+      panel,
+      /function renderPlannerRequestFailure\(assistantEl, data, retryPayload = null\) \{[\s\S]*?textEl\.append\(message, actions\);[\s\S]*?addMessageCopyButton\(assistantEl\);[\s\S]*?return true;[\s\S]*?\}/,
+      `${label}: planner request failure is not rendered as an actionable assistant card`,
+    );
+    assert.match(
+      panel,
+      /providerBtn\.textContent = t\('st\.tab\.providers'\);[\s\S]*?await openProvidersSettingsPage\(\);/,
+      `${label}: Providers action does not lead to the provider settings tab`,
+    );
+    assert.match(
+      panel,
+      /const orderedActions = data\.failureKind === 'auth'\s*\? \[providerBtn, retryReady \? retryBtn : null\]\s*: \[retryReady \? retryBtn : null, providerBtn\];/,
+      `${label}: authentication failures should prioritize Providers while transient failures prioritize Retry`,
+    );
+    assert.match(
+      panel,
+      /case 'warning':[\s\S]*?data\?\.code === 'planner_request_failed'[\s\S]*?const targetAssistantEl = eventAssistantEl \|\| currentAssistantEl;[\s\S]*?renderPlannerRequestFailure\(targetAssistantEl, data, retryPayload\);/,
+      `${label}: live planner request failures bypass the actionable renderer`,
+    );
+    assert.equal(
+      (panel.match(/plannerRequestFailureUpdate\(res\?\.updates\)/g) || []).length >= 2,
+      true,
+      `${label}: returned and restored run responses do not both recover planner failure actions`,
+    );
+    assert.match(
+      panel,
+      /document\.querySelectorAll\('\.error-retry-btn, \.planner-request-failure-retry-btn'\)\.forEach\(bindErrorRetryButton\);/,
+      `${label}: restored planner Retry buttons are not rebound`,
+    );
+    assert.match(
+      panel,
+      /planner-request-failure-retry-btn\[data-retry-id\]/,
+      `${label}: planner Retry attachment payloads are not released with the card`,
+    );
+    assert.match(
+      panel,
+      /function rebindPlannerRequestFailureControls\(\) \{[\s\S]*?planner-request-failure-provider-btn[\s\S]*?bindPlannerProviderSettingsButton/,
+      `${label}: restored Providers buttons are not rebound`,
+    );
+    assert.match(css, /\.planner-request-failure-actions \{/, `${label}: planner failure action row is not styled`);
+    assert.match(css, /\.planner-request-failure-action\.primary \{/, `${label}: planner failure primary action is not styled`);
+  }
 });
 
 test('planner read-only fallback applies Ask mode to runtime guards without changing the selected mode', async () => {
