@@ -31,6 +31,7 @@ import {
   PDF_PASSTHROUGH_MAX_BYTES,
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
+import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
@@ -724,6 +725,34 @@ export class Agent extends LoopDetector {
     return this.conversationIds.get(tabId) || null;
   }
 
+  _runtimeTraceConfig(provider, { tabId = null, mode = null } = {}) {
+    let extensionVersion = '';
+    let promptTier = 'full';
+    try { extensionVersion = chrome.runtime.getManifest().version || ''; } catch {}
+    try { promptTier = provider?.promptTier || 'full'; } catch {}
+    const effectiveMode = mode
+      || (tabId != null ? this._effectiveRunMode(tabId) : 'ask');
+    return normalizeRuntimeTraceConfig({
+      extension_version: extensionVersion,
+      browser_target: 'chrome',
+      mode: effectiveMode,
+      prompt_tier: promptTier,
+      screenshot_redaction: this.screenshotRedaction === true,
+      strict_secret_mode: this.strictSecretMode === true,
+      plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
+      auto_screenshot: this.autoScreenshot,
+      use_site_adapters: this.useSiteAdapters === true,
+      web_mcp_enabled: this.webMcpEnabled === true,
+      api_mutations_allowed: tabId != null && this.apiAllowedTabs.has(tabId),
+      user_memory_enabled: this.userMemoryEnabled === true,
+      selection_grounded: tabId != null && this.selectionGroundingScopes.has(tabId),
+      image_detail: this.imageDetail,
+      max_agent_steps: this.maxSteps,
+      max_image_dimension: this.maxImageDimension,
+      max_screenshots_per_turn: this.maxScreenshotsPerTurn,
+    });
+  }
+
   _cloudGenerationOptions(provider, options = {}, { tabId = null, conversationId = null, generationName = 'main' } = {}) {
     if (String(provider?.config?.providerName || '').toLowerCase() !== 'webbrain-cloud') return options;
     const effectiveConversationId = conversationId || (tabId != null ? this.conversationIds.get(tabId) : null);
@@ -732,6 +761,7 @@ export class Agent extends LoopDetector {
       ...options,
       webbrainSessionId: String(effectiveConversationId),
       webbrainGenerationName: String(generationName || 'main'),
+      webbrainRuntimeConfig: this._runtimeTraceConfig(provider, { tabId }),
     };
   }
 
@@ -6749,6 +6779,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         providerId: provider?.name,
         providerClass: provider?.constructor?.name,
         webbrainVersion: chrome.runtime.getManifest().version || '',
+        runtimeConfig: this._runtimeTraceConfig(provider, { tabId, mode }),
         userMessage: typeof userMessage === 'string' ? userMessage : JSON.stringify(userMessage).slice(0, 2000),
         tabUrl,
         tabTitle,
@@ -13563,6 +13594,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       mode: 'act',
       model: this.providerManager?.getActive?.()?.model || '',
       providerId: this.providerManager?.activeProviderId || '',
+      runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
+        tabId,
+        mode: 'act',
+      }),
     });
     let traceStatus = 'workflow_stopped';
     let finalContent = '';

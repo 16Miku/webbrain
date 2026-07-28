@@ -1,3 +1,5 @@
+import { normalizeRuntimeTraceConfig } from './runtime-config.js';
+
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
  * screenshots) into IndexedDB for later inspection and cross-model comparison.
@@ -130,6 +132,7 @@ export async function startRun(meta = {}) {
       providerId: meta.providerId || '',
       providerClass: meta.providerClass || '',
       webbrainVersion: meta.webbrainVersion || '',
+      runtimeConfig: normalizeRuntimeTraceConfig(meta.runtimeConfig),
       userMessage: meta.userMessage || '',
       tabUrl: meta.tabUrl || '',
       tabTitle: meta.tabTitle || '',
