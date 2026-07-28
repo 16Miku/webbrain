@@ -10108,6 +10108,89 @@ test('getToolsForMode: `done` outcome is required in every supported Act and Dev
   }
 });
 
+test('completion form classification ignores passive localized utility shells without weakening real form guards', () => {
+  const passiveSidebarSearch = {
+    label: '',
+    outsidePrimaryContent: true,
+    insideDialog: false,
+    method: 'get',
+    hiddenNamedCount: 0,
+    editable: [{
+      tag: 'input',
+      type: 'text',
+      role: '',
+      name: '',
+      value: '',
+      required: false,
+      focused: false,
+    }],
+    submits: [],
+  };
+
+  for (const [label, invariant, agentRel] of [
+    ['chrome', CompletionInvariantCh, 'src/chrome/src/agent/agent.js'],
+    ['firefox', CompletionInvariantFx, 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const classify = invariant.classifyCompletionForm;
+    const reconstructed = Function(`return (${classify.toString()});`)();
+    assert.deepEqual(
+      reconstructed(passiveSidebarSearch),
+      classify(passiveSidebarSearch),
+      `${label}: completion form classifier is not self-contained for page injection`,
+    );
+    assert.deepEqual(
+      classify(passiveSidebarSearch),
+      {
+        label: '',
+        relevant: false,
+        utility: true,
+        utilityReason: 'passive_utility_shell',
+        editableCount: 1,
+        submitCount: 0,
+      },
+      `${label}: Mastodon-shaped localized sidebar search still blocked completion`,
+    );
+    assert.deepEqual(
+      classify({
+        editable: [{ tag: 'input', type: 'search', role: '', name: '', value: '' }],
+        submits: [{ label: 'Buscar' }],
+      }),
+      {
+        label: '',
+        relevant: false,
+        utility: true,
+        utilityReason: 'semantic_search',
+        editableCount: 1,
+        submitCount: 1,
+      },
+      `${label}: semantic search input depended on an English submit label`,
+    );
+
+    for (const [caseName, override] of [
+      ['primary-content form', { outsidePrimaryContent: false }],
+      ['dialog form', { insideDialog: true }],
+      ['POST form', { method: 'post' }],
+      ['form with hidden submitted state', { hiddenNamedCount: 1 }],
+      ['required field', { editable: [{ ...passiveSidebarSearch.editable[0], required: true }] }],
+      ['focused field', { editable: [{ ...passiveSidebarSearch.editable[0], focused: true }] }],
+      ['draft-bearing field', { editable: [{ ...passiveSidebarSearch.editable[0], value: 'draft' }] }],
+      ['named task field', { editable: [{ ...passiveSidebarSearch.editable[0], name: 'title' }] }],
+      ['form with a submit control', { submits: [{ label: 'Gönder' }] }],
+    ]) {
+      const result = classify({ ...passiveSidebarSearch, ...override });
+      assert.equal(result.relevant, true, `${label}: ${caseName} was hidden as utility UI`);
+      assert.equal(result.utility, false, `${label}: ${caseName} received a utility classification`);
+    }
+
+    const agentSource = fs.readFileSync(path.join(ROOT, agentRel), 'utf8');
+    assert.match(
+      agentSource,
+      /const classifyForm = \$\{classifyCompletionForm\.toString\(\)\}/,
+      `${label}: done verification probe is not wired to the shared form classifier`,
+    );
+  }
+});
+
 test('completion invariant state machine enforces post-action observation with Chrome/Firefox parity', () => {
   assert.equal(
     fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/completion-invariant.js'), 'utf8'),

@@ -94,6 +94,85 @@ function isSelfVerifyingActionResult(name, result) {
   );
 }
 
+/**
+ * Classify one visible form from browser-neutral structural facts.
+ *
+ * Completion probes run inside the page, so Agent serializes this function
+ * with toString() and supplies plain facts rather than DOM nodes. Keep this
+ * function self-contained and language-independent for structural fallbacks.
+ */
+export function classifyCompletionForm({
+  label = '',
+  utilityRegion = false,
+  outsidePrimaryContent = false,
+  insideDialog = false,
+  method = 'get',
+  hiddenNamedCount = 0,
+  editable = [],
+  submits = [],
+} = {}) {
+  const fields = Array.isArray(editable) ? editable : [];
+  const submitControls = Array.isArray(submits) ? submits : [];
+  const normalizedMethod = String(method || 'get').trim().toLowerCase() || 'get';
+  const normalizedFields = fields.map(field => ({
+    tag: String(field?.tag || '').trim().toLowerCase(),
+    type: String(field?.type || '').trim().toLowerCase(),
+    role: String(field?.role || '').trim().toLowerCase(),
+    name: String(field?.name || '').trim(),
+    value: String(field?.value || '').trim(),
+    required: field?.required === true,
+    focused: field?.focused === true,
+  }));
+  const normalizedSubmits = submitControls.map(control => ({
+    label: String(control?.label || '').trim(),
+  }));
+
+  const semanticSearchOnly = normalizedFields.length > 0
+    && normalizedFields.every(field => field.type === 'search' || field.role === 'searchbox');
+  // Preserve compatibility with conventional query field names. Unlike the
+  // structural branches, this legacy fallback intentionally requires a
+  // search-like submit label so an unrelated named field cannot hide a task
+  // form merely because its name happens to be short.
+  const conventionalSearchOnly = normalizedFields.length > 0
+    && normalizedFields.every(field => /^(q|query|search|filter)$/i.test(field.name))
+    && normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
+
+  const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
+  const passiveUtilityShell = !!(
+    onlyField
+    && outsidePrimaryContent
+    && !insideDialog
+    && normalizedMethod === 'get'
+    && Number(hiddenNamedCount || 0) === 0
+    && normalizedSubmits.length === 0
+    && onlyField.tag === 'input'
+    && (onlyField.type === '' || onlyField.type === 'text' || onlyField.type === 'search')
+    && !onlyField.name
+    && !onlyField.value
+    && !onlyField.required
+    && !onlyField.focused
+  );
+
+  const utilityReason = utilityRegion
+    ? 'utility_region'
+    : semanticSearchOnly
+      ? 'semantic_search'
+      : conventionalSearchOnly
+        ? 'conventional_search'
+        : passiveUtilityShell
+          ? 'passive_utility_shell'
+          : null;
+  const utility = utilityReason !== null;
+  return {
+    label: String(label || '').trim().slice(0, 80),
+    relevant: !utility && (normalizedFields.length > 0 || normalizedSubmits.length > 0),
+    utility,
+    utilityReason,
+    editableCount: normalizedFields.length,
+    submitCount: normalizedSubmits.length,
+  };
+}
+
 export function isCompletionActionTool(name, args = {}) {
   if (name === 'execute_webmcp_tool') return true;
   if (
