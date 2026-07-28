@@ -2761,6 +2761,13 @@ body {
   color: var(--error-soft);
 }
 
+.planner-request-failure-provider {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
 .planner-request-failure-actions {
   display: flex;
   flex-wrap: wrap;

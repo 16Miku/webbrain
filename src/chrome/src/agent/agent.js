@@ -127,16 +127,38 @@ function isBrowserNewTabUrl(url) {
   return BROWSER_NEW_TAB_URL_PREFIXES.some(prefix => value.startsWith(prefix));
 }
 
+// Only read a 3-digit number as a status code where it actually reads like
+// one — prefixed by a status word, leading the message, or parenthesized.
+// A bare scan would turn "max_tokens 512" into a 5xx and recommend a retry
+// that can only fail the same way.
+const PLANNER_FAILURE_STATUS_PATTERNS = [
+  /\b(?:error|http|status|code|returned|response)\s*[:#-]?\s*(\d{3})\b/i,
+  /^\s*\(?(\d{3})\)?\b/,
+  /\((\d{3})\)/,
+];
+const PLANNER_AUTH_FAILURE_RE = /\b(?:unauthori[sz]ed|unauthenticated|forbidden|permission denied|invalid credentials|(?:invalid|incorrect|missing|expired)[\s_-]*api[\s_-]*key|api[\s_-]*key[\s_-]*(?:is\s*)?(?:missing|invalid|incorrect|expired|not\s*set|required)|authentication|(?:expired|invalid)[\s_-]*token|token[\s_-]*expired)\b/i;
+// "Failed to fetch" (Chrome) and "NetworkError…" (Firefox) are the shapes a
+// dead local provider or an offline machine actually produces, so they have
+// to land in the bucket that offers Retry first.
+const PLANNER_TRANSIENT_FAILURE_RE = /\b(?:timed?\s*out|timeout|network\w*|failed to fetch|fetch failed|load failed|connection (?:closed|reset|refused|error)|econn\w+|socket hang up|temporar(?:y|ily)|unavailable|overloaded|rate[\s_-]?limit\w*|too many requests|bad gateway|gateway timeout)\b/i;
+
 function plannerRequestFailureKind(detail) {
   const text = String(detail || '');
-  const statusMatch = text.match(/\b(?:error|http|status)\s*[:#-]?\s*(\d{3})\b/i)
-    || text.match(/\b(401|403|408|425|429|5\d\d)\b/);
-  const status = Number(statusMatch?.[1] || 0);
-  if (status === 401 || status === 403) return 'auth';
-  if ([408, 425, 429].includes(status) || status >= 500) return 'transient';
-  if (/\b(?:timed?\s*out|timeout|network|fetch failed|connection (?:closed|reset|refused)|econn\w+|temporar(?:y|ily)|unavailable)\b/i.test(text)) {
-    return 'transient';
+  let status = 0;
+  for (const pattern of PLANNER_FAILURE_STATUS_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) {
+      status = Number(match[1]);
+      break;
+    }
   }
+  if (status === 401 || status === 403) return 'auth';
+  if ([408, 425, 429].includes(status) || (status >= 500 && status <= 599)) return 'transient';
+  if (PLANNER_AUTH_FAILURE_RE.test(text)) return 'auth';
+  // A remaining 4xx is a request the provider rejected on its merits; a retry
+  // of the same request is not the fix.
+  if (status >= 400 && status <= 499) return 'provider';
+  if (PLANNER_TRANSIENT_FAILURE_RE.test(text)) return 'transient';
   return 'provider';
 }
 
@@ -7233,6 +7255,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reason: gate.reason,
         requestKind: gate.requestKind,
         requiresStateChange: gate.requiresStateChange,
+        // Carried so a caller can tell an auth failure from a transient one
+        // without re-parsing the message text.
+        ...(gate.failureKind ? { failureKind: gate.failureKind } : {}),
       };
     }
 
@@ -7412,7 +7437,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       500,
       { collapseWhitespace: true },
     );
-    const message = `Planner request failed before a valid response was available: ${detail} No tools ran.`;
+    const detailSentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+    const message = `Planner request failed before a valid response was available: ${detailSentence} No tools ran.`;
     const failureKind = plannerRequestFailureKind(detail);
     onUpdate('warning', {
       code: 'planner_request_failed',

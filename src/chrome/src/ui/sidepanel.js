@@ -5255,6 +5255,15 @@ function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
   const message = document.createElement('div');
   message.className = 'planner-request-failure-message';
   message.textContent = data.message || 'Planner request failed before a valid response was available.';
+  // Name the provider that failed — with several configured, "open Providers"
+  // is only actionable if the user knows which one to look at. The label is a
+  // proper noun, so it needs no translation.
+  if (data.provider) {
+    const providerName = document.createElement('div');
+    providerName.className = 'planner-request-failure-provider';
+    providerName.textContent = data.provider;
+    message.appendChild(providerName);
+  }
 
   const actions = document.createElement('div');
   actions.className = 'planner-request-failure-actions';

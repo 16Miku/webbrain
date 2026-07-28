@@ -49590,6 +49590,80 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
       );
       assert.equal(transient.failureKind, 'transient', `${label}: 503 planner failure was not classified as transient`);
       assert.equal(warning?.failureKind, 'transient', `${label}: transient category was not exposed to the sidepanel`);
+
+      // The category only reorders two always-present buttons, but it is the
+      // whole point of the card: an auth failure must lead with Providers and
+      // a dropped connection must lead with Retry. Classification runs on raw
+      // provider prose, so pin the shapes real providers actually emit —
+      // including the browser's own fetch failures, which is what a stopped
+      // local server looks like from inside the extension.
+      const classifications = [
+        ['Incorrect API key provided: sk-***. (status 401)', 'auth', 'parenthesized 401'],
+        ['Unauthorized', 'auth', 'status-free auth rejection'],
+        ['invalid_api_key: authentication failed', 'auth', 'textual auth rejection'],
+        ['TypeError: Failed to fetch', 'transient', 'Chrome transport failure'],
+        ['NetworkError when attempting to fetch resource.', 'transient', 'Firefox transport failure'],
+        ['The request timed out after 60000 ms', 'transient', 'timeout'],
+        ['ECONNREFUSED 127.0.0.1:11434', 'transient', 'unreachable local provider'],
+        ['Rate limit reached. Please try again (429)', 'transient', 'rate limit'],
+        ['Provider returned 400: max_tokens 512 is invalid', 'provider', 'rejected request carrying a 5xx-shaped number'],
+        ['This model requires 8192 context, got 500 tokens', 'provider', 'prose carrying a 5xx-shaped number'],
+        ['insufficient_quota: You exceeded your current quota', 'provider', 'billing failure'],
+      ];
+      for (const [detail, expected, why] of classifications) {
+        agent._chatWithCostAllowance = async () => { throw new Error(detail); };
+        warning = null;
+        const classified = await agent._runPlannerGate(
+          tabId,
+          { role: 'user', content: 'Classify this failure.' },
+          onUpdate,
+          null,
+        );
+        assert.equal(
+          classified.failureKind,
+          expected,
+          `${label}: ${why} ("${detail}") should recover as ${expected}`,
+        );
+        assert.equal(
+          warning?.failureKind,
+          expected,
+          `${label}: ${why} lost its category on the way to the sidepanel`,
+        );
+        assert.match(
+          classified.message || '',
+          /[.!?] No tools ran\.$/,
+          `${label}: ${why} produced a run-on failure message`,
+        );
+      }
+    }
+  });
+});
+
+test('planner failure category survives the planner gate wrapper', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9157 : 9158;
+      const provider = { name: 'broken-provider', model: 'broken-model', config: {} };
+      const agent = new AgentClass({ getActive: () => provider });
+      agent._chatWithCostAllowance = async () => { throw new Error('401 invalid API key'); };
+
+      const messages = [];
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        messages,
+        { role: 'user', content: 'Perform this task.' },
+        () => {},
+        'act',
+        null,
+        null,
+      );
+      assert.equal(outcome.proceed, false, `${label}: planner failure unexpectedly continued into execution`);
+      assert.equal(outcome.reason, 'planner_error', `${label}: planner failure lost its planner status`);
+      assert.equal(
+        outcome.failureKind,
+        'auth',
+        `${label}: the gate wrapper dropped the failure category before any caller could read it`,
+      );
     }
   });
 });
@@ -49658,8 +49732,14 @@ test('planner request failures expose provider settings and retry actions in bot
       /function rebindPlannerRequestFailureControls\(\) \{[\s\S]*?planner-request-failure-provider-btn[\s\S]*?bindPlannerProviderSettingsButton/,
       `${label}: restored Providers buttons are not rebound`,
     );
+    assert.match(
+      panel,
+      /if \(data\.provider\) \{[\s\S]*?providerName\.className = 'planner-request-failure-provider';[\s\S]*?providerName\.textContent = data\.provider;/,
+      `${label}: the failing provider is never named, so "open Providers" does not say which one to fix`,
+    );
     assert.match(css, /\.planner-request-failure-actions \{/, `${label}: planner failure action row is not styled`);
     assert.match(css, /\.planner-request-failure-action\.primary \{/, `${label}: planner failure primary action is not styled`);
+    assert.match(css, /\.planner-request-failure-provider \{/, `${label}: planner failure provider label is not styled`);
   }
 });
 
