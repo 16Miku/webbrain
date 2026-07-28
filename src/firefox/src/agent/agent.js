@@ -121,6 +121,19 @@ function normalizeDoneOutcome(value) {
   return DONE_OUTCOMES.has(outcome) ? outcome : null;
 }
 
+function plannerRequestFailureKind(detail) {
+  const text = String(detail || '');
+  const statusMatch = text.match(/\b(?:error|http|status)\s*[:#-]?\s*(\d{3})\b/i)
+    || text.match(/\b(401|403|408|425|429|5\d\d)\b/);
+  const status = Number(statusMatch?.[1] || 0);
+  if (status === 401 || status === 403) return 'auth';
+  if ([408, 425, 429].includes(status) || status >= 500) return 'transient';
+  if (/\b(?:timed?\s*out|timeout|network|fetch failed|connection (?:closed|reset|refused)|econn\w+|temporar(?:y|ily)|unavailable)\b/i.test(text)) {
+    return 'transient';
+  }
+  return 'provider';
+}
+
 /**
  * The WebBrain Agent — orchestrates multi-step LLM + tool-use loops.
  */
@@ -6300,20 +6313,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _plannerRequestFailure(error, onUpdate) {
+  _plannerRequestFailure(error, onUpdate, provider = null) {
     const detail = sanitizePlannerText(
       error?.message || String(error || 'Unknown planner request error.'),
       500,
       { collapseWhitespace: true },
     );
-    const message = `Planner request failed before a valid response was available: ${detail}`;
-    onUpdate('warning', { message });
+    const message = `Planner request failed before a valid response was available: ${detail} No tools ran.`;
+    const failureKind = plannerRequestFailureKind(detail);
+    onUpdate('warning', {
+      code: 'planner_request_failed',
+      message,
+      failureKind,
+      provider: sanitizePlannerText(
+        provider?.config?.label || provider?.name || provider?.config?.providerName || '',
+        80,
+        { collapseWhitespace: true },
+      ),
+    });
     return {
       proceed: false,
       message,
       reason: 'planner_error',
       requestKind: 'respond',
       requiresStateChange: false,
+      failureKind,
     };
   }
 
@@ -6502,7 +6526,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
-      return this._plannerRequestFailure(e, onUpdate);
+      return this._plannerRequestFailure(e, onUpdate, provider);
     }
   }
 
@@ -6720,7 +6744,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
-      return this._plannerRequestFailure(e, onUpdate);
+      return this._plannerRequestFailure(e, onUpdate, provider);
     }
   }
 
