@@ -10,8 +10,17 @@ const ROOT = path.resolve(DIR, '../..');
 // No product logo or wordmark in this variant — the Web Store already shows both beside the listing.
 const assets = {
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
-  models: dataUri('assets/screenshots_v1/s7-model-selector.png'),
+  modelProviders: dataUri('assets/webstore-explainer-2026-5/model-providers-short.png'),
 };
+
+const browserLogos = [
+  ['Chrome', svgUri('chrome.svg')],
+  ['Firefox', svgUri('firefox.svg')],
+  ['Microsoft Edge', svgUri('edge.svg')],
+  ['Opera', svgUri('opera.svg')],
+  ['Vivaldi', svgUri('vivaldi.svg')],
+  ['Brave Browser', svgUri('brave.svg')],
+];
 
 // Vendored so renders never depend on what happens to be installed locally. See fonts/OFL-*.txt.
 const fonts = {
@@ -23,6 +32,11 @@ const fonts = {
 function dataUri(relativePath) {
   const bytes = readFileSync(path.join(ROOT, relativePath));
   return `data:image/png;base64,${bytes.toString('base64')}`;
+}
+
+function svgUri(name) {
+  const bytes = readFileSync(path.join(DIR, 'browser-logos', name));
+  return `data:image/svg+xml;base64,${bytes.toString('base64')}`;
 }
 
 function fontUri(name) {
@@ -89,16 +103,7 @@ const baseCss = `
   .proof { --bg1:#f7f6ff; --bg2:#eef4ff; --ink:#171a2b; --muted:#5a6274;
     --accent:#6e56cf; --accent2:#f0a52b; --border:rgba(30,34,64,0.13);
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
-  .content { position: relative; z-index: 1; width: 100%; height: 100%; padding: 44px 56px; }
-  .eyebrow {
-    display: inline-flex; align-items: center; gap: 10px; padding: 10px 15px;
-    color: var(--accent); background: var(--panel); border: 1px solid var(--border);
-    border-radius: 999px; font-family: var(--mono); font-size: 13.5px; font-weight: 650;
-    text-transform: uppercase; letter-spacing: 0.07em; line-height: 1;
-  }
-  .head { display: flex; align-items: center; justify-content: flex-end; }
-  .eyebrow .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--accent2);
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent2) 18%, transparent); }
+  .content { position: relative; z-index: 1; padding: 38px 48px; }
   h1 {
     margin: 18px 0 0; font-family: var(--display); font-size: 62px; line-height: 1.05;
     font-weight: 800; letter-spacing: -0.02em; font-variation-settings: 'opsz' 72;
@@ -107,6 +112,7 @@ const baseCss = `
   .sub { margin-top: 16px; color: var(--muted); font-size: 24px; font-weight: 520; letter-spacing: -0.005em; }
   .num { font-family: var(--display); font-weight: 800; letter-spacing: -0.03em;
     font-variation-settings: 'opsz' 96; }
+  .stack { height: 100%; display: flex; flex-direction: column; justify-content: center; }
   .crop-frame {
     overflow: hidden; border: 1px solid var(--border); border-radius: 24px;
     background: #ffffff; box-shadow: var(--shadow); position: relative;
@@ -117,6 +123,7 @@ const baseCss = `
 /* ---------- 01 HERO (dark + light variant) ---------- */
 function hero(light = false) {
   return {
+    scale: 1.3,
     file: light ? '01-hero-light.png' : '01-hero.png',
     theme: light ? 'hero-light' : 'dark',
     body: `
@@ -135,6 +142,15 @@ function hero(light = false) {
               border-radius:999px; font-family:var(--mono); font-size:13.5px; font-weight:650;
               letter-spacing:0.05em; text-transform:uppercase; color:var(--muted);">${c}</span>`).join('')}
         </div>
+        <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-top:20px;"
+          aria-label="Supported browsers">
+          ${browserLogos.map(([name, src]) => `
+            <span title="${name}" style="width:46px; height:46px; display:grid; place-items:center;
+              border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,0.92);
+              box-shadow:0 10px 24px rgba(34,40,72,0.10);">
+              <img src="${src}" alt="${name}" style="display:block; width:30px; height:30px; object-fit:contain;">
+            </span>`).join('')}
+        </div>
       </div>`,
   };
 }
@@ -148,13 +164,12 @@ function actScene() {
     ['live', 'Clicking Search…'],
   ];
   return {
+    scale: 1.08,
     file: '02-tell-the-browser.png',
     theme: 'act',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Act mode</span>
-      </div>
-      <div style="text-align:center; margin-top:34px;">
+      <div class="stack">
+      <div style="text-align:center;">
         <h1 style="margin:0; font-size:58px;">Tell the browser what to do.</h1>
       </div>
 
@@ -222,6 +237,7 @@ function actScene() {
             Pauses before anything irreversible
           </div>
         </div>
+      </div>
       </div>`,
   };
 }
@@ -232,13 +248,11 @@ function askScene() {
   const s = 1.62;
   const x = 906, y = 122, w = 374, h = 352;
   return {
+    scale: 1.03,
     file: '03-ask-any-page.png',
     theme: 'read',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Ask mode</span>
-      </div>
-      <div style="display:grid; grid-template-columns: 480px 1fr; gap:48px; align-items:center; height:calc(100% - 60px);">
+      <div style="display:grid; grid-template-columns: 480px 1fr; gap:48px; align-items:center; height:100%;">
         <div>
           <h1>Ask any page.<br>Get the useful part.</h1>
           <div class="sub">Clean answers from messy pages. Read-only by default.</div>
@@ -252,27 +266,45 @@ function askScene() {
   };
 }
 
-/* ---------- 04 ANY LLM (cropped to model dropdown) ---------- */
+/* ---------- 04 ANY LLM (large provider rows, cropped to their useful content) ---------- */
 function modelsScene() {
-  // Source 1280x800. Relevant UI: dropdown+header x 418-1162, y 6-748. Scale 0.82.
-  const s = 0.82;
-  const x = 418, y = 6, w = 744, h = 742;
+  // Source 1472x976. Each provider card is isolated so the screenshot's beige
+  // backdrop disappears. The left 924px carries the useful identity/model data;
+  // the masked edge lets it fade naturally into the slide rather than looking cut.
+  const sourceW = 1472;
+  const sourceScale = 0.7;
+  const cropX = 18;
+  const cropW = 924;
+  const cropH = 91;
+  const rowStarts = [23, 143, 263, 383, 503, 623, 743, 863];
+  const displayW = cropW * sourceScale;
+  const displayH = cropH * sourceScale;
   return {
+    scale: 1.04,
     file: '04-any-llm.png',
     theme: 'provider',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Any LLM</span>
-      </div>
-      <div style="display:grid; grid-template-columns: 470px 1fr; gap:44px; align-items:center; height:calc(100% - 60px);">
+      <div style="display:grid; grid-template-columns: 430px 1fr; gap:28px; align-items:center; height:100%;">
         <div>
           <h1>Use the model you trust.</h1>
           <div class="sub">Local, cloud, or your own keys &mdash; switch anytime.</div>
-        </div>
-        <div style="display:flex; justify-content:center;">
-          <div class="crop-frame" style="width:${w * s}px; height:${h * s}px; transform:rotate(-1.1deg);">
-            <img src="${assets.models}" style="width:${1280 * s}px; margin-left:${-x * s}px; margin-top:${-y * s}px;" alt="">
+          <div style="display:inline-flex; align-items:center; margin-top:38px; padding:11px 20px;
+            border:1px solid var(--border); border-radius:999px; background:rgba(255,255,255,0.68);
+            color:var(--muted); font-size:15px; font-weight:700; box-shadow:0 8px 24px rgba(24,52,90,0.06);">
+            100+ providers are supported!
           </div>
+        </div>
+        <div style="display:grid; gap:10px; justify-content:start; align-content:center;">
+          ${rowStarts.map((y, index) => `
+            <div style="position:relative; width:${displayW}px; height:${displayH}px; overflow:hidden;
+              border-radius:12px;
+              -webkit-mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              filter:drop-shadow(0 9px 14px rgba(24,52,90,${index === 2 ? '0.10' : '0.055'}));">
+              <img src="${assets.modelProviders}" alt="" style="position:absolute; display:block;
+                width:${sourceW * sourceScale}px; max-width:none;
+                left:${-cropX * sourceScale}px; top:${-y * sourceScale}px;">
+            </div>`).join('')}
         </div>
       </div>`,
   };
@@ -291,13 +323,11 @@ function planScene(light = false) {
     : { bg: '#151c2a', border: 'rgba(255,255,255,0.16)', shadow: '0 30px 80px rgba(0,0,0,0.42)',
         label: '#8d99ad', step: '#d7e2ea', onAccent: '#102319' };
   return {
+    scale: 1.22,
     file: light ? '05-plan-before-act-light.png' : '05-plan-before-act.png',
     theme: light ? 'plan-light' : 'plan',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Plan before Act</span>
-      </div>
-      <div style="display:grid; grid-template-columns: 500px 1fr; gap:48px; align-items:center; height:calc(100% - 60px);">
+      <div style="display:grid; grid-template-columns: 440px 1fr; gap:40px; align-items:center; height:100%;">
         <div>
           <h1>See the plan before it touches the page.</h1>
           <div class="sub">Approve first. You stay in the loop.</div>
@@ -332,13 +362,11 @@ function planScene(light = false) {
 /* ---------- 06 LAUNCH OFFER ---------- */
 function offerScene() {
   return {
+    scale: 1.3,
     file: '06-launch-offer.png',
     theme: 'dark',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Launch offer</span>
-      </div>
-      <div style="height:calc(100% - 60px); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+      <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
         <h1 style="font-size:60px;">WebBrain Cloud launch pricing</h1>
         <div style="display:flex; align-items:baseline; gap:28px; margin-top:30px;">
           <!-- Bricolage sets line-through low on heavy figures, so the strike is drawn manually. -->
@@ -375,18 +403,17 @@ function proofScene() {
     ['BW', '#8b5cf6'], ['RO', '#d14f6d'],
   ];
   return {
+    scale: 1.12,
     file: '07-social-proof.png',
     theme: 'proof',
     body: `
-      <div class="head">
-        <span class="eyebrow"><span class="dot"></span>Open source</span>
-      </div>
 
-      <div style="text-align:center; margin-top:44px;">
+      <div class="stack">
+      <div style="text-align:center;">
         <h1 style="margin:0; font-size:64px;">Built in the open.</h1>
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:26px; width:1120px; margin:52px auto 0;">
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:26px; width:1040px; margin:52px auto 0;">
         ${stats.map(([glyph, value, label]) => `
           <div style="background:var(--panel); border:1px solid var(--border); border-radius:26px;
             padding:40px 24px 36px; text-align:center; box-shadow:var(--shadow);">
@@ -396,7 +423,7 @@ function proofScene() {
           </div>`).join('')}
       </div>
 
-      <div style="width:1120px; margin:44px auto 0; display:flex; align-items:center; justify-content:space-between;
+      <div style="width:1040px; margin:44px auto 0; display:flex; align-items:center; justify-content:space-between;
         gap:24px; background:#171827; border:1px solid rgba(255,255,255,0.12); border-radius:22px;
         padding:22px 26px; color:#fff; box-shadow:0 24px 60px rgba(23,26,43,0.3);">
         <div style="display:flex; align-items:center; gap:14px; min-width:0;">
@@ -425,6 +452,7 @@ function proofScene() {
               <path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>
             </svg>Star</span>
         </div>
+      </div>
       </div>`,
   };
 }
@@ -437,13 +465,15 @@ const scenes = [
 function html(scene) {
   return `<!doctype html><html><head><meta charset="utf-8">
     <style>${baseCss}</style></head>
-    <body><main class="canvas ${scene.theme}"><div class="content">${scene.body}</div></main></body></html>`;
+    <body><main class="canvas ${scene.theme}"><div class="content" style="width:${W / (scene.scale ?? 1)}px;
+      height:${H / (scene.scale ?? 1)}px; zoom:${scene.scale ?? 1};">${scene.body}</div></main></body></html>`;
 }
 
 async function renderAll() {
   await mkdir(DIR, { recursive: true });
   const browser = await chromium.launch();
-  for (const scene of scenes) {
+  const only = new Set((process.env.ONLY ?? '').split(',').map((name) => name.trim()).filter(Boolean));
+  for (const scene of scenes.filter((candidate) => only.size === 0 || only.has(candidate.file))) {
     const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await page.setContent(html(scene), { waitUntil: 'load' });
     await page.evaluate(async () => {
