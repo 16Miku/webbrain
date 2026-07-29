@@ -15945,7 +15945,7 @@ const ADAPTERS = [
   {
     name: 'wechat-official-account',
     category: 'general',
-    matches: (url) => /^https?:\/\/mp\.weixin\.qq\.com\//.test(url),
+    matches: (url) => /^https?:\/\/mp\.weixin\.qq\.com\/(?:$|[?#]|cgi-bin(?:[/?#]|$))/.test(url),
     notes: `
 - Confirm the current official account name in the top bar before editing or publishing; an old tab or session-token URL may belong to a different account.
 - The article editor has separate title and body editable regions. The body uses ProseMirror/contenteditable; focus each region separately and verify its text after writing so the title is not inserted into the body or vice versa.
