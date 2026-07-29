@@ -129,13 +129,24 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_page',
-      description: 'Read the current page content including title, URL, visible text, links, and forms. RESULT SHAPE: `pageGate`, when present, describes a rendered blocking login/registration/subscription surface and means text behind that gate was deliberately excluded; `text` is the readable article body or bounded pre-gate/gate text; `textSource` is the CSS selector that produced the body, "page-gate", or a "(pre-gate)" selector; `isArticlePage` reports article markup. Only treat the article body as complete when no blocking `pageGate` is present and `isArticlePage:true` with a real article selector. NOTE: PDF tabs auto-redirect to read_pdf because Firefox\'s built-in viewer is a privileged page that content scripts cannot scrape.',
+      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). Continue long text with `offset: nextOffset` while `hasMore:true`; do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, and `nextOffset` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Firefox\'s built-in viewer is a privileged page that content scripts cannot scrape.',
       parameters: {
         type: 'object',
         properties: {
           includeChrome: {
             type: 'boolean',
             description: 'Include nav / header / footer / aside / ad-slot text in the body. Default false — when the user asks about article/README content you almost never want this. Set true only when the user is asking ABOUT the navigation menu, footer links, cookie banner, advertisement, etc.',
+          },
+          offset: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Character offset into the extracted prose. Default 0. When hasMore is true, call read_page again with offset set exactly to nextOffset.',
+          },
+          limit: {
+            type: 'integer',
+            minimum: 500,
+            maximum: 6000,
+            description: 'Maximum prose characters to return. Default 4000; bounded to 500..6000.',
           },
         },
         required: [],
@@ -1278,7 +1289,7 @@ READING THE CURRENT TAB vs. FETCHING URLS — read this:
 - DO NOT call \`fetch_url\` or \`research_url\` against the URL of the active tab, the API equivalent of the active tab, or a "renderable" / "raw" / "amp" / "mobile" variant of the active tab's URL. Re-fetching content the user is already looking at is the most common wasted step. Symptom of this antipattern: you fetch a Wikipedia/MediaWiki API URL for the same page the user is on, get a truncated result, then fetch a slightly different variant hoping for more content. Stop and call \`read_page\` instead.
 - \`fetch_url\` and \`research_url\` are for content on OTHER URLs — a referenced article, an API the page links to, a sibling page, a different site entirely.
 - If \`get_accessibility_tree({filter:"visible"})\` returns \`truncated:true\` / \`hasMore:true\`, call \`get_accessibility_tree({filter:"visible", page: nextPage})\` before scrolling to find a control that may already be visible but omitted from the first chunk.
-- If \`read_page\` truncates or doesn't surface what you need, scroll the tab and re-read; or use \`get_accessibility_tree({ref_id: ...})\` to read a specific subtree. Don't escape to fetch_url to retrieve what's already in the DOM.
+- If \`read_page\` returns \`hasMore:true\`, continue deterministically with \`read_page({offset: nextOffset})\` until enough article text is covered. Do not scroll and reread the same prefix. \`truncationReason:"tool_output_window"\` with \`accessState:"no_blocking_page_gate"\` is NOT a paywall or access restriction; only a structured blocking \`pageGate\` supports that claim.
 
 Guidelines:
 1. Read the page first to understand the context, then answer the user's question.
