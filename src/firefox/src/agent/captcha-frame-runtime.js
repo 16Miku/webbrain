@@ -263,16 +263,26 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     const candidate = reconcileAncestorLoader(rawCandidate);
     const frameVisible = frameIsVisible(candidate?.frameId)
       && candidate?.frameVisibleWithinAnchor !== false;
+    const visible = candidate?.visible === true && frameVisible;
     return {
       ...candidate,
       frameVisible,
       websiteURL: nearestHttpUrl(candidate),
       dialogAssociated: candidate?.dialogAssociated === true
         || frameIsDialogAssociated(candidate?.frameId),
-      visible: candidate?.visible === true && frameVisible,
+      visible,
       normalCheckbox: candidate?.normalCheckbox === true && candidate?.visible === true && frameVisible,
+      activeChallengeFrameVisible: candidate?.activeChallengeFrame === true && visible,
     };
   });
+}
+
+function isVisibleActiveChallengeFrame(candidate) {
+  if (candidate?.activeChallengeFrameVisible === true) return true;
+  if (candidate?.activeChallengeFrameVisible === false) return false;
+  return candidate?.activeChallengeFrame === true
+    && candidate?.visible === true
+    && candidate?.frameVisible !== false;
 }
 
 function candidateSummary(candidate) {
@@ -291,6 +301,8 @@ function candidateSummary(candidate) {
     visible: candidate?.visible === true,
     normalCheckbox: candidate?.normalCheckbox === true,
     challengeFrame: candidate?.challengeFrame === true,
+    activeChallengeFrame: candidate?.activeChallengeFrame === true,
+    activeChallengeFrameVisible: isVisibleActiveChallengeFrame(candidate),
     dialogAssociated: candidate?.dialogAssociated === true,
     frameVisible: candidate?.frameVisible !== false,
     isInvisible: candidate?.isInvisible === true,
@@ -326,9 +338,7 @@ function candidateScore(candidate) {
   // Priority is tiered so no combination of secondary signals can make a
   // generic visible/background integration outrank an active challenge
   // frame or visible checkbox.
-  const activeChallengeFrame = candidate?.challengeFrame
-    && candidate?.visible === true
-    && candidate?.frameVisible !== false;
+  const activeChallengeFrame = isVisibleActiveChallengeFrame(candidate);
   const primary = (candidate?.normalCheckbox && candidate?.visible) || activeChallengeFrame;
   const tier = primary ? 3 : (candidate?.visible ? 2 : 1);
   let score = tier * 1000;
@@ -406,6 +416,10 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
         visible: previous.visible === true || candidate.visible === true,
         normalCheckbox: previous.normalCheckbox === true || candidate.normalCheckbox === true,
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
+        activeChallengeFrame: previous.activeChallengeFrame === true
+          || candidate.activeChallengeFrame === true,
+        activeChallengeFrameVisible: isVisibleActiveChallengeFrame(previous)
+          || isVisibleActiveChallengeFrame(candidate),
         dialogAssociated: previous.dialogAssociated === true || candidate.dialogAssociated === true,
         responseField: previous.responseField === true || candidate.responseField === true,
         responseTokenPresent: previous.responseTokenPresent === true
@@ -580,7 +594,7 @@ function selectedReason(candidate, constraints) {
   if (constraints.frameUrl) return 'exact frameUrl match';
   if (constraints.websiteKey) return 'exact websiteKey match';
   if (candidate.normalCheckbox && candidate.visible) return 'visible checkbox challenge';
-  if (candidate.visible && candidate.challengeFrame && candidate.frameVisible !== false) return 'visible challenge frame';
+  if (isVisibleActiveChallengeFrame(candidate)) return 'visible challenge frame';
   if (candidate.visible) return 'visible CAPTCHA widget';
   if (candidate.challengeFrame && candidate.frameVisible !== false) return 'challenge frame candidate';
   return 'only detected CAPTCHA candidate';
@@ -627,6 +641,29 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       return null;
     }
   };
+  // Page-serialized counterpart of captchaActiveChallengeFrameVendor in
+  // captcha-gate.js. Only challenge routes, never checkbox routes, may arm it.
+  const activeChallengeFrameVendor = (urlStr) => {
+    try {
+      const parsed = new URL(String(urlStr || ''), frameUrl || 'https://dummy.host');
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      if (
+        (/(^|\.)google\.com$/.test(host) || /(^|\.)recaptcha\.net$/.test(host))
+        && /\/recaptcha\/(?:api2|enterprise)\/bframe(?:\/|$)/.test(path)
+      ) return 'recaptcha';
+      if (/(^|\.)hcaptcha\.com$/.test(host)) {
+        const frame = new URLSearchParams(String(parsed.hash || '').replace(/^#/, '')).get('frame');
+        if (frame === 'challenge') return 'hcaptcha';
+      }
+      if (
+        /(^|\.)(?:arkoselabs|funcaptcha)\.com$/.test(host)
+        && /\/fc\/gc(?:\/|$)/.test(path)
+      ) return 'arkose';
+    } catch (_) {}
+    return '';
+  };
+  const documentChallengeVendor = activeChallengeFrameVendor(frameUrl);
   const visibleElement = (element) => {
     if (!element) return false;
     try {
@@ -714,7 +751,9 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     candidates.push({
       ...serializableCandidate,
       frameUrl,
-      challengeFrame,
+      challengeFrame: candidate.challengeFrame === true || challengeFrame,
+      activeChallengeFrame: candidate.activeChallengeFrame === true
+        || !!documentChallengeVendor,
       responseField,
       responseTokenPresent: candidate.responseTokenPresent === true
         || alsoResponseTokenPresent === true,
@@ -873,16 +912,21 @@ export function detectCaptchaCandidatesInPage(scope = null) {
   const recaptchaFrames = iframeUrls.filter(({ url }) =>
     /recaptcha\/(api2|enterprise)\/anchor/i.test(url)
   );
+  const recaptchaChallengeFrames = iframeUrls.filter(({ url }) =>
+    activeChallengeFrameVendor(url) === 'recaptcha'
+  );
 
   for (const { element, url } of iframeUrls) {
     if (/hcaptcha\.com/i.test(url)) {
       const websiteKey = urlParam(url, 'sitekey');
       if (websiteKey) {
+        const activeChallengeFrame = activeChallengeFrameVendor(url) === 'hcaptcha';
         add({
           type: 'hcaptcha',
           websiteKey,
           visible: visibleElement(element),
-          normalCheckbox: visibleElement(element),
+          normalCheckbox: visibleElement(element) && !activeChallengeFrame,
+          activeChallengeFrame,
           ...responseFieldIdentity(
             element,
             'h-captcha-response',
@@ -919,10 +963,31 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       }
       continue;
     }
-    if (!/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) continue;
+    const recaptchaChallengeFrame = activeChallengeFrameVendor(url) === 'recaptcha';
+    if (!recaptchaChallengeFrame && !/recaptcha\/(api2|enterprise)\/anchor/i.test(url)) continue;
     const websiteKey = urlParam(url, 'k');
     if (!websiteKey) continue;
     const isEnterprise = /recaptcha\/enterprise/i.test(url);
+    if (recaptchaChallengeFrame) {
+      const challengeIndex = recaptchaChallengeFrames.findIndex(frame => frame.element === element);
+      add({
+        type: isEnterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2',
+        websiteKey,
+        isInvisible: false,
+        isEnterprise,
+        visible: visibleElement(element),
+        normalCheckbox: false,
+        activeChallengeFrame: true,
+        ...responseFieldIdentity(
+          element,
+          'g-recaptcha-response',
+          challengeIndex,
+          recaptchaChallengeFrames.length,
+        ),
+        detectedVia: 'url',
+      }, element);
+      continue;
+    }
     const isInvisible = urlParam(url, 'size') === 'invisible';
     const matchingV3Script = scriptUrls.find(scriptUrl => urlParam(scriptUrl, 'render') === websiteKey) || null;
     const isV3 = !!matchingV3Script;
@@ -994,6 +1059,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
     try { url = String(element.src || ''); } catch (_) {}
     try { loadedUrl = String(element.contentWindow?.location?.href || ''); } catch (_) {}
     try { name = String(element.name || element.getAttribute?.('name') || ''); } catch (_) {}
+    const activeChallengeFrame = !!activeChallengeFrameVendor(loadedUrl || url);
     return {
       index,
       url,
@@ -1001,6 +1067,7 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       name,
       visible: visibleElement(element),
       dialogAssociated: elementInChallengeDialog(element),
+      activeChallengeFrame,
     };
   });
   let frameName = '';

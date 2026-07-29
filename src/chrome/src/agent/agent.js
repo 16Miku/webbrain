@@ -3082,6 +3082,56 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
+    let detection = null;
+    let detectionFailed = false;
+    let failedDiagnostics = null;
+    let detectionAttempted = false;
+    const inspectCaptchaFrames = async () => {
+      if (detectionAttempted) return;
+      detectionAttempted = true;
+      try {
+        detection = await detectCaptcha(tabId);
+      } catch (error) {
+        detectionFailed = true;
+        failedDiagnostics = error?.captchaDiagnostics || null;
+      }
+    };
+    let languageNeutralFrameTrigger = false;
+    const hasDialogSurface = toolResult.pageGate?.surface === 'dialog'
+      || /^\s*(?:dialog|alertdialog)(?=\s|$)/im.test(toolResult.pageContent);
+    if (!challenge && hasDialogSurface) {
+      await inspectCaptchaFrames();
+      const selectedActiveFrame = detection?.selected?.activeChallengeFrame === true
+        && detection?.selected?.activeChallengeFrameVisible === true
+        && detection?.selected?.visible === true
+        && detection?.selected?.frameVisible !== false;
+      const diagnosticActiveFrame = (detection?.diagnostics?.frames || []).find(frame =>
+        frame?.activeChallengeFrame === true && frame?.visible === true
+      );
+      if (selectedActiveFrame || diagnosticActiveFrame) {
+        const vendor = diagnosticActiveFrame?.vendor
+          || (String(detection?.selected?.type || '').startsWith('recaptcha')
+            ? 'recaptcha'
+            : detection?.selected?.type || 'captcha');
+        const vendorLabel = vendor === 'recaptcha'
+          ? 'reCAPTCHA'
+          : vendor === 'hcaptcha'
+            ? 'hCaptcha'
+            : vendor === 'arkose'
+              ? 'Arkose'
+              : 'CAPTCHA';
+        challenge = detectChallengeDialog(`dialog ${JSON.stringify(`Visible ${vendorLabel} CAPTCHA challenge`)}`);
+        languageNeutralFrameTrigger = !!challenge;
+        if (selectedActiveFrame) {
+          observedChallengeFrameId = Number.isInteger(detection.selected.frameId)
+            ? detection.selected.frameId
+            : observedChallengeFrameId;
+          observedChallengeFrameUrl = String(
+            detection.selected.frameUrl || observedChallengeFrameUrl
+          );
+        }
+      }
+    }
     const requestedPage = toolArgs?.page;
     const requestedMaxDepth = toolArgs?.maxDepth;
     const parsedMaxDepth = Number(requestedMaxDepth);
@@ -3232,17 +3282,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: existing.publicGate, loopCheck };
     }
 
-    let detection = null;
-    let detectionFailed = false;
-    let failedDiagnostics = null;
-    if (this.captchaSolverEnabled) {
-      try {
-        detection = await detectCaptcha(tabId);
-      } catch (error) {
-        detectionFailed = true;
-        failedDiagnostics = error?.captchaDiagnostics || null;
-      }
-    }
+    await inspectCaptchaFrames();
     const diagnostics = detection?.diagnostics || failedDiagnostics || {
       vendors: [],
       candidateTypes: [],
@@ -3256,8 +3296,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && frame?.visible === true
       ))
       .map(frame => frame.vendor))];
-    const selectedCorrelated = detection?.selected?.dialogAssociated === true
-      && detection?.selected?.frameVisible !== false;
+    const selectedCorrelated = detection?.selected?.frameVisible !== false
+      && (
+        detection?.selected?.dialogAssociated === true
+        || (
+          detection?.selected?.activeChallengeFrame === true
+          && detection?.selected?.activeChallengeFrameVisible === true
+          && detection?.selected?.visible === true
+        )
+      );
     const supported = this.captchaSolverEnabled
       && !detectionFailed
       && !detection?.error
@@ -3274,6 +3321,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(!this.captchaSolverEnabled ? { solverDisabled: true } : {}),
       ...(detection?.error ? { selectionFailed: true } : {}),
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
+      ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
     };
     this._captchaGateStates.set(tabId, {
       key,
