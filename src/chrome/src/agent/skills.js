@@ -97,6 +97,167 @@ function inferName(content, index) {
   return (firstLine || `Skill ${index + 1}`).slice(0, 80);
 }
 
+function parseAgentSkillScalar(value) {
+  const raw = String(value || '').trim();
+  if (
+    !raw
+    || /^[!&*\[\]{},#|>%@`]/.test(raw)
+    || /^[?:-](?:[ \t]|$)/.test(raw)
+  ) return null;
+  const singleQuoted = raw.match(/^'((?:''|[^'])*)'(?:\s+#.*)?$/);
+  if (singleQuoted) return singleQuoted[1].replace(/''/g, "'");
+  const doubleQuoted = raw.match(/^("(?:\\.|[^"\\])*")(?:\s+#.*)?$/);
+  if (doubleQuoted) {
+    try {
+      const parsed = JSON.parse(doubleQuoted[1]);
+      return typeof parsed === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (/^['"]/.test(raw)) return null;
+  const plain = raw.replace(/\s+#.*$/, '').trim();
+  if (!plain || /:(?:[ \t]|$)/.test(plain)) return null;
+  return plain;
+}
+
+function agentSkillLineIndent(line) {
+  const leading = String(line || '').match(/^[ \t]*/)?.[0] || '';
+  return leading.includes('\t') ? null : leading.length;
+}
+
+function parseAgentSkillBlock(lines, startIndex, indicator) {
+  if (!/^[>|](?:(?:[1-9][+-]?)|(?:[+-][1-9]?))?$/.test(indicator)) return null;
+  const explicitIndent = Number(indicator.match(/[1-9]/)?.[0] || 0);
+  const block = [];
+  let endIndex = startIndex;
+  let contentIndent = explicitIndent || 0;
+
+  while (endIndex + 1 < lines.length) {
+    const next = lines[endIndex + 1];
+    if (next.trim() && !/^[ \t]/.test(next)) break;
+    endIndex += 1;
+    if (!next.trim()) {
+      block.push(next);
+      continue;
+    }
+    const indent = agentSkillLineIndent(next);
+    if (indent == null) return null;
+    if (!contentIndent) contentIndent = indent;
+    if (!contentIndent || indent < contentIndent) return null;
+    block.push(next);
+  }
+
+  return {
+    value: cleanText(block.map((line) => line.slice(contentIndent)).join('\n')),
+    endIndex,
+  };
+}
+
+function parseAgentSkillMetadataMap(lines, startIndex) {
+  let endIndex = startIndex;
+  let mappingIndent = 0;
+  let foundEntry = false;
+  const seenKeys = new Set();
+
+  while (endIndex + 1 < lines.length) {
+    const next = lines[endIndex + 1];
+    if (next.trim() && !/^[ \t]/.test(next)) break;
+    endIndex += 1;
+    if (!next.trim() || /^\s*#/.test(next)) continue;
+    const indent = agentSkillLineIndent(next);
+    if (indent == null) return null;
+    if (!mappingIndent) mappingIndent = indent;
+    if (!mappingIndent || indent !== mappingIndent) return null;
+    const entry = next.slice(mappingIndent).match(/^([^:#][^:]*):(?:[ \t]*(.*))?$/);
+    const entryKey = cleanSingleLine(entry?.[1]);
+    if (!entry || !entryKey || seenKeys.has(entryKey) || parseAgentSkillScalar(entry[2]) == null) return null;
+    seenKeys.add(entryKey);
+    foundEntry = true;
+  }
+
+  return { value: foundEntry ? true : '', endIndex };
+}
+
+function parseAgentSkillFrontmatter(content) {
+  const text = String(content || '').replace(/\r\n?/g, '\n').trimStart();
+  const match = text.match(/^---\n([\s\S]{0,8192}?)\n---(?:\n|$)/);
+  if (!match) return null;
+
+  const lines = match[1].split('\n');
+  const values = {};
+  const seen = new Set();
+  const allowedFields = new Set([
+    'name',
+    'description',
+    'license',
+    'compatibility',
+    'metadata',
+    'allowed-tools',
+  ]);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    if (/^[ \t]/.test(line)) return null;
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$/);
+    if (!field) return null;
+    const key = field[1];
+    if (!allowedFields.has(key)) return null;
+    if (seen.has(key)) return null;
+    seen.add(key);
+
+    const rawValue = field[2] || '';
+    const scalarIndicator = rawValue.trim();
+    if (key === 'metadata' && !scalarIndicator) {
+      const parsed = parseAgentSkillMetadataMap(lines, index);
+      if (!parsed) return null;
+      values[key] = parsed.value;
+      index = parsed.endIndex;
+    } else if (/^[>|]/.test(scalarIndicator)) {
+      const parsed = parseAgentSkillBlock(lines, index, scalarIndicator);
+      if (!parsed) return null;
+      values[key] = parsed.value;
+      index = parsed.endIndex;
+    } else {
+      let scalar = parseAgentSkillScalar(rawValue);
+      if (scalar == null && !scalarIndicator && key !== 'name' && key !== 'description') {
+        scalar = '';
+      } else if (scalar == null) {
+        return null;
+      }
+      const continuation = [];
+      while (index + 1 < lines.length) {
+        const next = lines[index + 1];
+        if (next.trim() && !/^[ \t]/.test(next)) break;
+        index += 1;
+        if (!next.trim() || /^\s*#/.test(next)) continue;
+        const indent = agentSkillLineIndent(next);
+        if (indent == null || !indent) return null;
+        const part = parseAgentSkillScalar(next.slice(indent));
+        if (part == null) return null;
+        continuation.push(part);
+      }
+      values[key] = cleanSingleLine([scalar || '', ...continuation].join(' '));
+    }
+  }
+
+  const name = cleanSingleLine(values.name).normalize('NFKC');
+  const description = cleanSingleLine(values.description);
+  if (
+    !/^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u.test(name)
+    || name !== name.toLowerCase()
+    || [...name].length > 64
+    || !description
+    || [...description].length > 1024
+    || (seen.has('compatibility') && [...cleanSingleLine(values.compatibility)].length > 500)
+  ) return null;
+  return {
+    name,
+    description,
+    body: cleanText(text.slice(match[0].length)),
+  };
+}
+
 function toolBlockRegex() {
   return /```(?:webbrain-tools|wb-tools)\s*\n([\s\S]*?)```/gi;
 }
@@ -106,7 +267,8 @@ function skillMetadataBlockRegex() {
 }
 
 export function stripSkillToolBlocks(content) {
-  return cleanText(content)
+  const agentSkill = parseAgentSkillFrontmatter(content);
+  return cleanText(agentSkill ? agentSkill.body : content)
     .replace(toolBlockRegex(), '')
     .replace(skillMetadataBlockRegex(), '')
     .trim();
@@ -464,8 +626,15 @@ function normalizeSkills(value, { maxSkills = MAX_CUSTOM_SKILLS } = {}) {
     const sourceUrl = sourceType === 'url' || sourceType === 'built-in'
       ? cleanSingleLine(item.sourceUrl || item.path).slice(0, 2048)
       : '';
-    const name = cleanSingleLine(item.name).slice(0, 80) || inferName(content, skills.length);
-    const metadata = parseSkillMetadataBlock(content);
+    const agentSkill = parseAgentSkillFrontmatter(content);
+    const name = cleanSingleLine(item.name).slice(0, 80)
+      || agentSkill?.name
+      || inferName(content, skills.length);
+    // Agent Skills frontmatter is instruction-only metadata. WebBrain routing
+    // manifests and network tools are trusted only when they occur in the
+    // Markdown body after a valid frontmatter boundary.
+    const manifestContent = agentSkill ? agentSkill.body : content;
+    const metadata = parseSkillMetadataBlock(manifestContent);
     const trustedChromeWebStoreSkill = id === 'chrome-web-store-release'
       && sourceType === 'built-in'
       && sourceUrl === 'skills/chrome-web-store-release.md';
@@ -473,7 +642,9 @@ function normalizeSkills(value, { maxSkills = MAX_CUSTOM_SKILLS } = {}) {
     // an already-normalized skill record passes through this boundary again.
     const toolRecords = trustedChromeWebStoreSkill
       ? []
-      : Array.isArray(item.tools) ? item.tools : parseSkillToolBlocks(content);
+      : agentSkill
+        ? parseSkillToolBlocks(manifestContent)
+        : Array.isArray(item.tools) ? item.tools : parseSkillToolBlocks(content);
     const normalizedTools = normalizeSkillTools(toolRecords, id);
     const privilegedTools = trustedBuiltInSkillTools(id, sourceType, sourceUrl);
     skills.push({
@@ -482,7 +653,9 @@ function normalizeSkills(value, { maxSkills = MAX_CUSTOM_SKILLS } = {}) {
       sourceType,
       sourceUrl,
       content,
-      summary: metadata?.summary || inferSkillSummary(content, name),
+      summary: metadata?.summary
+        || agentSkill?.description.slice(0, MAX_CUSTOM_SKILL_SUMMARY_CHARS)
+        || inferSkillSummary(content, name),
       modes: metadata?.modes || ['act'],
       intents: metadata?.intents || [],
       tools: [...normalizedTools, ...privilegedTools],

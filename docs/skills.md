@@ -29,6 +29,20 @@ Intents are cross-language *meaning* hints for the LLM, not literal keyword
 matching. Skills without metadata infer the first prose paragraph as their
 summary, have no inferred intents, and default to Act/Dev.
 
+WebBrain also recognizes the required `name` and `description` YAML frontmatter
+from an imported [Agent Skills `SKILL.md`](https://agentskills.io/specification).
+The name and description populate the routing catalog, and the frontmatter is
+removed before the Markdown body is loaded. A name entered in Settings and a
+`webbrain-skill` block still take precedence.
+
+This is instruction-only compatibility. WebBrain imports one text document; it
+does not fetch bundled `scripts/`, `references/`, or `assets/`, execute skill
+code, or treat the Agent Skills `allowed-tools` field as a WebBrain permission
+or tool manifest. Use `webbrain-tools` for WebBrain HTTP tools. WebBrain
+recognizes `webbrain-skill` and `webbrain-tools` fences only in the Markdown
+body after valid frontmatter; fence-like text inside frontmatter cannot grant
+routing eligibility or register tools.
+
 ## Skill tools
 
 A skill can expose read-only HTTP tools, or short-lived download-job tools, with

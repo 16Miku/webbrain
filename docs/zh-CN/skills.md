@@ -24,6 +24,19 @@ Mid 和 Full 运行会收到一个小型的可用技能目录：ID、名称、�
 意图是给 LLM 的跨语言*语义*提示，而非字面关键词匹配。没有元数据的技能会将第一段
 正文推断为摘要，不会推断出意图，并默认为 Act/Dev。
 
+WebBrain 也会识别导入的
+[Agent Skills `SKILL.md`](https://agentskills.io/specification) 中必需的
+`name` 和 `description` YAML frontmatter。名称和描述会写入路由目录，而在加载
+Markdown 正文前会移除 frontmatter。在设置中输入的名称及 `webbrain-skill` 块仍有
+更高优先级。
+
+这仅属于指令兼容。WebBrain 只导入一个文本文档；它不会获取打包的 `scripts/`、
+`references/` 或 `assets/`，不会执行技能代码，也不会把 Agent Skills 的
+`allowed-tools` 字段当作 WebBrain 权限或工具清单。WebBrain HTTP 工具仍应使用
+`webbrain-tools`。WebBrain 只识别有效 frontmatter 之后 Markdown 正文中的
+`webbrain-skill` 和 `webbrain-tools` 围栏；frontmatter 内形似围栏的文本不能授予
+路由资格或注册工具。
+
 ## 技能工具
 
 技能可以通过围栏 `webbrain-tools` JSON 清单暴露只读 HTTP 工具，或短生命周期的
