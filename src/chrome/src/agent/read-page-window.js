@@ -16,6 +16,13 @@ function withDeliveredText(result, text) {
   const deliveredEnd = Math.min(originalLength, textOffset + returnedLength);
   const hasMore = deliveredEnd < originalLength;
   const textTruncated = textOffset > 0 || hasMore;
+  const continuationArgs = hasMore
+    ? {
+      offset: deliveredEnd,
+      limit: Number(result.textLimit) || READ_PAGE_DEFAULT_LIMIT,
+      includeChrome: result.includeChrome === true,
+    }
+    : null;
   return {
     ...result,
     text,
@@ -23,6 +30,7 @@ function withDeliveredText(result, text) {
     textTruncated,
     hasMore,
     nextOffset: hasMore ? deliveredEnd : null,
+    continuationArgs,
     truncationReason: textTruncated ? 'tool_output_window' : null,
   };
 }

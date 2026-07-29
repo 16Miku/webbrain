@@ -129,7 +129,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_page',
-      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). Continue long text with `offset: nextOffset` while `hasMore:true`; do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, and `nextOffset` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Chrome\'s PDF viewer is a chrome-extension:// page that content scripts cannot scrape.',
+      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). While `hasMore:true`, continue with the exact returned `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Chrome\'s PDF viewer is a chrome-extension:// page that content scripts cannot scrape.',
       parameters: {
         type: 'object',
         properties: {
@@ -140,7 +140,7 @@ export const AGENT_TOOLS = [
           offset: {
             type: 'integer',
             minimum: 0,
-            description: 'Character offset into the extracted prose. Default 0. When hasMore is true, call read_page again with offset set exactly to nextOffset.',
+            description: 'Character offset into the extracted prose. Default 0. When hasMore is true, pass the exact returned continuationArgs so extraction options stay stable.',
           },
           limit: {
             type: 'integer',
@@ -1414,7 +1414,7 @@ READING THE CURRENT TAB vs. FETCHING URLS — read this:
 - DO NOT call \`fetch_url\` or \`research_url\` against the URL of the active tab, the API equivalent of the active tab, or a "renderable" / "raw" / "amp" / "mobile" variant of the active tab's URL. Re-fetching content the user is already looking at is the most common wasted step. Symptom of this antipattern: you fetch a Wikipedia/MediaWiki API URL for the same page the user is on, get a truncated result, then fetch a slightly different variant hoping for more content. Stop and call \`read_page\` instead.
 - \`fetch_url\` and \`research_url\` are for content on OTHER URLs — a referenced article, an API the page links to, a sibling page, a different site entirely.
 - If \`get_accessibility_tree({filter:"visible"})\` returns \`truncated:true\` / \`hasMore:true\`, call \`get_accessibility_tree({filter:"visible", page: nextPage})\` before scrolling to find a control that may already be visible but omitted from the first chunk.
-- If \`read_page\` returns \`hasMore:true\`, continue deterministically with \`read_page({offset: nextOffset})\` until enough article text is covered. Do not scroll and reread the same prefix. \`truncationReason:"tool_output_window"\` with \`accessState:"no_blocking_page_gate"\` is NOT a paywall or access restriction; only a structured blocking \`pageGate\` supports that claim.
+- If \`read_page\` returns \`hasMore:true\`, continue deterministically with the exact returned \`continuationArgs\` (equivalent to \`{offset: nextOffset, limit: textLimit, includeChrome}\`) until enough article text is covered. Preserve every extraction option across windows; do not scroll and reread the same prefix. \`truncationReason:"tool_output_window"\` with \`accessState:"no_blocking_page_gate"\` is NOT a paywall or access restriction; only a structured blocking \`pageGate\` supports that claim.
 
 Guidelines:
 1. Read the page first (a11y tree by default) to understand the context, then answer the user's question.

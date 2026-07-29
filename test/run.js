@@ -3339,12 +3339,30 @@ test('read_page paginates a long friend-link article without inventing a paywall
       assert.equal(page.accessState, 'no_blocking_page_gate', `${label}: readable friend link was treated as blocked`);
       assert.equal(page.accessGateEvidence, 'none', `${label}: tool truncation invented access-gate evidence`);
       assert.equal(page.truncationReason, 'tool_output_window', `${label}: long page lacks a structured tool-window reason`);
+      if (page.hasMore) {
+        assert.deepEqual(page.continuationArgs, {
+          offset: page.nextOffset,
+          limit: 3000,
+          includeChrome: false,
+        }, `${label}: continuation does not preserve extraction options`);
+      }
       offset = page.nextOffset;
     } while (offset !== null);
 
     assert.equal(pages.map(page => page.text).join(''), longText, `${label}: continuation skipped or duplicated article text`);
     assert.equal(pages.at(-1).hasMore, false, `${label}: final window still claims more text`);
     assert.equal(pages.at(-1).nextOffset, null, `${label}: final window exposed a stale continuation`);
+    assert.equal(pages.at(-1).continuationArgs, null, `${label}: final window exposed stale continuation arguments`);
+
+    const chromeIncluded = runtime.applyReadPageWindow({
+      ...friendLinkArticle,
+      includeChrome: true,
+    }, { includeChrome: true, limit: 3000 });
+    assert.deepEqual(chromeIncluded.continuationArgs, {
+      offset: 3000,
+      limit: 3000,
+      includeChrome: true,
+    }, `${label}: includeChrome was lost across continuation`);
 
     const blocked = runtime.applyReadPageWindow({
       ...friendLinkArticle,
@@ -3376,9 +3394,9 @@ test('read_page schema and prompts require nextOffset continuation in both brows
     assert.equal(properties.offset.minimum, 0, `${label}: offset accepts negative values`);
     assert.equal(properties.limit.minimum, 500, `${label}: limit minimum drifted`);
     assert.equal(properties.limit.maximum, 6000, `${label}: limit maximum drifted`);
-    assert.match(tool.function.description, /offset: nextOffset[\s\S]*hasMore:true/i, `${label}: tool does not teach continuation`);
+    assert.match(tool.function.description, /hasMore:true[\s\S]*continuationArgs[\s\S]*offset:nextOffset/i, `${label}: tool does not teach stable continuation`);
     assert.match(tool.function.description, /tool_output_window[\s\S]*never evidence of a paywall/i, `${label}: tool truncation can be mistaken for a paywall`);
-    assert.match(prompt, /read_page\(\{offset: nextOffset\}\)/, `${label}: Ask prompt does not continue the returned window`);
+    assert.match(prompt, /continuationArgs[\s\S]*offset: nextOffset[\s\S]*includeChrome/, `${label}: Ask prompt does not preserve continuation options`);
     assert.match(prompt, /no_blocking_page_gate[\s\S]*NOT a paywall/i, `${label}: Ask prompt lacks the structural access distinction`);
     assert.doesNotMatch(prompt, /scroll the tab and re-read/i, `${label}: stale scroll-and-reread guidance survived`);
   }
