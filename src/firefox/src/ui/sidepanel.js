@@ -3420,7 +3420,7 @@ async function init() {
   // Restore prior conversation for this tab (if any) — survives close/reopen.
   const restoreTabId = currentTabId;
   if (restoreTabId != null) {
-    const html = await loadTabChat(restoreTabId);
+    const html = await loadTabChat(restoreTabId, { waitForHandoff: true });
     if (currentTabId === restoreTabId && html) {
       await hydrateRestoredChatHistory(restoreTabId, html);
       if (currentTabId === restoreTabId) {

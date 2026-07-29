@@ -17814,7 +17814,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     const initMatch = panel.match(/async function init\(\) \{([\s\S]*?)\n  \/\/ Start observing the messages container/);
     assert.ok(initMatch, `${label}: init restore block missing`);
     const initBody = initMatch[1];
-    const initLoadIdx = initBody.indexOf('const html = await loadTabChat(restoreTabId);');
+    const initLoadIdx = initBody.indexOf('const html = await loadTabChat(restoreTabId, { waitForHandoff: true });');
     const initHydrateIdx = initBody.indexOf('await hydrateRestoredChatHistory(restoreTabId, html);');
     const initGuardIdx = initBody.indexOf('if (currentTabId === restoreTabId) {', initHydrateIdx);
     const initDomIdx = initBody.indexOf('messagesEl.innerHTML = html;', initGuardIdx);
@@ -18238,7 +18238,7 @@ test('sidepanel does not miss startup tab switches before consuming tab-scoped s
 
     if (label === 'chrome') {
       const restoreCaptureIdx = body.indexOf('const restoreTabId = currentTabId;');
-      const restoreLoadIdx = body.indexOf('const html = await loadTabChat(restoreTabId);');
+      const restoreLoadIdx = body.indexOf('const html = await loadTabChat(restoreTabId, { waitForHandoff: true });');
       const restoreGuardIdx = body.indexOf('if (currentTabId === restoreTabId && html)');
       assert.notEqual(restoreCaptureIdx, -1, 'chrome: initial tab-chat restore should capture the target tab');
       assert.notEqual(restoreLoadIdx, -1, 'chrome: initial tab-chat restore should load the captured tab');
@@ -21464,6 +21464,7 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
   let mode = 'act';
   const sends = [];
   const claims = [];
+  const releases = [];
   const input = {
     value: '',
     events: [],
@@ -21490,6 +21491,10 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
         }
         return { ok: true, claimed: true };
       }
+      if (action === 'release_context_menu_prompt_claim') {
+        releases.push(params);
+        return { ok: true, released: true };
+      }
       assert.equal(action, 'consume_context_menu_prompt');
       assert.deepEqual(params, { tabId: currentTabId });
       return { prompt };
@@ -21501,6 +21506,7 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
     input,
     sends,
     claims,
+    releases,
     setProcessing(value) { isProcessing = value; },
     setTabId(value) { currentTabId = value; },
     setVisible(value) { isVisible = value; },
@@ -21635,6 +21641,31 @@ test('context-menu prompt leases deduplicate sends across sidepanel instances', 
   }
 });
 
+test('context-menu prompts release an initial claim acquired after the panel becomes hidden', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-hidden-during-claim`, tabId: 10, text: 'Explain this selection' };
+    const claimGate = deferred();
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => claimGate.promise,
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    h.setVisible(false);
+    claimGate.resolve({ ok: true, claimed: true });
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 0, `${label}: a hidden panel must not submit after its initial claim resolves`);
+    assert.equal(h.releases.length, 1, `${label}: the successful hidden claim should be released`);
+    assert.equal(h.releases[0].tabId, prompt.tabId, `${label}: release should retain the prompt tab`);
+    assert.equal(h.releases[0].promptId, prompt.id, `${label}: release should target the claimed prompt`);
+    assert.equal(h.releases[0].claimantId, h.claims[0].claimantId, `${label}: only the claim owner may release it`);
+  }
+});
+
 test('context-menu prompt lease recovery retries after an abandoned owner expires', async () => {
   for (const [label, createHandler] of [
     ['chrome', createContextMenuPromptHandlerCh],
@@ -21736,6 +21767,11 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       `${label}: the claimed identity should follow the prompt into the run-start path`,
     );
     assert.match(
+      handler,
+      /claimResult\?\.claimed && !getIsDocumentVisible\(\)[\s\S]*?release_context_menu_prompt_claim[\s\S]*?reason: 'panel-hidden'/,
+      `${label}: an initial claim that resolves after hiding should be released for the visible panel`,
+    );
+    assert.match(
       panel,
       /getIsDocumentVisible: \(\) => document\.visibilityState !== 'hidden'/,
       `${label}: context-menu handling should be limited to visible panel documents`,
@@ -21749,6 +21785,11 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       panel,
       /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await consumePendingContextMenuPrompt\(\);/,
       `${label}: a returning panel should wait for the shared handoff before consuming prompts`,
+    );
+    assert.match(
+      panel,
+      /const restoreTabId = currentTabId;[\s\S]*?await loadTabChat\(restoreTabId, \{ waitForHandoff: true \}\);/,
+      `${label}: an initially visible panel should also wait for an outgoing document handoff`,
     );
     assert.match(
       panel,
