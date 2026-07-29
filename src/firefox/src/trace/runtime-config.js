@@ -17,9 +17,13 @@ const BOOLEAN_FIELDS = Object.freeze([
   'selection_grounded',
 ]);
 
+// Bounds keep the payload sane, not to re-validate settings: each range is a
+// superset of what the agent's own normalizers can hold (steps ≤ 200 with 0 =
+// unlimited, dimension ≤ 2048, screenshots ≤ 5), so a legitimate setting is
+// never silently dropped for being out of range.
 const INTEGER_RANGES = Object.freeze({
   max_agent_steps: [0, 10_000],
-  max_image_dimension: [256, 16_384],
+  max_image_dimension: [1, 16_384],
   max_screenshots_per_turn: [0, 1_000],
 });
 
