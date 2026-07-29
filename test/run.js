@@ -2453,6 +2453,44 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Rakuten Ichiba shopping surfaces and includes marketplace guidance', () => {
+  const trustedUrls = [
+    'https://www.rakuten.co.jp/',
+    'https://search.rakuten.co.jp/search/mall/%E6%B0%B4/',
+    'https://item.rakuten.co.jp/example-shop/example-item/',
+    'https://basket.step.rakuten.co.jp/rms/mall/bs/cart/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'rakuten-ichiba');
+    assert.equal(getActiveAdapterFx(url)?.name, 'rakuten-ichiba');
+  }
+
+  const rejectedUrls = [
+    'https://travel.rakuten.co.jp/',
+    'https://books.rakuten.co.jp/',
+    'https://order.step.rakuten.co.jp/',
+    'https://www.rakuten.co.jp.phishing.example/',
+    'https://example.com/item.rakuten.co.jp/example-shop/example-item/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'rakuten-ichiba');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'rakuten-ichiba');
+  }
+
+  const adapter = getActiveAdapter('https://search.rakuten.co.jp/search/mall/%E6%B0%B4/');
+  const firefoxAdapter = getActiveAdapterFx('https://item.rakuten.co.jp/example-shop/example-item/');
+  assert.match(adapter?.notes || '', /2026-07/);
+  assert.match(adapter?.notes || '', /\[PR\]/);
+  assert.match(adapter?.notes || '', /同じ商品を安い順で見る/);
+  assert.match(adapter?.notes || '', /定期購入/);
+  assert.match(adapter?.notes || '', /different shops/i);
+  assert.match(adapter?.notes || '', /ご購入手続き/);
+  assert.match(adapter?.notes || '', /3,980円/);
+  assert.match(adapter?.notes || '', /特定送料/);
+  assert.match(adapter?.notes || '', /ポイント/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
