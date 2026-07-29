@@ -10,7 +10,7 @@ import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLe
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
-import { completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
+import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient } from '../cdp/cdp-client.js';
 import { getActiveAdapter, getFullPageCapturePolicy, UNIVERSAL_PREAMBLE } from './adapters.js';
 import {
@@ -659,6 +659,7 @@ export class Agent extends LoopDetector {
                 label: boundedText(form?.label, 80),
                 relevant: !!form?.relevant,
                 utility: !!form?.utility,
+                utilityReason: boundedText(form?.utilityReason, 40),
                 editableCount: Number(form?.editableCount || 0),
                 submitCount: Number(form?.submitCount || 0),
               }))
@@ -14973,18 +14974,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     return true;
                   } catch (e) { return false; }
                 }
+                const classifyForm = ${classifyCompletionForm.toString()};
                 const dialogs = Array.from(document.querySelectorAll('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]')).filter(visible);
                 const forms = Array.from(document.querySelectorAll('form')).filter(visible);
+                const primaryContent = document.querySelector('main,[role=main]');
                 const formDescriptors = forms.map(form => {
                   const editable = Array.from(form.querySelectorAll('input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]),textarea,select,[contenteditable=true]')).filter(visible);
                   const submits = Array.from(form.querySelectorAll('button,input[type=submit],input[type=image],[role=button]')).filter(visible);
                   const utilityRegion = !!form.closest('header,nav,footer,[role=banner],[role=navigation],[role=search],[role=contentinfo]') || form.getAttribute('role') === 'search';
-                  const searchOnly = editable.length > 0
-                    && editable.every(el => el.matches('input[type=search]') || /^(q|query|search|filter)$/i.test(el.getAttribute('name') || ''))
-                    && submits.every(el => /search|filter|go/i.test((el.innerText || el.value || el.getAttribute('aria-label') || '').trim()));
                   const label = (form.getAttribute('aria-label') || form.getAttribute('name') || form.id || (form.querySelector('h1,h2,h3,legend')?.innerText || '')).trim().slice(0, 80);
-                  const relevant = !utilityRegion && !searchOnly && (editable.length > 0 || submits.length > 0);
-                  return { label, relevant, utility: utilityRegion || searchOnly, editableCount: editable.length, submitCount: submits.length };
+                  return classifyForm({
+                    label,
+                    utilityRegion,
+                    outsidePrimaryContent: !!primaryContent && !form.closest('main,[role=main]'),
+                    insideDialog: !!form.closest('[role=dialog],[role=alertdialog],[aria-modal=true],dialog[open]'),
+                    method: form.getAttribute('method') || 'get',
+                    hiddenNamedCount: Array.from(form.querySelectorAll('input[type=hidden][name]'))
+                      .filter(el => (el.getAttribute('name') || '').trim()).length,
+                    editable: editable.map(el => ({
+                      tag: (el.tagName || '').toLowerCase(),
+                      type: el.getAttribute('type') || '',
+                      role: el.getAttribute('role') || '',
+                      name: el.getAttribute('name') || '',
+                      value: 'value' in el ? el.value : (el.innerText || ''),
+                      required: el.required === true || el.getAttribute('aria-required') === 'true',
+                      focused: document.activeElement === el,
+                    })),
+                    submits: submits.map(el => ({
+                      label: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim(),
+                    })),
+                  });
                 });
                 const toasts = Array.from(document.querySelectorAll('[role=status],[role=alert],[aria-live]'))
                   .filter(visible)

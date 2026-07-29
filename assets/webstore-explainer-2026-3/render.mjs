@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(DIR, '../..');
 
+// No product logo in this variant — the Web Store already shows the icon beside the listing.
 const assets = {
-  logo: dataUri('assets/store-icon-128.png'),
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
   models: dataUri('assets/screenshots_v1/s7-model-selector.png'),
 };
@@ -67,7 +67,6 @@ const baseCss = `
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
   .content { position: relative; z-index: 1; width: 100%; height: 100%; padding: 44px 56px; }
   .brand { display: flex; align-items: center; gap: 13px; font-size: 22px; font-weight: 760; }
-  .brand img { width: 40px; height: 40px; border-radius: 11px; box-shadow: 0 10px 24px rgba(0,0,0,0.13); }
   .eyebrow {
     display: inline-flex; align-items: center; gap: 10px; padding: 9px 14px;
     color: var(--accent); background: var(--panel); border: 1px solid var(--border);
@@ -85,10 +84,9 @@ const baseCss = `
   .crop-frame img { display: block; }
 `;
 
-function brandRow(light) {
+function brandRow() {
   return `
-    <div class="brand" style="${light ? '' : ''}">
-      <img src="${assets.logo}" alt="">
+    <div class="brand">
       <span>WebBrain</span>
     </div>`;
 }
@@ -100,17 +98,15 @@ function hero(light = false) {
     theme: light ? 'hero-light' : 'dark',
     body: `
       <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
-        <img src="${assets.logo}" style="width:112px; height:112px; border-radius:28px;
-          box-shadow:${light ? '0 22px 50px rgba(40,44,80,0.2)' : '0 26px 60px rgba(0,0,0,0.4)'};" alt="">
-        <div style="margin-top:26px; font-size:34px; font-weight:800; letter-spacing:0.01em;">WebBrain</div>
-        <h1 style="margin-top:20px; font-size:76px; max-width:900px;">Your open-source<br>AI browser agent</h1>
+        <div style="font-size:38px; font-weight:800; letter-spacing:0.02em;">WebBrain</div>
+        <h1 style="margin-top:24px; font-size:76px; max-width:900px;">Your open-source<br>AI browser agent</h1>
         <div class="sub" style="font-size:30px; font-weight:640; color:var(--ink); margin-top:22px;">
           <span style="color:var(--accent);">Ask.</span>
           <span style="color:var(--accent2);">Act.</span>
           Automate. <span style="opacity:0.85;">Any LLM.</span>
         </div>
         <div style="display:flex; gap:10px; margin-top:30px;">
-          ${['Chrome & Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
+          ${['Chromium browsers and Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
             <span style="padding:10px 15px; border:1px solid var(--border); background:var(--panel);
               border-radius:999px; font-size:15px; font-weight:700; color:var(--muted);">${c}</span>`).join('')}
         </div>
@@ -142,7 +138,6 @@ function actScene() {
       <div style="width:940px; margin:40px auto 0; display:flex; align-items:center; gap:16px;
         background:#ffffff; border:1px solid var(--border); border-radius:22px; padding:20px 22px;
         box-shadow:0 24px 60px rgba(68,50,40,0.18);">
-        <img src="${assets.logo}" style="width:38px; height:38px; border-radius:10px;" alt="">
         <div style="flex:1; font-size:25px; font-weight:680; color:var(--ink); line-height:1.25;">
           Search for the cheapest flights from Istanbul to San Francisco<span
             style="display:inline-block; width:3px; height:26px; background:var(--accent); margin-left:5px; vertical-align:-4px; border-radius:2px;"></span>

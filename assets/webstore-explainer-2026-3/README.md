@@ -1,9 +1,18 @@
-# Web Store explainer visuals 2026 — v2 (narrative arc)
+# Web Store explainer visuals 2026 — v3 (logo-free)
 
-Gallery restructured per feedback: hero → flow slides cropped to relevant UI → launch offer. Dense text removed.
+Same gallery as v2 (`../webstore-explainer-2026-2`), with the WebBrain product icon
+removed from every slide — the Web Store already shows it beside the listing. The
+"WebBrain" wordmark stays as text in the corner brand row and the hero.
+
+Dropped in four places vs v2: the hero icon, the `.brand` row icon, the chat-input
+avatar on 02, and the now-unused `assets.logo` data URI. The GitHub mark on 07 is
+not ours and stays.
+
+v2 remains the version to edit if you want the icon back; the two are independent
+copies, so a content change needs applying in both.
 
 Files (1280×800):
-- 01-hero.png: Logo + tagline hero
+- 01-hero.png: Wordmark + tagline hero
 - 02-tell-the-browser.png: Flight-search command front and center as chat input, browser acting on it
 - 03-ask-any-page.png: Ask mode, cropped to the answer panel
 - 04-any-llm.png: Model picker, cropped to the provider dropdown
@@ -26,5 +35,5 @@ Slide 07 is appended after the offer to keep the existing filenames stable. If p
 Regenerate:
 
 ```bash
-node assets/webstore-explainer-2026-2/render.mjs
+node assets/webstore-explainer-2026-3/render.mjs
 ```
