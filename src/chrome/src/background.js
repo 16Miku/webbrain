@@ -1380,8 +1380,17 @@ function isClarificationRequiredRunUpdate(update) {
     && update?.data?.status === 'clarification_required';
 }
 
+function isPlannerRequestFailureUpdate(update) {
+  return update?.type === 'warning'
+    && update?.data?.code === 'planner_request_failed';
+}
+
 function runUpdatesSucceeded(updates = []) {
-  return !updates.some(update => update?.type === 'error' || isClarificationRequiredRunUpdate(update));
+  return !updates.some(update => (
+    update?.type === 'error'
+    || isClarificationRequiredRunUpdate(update)
+    || isPlannerRequestFailureUpdate(update)
+  ));
 }
 
 function terminalRunUiStatus(content, updates = [], error = null) {
@@ -1389,7 +1398,7 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
-  if (updates.some(update => update?.type === 'error')) return 'failed';
+  if (updates.some(update => update?.type === 'error' || isPlannerRequestFailureUpdate(update))) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }

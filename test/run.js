@@ -259,6 +259,12 @@ const ConfigTransferCh = await import(
 const ConfigTransferFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/config-transfer.js').replace(/\\/g, '/')
 );
+const RuntimeTraceConfigCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/trace/runtime-config.js').replace(/\\/g, '/')
+);
+const RuntimeTraceConfigFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/trace/runtime-config.js').replace(/\\/g, '/')
+);
 const DownloadDirectoryCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/download-directory.js').replace(/\\/g, '/')
 );
@@ -4130,10 +4136,70 @@ test('trace record and JSON exports carry WebBrain version metadata', () => {
     const traceUi = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/traces.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(recorder, /webbrainVersion: meta\.webbrainVersion \|\| ''/, `${label}: run record should retain the recording version`);
+    assert.match(recorder, /runtimeConfig: normalizeRuntimeTraceConfig\(meta\.runtimeConfig\)/, `${label}: run record should retain only allowlisted runtime settings`);
     assert.match(agent, new RegExp(`webbrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: trace start should read the runtime manifest`);
+    assert.match(agent, /runtimeConfig: this\._runtimeTraceConfig\(provider, \{ tabId, mode \}\)/, `${label}: trace start should snapshot effective runtime settings`);
     assert.match(traceUi, new RegExp(`exportedByWebBrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: JSON export should identify the exporting build`);
     assert.match(traceUi, /schema: 'webbrain-trace\/1'/, `${label}: additive version metadata should retain the v1 schema`);
   }
+});
+
+test('runtime trace config is versioned, bounded, and secret-free in both browsers', () => {
+  const candidate = {
+    schema_version: 99,
+    extension_version: '24.7.0-beta.1',
+    browser_target: 'chrome',
+    mode: 'act',
+    prompt_tier: 'compact',
+    plan_before_act_mode: 'try',
+    auto_screenshot: 'state_change',
+    image_detail: 'low',
+    screenshot_redaction: true,
+    strict_secret_mode: false,
+    use_site_adapters: true,
+    web_mcp_enabled: false,
+    api_mutations_allowed: true,
+    user_memory_enabled: true,
+    selection_grounded: false,
+    max_agent_steps: 130,
+    max_image_dimension: 1568,
+    max_screenshots_per_turn: 4,
+    api_key: 'must-not-leak',
+    profile_text: 'must-not-leak',
+    arbitrary_nested_settings: { token: 'must-not-leak' },
+  };
+  const expected = {
+    schema_version: 1,
+    extension_version: '24.7.0-beta.1',
+    browser_target: 'chrome',
+    mode: 'act',
+    prompt_tier: 'compact',
+    plan_before_act_mode: 'try',
+    auto_screenshot: 'state_change',
+    image_detail: 'low',
+    screenshot_redaction: true,
+    strict_secret_mode: false,
+    use_site_adapters: true,
+    web_mcp_enabled: false,
+    api_mutations_allowed: true,
+    user_memory_enabled: true,
+    selection_grounded: false,
+    max_agent_steps: 130,
+    max_image_dimension: 1568,
+    max_screenshots_per_turn: 4,
+  };
+  assert.deepEqual(RuntimeTraceConfigCh.normalizeRuntimeTraceConfig(candidate), expected);
+  assert.deepEqual(RuntimeTraceConfigFx.normalizeRuntimeTraceConfig(candidate), expected);
+
+  const rejected = RuntimeTraceConfigCh.normalizeRuntimeTraceConfig({
+    extension_version: 'bad version with spaces',
+    browser_target: 'safari',
+    mode: 'admin',
+    max_agent_steps: Infinity,
+    max_image_dimension: 42,
+    screenshot_redaction: 'yes',
+  });
+  assert.deepEqual(rejected, { schema_version: 1 });
 });
 
 test('trace recorders normalize done only from explicit loop error evidence', () => {
@@ -4955,6 +5021,8 @@ test('tool-free response and recovery calls honor Stop before rendering model ou
 
       assert.deepEqual(result, { content: '[Stopped by user]', status: 'cancelled' }, `${label}: ${phase} ignored Stop`);
       assert.equal(messages.at(-1)?.content, '[Stopped by user]', `${label}: ${phase} persisted late model output`);
+      assert.equal(messages.at(-1)?.webbrainLocalStatus, 'cancelled', `${label}: ${phase} cancellation was not marked UI-only`);
+      assert.equal(agent._modelVisibleConversationMessages(messages).includes(messages.at(-1)), false, `${label}: ${phase} cancellation remained model-visible`);
       assert.equal(updates.some(update => /late model output/.test(update.data?.content || '')), false, `${label}: ${phase} rendered late model output`);
       assert.equal(agent.abortFlags.has(tabId), false, `${label}: ${phase} left the abort flag pending`);
     }
@@ -32347,6 +32415,9 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     const tabId = label === 'chrome' ? 731 : 732;
     const agent = new AgentClass({});
     agent.getConversation(tabId, 'ask');
+    agent.screenshotRedaction = true;
+    agent.strictSecretMode = true;
+    agent.apiAllowedTabs.add(tabId);
     const firstConversationId = agent.conversationIds.get(tabId);
     assert.match(firstConversationId, /^conv_/, `${label}: new conversation should mint an id`);
 
@@ -32356,6 +32427,13 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     assert.equal(main.webbrainSessionId, firstConversationId, `${label}: main call should carry the conversation id`);
     assert.equal(planner.webbrainSessionId, firstConversationId, `${label}: planner call should share the main session`);
     assert.equal(planner.webbrainGenerationName, 'planner', `${label}: planner call should be labeled`);
+    assert.equal(main.webbrainRuntimeConfig?.schema_version, 1, `${label}: runtime trace schema missing`);
+    assert.equal(main.webbrainRuntimeConfig?.browser_target, label, `${label}: browser target missing`);
+    assert.equal(main.webbrainRuntimeConfig?.mode, 'ask', `${label}: effective mode missing`);
+    assert.equal(main.webbrainRuntimeConfig?.screenshot_redaction, true, `${label}: screenshot redaction setting missing`);
+    assert.equal(main.webbrainRuntimeConfig?.strict_secret_mode, true, `${label}: strict secret setting missing`);
+    assert.equal(main.webbrainRuntimeConfig?.api_mutations_allowed, true, `${label}: per-tab API authorization missing`);
+    assert.ok(!JSON.stringify(main.webbrainRuntimeConfig).includes('apiKey'), `${label}: runtime metadata must remain an allowlist`);
 
     const byoOptions = agent._cloudGenerationOptions({ config: { providerName: 'openai' } }, { temperature: 0 }, { tabId, generationName: 'memory' });
     assert.deepEqual(byoOptions, { temperature: 0 }, `${label}: BYO provider received Cloud collection fields`);
@@ -32372,9 +32450,16 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     cloudProvider._addWebBrainCloudContext(cloudBody, {
       webbrainSessionId: firstConversationId,
       webbrainGenerationName: 'compaction',
+      webbrainRuntimeConfig: {
+        ...main.webbrainRuntimeConfig,
+        api_key: 'must-not-leak',
+        profile_text: 'must-not-leak',
+      },
     });
     assert.equal(cloudBody.session_id, firstConversationId, `${label}: Cloud request body should include session_id`);
     assert.equal(cloudBody.trace?.generation_name, 'compaction', `${label}: Cloud request body should include the generation label`);
+    assert.deepEqual(cloudBody.trace?.runtime_config, main.webbrainRuntimeConfig, `${label}: Cloud request body should include only allowlisted runtime settings`);
+    assert.ok(!JSON.stringify(cloudBody).includes('must-not-leak'), `${label}: arbitrary settings leaked into Cloud trace context`);
 
     const byoProvider = new Provider({ providerName: 'openai', apiKey: 'test-key' });
     const byoBody = {};
@@ -41334,6 +41419,46 @@ function executionToolResponses(prefix = 'execution') {
   ];
 }
 
+test('local cancellation statuses stay visible but are excluded from model and planner context', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const marked = agent._localCancellationMessage('[Stopped by user]');
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'First task.' },
+      marked,
+      { role: 'assistant', content: '[Stopped by user' },
+      { role: 'user', content: 'How should I respond to this?' },
+    ];
+
+    const modelMessages = agent._messagesForSourceGroundedRun(messages);
+    const digest = agent._buildPlannerHistoryDigest(messages);
+
+    assert.equal(marked.webbrainLocalStatus, 'cancelled', `${AgentClass.name}: cancellation lacks local status metadata`);
+    assert.equal(messages.length, 5, `${AgentClass.name}: model filtering mutated visible history`);
+    assert.equal(
+      modelMessages.some(message => agent._isLocalCancellationText(message.content)),
+      false,
+      `${AgentClass.name}: cancellation leaked into model context`,
+    );
+    assert.doesNotMatch(digest, /Stopped by user/, `${AgentClass.name}: cancellation leaked into planner digest`);
+    assert.match(digest, /How should I respond to this\?/, `${AgentClass.name}: latest real user task was filtered`);
+    assert.equal(
+      agent._modelVisibleConversationMessages([marked]).length,
+      0,
+      `${AgentClass.name}: marked cancellation was not treated as UI-only`,
+    );
+  }
+});
+
 test('Act rejects planner-shaped plain finals and continues into a real tool', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const responses = [
@@ -41414,6 +41539,113 @@ test('Act routes ordinary plain finals through the language-neutral done protoco
       agent.conversations.get(tabId).some(message => message.role === 'user' && String(message.content || '').startsWith('[PLAN EXECUTION BLOCK')),
       `${AgentClass.name}: plain final missing protocol recovery nudge`,
     );
+  }
+});
+
+test('Act omits a stale cancellation echo and recovers into tools', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      ...executionToolResponses(`stale_cancel_${index}`),
+    ];
+    const requests = [];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        const next = responses.shift();
+        assert.ok(next, `${AgentClass.name}: stale-cancellation recovery called the model too many times`);
+        return next;
+      },
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8650 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.equal(final, 'Executed and verified.', `${AgentClass.name}: stale cancellation stopped execution`);
+    assert.equal(responses.length, 0, `${AgentClass.name}: stale cancellation did not recover through tools`);
+    assert.equal(
+      requests[1].some(message => agent._isLocalCancellationText(message.content)),
+      false,
+      `${AgentClass.name}: stale cancellation was replayed to the recovery turn`,
+    );
+    assert.ok(
+      requests[1].some(message => message.role === 'assistant' && /Stale local cancellation status omitted/.test(message.content || '')),
+      `${AgentClass.name}: recovery context lacks the neutral replacement`,
+    );
+    assert.ok(
+      requests[1].some(message => message.role === 'user' && /No current user stop was received/.test(message.content || '')),
+      `${AgentClass.name}: recovery nudge did not distinguish a stale status from a real abort`,
+    );
+  }
+});
+
+test('Act fails transparently when a stale cancellation echo repeats', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      { content: '[Stopped by user', toolCalls: [] },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8655 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.match(final, /No current user stop was received/, `${AgentClass.name}: failure implied the user cancelled`);
+    assert.match(final, /no successful action was verified/i, `${AgentClass.name}: failure claimed execution evidence`);
+  }
+});
+
+test('Act preserves successful tool evidence when a stale cancellation echo repeats', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const responses = [
+      { content: '[Stopped by user]', toolCalls: [] },
+      {
+        content: null,
+        toolCalls: [{
+          id: `stale_evidence_${index}`,
+          function: { name: 'read_page', arguments: '{}' },
+        }],
+      },
+      { content: '[Stopped by user]', toolCalls: [] },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const tabId = 8657 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => {}, 'act');
+
+    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.match(final, /Some task tools completed/, `${AgentClass.name}: successful tool evidence was discarded`);
+    assert.match(final, /Inspect the current state before retrying/, `${AgentClass.name}: retry warning was omitted`);
+    assert.doesNotMatch(final, /no successful action was verified/i, `${AgentClass.name}: failure contradicted verified tool evidence`);
   }
 });
 
@@ -47662,6 +47894,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_SYSTEM_PROMPT, /attached JSON\/TXT\/CSV text file content/);
   assert.match(PLANNER_SYSTEM_PROMPT, /brief neutral scratchpad_notes/);
   assert.match(PLANNER_SYSTEM_PROMPT, /Do not plan to copy the full file/);
+  assert.match(PLANNER_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /precise fixed interval.*every five minutes.*start now/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /Calendar\/cron recurrence.*not supported/i);
@@ -47677,6 +47911,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /use find_text to select one page-text match instead of Ctrl\/Cmd\+F/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Each call replaces the previous selection/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /cannot create simultaneous highlights or browser Find UI/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT_FX, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /Calendar\/cron recurrence.*unsupported/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /"use_progress_ledger": boolean/);
@@ -47870,6 +48106,227 @@ test('planner routes existing-context artifact requests to a tool-free response'
       }, `${label}: existing-context response should bypass browser tools`);
       assert.match(plannerMessages?.[1]?.content || '', /Prior user request[\s\S]*Draft and send Gary/, `${label}: planner lost the original email task`);
       assert.match(plannerMessages?.[1]?.content || '', /source="agent_scratchpad"[\s\S]*\[pending draft\]/, `${label}: planner lost the pending draft checkpoint`);
+    }
+  });
+});
+
+test('planner rechecks tool-dependent respond and plan-only intents before routing', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        for (const [kindIndex, requestKind] of ['respond', 'plan_only'].entries()) {
+          const responses = [
+            plannerFixtureJson({
+              request_kind: requestKind,
+              requires_state_change: false,
+              summary: 'Read the open email and draft a response.',
+              steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
+              localized: {
+                locale: 'en',
+                summary: 'Read the open email and draft a response.',
+                steps: [{ id: '1', action: 'Read the open email.' }],
+                risks: [],
+              },
+            }),
+            plannerFixtureJson({
+              request_kind: 'execute',
+              requires_state_change: false,
+              summary: 'Read the open email and draft a response.',
+              steps: [
+                { id: '1', action: 'Read the open email.', tools: ['read_page'] },
+                { id: '2', action: 'Return reply drafts.', tools: ['done'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Read the open email and draft a response.',
+                steps: [
+                  { id: '1', action: 'Read the open email.' },
+                  { id: '2', action: 'Return reply drafts.' },
+                ],
+                risks: [],
+              },
+            }),
+          ];
+          const plannerRequests = [];
+          const provider = {
+            promptTier: 'full',
+            model: 'planner-test',
+            name: 'planner-test',
+            chat: async (messages) => {
+              plannerRequests.push(messages);
+              const content = responses.shift();
+              assert.ok(content, `${AgentClass.name}: ${route}/${requestKind} planner called too many times`);
+              return { content, usage: {} };
+            },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 9280 + (agentIndex * 20) + (routeIndex * 10) + kindIndex;
+          const args = [
+            tabId,
+            { role: 'user', content: 'How should I respond to this?' },
+            () => {},
+            null,
+            null,
+            '',
+            { tabUrl: 'https://mail.google.com/', tabTitle: 'The Next New Thing' },
+          ];
+          const gate = route === 'intent'
+            ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+            : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
+
+          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${requestKind} did not recover`);
+          assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: ${route}/${requestKind} stayed tool-free`);
+          assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: read-only repair gained mutation authority`);
+          assert.equal(plannerRequests.length, 2, `${AgentClass.name}: ${route}/${requestKind} should get one consistency repair`);
+          assert.match(
+            plannerRequests[1].at(-1)?.content || '',
+            new RegExp(requestKind === 'respond' ? 'respond_with_tools' : 'plan_only_with_execution_tools'),
+            `${AgentClass.name}: ${route}/${requestKind} missing focused consistency guidance`,
+          );
+          assert.equal(responses.length, 0, `${AgentClass.name}: ${route}/${requestKind} left an unused response`);
+        }
+      }
+    }
+  });
+});
+
+test('planner consistency repair keeps model-derived plan fields out of trusted messages', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const provider = {
+      promptTier: 'full',
+      model: 'planner-test',
+      name: 'planner-test',
+    };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    const plannerMessages = [
+      { role: 'system', content: 'Planner system prompt.' },
+      { role: 'user', content: 'Authoritative user task.' },
+    ];
+    const plan = {
+      request_kind: 'respond',
+      summary: 'MODEL_DERIVED_INJECTION_TEXT',
+      steps: [{
+        id: '1',
+        action: 'MODEL_DERIVED_INJECTION_TEXT',
+        tools: ['MODEL_DERIVED_INJECTION_TOOL'],
+      }],
+    };
+    const issue = agent._plannerIntentConsistencyIssue(plan);
+    const repairMessages = agent._plannerIntentConsistencyRepairMessages(plannerMessages, issue);
+    const appendedMessages = repairMessages.slice(plannerMessages.length);
+
+    assert.equal(appendedMessages.length, 1, `${AgentClass.name}: repair replayed the prior planner output`);
+    assert.equal(appendedMessages[0]?.role, 'user', `${AgentClass.name}: repair added a trusted assistant replay`);
+    assert.match(appendedMessages[0]?.content || '', /respond_with_tools/, `${AgentClass.name}: repair lost the controlled issue kind`);
+    assert.doesNotMatch(
+      appendedMessages[0]?.content || '',
+      /MODEL_DERIVED_INJECTION/,
+      `${AgentClass.name}: model-derived plan data crossed the trust boundary`,
+    );
+  }
+});
+
+test('planner falls back safely when repaired respond intent still lists tools', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        for (const [scenarioIndex, [scenarioLabel, firstResponse]] of [
+          ['repeated', null],
+          ['json_repair', 'not valid planner JSON'],
+        ].entries()) {
+          const inconsistentRespond = plannerFixtureJson({
+            request_kind: 'respond',
+            requires_state_change: false,
+            summary: 'Read the open email and draft a response.',
+            steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
+            localized: {
+              locale: 'en',
+              summary: 'Read the open email and draft a response.',
+              steps: [{ id: '1', action: 'Read the open email.' }],
+              risks: [],
+            },
+          });
+          const responses = [
+            firstResponse ?? inconsistentRespond,
+            inconsistentRespond,
+          ];
+          let calls = 0;
+          const provider = {
+            promptTier: 'full',
+            model: 'planner-test',
+            name: 'planner-test',
+            chat: async () => {
+              calls++;
+              return { content: responses.shift(), usage: {} };
+            },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 9310 + (agentIndex * 20) + (routeIndex * 10) + scenarioIndex;
+          const args = [
+            tabId,
+            { role: 'user', content: 'How should I respond to this?' },
+            () => {},
+            null,
+            null,
+            '',
+            { tabUrl: 'https://mail.google.com/', tabTitle: 'The Next New Thing' },
+          ];
+          const gate = route === 'intent'
+            ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+            : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
+
+          assert.equal(calls, 2, `${AgentClass.name}: ${route}/${scenarioLabel} exceeded the one-repair budget`);
+          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${scenarioLabel} did not enter the safe fallback`);
+          assert.equal(gate.readOnlyFallback, true, `${AgentClass.name}: ${route}/${scenarioLabel} accepted an unresolved intent`);
+          assert.notEqual(gate.responseOnly, true, `${AgentClass.name}: ${route}/${scenarioLabel} still routed tool-dependent work response-only`);
+          assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: ${route}/${scenarioLabel} fallback gained mutation authority`);
+        }
+      }
+    }
+  });
+});
+
+test('planner consistency repair preserves an explicit plan-only request', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const planOnly = plannerFixtureJson({
+        request_kind: 'plan_only',
+        requires_state_change: false,
+        summary: 'Outline how to review the open email later.',
+        steps: [{ id: '1', action: 'Plan a later email read.', tools: ['read_page'] }],
+        localized: {
+          locale: 'en',
+          summary: 'Outline how to review the open email later.',
+          steps: [{ id: '1', action: 'Plan a later email read.' }],
+          risks: [],
+        },
+      });
+      let calls = 0;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-test',
+        name: 'planner-test',
+        chat: async () => {
+          calls++;
+          return { content: planOnly, usage: {} };
+        },
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      const gate = await agent._runPlannerIntentGate(
+        9330 + index,
+        { role: 'user', content: 'Only give me a plan for reviewing this email later.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://mail.google.com/', tabTitle: 'Inbox' },
+        'act',
+        { locale: 'en' },
+      );
+
+      assert.equal(calls, 2, `${AgentClass.name}: ambiguous plan-only output was not rechecked once`);
+      assert.equal(gate.proceed, false, `${AgentClass.name}: explicit plan-only request was silently authorized`);
+      assert.equal(gate.reason, 'plan_only', `${AgentClass.name}: explicit plan-only intent changed`);
     }
   });
 });
@@ -49152,8 +49609,8 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
         calls += 1;
         throw new Error('401 invalid API key');
       };
-      let warning = '';
-      const onUpdate = (type, data) => { if (type === 'warning') warning = data?.message || ''; };
+      let warning = null;
+      const onUpdate = (type, data) => { if (type === 'warning') warning = data || null; };
 
       const intent = await agent._runPlannerIntentGate(
         tabId,
@@ -49167,10 +49624,15 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
       assert.equal(intent.requestKind, 'respond', `${label}: provider failure was mislabeled as ambiguous intent`);
       assert.equal(intent.readOnlyFallback, undefined, `${label}: provider failure was treated as invalid JSON`);
       assert.match(intent.message || '', /Planner request failed.*401 invalid API key/i, `${label}: intent request error hid the provider failure`);
-      assert.equal(warning, intent.message, `${label}: intent request warning diverged from the terminal error`);
+      assert.match(intent.message || '', /No tools ran\.$/, `${label}: planner failure did not state that execution never began`);
+      assert.equal(intent.failureKind, 'auth', `${label}: 401 planner failure was not classified as an authentication problem`);
+      assert.equal(warning?.code, 'planner_request_failed', `${label}: planner request failure warning lacks a stable UI code`);
+      assert.equal(warning?.failureKind, 'auth', `${label}: planner request failure warning lost its authentication category`);
+      assert.equal(warning?.provider, 'broken-provider', `${label}: planner request failure warning lost its provider label`);
+      assert.equal(warning?.message, intent.message, `${label}: intent request warning diverged from the terminal error`);
 
       calls = 0;
-      warning = '';
+      warning = null;
       const full = await agent._runPlannerGate(
         tabId,
         { role: 'user', content: 'Perform this task.' },
@@ -49182,9 +49644,181 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
       assert.equal(full.reason, 'planner_error', `${label}: full planner request error lost its planner status`);
       assert.equal(full.readOnlyFallback, undefined, `${label}: full planner provider failure was treated as invalid JSON`);
       assert.match(full.message || '', /Planner request failed.*401 invalid API key/i, `${label}: full planner request error hid the provider failure`);
-      assert.equal(warning, full.message, `${label}: full planner warning diverged from the terminal error`);
+      assert.equal(warning?.message, full.message, `${label}: full planner warning diverged from the terminal error`);
+
+      agent._chatWithCostAllowance = async () => {
+        throw new Error('openrouter error 503: temporarily unavailable');
+      };
+      warning = null;
+      const transient = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Perform this task later.' },
+        onUpdate,
+        null,
+      );
+      assert.equal(transient.failureKind, 'transient', `${label}: 503 planner failure was not classified as transient`);
+      assert.equal(warning?.failureKind, 'transient', `${label}: transient category was not exposed to the sidepanel`);
+
+      // The category only reorders two always-present buttons, but it is the
+      // whole point of the card: an auth failure must lead with Providers and
+      // a dropped connection must lead with Retry. Classification runs on raw
+      // provider prose, so pin the shapes real providers actually emit —
+      // including the browser's own fetch failures, which is what a stopped
+      // local server looks like from inside the extension.
+      const classifications = [
+        ['Incorrect API key provided: sk-***. (status 401)', 'auth', 'parenthesized 401'],
+        ['Unauthorized', 'auth', 'status-free auth rejection'],
+        ['invalid_api_key: authentication failed', 'auth', 'textual auth rejection'],
+        ['TypeError: Failed to fetch', 'transient', 'Chrome transport failure'],
+        ['NetworkError when attempting to fetch resource.', 'transient', 'Firefox transport failure'],
+        ['The request timed out after 60000 ms', 'transient', 'timeout'],
+        ['ECONNREFUSED 127.0.0.1:11434', 'transient', 'unreachable local provider'],
+        ['Rate limit reached. Please try again (429)', 'transient', 'rate limit'],
+        ['Provider returned 400: max_tokens 512 is invalid', 'provider', 'rejected request carrying a 5xx-shaped number'],
+        ['This model requires 8192 context, got 500 tokens', 'provider', 'prose carrying a 5xx-shaped number'],
+        ['insufficient_quota: You exceeded your current quota', 'provider', 'billing failure'],
+      ];
+      for (const [detail, expected, why] of classifications) {
+        agent._chatWithCostAllowance = async () => { throw new Error(detail); };
+        warning = null;
+        const classified = await agent._runPlannerGate(
+          tabId,
+          { role: 'user', content: 'Classify this failure.' },
+          onUpdate,
+          null,
+        );
+        assert.equal(
+          classified.failureKind,
+          expected,
+          `${label}: ${why} ("${detail}") should recover as ${expected}`,
+        );
+        assert.equal(
+          warning?.failureKind,
+          expected,
+          `${label}: ${why} lost its category on the way to the sidepanel`,
+        );
+        assert.match(
+          classified.message || '',
+          /[.!?] No tools ran\.$/,
+          `${label}: ${why} produced a run-on failure message`,
+        );
+      }
     }
   });
+});
+
+test('planner failure category survives the planner gate wrapper', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9157 : 9158;
+      const provider = { name: 'broken-provider', model: 'broken-model', config: {} };
+      const agent = new AgentClass({ getActive: () => provider });
+      agent._chatWithCostAllowance = async () => { throw new Error('401 invalid API key'); };
+
+      const messages = [];
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        messages,
+        { role: 'user', content: 'Perform this task.' },
+        () => {},
+        'act',
+        null,
+        null,
+      );
+      assert.equal(outcome.proceed, false, `${label}: planner failure unexpectedly continued into execution`);
+      assert.equal(outcome.reason, 'planner_error', `${label}: planner failure lost its planner status`);
+      assert.equal(
+        outcome.failureKind,
+        'auth',
+        `${label}: the gate wrapper dropped the failure category before any caller could read it`,
+      );
+    }
+  });
+});
+
+test('planner request failures expose provider settings and retry actions in both sidepanels', () => {
+  for (const [label, panelRel, backgroundRel, cssRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/background.js', 'src/chrome/styles/sidepanel.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/background.js', 'src/firefox/styles/sidepanel.css'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+
+    assert.match(
+      background,
+      /function isPlannerRequestFailureUpdate\(update\) \{[\s\S]*?update\?\.type === 'warning'[\s\S]*?update\?\.data\?\.code === 'planner_request_failed';[\s\S]*?\}/,
+      `${label}: background cannot identify structured planner request failures`,
+    );
+    assert.match(
+      background,
+      /function runUpdatesSucceeded\(updates = \[\]\) \{[\s\S]*?isPlannerRequestFailureUpdate\(update\)[\s\S]*?\}/,
+      `${label}: planner request failure is still counted as a successful run`,
+    );
+    assert.match(
+      background,
+      /if \(updates\.some\(update => update\?\.type === 'error' \|\| isPlannerRequestFailureUpdate\(update\)\)\) return 'failed';/,
+      `${label}: planner request failure does not produce a failed terminal run status`,
+    );
+    assert.match(
+      panel,
+      /function renderPlannerRequestFailure\(assistantEl, data, retryPayload = null\) \{[\s\S]*?textEl\.append\(message, actions\);[\s\S]*?addMessageCopyButton\(assistantEl\);[\s\S]*?return true;[\s\S]*?\}/,
+      `${label}: planner request failure is not rendered as an actionable assistant card`,
+    );
+    assert.match(
+      panel,
+      /providerBtn\.textContent = t\('st\.tab\.providers'\);[\s\S]*?await openProvidersSettingsPage\(\);/,
+      `${label}: Providers action does not lead to the provider settings tab`,
+    );
+    assert.match(
+      panel,
+      /const orderedActions = data\.failureKind === 'auth'\s*\? \[providerBtn, retryReady \? retryBtn : null\]\s*: \[retryReady \? retryBtn : null, providerBtn\];/,
+      `${label}: authentication failures should prioritize Providers while transient failures prioritize Retry`,
+    );
+    assert.match(
+      panel,
+      /case 'warning':[\s\S]*?data\?\.code === 'planner_request_failed'[\s\S]*?const targetAssistantEl = eventAssistantEl \|\| currentAssistantEl;[\s\S]*?renderPlannerRequestFailure\(targetAssistantEl, data, retryPayload\);/,
+      `${label}: live planner request failures bypass the actionable renderer`,
+    );
+    assert.equal(
+      (panel.match(/plannerRequestFailureUpdate\(res\?\.updates\)/g) || []).length >= 2,
+      true,
+      `${label}: returned and restored run responses do not both recover planner failure actions`,
+    );
+    assert.match(
+      panel,
+      /document\.querySelectorAll\('\.error-retry-btn, \.planner-request-failure-retry-btn'\)\.forEach\(bindErrorRetryButton\);/,
+      `${label}: restored planner Retry buttons are not rebound`,
+    );
+    assert.match(
+      panel,
+      /planner-request-failure-retry-btn\[data-retry-id\]/,
+      `${label}: planner Retry attachment payloads are not released with the card`,
+    );
+    assert.match(
+      panel,
+      /function rebindPlannerRequestFailureControls\(\) \{[\s\S]*?planner-request-failure-provider-btn[\s\S]*?bindPlannerProviderSettingsButton/,
+      `${label}: restored Providers buttons are not rebound`,
+    );
+    assert.match(
+      panel,
+      /if \(data\.provider\) \{[\s\S]*?providerName\.className = 'planner-request-failure-provider';[\s\S]*?providerName\.textContent = data\.provider;/,
+      `${label}: the failing provider is never named, so "open Providers" does not say which one to fix`,
+    );
+    assert.match(
+      panel,
+      /textEl\.replaceChildren\(\);[\s\S]*?textEl\.setAttribute\('role', 'alert'\);[\s\S]*?const message = document\.createElement\('div'\);/,
+      `${label}: the failure card is not announced, and the role must precede its content to be spoken`,
+    );
+    assert.match(
+      panel,
+      /msgEl\.querySelector\('\.error-retry-btn, \.cost-allowance-retry-btn, \.planner-request-failure-retry-btn'\)/,
+      `${label}: a planner failure card can be given a second, duplicate Retry affordance`,
+    );
+    assert.match(css, /\.planner-request-failure-actions \{/, `${label}: planner failure action row is not styled`);
+    assert.match(css, /\.planner-request-failure-action\.primary \{/, `${label}: planner failure primary action is not styled`);
+    assert.match(css, /\.planner-request-failure-provider \{/, `${label}: planner failure provider label is not styled`);
+  }
 });
 
 test('planner read-only fallback applies Ask mode to runtime guards without changing the selected mode', async () => {
