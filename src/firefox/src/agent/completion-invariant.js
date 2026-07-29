@@ -94,6 +94,101 @@ function isSelfVerifyingActionResult(name, result) {
   );
 }
 
+/**
+ * Classify one visible form from browser-neutral structural facts.
+ *
+ * Completion probes run inside the page, so Agent serializes this function
+ * with toString() and supplies plain facts rather than DOM nodes. Keep this
+ * function self-contained and language-independent for structural fallbacks.
+ */
+export function classifyCompletionForm({
+  label = '',
+  utilityRegion = false,
+  outsidePrimaryContent = false,
+  insideDialog = false,
+  method = 'get',
+  hiddenNamedCount = 0,
+  editable = [],
+  submits = [],
+} = {}) {
+  const fields = Array.isArray(editable) ? editable : [];
+  const submitControls = Array.isArray(submits) ? submits : [];
+  const normalizedMethod = String(method || 'get').trim().toLowerCase() || 'get';
+  const normalizedFields = fields.map(field => ({
+    tag: String(field?.tag || '').trim().toLowerCase(),
+    type: String(field?.type || '').trim().toLowerCase(),
+    role: String(field?.role || '').trim().toLowerCase(),
+    name: String(field?.name || '').trim(),
+    value: String(field?.value || '').trim(),
+    required: field?.required === true,
+    focused: field?.focused === true,
+  }));
+  const normalizedSubmits = submitControls.map(control => ({
+    label: String(control?.label || '').trim(),
+  }));
+
+  const semanticSearchField = field => field.type === 'search' || field.role === 'searchbox';
+  const conventionalSearchField = field => /^(q|query|search|filter)$/i.test(field.name);
+  // Preserve the previous per-field semantic-or-conventional behavior so a
+  // search input plus a named filter control remains utility UI. Task evidence
+  // gates the whole shortcut: semantic markup alone must not hide an assignee
+  // picker, dialog, POST form, or non-search submission. A retained value is
+  // normal search-results state and is not task evidence by itself.
+  const searchFieldsOnly = normalizedFields.length > 0
+    && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
+  const searchSubmitsOnly = normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
+  const searchHasTaskEvidence = !!(
+    insideDialog
+    || normalizedMethod !== 'get'
+    || Number(hiddenNamedCount || 0) !== 0
+    || !searchSubmitsOnly
+    || normalizedFields.some(field => (
+      field.required
+      || field.focused
+      || (!!field.name && !conventionalSearchField(field))
+    ))
+  );
+  // Primary content alone is not task evidence: result pages commonly place
+  // genuine search/filter forms there.
+  const safeSearchOnly = searchFieldsOnly && !searchHasTaskEvidence;
+  const hasSemanticSearchField = normalizedFields.some(semanticSearchField);
+
+  const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
+  const passiveUtilityShell = !!(
+    onlyField
+    && outsidePrimaryContent
+    && !insideDialog
+    && normalizedMethod === 'get'
+    && Number(hiddenNamedCount || 0) === 0
+    && normalizedSubmits.length === 0
+    && onlyField.tag === 'input'
+    && (onlyField.type === '' || onlyField.type === 'text' || onlyField.type === 'search')
+    && !onlyField.name
+    && !onlyField.value
+    && !onlyField.required
+    && !onlyField.focused
+  );
+
+  const utilityReason = utilityRegion
+    ? 'utility_region'
+    : safeSearchOnly
+      ? hasSemanticSearchField
+        ? 'semantic_search'
+        : 'conventional_search'
+        : passiveUtilityShell
+          ? 'passive_utility_shell'
+          : null;
+  const utility = utilityReason !== null;
+  return {
+    label: String(label || '').trim().slice(0, 80),
+    relevant: !utility && (normalizedFields.length > 0 || normalizedSubmits.length > 0),
+    utility,
+    utilityReason,
+    editableCount: normalizedFields.length,
+    submitCount: normalizedSubmits.length,
+  };
+}
+
 export function isCompletionActionTool(name, args = {}) {
   if (name === 'execute_webmcp_tool') return true;
   if (
