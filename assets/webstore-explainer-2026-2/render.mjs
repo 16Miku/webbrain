@@ -56,6 +56,12 @@ const baseCss = `
   .provider { --bg1:#f6f8fb; --bg2:#eef8f1; --ink:#182033; --muted:#5b6574;
     --accent:#3e6ff4; --accent2:#28a96b; --border:rgba(25,38,68,0.13);
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(24,52,90,0.19); }
+  .hero-light { --bg1:#f7f9ff; --bg2:#fff1f6; --ink:#141828; --muted:#586074;
+    --accent:#d6417f; --accent2:#12a06a; --border:rgba(28,34,64,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(40,44,80,0.18); }
+  .plan-light { --bg1:#f5fbf7; --bg2:#eef4ff; --ink:#141b26; --muted:#586374;
+    --accent:#12a25f; --accent2:#dd9414; --border:rgba(24,38,48,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(28,50,44,0.18); }
   .proof { --bg1:#f7f6ff; --bg2:#eef4ff; --ink:#171a2b; --muted:#5a6274;
     --accent:#6e56cf; --accent2:#f0a52b; --border:rgba(30,34,64,0.13);
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
@@ -87,17 +93,18 @@ function brandRow(light) {
     </div>`;
 }
 
-/* ---------- 01 HERO ---------- */
-function hero() {
+/* ---------- 01 HERO (dark + light variant) ---------- */
+function hero(light = false) {
   return {
-    file: '01-hero.png',
-    theme: 'dark',
+    file: light ? '01-hero-light.png' : '01-hero.png',
+    theme: light ? 'hero-light' : 'dark',
     body: `
       <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
-        <img src="${assets.logo}" style="width:112px; height:112px; border-radius:28px; box-shadow:0 26px 60px rgba(0,0,0,0.4);" alt="">
+        <img src="${assets.logo}" style="width:112px; height:112px; border-radius:28px;
+          box-shadow:${light ? '0 22px 50px rgba(40,44,80,0.2)' : '0 26px 60px rgba(0,0,0,0.4)'};" alt="">
         <div style="margin-top:26px; font-size:34px; font-weight:800; letter-spacing:0.01em;">WebBrain</div>
         <h1 style="margin-top:20px; font-size:76px; max-width:900px;">Your open-source<br>AI browser agent</h1>
-        <div class="sub" style="font-size:30px; font-weight:640; color:#ffffff; margin-top:22px;">
+        <div class="sub" style="font-size:30px; font-weight:640; color:var(--ink); margin-top:22px;">
           <span style="color:var(--accent);">Ask.</span>
           <span style="color:var(--accent2);">Act.</span>
           Automate. <span style="opacity:0.85;">Any LLM.</span>
@@ -252,16 +259,21 @@ function modelsScene() {
   };
 }
 
-/* ---------- 05 PLAN BEFORE ACT ---------- */
-function planScene() {
+/* ---------- 05 PLAN BEFORE ACT (dark + light variant) ---------- */
+function planScene(light = false) {
   const steps = [
     'Read the visible form and required fields',
     'Fill only what you asked for',
     'Pause before any purchase or submit',
   ];
+  const card = light
+    ? { bg: '#ffffff', border: 'var(--border)', shadow: '0 30px 70px rgba(28,50,44,0.18)',
+        label: 'var(--muted)', step: 'var(--ink)', onAccent: '#ffffff' }
+    : { bg: '#151c2a', border: 'rgba(255,255,255,0.16)', shadow: '0 30px 80px rgba(0,0,0,0.42)',
+        label: '#8d99ad', step: '#d7e2ea', onAccent: '#102319' };
   return {
-    file: '05-plan-before-act.png',
-    theme: 'plan',
+    file: light ? '05-plan-before-act-light.png' : '05-plan-before-act.png',
+    theme: light ? 'plan-light' : 'plan',
     body: `
       <div style="display:flex; align-items:center; justify-content:space-between;">
         ${brandRow()}
@@ -273,23 +285,24 @@ function planScene() {
           <div class="sub">Approve first. You stay in the loop.</div>
         </div>
         <div style="display:flex; justify-content:center;">
-          <div style="width:470px; padding:28px; background:#151c2a; border:1px solid rgba(255,255,255,0.16);
-            border-radius:26px; box-shadow:0 30px 80px rgba(0,0,0,0.42); transform:rotate(1.1deg);">
-            <div style="font-size:15px; font-weight:800; color:#8d99ad; text-transform:uppercase; letter-spacing:0.05em;">Proposed browser plan</div>
+          <div style="width:470px; padding:28px; background:${card.bg}; border:1px solid ${card.border};
+            border-radius:26px; box-shadow:${card.shadow}; transform:rotate(1.1deg);">
+            <div style="font-size:15px; font-weight:800; color:${card.label}; text-transform:uppercase; letter-spacing:0.05em;">Proposed browser plan</div>
             <div style="display:grid; gap:14px; margin-top:20px;">
               ${steps.map((label, i) => `
-                <div style="display:grid; grid-template-columns:36px 1fr; gap:14px; align-items:center; color:#d7e2ea; font-size:19px; font-weight:640; line-height:1.3;">
+                <div style="display:grid; grid-template-columns:36px 1fr; gap:14px; align-items:center; color:${card.step}; font-size:19px; font-weight:640; line-height:1.3;">
                   <span style="width:36px; height:36px; border-radius:12px; display:grid; place-items:center;
-                    background:var(--accent); color:#102319; font-size:17px; font-weight:850;">${i + 1}</span>
+                    background:var(--accent); color:${card.onAccent}; font-size:17px; font-weight:850;">${i + 1}</span>
                   <span>${label}</span>
                 </div>`).join('')}
             </div>
             <div style="display:flex; gap:12px; margin-top:26px;">
               <span style="display:inline-flex; align-items:center; justify-content:center; min-width:140px; height:50px;
-                border-radius:14px; background:var(--accent); color:#102319; font-size:17px; font-weight:800;">Approve</span>
+                border-radius:14px; background:var(--accent); color:${card.onAccent}; font-size:17px; font-weight:800;">Approve</span>
               <span style="display:inline-flex; align-items:center; justify-content:center; min-width:140px; height:50px;
-                border-radius:14px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.07);
-                color:#e9eef6; font-size:17px; font-weight:800;">Adjust</span>
+                border-radius:14px; border:1px solid ${light ? 'var(--border)' : 'rgba(255,255,255,0.2)'};
+                background:${light ? '#f4f6fa' : 'rgba(255,255,255,0.07)'};
+                color:${light ? 'var(--ink)' : '#e9eef6'}; font-size:17px; font-weight:800;">Adjust</span>
             </div>
           </div>
         </div>
@@ -393,7 +406,10 @@ function proofScene() {
   };
 }
 
-const scenes = [hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene()];
+const scenes = [
+  hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
+  hero(true), planScene(true),
+];
 
 function html(scene) {
   return `<!doctype html><html><head><meta charset="utf-8">
