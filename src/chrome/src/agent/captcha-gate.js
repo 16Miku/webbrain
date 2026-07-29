@@ -1,3 +1,5 @@
+import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
+
 const CHALLENGE_DIALOG_RE = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
 const CHALLENGE_FAILURE_RE = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
 const CHALLENGE_CONTEXT_RE = /\b(?:(?:re|h|fun)?captcha|human|robot|challenge)\b/i;
@@ -374,6 +376,7 @@ export function buildCaptchaDiagnostics({
       source: 'navigation',
     });
   }
+  const embeddedFrames = [];
   for (const context of frameContexts || []) {
     addFrame({
       frameId: context?.frameId,
@@ -381,13 +384,27 @@ export function buildCaptchaDiagnostics({
       source: 'document',
     });
     for (const child of context?.childFrames || []) {
-      addFrame({
+      embeddedFrames.push({
+        frameId: context?.frameId,
         frameUrl: child?.loadedUrl || child?.url,
-        source: 'embedded',
         visible: child?.visible,
         activeChallengeFrame: child?.activeChallengeFrame === true,
       });
     }
+  }
+  const visibleEmbeddedFrames = applyCaptchaFrameVisibility(
+    embeddedFrames,
+    frameContexts,
+    navigationFrames,
+  );
+  for (const frame of visibleEmbeddedFrames) {
+    addFrame({
+      frameId: frame?.frameId,
+      frameUrl: frame?.frameUrl,
+      source: 'embedded',
+      visible: frame?.visible,
+      activeChallengeFrame: frame?.activeChallengeFrame === true,
+    });
   }
   for (const candidate of candidates || []) {
     addFrame({

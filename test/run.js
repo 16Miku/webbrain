@@ -54560,6 +54560,22 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         }),
       },
       {
+        label: 'visible anchor paired with a hidden reCAPTCHA challenge frame',
+        node: captchaEl('div', {}, [
+          captchaEl('textarea', {
+            id: 'g-recaptcha-response-shared',
+            name: 'g-recaptcha-response',
+          }),
+          captchaEl('iframe', {
+            src: 'https://www.google.com/recaptcha/api2/anchor?k=SHARED_RECAPTCHA_KEY',
+          }),
+          captchaEl('iframe', {
+            src: 'https://www.google.com/recaptcha/api2/bframe?k=SHARED_RECAPTCHA_KEY',
+            hidden: true,
+          }),
+        ]),
+      },
+      {
         label: 'generic application CAPTCHA route',
         node: captchaEl('iframe', {
           src: 'https://example.test/checkpoint/captcha/challenge',
@@ -54595,6 +54611,40 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
       });
     }
+
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+      ]),
+      captchaEl('textarea', {
+        id: 'g-recaptcha-response-hidden',
+        name: 'g-recaptcha-response',
+      }),
+      captchaEl('iframe', {
+        src: 'https://www.google.com/recaptcha/api2/bframe?k=HIDDEN_DIALOG_KEY',
+        hidden: true,
+      }),
+    ], async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent._currentUrl = async () => 'https://example.test/signup';
+      const observed = await agent._observeCaptchaChallenge(
+        5,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_320]' },
+        { filter: 'visible' },
+      );
+      assert.equal(
+        observed.gate?.status,
+        'manual_required',
+        `${build}: hidden active frame was treated as a solvable dialog challenge`,
+      );
+      assert.equal(
+        observed.gate?.candidateNotCorrelated,
+        true,
+        `${build}: hidden active frame was correlated without effective visibility`,
+      );
+    });
   }
 });
 
@@ -55656,6 +55706,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
 test('captcha frame visibility propagation demotes descendants of hidden embedding frames', async () => {
   for (const build of ['chrome', 'firefox']) {
     const runtime = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`)).href);
+    const gate = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-gate.js`)).href);
     const visibleCandidate = {
       frameId: 0,
       frameUrl: 'https://example.test/form',
@@ -55702,6 +55753,7 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
           loadedUrl: nestedCandidate.frameUrl,
           name: 'captcha-internal',
           visible: true,
+          activeChallengeFrame: true,
         }],
       },
       {
@@ -55725,6 +55777,20 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       'KEY_VISIBLE',
       `${build}: hidden nested CAPTCHA outranked the visible candidate`,
     );
+    const hiddenDiagnostics = gate.buildCaptchaDiagnostics({
+      candidates: hiddenAdjusted,
+      frameContexts,
+      navigationFrames,
+    });
+    assert.equal(
+      hiddenDiagnostics.frames.some(frame =>
+        frame.source === 'embedded'
+        && frame.activeChallengeFrame === true
+        && frame.visible === true
+      ),
+      false,
+      `${build}: hidden ancestor remained visible in embedded-frame diagnostics`,
+    );
 
     frameContexts[0].childFrames[0].visible = true;
     const visibleAdjusted = runtime.applyCaptchaFrameVisibility(
@@ -55737,6 +55803,20 @@ test('captcha frame visibility propagation demotes descendants of hidden embeddi
       runtime.selectCaptchaCandidate(visibleAdjusted).selected.websiteKey,
       'KEY_HIDDEN_NESTED',
       `${build}: visible nested challenge was not restored`,
+    );
+    const visibleDiagnostics = gate.buildCaptchaDiagnostics({
+      candidates: visibleAdjusted,
+      frameContexts,
+      navigationFrames,
+    });
+    assert.equal(
+      visibleDiagnostics.frames.some(frame =>
+        frame.source === 'embedded'
+        && frame.activeChallengeFrame === true
+        && frame.visible === true
+      ),
+      true,
+      `${build}: visible ancestor chain did not restore embedded-frame diagnostics`,
     );
     frameContexts[0].childFrames[0].dialogAssociated = true;
     const dialogAdjusted = runtime.applyCaptchaFrameVisibility(
@@ -56011,6 +56091,56 @@ test('captcha candidate ranking fails closed on ties and honors exact targeting'
       activeChallenge.selected.websiteKey,
       'KEY_ACTIVE',
       `${build}: generic visible widget outranked the active challenge frame`,
+    );
+
+    const sharedWidgetObservations = runtime.applyCaptchaFrameVisibility([
+      {
+        frameId: 0,
+        frameUrl: 'https://example.test/form',
+        type: 'recaptcha_v2',
+        websiteKey: 'KEY_SHARED_VISIBILITY',
+        responseFieldId: 'g-recaptcha-response-shared',
+        visible: true,
+        normalCheckbox: true,
+        activeChallengeFrame: false,
+        detectedVia: 'url',
+      },
+      {
+        frameId: 0,
+        frameUrl: 'https://example.test/form',
+        type: 'recaptcha_v2',
+        websiteKey: 'KEY_SHARED_VISIBILITY',
+        responseFieldId: 'g-recaptcha-response-shared',
+        visible: false,
+        normalCheckbox: false,
+        activeChallengeFrame: true,
+        detectedVia: 'url',
+      },
+    ], [{
+      frameId: 0,
+      frameUrl: 'https://example.test/form',
+      childFrames: [],
+    }], [{
+      frameId: 0,
+      parentFrameId: -1,
+      url: 'https://example.test/form',
+    }]);
+    const sharedWidget = runtime.selectCaptchaCandidate(sharedWidgetObservations).selected;
+    assert.equal(sharedWidget.visible, true, `${build}: visible anchor was lost during candidate merge`);
+    assert.equal(
+      sharedWidget.activeChallengeFrame,
+      true,
+      `${build}: hidden active-frame observation was lost during candidate merge`,
+    );
+    assert.equal(
+      sharedWidget.activeChallengeFrameVisible,
+      false,
+      `${build}: visible anchor was combined with a hidden active frame`,
+    );
+    assert.equal(
+      sharedWidget.selectionReason,
+      'visible checkbox challenge',
+      `${build}: hidden active frame changed the merged candidate's ranking reason`,
     );
   }
 });

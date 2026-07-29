@@ -3027,6 +3027,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!challenge && hasDialogSurface) {
       await inspectCaptchaFrames();
       const selectedActiveFrame = detection?.selected?.activeChallengeFrame === true
+        && detection?.selected?.activeChallengeFrameVisible === true
         && detection?.selected?.visible === true
         && detection?.selected?.frameVisible !== false;
       const diagnosticActiveFrame = (detection?.diagnostics?.frames || []).find(frame =>
@@ -3220,10 +3221,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && frame?.visible === true
       ))
       .map(frame => frame.vendor))];
-    const selectedCorrelated = (
-      detection?.selected?.dialogAssociated === true
-      || detection?.selected?.activeChallengeFrame === true
-    ) && detection?.selected?.frameVisible !== false;
+    const selectedCorrelated = detection?.selected?.frameVisible !== false
+      && (
+        detection?.selected?.dialogAssociated === true
+        || (
+          detection?.selected?.activeChallengeFrame === true
+          && detection?.selected?.activeChallengeFrameVisible === true
+          && detection?.selected?.visible === true
+        )
+      );
     const supported = this.captchaSolverEnabled
       && !detectionFailed
       && !detection?.error

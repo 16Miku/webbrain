@@ -263,16 +263,26 @@ export function applyCaptchaFrameVisibility(candidates, frameContexts, navigatio
     const candidate = reconcileAncestorLoader(rawCandidate);
     const frameVisible = frameIsVisible(candidate?.frameId)
       && candidate?.frameVisibleWithinAnchor !== false;
+    const visible = candidate?.visible === true && frameVisible;
     return {
       ...candidate,
       frameVisible,
       websiteURL: nearestHttpUrl(candidate),
       dialogAssociated: candidate?.dialogAssociated === true
         || frameIsDialogAssociated(candidate?.frameId),
-      visible: candidate?.visible === true && frameVisible,
+      visible,
       normalCheckbox: candidate?.normalCheckbox === true && candidate?.visible === true && frameVisible,
+      activeChallengeFrameVisible: candidate?.activeChallengeFrame === true && visible,
     };
   });
+}
+
+function isVisibleActiveChallengeFrame(candidate) {
+  if (candidate?.activeChallengeFrameVisible === true) return true;
+  if (candidate?.activeChallengeFrameVisible === false) return false;
+  return candidate?.activeChallengeFrame === true
+    && candidate?.visible === true
+    && candidate?.frameVisible !== false;
 }
 
 function candidateSummary(candidate) {
@@ -292,6 +302,7 @@ function candidateSummary(candidate) {
     normalCheckbox: candidate?.normalCheckbox === true,
     challengeFrame: candidate?.challengeFrame === true,
     activeChallengeFrame: candidate?.activeChallengeFrame === true,
+    activeChallengeFrameVisible: isVisibleActiveChallengeFrame(candidate),
     dialogAssociated: candidate?.dialogAssociated === true,
     frameVisible: candidate?.frameVisible !== false,
     isInvisible: candidate?.isInvisible === true,
@@ -327,9 +338,7 @@ function candidateScore(candidate) {
   // Priority is tiered so no combination of secondary signals can make a
   // generic visible/background integration outrank an active challenge
   // frame or visible checkbox.
-  const activeChallengeFrame = candidate?.activeChallengeFrame
-    && candidate?.visible === true
-    && candidate?.frameVisible !== false;
+  const activeChallengeFrame = isVisibleActiveChallengeFrame(candidate);
   const primary = (candidate?.normalCheckbox && candidate?.visible) || activeChallengeFrame;
   const tier = primary ? 3 : (candidate?.visible ? 2 : 1);
   let score = tier * 1000;
@@ -409,6 +418,8 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
         challengeFrame: previous.challengeFrame === true || candidate.challengeFrame === true,
         activeChallengeFrame: previous.activeChallengeFrame === true
           || candidate.activeChallengeFrame === true,
+        activeChallengeFrameVisible: isVisibleActiveChallengeFrame(previous)
+          || isVisibleActiveChallengeFrame(candidate),
         dialogAssociated: previous.dialogAssociated === true || candidate.dialogAssociated === true,
         responseField: previous.responseField === true || candidate.responseField === true,
         responseTokenPresent: previous.responseTokenPresent === true
@@ -583,7 +594,7 @@ function selectedReason(candidate, constraints) {
   if (constraints.frameUrl) return 'exact frameUrl match';
   if (constraints.websiteKey) return 'exact websiteKey match';
   if (candidate.normalCheckbox && candidate.visible) return 'visible checkbox challenge';
-  if (candidate.visible && candidate.activeChallengeFrame && candidate.frameVisible !== false) return 'visible challenge frame';
+  if (isVisibleActiveChallengeFrame(candidate)) return 'visible challenge frame';
   if (candidate.visible) return 'visible CAPTCHA widget';
   if (candidate.challengeFrame && candidate.frameVisible !== false) return 'challenge frame candidate';
   return 'only detected CAPTCHA candidate';
