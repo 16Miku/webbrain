@@ -2330,6 +2330,36 @@ test('matches Xiaohongshu surfaces with mirrored regional guidance', () => {
   assert.match(chromeAdapter?.notes || '', /Creator Center.*final public note URL/s);
 });
 
+test('matches WeChat Official Account admin surfaces with safe publishing guidance', () => {
+  const urls = [
+    'https://mp.weixin.qq.com/',
+    'https://mp.weixin.qq.com/cgi-bin/home?t=home/index&lang=zh_CN&token=123',
+    'https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&type=77&token=123&lang=zh_CN',
+  ];
+  for (const url of urls) {
+    assert.equal(getActiveAdapter(url)?.name, 'wechat-official-account', `chrome did not match ${url}`);
+    assert.equal(getActiveAdapterFx(url)?.name, 'wechat-official-account', `firefox did not match ${url}`);
+  }
+  assert.notEqual(
+    getActiveAdapter('https://mp.weixin.qq.com.evil.example/cgi-bin/home')?.name,
+    'wechat-official-account',
+  );
+  assert.notEqual(
+    getActiveAdapter('https://example.com/?next=https://mp.weixin.qq.com/')?.name,
+    'wechat-official-account',
+  );
+
+  const chromeAdapter = getActiveAdapter(urls[1]);
+  const firefoxAdapter = getActiveAdapterFx(urls[1]);
+  assert.equal(firefoxAdapter?.notes, chromeAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /separate title and body.*ProseMirror\/contenteditable/s);
+  assert.match(chromeAdapter?.notes || '', /保存为草稿.*发表.*not publicly visible/s);
+  assert.match(chromeAdapter?.notes || '', /从正文选择.*intended image and crop/s);
+  assert.match(chromeAdapter?.notes || '', /微信验证.*QR code.*Pause for the user/s);
+  assert.match(chromeAdapter?.notes || '', /发表记录.*public article URL/s);
+  assert.match(chromeAdapter?.notes || '', /short-lived session tokens.*current dashboard/s);
+});
+
 test('regional social action shims expose Bilibili and Xiaohongshu custom controls', () => {
   const axChrome = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const axFirefox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
