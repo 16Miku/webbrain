@@ -2151,8 +2151,41 @@ async function handleMessage(msg, sender) {
       };
     }
 
-    case 'chat_start':
-      return launchDetachedRun('chat', msg, sender);
+    case 'chat_start': {
+      const claim = msg.contextMenuClaim;
+      if (!claim?.promptId || !claim?.claimantId) {
+        return launchDetachedRun('chat', msg, sender);
+      }
+      const tabId = msg.tabId || sender.tab?.id;
+      try {
+        const reservation = await contextMenuStorage.reserve(
+          tabId,
+          claim.promptId,
+          claim.claimantId,
+          () => launchDetachedRun('chat', msg, sender),
+        );
+        if (reservation?.reserved) return reservation;
+        return {
+          ok: false,
+          accepted: false,
+          code: 'context-menu-reservation-rejected',
+          reason: reservation?.reason || 'claim-lost',
+          leaseExpiresAt: reservation?.leaseExpiresAt,
+          retryAfterMs: reservation?.reason === 'run-active' ? 1_000 : undefined,
+        };
+      } catch (error) {
+        if (/run is already active/i.test(String(error?.message || ''))) {
+          return {
+            ok: false,
+            accepted: false,
+            code: 'context-menu-reservation-rejected',
+            reason: 'run-active',
+            retryAfterMs: 1_000,
+          };
+        }
+        throw error;
+      }
+    }
 
     case 'continue_start':
       return launchDetachedRun('continue', msg, sender);
@@ -2584,6 +2617,18 @@ async function handleMessage(msg, sender) {
     case 'consume_context_menu_prompt': {
       const tabId = msg.tabId || sender.tab?.id;
       return await contextMenuStorage.consume(tabId);
+    }
+
+    case 'claim_context_menu_prompt': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, claimed: false, error: 'No tab ID' };
+      return await contextMenuStorage.claim(
+        tabId,
+        msg.promptId,
+        msg.claimantId,
+        Date.now(),
+        () => agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId),
+      );
     }
 
     case 'clear_context_menu_prompt': {

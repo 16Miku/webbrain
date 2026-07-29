@@ -415,6 +415,7 @@ const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
 const {
+  CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_CH,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
@@ -424,6 +425,7 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
+  CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_FX,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
@@ -16988,7 +16990,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
     assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
-    assert.match(panel, /async function flushRenderedTabChat\(\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);\s*await persistTabChat\(tabId, messagesEl\.innerHTML\);/, `${label}: tab switches should render a queued frame before serializing its last acknowledged stream chunk`);
+    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
     assert.match(panel, /function formatMarkdown\(text, options = \{\}\)[\s\S]*?const enhance = options\.enhance !== false;[\s\S]*?const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);[\s\S]*?if \(enhance\) scheduleMathRender\(\);[\s\S]*?if \(enhance && codeBlocks\.length > 0\)/, `${label}: syntax highlighting and interactive Markdown enhancements should wait for the terminal render`);
     assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && hasStreamedText\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
@@ -17941,7 +17943,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     if (label === 'chrome' || label === 'firefox') {
       assert.match(
         panel,
-        /async function flushRenderedTabChat\(\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?await persistTabChat\(tabId, messagesEl\.innerHTML\);[\s\S]*?\}/,
+        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
         `${label}: final flush should cancel stale debounced writes and persist the rendered tab immediately`,
       );
     }
@@ -21397,7 +21399,10 @@ function createDeferredRemoveStore() {
     remove(k) {
       const gate = deferred();
       removes.push({ key: k, gate });
-      return gate.promise.then(() => { data.delete(k); });
+      return gate.promise.then(() => {
+        const keys = Array.isArray(k) ? k : [k];
+        keys.forEach(key => data.delete(key));
+      });
     },
   };
   return { store, data, removes };
@@ -21407,11 +21412,13 @@ async function waitMicrotasks(count = 2) {
   for (let i = 0; i < count; i += 1) await Promise.resolve();
 }
 
-function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
+function createContextMenuPromptHarness(createHandler, prompt, sendMessage, options = {}) {
   let currentTabId = prompt.tabId;
   let isProcessing = false;
+  let isVisible = options.isVisible !== false;
   let mode = 'act';
   const sends = [];
+  const claims = [];
   const input = {
     value: '',
     events: [],
@@ -21431,17 +21438,27 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
       return sendMessage(extra, sends.length);
     },
     sendToBackground: async (action, params) => {
+      if (action === 'claim_context_menu_prompt') {
+        claims.push(params);
+        if (typeof options.claimPrompt === 'function') {
+          return await options.claimPrompt(params, claims.length);
+        }
+        return { ok: true, claimed: true };
+      }
       assert.equal(action, 'consume_context_menu_prompt');
       assert.deepEqual(params, { tabId: currentTabId });
       return { prompt };
     },
+    getIsDocumentVisible: () => isVisible,
   });
   return {
     handler,
     input,
     sends,
+    claims,
     setProcessing(value) { isProcessing = value; },
     setTabId(value) { currentTabId = value; },
+    setVisible(value) { isVisible = value; },
   };
 }
 
@@ -21459,14 +21476,18 @@ test('context-menu prompt transport preserves only allowlisted selection groundi
     const h = createContextMenuPromptHarness(createHandler, prompt, async () => true);
     h.handler.acceptContextMenuPrompt(prompt);
     await waitMicrotasks(3);
-    assert.deepEqual(
-      h.sends[0].extra,
-      {
-        contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
-        sourceGrounding,
-      },
-      `${label}: selection-only provenance should survive sidepanel transport`,
-    );
+    const {
+      contextMenuClaim,
+      __onContextMenuClaimRejected,
+      ...groundedExtra
+    } = h.sends[0].extra;
+    assert.deepEqual(groundedExtra, {
+      contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+      sourceGrounding,
+    }, `${label}: selection-only provenance should survive sidepanel transport`);
+    assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: run-start ownership should stay prompt-scoped`);
+    assert.equal(typeof contextMenuClaim.claimantId, 'string', `${label}: run-start ownership should include the panel claimant`);
+    assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: reservation loss should remain locally retryable`);
 
     const invalidPrompt = {
       id: `${label}-invalid-grounding`,
@@ -21477,11 +21498,16 @@ test('context-menu prompt transport preserves only allowlisted selection groundi
     const invalid = createContextMenuPromptHarness(createHandler, invalidPrompt, async () => true);
     invalid.handler.acceptContextMenuPrompt(invalidPrompt);
     await waitMicrotasks(3);
-    assert.deepEqual(
-      invalid.sends[0].extra,
-      { contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id } },
-      `${label}: unknown grounding values must be dropped`,
-    );
+    const {
+      contextMenuClaim: invalidClaim,
+      __onContextMenuClaimRejected: invalidRejection,
+      ...invalidExtra
+    } = invalid.sends[0].extra;
+    assert.deepEqual(invalidExtra, {
+      contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id },
+    }, `${label}: unknown grounding values must be dropped`);
+    assert.equal(invalidClaim.promptId, invalidPrompt.id, `${label}: invalid grounding must not remove run ownership`);
+    assert.equal(typeof invalidRejection, 'function', `${label}: invalid grounding must not remove retry handling`);
   }
 });
 
@@ -21501,11 +21527,16 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     await h.handler.consumePendingContextMenuPrompt();
     await waitMicrotasks(3);
     assert.equal(h.sends.length, 2, `${label}: stored prompt should retry after the first send was not accepted`);
-    assert.deepEqual(
-      h.sends[1].extra,
-      { contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id } },
-      `${label}: retry should still clear the stored prompt when accepted`,
-    );
+    const {
+      contextMenuClaim,
+      __onContextMenuClaimRejected,
+      ...retryExtra
+    } = h.sends[1].extra;
+    assert.deepEqual(retryExtra, {
+      contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+    }, `${label}: retry should still clear the stored prompt when accepted`);
+    assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: recovered sends should retain prompt ownership`);
+    assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: recovered sends should remain retryable until reservation`);
   }
 });
 
@@ -21532,6 +21563,227 @@ test('context-menu prompt recovery does not duplicate an in-flight send', async 
     await h.handler.consumePendingContextMenuPrompt();
     await waitMicrotasks(3);
     assert.equal(h.sends.length, 1, `${label}: accepted prompts should not be replayed from storage`);
+  }
+});
+
+test('context-menu prompt leases deduplicate sends across sidepanel instances', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-cross-instance`, tabId: 10, text: 'Translate this selection' };
+    let leaseOwner = '';
+    const claimPrompt = async ({ claimantId }) => {
+      if (!leaseOwner) leaseOwner = claimantId;
+      return { ok: true, claimed: claimantId === leaseOwner };
+    };
+    const first = createContextMenuPromptHarness(createHandler, prompt, async () => true, { claimPrompt });
+    const second = createContextMenuPromptHarness(createHandler, prompt, async () => true, { claimPrompt });
+
+    first.handler.acceptContextMenuPrompt(prompt);
+    second.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(8);
+
+    assert.equal(first.claims.length + second.claims.length, 2, `${label}: both panel instances should contend through the background lease`);
+    assert.equal(first.sends.length + second.sends.length, 1, `${label}: only the lease owner may submit the prompt`);
+    assert.notEqual(first.claims[0].claimantId, second.claims[0].claimantId, `${label}: panel instances need distinct lease identities`);
+  }
+});
+
+test('context-menu prompt lease recovery retries after an abandoned owner expires', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-lease-recovery`, tabId: 10, text: 'Proofread this selection' };
+    let claimAttempt = 0;
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => {
+        claimAttempt += 1;
+        if (claimAttempt === 1) {
+          return { ok: true, claimed: false, reason: 'leased', leaseExpiresAt: Date.now() + 5 };
+        }
+        return { ok: true, claimed: true };
+      },
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.claims.length, 2, `${label}: the surviving panel should reclaim after the abandoned lease expires`);
+    assert.equal(h.sends.length, 1, `${label}: lease recovery should submit the prompt exactly once`);
+  }
+});
+
+test('context-menu prompts retry after the background reports an active run', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-active-run-retry`, tabId: 10, text: 'Translate this selection' };
+    let claimAttempt = 0;
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => {
+        claimAttempt += 1;
+        return claimAttempt === 1
+          ? { ok: true, claimed: false, reason: 'run-active', retryAfterMs: 5 }
+          : { ok: true, claimed: true };
+      },
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.claims.length, 2, `${label}: an active background run should trigger a later claim attempt`);
+    assert.equal(h.sends.length, 1, `${label}: the prompt should submit once the background run releases the tab`);
+  }
+});
+
+test('hidden sidepanel instances neither claim nor consume context-menu prompts', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-hidden`, tabId: 11, text: 'Revise this message' };
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, { isVisible: false });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await h.handler.consumePendingContextMenuPrompt();
+    await waitMicrotasks(3);
+    assert.equal(h.claims.length, 0, `${label}: hidden panels must not claim broadcast or stored prompts`);
+    assert.equal(h.sends.length, 0, `${label}: hidden panels must not submit prompts`);
+
+    h.setVisible(true);
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(5);
+    assert.equal(h.claims.length, 1, `${label}: the panel may claim after becoming visible`);
+    assert.equal(h.sends.length, 1, `${label}: the visible panel should submit after claiming`);
+  }
+});
+
+test('context-menu ownership and stale-panel persistence guards are wired in both builds', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const handler = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/context-menu-prompts.js'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+
+    assert.match(
+      background,
+      /case 'chat_start':[\s\S]*?contextMenuStorage\.reserve\([\s\S]*?launchDetachedRun\('chat', msg, sender\)/,
+      `${label}: background should validate prompt ownership while atomically reserving the detached run`,
+    );
+    assert.match(
+      background,
+      /case 'claim_context_menu_prompt':[\s\S]*?contextMenuStorage\.claim\([\s\S]*?agent\.activeRunState\(tabId\)\?\.running \|\| detachedRunStarts\.has\(tabId\)/,
+      `${label}: background should reject queued claim operations after another run reserves the tab`,
+    );
+    assert.match(
+      handler,
+      /sendToBackground\('claim_context_menu_prompt', \{[\s\S]*?promptId: payload\.id,[\s\S]*?claimantId,[\s\S]*?\}\)/,
+      `${label}: panel handlers should claim before submitting`,
+    );
+    assert.match(
+      handler,
+      /contextMenuClaim: \{[\s\S]*?promptId: payload\.id,[\s\S]*?claimantId,[\s\S]*?\}[\s\S]*?__onContextMenuClaimRejected/,
+      `${label}: the claimed identity should follow the prompt into the run-start path`,
+    );
+    assert.match(
+      panel,
+      /getIsDocumentVisible: \(\) => document\.visibilityState !== 'hidden'/,
+      `${label}: context-menu handling should be limited to visible panel documents`,
+    );
+    assert.match(
+      panel,
+      /function persistTabChat\(tabId, html, \{ allowHidden = false \} = \{\}\) \{[\s\S]*?document\.visibilityState === 'hidden'[\s\S]*?!allowHidden[\s\S]*?skipped: true/,
+      `${label}: hidden panel documents must not persist transcript snapshots`,
+    );
+    assert.match(
+      panel,
+      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId\);[\s\S]*?await consumePendingContextMenuPrompt\(\);/,
+      `${label}: a returning panel should reload shared state before consuming prompts`,
+    );
+    assert.match(
+      panel,
+      /document\.addEventListener\('visibilitychange',[\s\S]*?requestVisibleSidePanelStateRefresh\(\)/,
+      `${label}: visibility restoration should trigger the stale-panel refresh`,
+    );
+    assert.match(
+      panel,
+      /const snapshot = lastVisibleTabChatSnapshot;[\s\S]*?visibilityHandoffPromise = snapshot[\s\S]*?persistTabChat\(snapshot\.tabId, snapshot\.html, \{ allowHidden: true \}\)/,
+      `${label}: the last visible transcript should flush before hidden-writer protection takes over`,
+    );
+    assert.match(
+      panel,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?sendToBackground\('claim_context_menu_prompt',[\s\S]*?let userEl = null;/,
+      `${label}: context-menu ownership should be renewed after async preflight and before rendering the submitted turn`,
+    );
+  }
+});
+
+test('context-menu prompt storage enforces a durable expiring lease', async () => {
+  for (const [label, createStorage, leaseMs] of [
+    ['chrome', createContextMenuStorageCh, CONTEXT_MENU_CLAIM_LEASE_MS_CH],
+    ['firefox', createContextMenuStorageFx, CONTEXT_MENU_CLAIM_LEASE_MS_FX],
+  ]) {
+    const data = new Map();
+    const store = {
+      async set(values) {
+        Object.entries(values || {}).forEach(([key, value]) => data.set(key, value));
+      },
+      async get(key) {
+        return data.has(key) ? { [key]: data.get(key) } : {};
+      },
+      async remove(keys) {
+        (Array.isArray(keys) ? keys : [keys]).forEach(key => data.delete(key));
+      },
+    };
+    const storage = createStorage(() => store);
+    const prompt = { id: `${label}-lease`, tabId: 12, text: 'Explain this selection' };
+    await storage.save(prompt.tabId, prompt);
+
+    const first = await storage.claim(prompt.tabId, prompt.id, 'panel-a', 1_000);
+    const duplicateOwner = await storage.claim(prompt.tabId, prompt.id, 'panel-a', 1_001);
+    const contender = await storage.claim(prompt.tabId, prompt.id, 'panel-b', 1_002);
+    const takeover = await storage.claim(prompt.tabId, prompt.id, 'panel-b', duplicateOwner.leaseExpiresAt);
+
+    assert.equal(first.claimed, true, `${label}: first panel should acquire the lease`);
+    assert.equal(duplicateOwner.claimed, true, `${label}: lease acquisition should be idempotent for its owner`);
+    assert.equal(contender.claimed, false, `${label}: a second panel must be rejected while the lease is active`);
+    assert.equal(contender.reason, 'leased', `${label}: active lease rejection should be explicit`);
+    assert.equal(takeover.claimed, true, `${label}: another panel may recover the prompt after lease expiry`);
+    assert.equal(data.get(storage.claimKey(prompt.tabId))?.claimantId, 'panel-b', `${label}: the durable claim should record the current owner`);
+
+    let reservations = 0;
+    const staleOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-a', () => {
+      reservations += 1;
+      return { accepted: true };
+    });
+    const currentOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-b', () => {
+      reservations += 1;
+      return { accepted: true, requestId: 'reserved-run' };
+    });
+    assert.equal(staleOwner.reserved, false, `${label}: an expired prior owner must not reserve the run after takeover`);
+    assert.equal(currentOwner.reserved, true, `${label}: the current claimant should reserve the run`);
+    assert.equal(currentOwner.requestId, 'reserved-run', `${label}: reservation should return the detached-run acknowledgement`);
+    assert.equal(reservations, 1, `${label}: ownership validation and the run reservation callback should be exactly once`);
+
+    const blockedByRun = await storage.claim(
+      prompt.tabId,
+      prompt.id,
+      'panel-c',
+      takeover.leaseExpiresAt,
+      () => true,
+    );
+    assert.equal(blockedByRun.claimed, false, `${label}: a queued claimant must be rejected once a run is reserved`);
+    assert.equal(blockedByRun.reason, 'run-active', `${label}: run reservation rejection should remain retryable`);
+    assert.equal(blockedByRun.retryAfterMs, 1_000, `${label}: active-run rejection should include a retry interval`);
+
+    await storage.clear(prompt.tabId, prompt.id);
+    assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
+    assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
   }
 });
 
@@ -32798,7 +33050,7 @@ test('detached chat lifecycle owns the default-on Ask streaming kill switch', ()
     const continueBody = background.match(/case 'continue': \{([\s\S]*?)\n\s+case 'abort'/)?.[1] || '';
 
     assert.match(panel, /sendRunWithReconnect\('chat_start'/, `${label}: sidepanel must retain detached chat_start`);
-    assert.match(background, /case 'chat_start':\s*return launchDetachedRun\('chat'/, `${label}: background must retain detached launch/reconnect ownership`);
+    assert.match(background, /case 'chat_start':\s*\{[\s\S]*?launchDetachedRun\('chat'/, `${label}: background must retain detached launch/reconnect ownership`);
     assert.match(chatBody, new RegExp(`await ${storageName}\\.storage\\.local\\.get\\('openaiAskStreamingEnabled'\\)`), `${label}: each detached chat should read the current kill switch`);
     assert.match(chatBody, /interactiveChat: true/, `${label}: only interactive chat should receive streaming capability`);
     assert.match(chatBody, /askStreamingEnabled: askStreamingSettings\.openaiAskStreamingEnabled !== false/, `${label}: streaming should default on`);
@@ -52342,6 +52594,36 @@ test('detached terminal journals win over duplicate task rejection records', asy
 
     assert.equal(response.content, 'Error: Cloud cost allowance reached.', `${label}: terminal content should remain renderable`);
     assert.equal(response.submittedTurnDurable, false, `${label}: terminal durability proof should survive duplicate rejection state`);
+  }
+});
+
+test('detached run rejections preserve structured reservation metadata', async () => {
+  for (const [label, runDetachedWithReconnect] of [
+    ['chrome', runDetachedWithReconnectCh],
+    ['firefox', runDetachedWithReconnectFx],
+  ]) {
+    const requestId = `${label}-structured-rejection`;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 64, requestId, mode: 'ask', text: 'translate this' },
+        start: async () => ({
+          accepted: false,
+          code: 'context-menu-reservation-rejected',
+          reason: 'run-active',
+          retryAfterMs: 1_000,
+        }),
+        probe: async () => {
+          throw new Error('a rejected reservation must not enter the probe loop');
+        },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      error => error?.code === 'context-menu-reservation-rejected'
+        && error?.reason === 'run-active'
+        && error?.retryAfterMs === 1_000,
+      `${label}: the sidepanel should receive enough rejection metadata to retry without rendering an error`,
+    );
   }
 });
 

@@ -14,11 +14,14 @@ export function createContextMenuPromptHandler({
   autoResizeInput,
   sendMessage,
   sendToBackground,
+  getIsDocumentVisible = () => true,
 }) {
   const acceptedContextMenuPromptIds = new Set();
   const trackedContextMenuPromptIds = new Set();
   const deferredContextMenuPrompts = [];
   const queuedContextMenuPrompts = [];
+  const claimRetryTimers = new Map();
+  const claimantId = `sidepanel-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   let runningContextMenuPromptId = null;
 
   function normalizeContextMenuPromptPayload(raw) {
@@ -41,7 +44,39 @@ export function createContextMenuPromptHandler({
     return payload?.tabId == null || currentTabId == null || Number(payload.tabId) === Number(currentTabId);
   }
 
+  function clearClaimRetry(promptId) {
+    const retry = claimRetryTimers.get(promptId);
+    if (retry?.timerId) clearTimeout(retry.timerId);
+    claimRetryTimers.delete(promptId);
+  }
+
+  function scheduleClaimRetry(payload, leaseExpiresAt, retryAfterMs) {
+    const expiry = Number(leaseExpiresAt);
+    const retryDelay = Number(retryAfterMs);
+    const retryAt = Number.isFinite(expiry) && expiry > 0
+      ? expiry
+      : Number.isFinite(retryDelay) && retryDelay > 0
+        ? Date.now() + retryDelay
+        : NaN;
+    if (!payload?.id || !Number.isFinite(retryAt)) return;
+    clearClaimRetry(payload.id);
+    const delay = Math.max(50, retryAt - Date.now() + 25);
+    const timerId = setTimeout(() => {
+      claimRetryTimers.delete(payload.id);
+      if (!getIsDocumentVisible()
+          || acceptedContextMenuPromptIds.has(payload.id)
+          || trackedContextMenuPromptIds.has(payload.id)
+          || runningContextMenuPromptId === payload.id) return;
+      acceptContextMenuPrompt(payload);
+    }, delay);
+    claimRetryTimers.set(payload.id, { tabId: payload.tabId, timerId });
+  }
+
   function routeTrackedContextMenuPrompt(payload) {
+    if (!getIsDocumentVisible()) {
+      trackedContextMenuPromptIds.delete(payload.id);
+      return;
+    }
     if (getCurrentTabId() == null) {
       deferredContextMenuPrompts.push(payload);
       return;
@@ -59,6 +94,7 @@ export function createContextMenuPromptHandler({
   function acceptContextMenuPrompt(rawPayload) {
     const payload = normalizeContextMenuPromptPayload(rawPayload);
     if (!payload) return;
+    if (!getIsDocumentVisible()) return;
     if (acceptedContextMenuPromptIds.has(payload.id) || trackedContextMenuPromptIds.has(payload.id)) return;
     trackedContextMenuPromptIds.add(payload.id);
     routeTrackedContextMenuPrompt(payload);
@@ -86,6 +122,11 @@ export function createContextMenuPromptHandler({
 
   async function runContextMenuPrompt(payload) {
     if (!payload?.text) return;
+    clearClaimRetry(payload.id);
+    if (!getIsDocumentVisible()) {
+      trackedContextMenuPromptIds.delete(payload.id);
+      return;
+    }
     if (runningContextMenuPromptId || getIsProcessing()) {
       queuedContextMenuPrompts.push(payload);
       return;
@@ -94,6 +135,27 @@ export function createContextMenuPromptHandler({
 
     const currentTabId = getCurrentTabId();
     const clearPayload = { tabId: payload.tabId ?? currentTabId, promptId: payload.id };
+    let claimResult = null;
+    try {
+      claimResult = await sendToBackground('claim_context_menu_prompt', {
+        tabId: clearPayload.tabId,
+        promptId: payload.id,
+        claimantId,
+      });
+    } catch {
+      // Leave the durable prompt untouched. A visible panel can reclaim it
+      // after this background connection or lease attempt recovers.
+      claimResult = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
+    }
+    if (!claimResult?.claimed || !getIsDocumentVisible()) {
+      runningContextMenuPromptId = null;
+      trackedContextMenuPromptIds.delete(payload.id);
+      // A different panel instance owns an active lease. A repeated delivery
+      // may re-check the lease, but it cannot submit until the lease expires.
+      scheduleClaimRetry(payload, claimResult?.leaseExpiresAt, claimResult?.retryAfterMs);
+      drainQueuedContextMenuPrompts();
+      return;
+    }
 
     if (getAgentMode() !== 'ask') setMode('ask');
     getInputEl().value = payload.text;
@@ -110,19 +172,33 @@ export function createContextMenuPromptHandler({
     // drain.  On a pre-receipt SW crash, storage is still intact and
     // consumePendingContextMenuPrompt() recovers the prompt on the next panel load.
     let accepted = false;
+    let rejectedClaim = null;
     try {
       accepted = await sendMessage({
         contextMenuClear: clearPayload,
+        contextMenuClaim: {
+          promptId: payload.id,
+          claimantId,
+        },
+        __onContextMenuClaimRejected: (result) => {
+          rejectedClaim = result || { reason: 'claim-lost' };
+        },
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
       });
     } catch { /* storage recovery can retry the prompt later */ }
     runningContextMenuPromptId = null;
     trackedContextMenuPromptIds.delete(payload.id);
-    if (accepted) acceptedContextMenuPromptIds.add(payload.id);
+    if (accepted) {
+      acceptedContextMenuPromptIds.add(payload.id);
+      clearClaimRetry(payload.id);
+    } else if (rejectedClaim) {
+      scheduleClaimRetry(payload, rejectedClaim.leaseExpiresAt, rejectedClaim.retryAfterMs);
+    }
     drainQueuedContextMenuPrompts();
   }
 
   async function consumePendingContextMenuPrompt() {
+    if (!getIsDocumentVisible()) return;
     const currentTabId = getCurrentTabId();
     if (currentTabId == null) return;
     try {
@@ -148,6 +224,9 @@ export function createContextMenuPromptHandler({
       ...queuedContextMenuPrompts.filter(keep));
     deferredContextMenuPrompts.splice(0, deferredContextMenuPrompts.length,
       ...deferredContextMenuPrompts.filter(keep));
+    for (const [promptId, retry] of claimRetryTimers) {
+      if (Number(retry?.tabId) === numericTabId) clearClaimRetry(promptId);
+    }
   }
 
   return {

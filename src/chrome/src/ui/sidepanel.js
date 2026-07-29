@@ -1143,6 +1143,7 @@ const {
   autoResizeInput,
   sendMessage,
   sendToBackground,
+  getIsDocumentVisible: () => document.visibilityState !== 'hidden',
 });
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
@@ -1576,8 +1577,10 @@ async function loadTabChat(tabId) {
   return null;
 }
 
-function persistTabChat(tabId, html) {
-  if (tabId == null) return;
+function persistTabChat(tabId, html, { allowHidden = false } = {}) {
+  if (tabId == null || (document.visibilityState === 'hidden' && !allowHidden)) {
+    return Promise.resolve({ ok: false, skipped: true });
+  }
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     // Keep the live transcript lossless. persistTabChatToSession may compact
     // only the storage.session copy when the shared quota requires it.
@@ -1587,7 +1590,7 @@ function persistTabChat(tabId, html) {
   });
 }
 
-async function flushRenderedTabChat() {
+async function flushRenderedTabChat({ allowHidden = false } = {}) {
   const tabId = renderedTabId;
   if (tabId == null) return;
   if (persistTimer && persistTimerTabId === tabId) {
@@ -1596,7 +1599,11 @@ async function flushRenderedTabChat() {
     persistTimerTabId = null;
   }
   flushPendingStreamedAssistantMarkdownRenders();
-  await persistTabChat(tabId, messagesEl.innerHTML);
+  const html = messagesEl.innerHTML;
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden });
 }
 
 function clearCachedTabChat(tabId) {
@@ -2065,10 +2072,18 @@ async function renderClearedConversationForTab(tabId) {
 // to thrash storage on every keystroke / streamed token.
 let persistTimer = null;
 let persistTimerTabId = null;
+let visibilityHandoffPromise = Promise.resolve();
+let visibleStateRefreshPending = false;
+let lastVisibleTabChatSnapshot = null;
 function schedulePersist() {
+  if (document.visibilityState === 'hidden') return;
   if (persistTimer) clearTimeout(persistTimer);
   const tabId = renderedTabId;
   const html = messagesEl.innerHTML;
+  if (tabId != null) {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+    tabChats.set(Number(tabId), html);
+  }
   persistTimerTabId = tabId;
   persistTimer = setTimeout(() => {
     persistTimer = null;
@@ -2204,7 +2219,9 @@ async function prepareChatHistoryForTurn(tabId, mode) {
 
 async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {
   const numericTabId = Number(tabId);
-  if (!Number.isFinite(numericTabId) || renderedTabId !== numericTabId) return;
+  if (document.visibilityState === 'hidden'
+      || !Number.isFinite(numericTabId)
+      || renderedTabId !== numericTabId) return;
   const messages = extractChatHistoryMessages(messagesEl);
   if (!messages.some((message) => message.role === 'user')) return;
   const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);
@@ -3688,6 +3705,46 @@ async function switchToTab(newTabId) {
   }
   drainQueuedAgentUpdatesForTab(newTabId);
   consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+}
+
+async function refreshVisibleSidePanelState() {
+  if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
+  const tabId = Number(currentTabId);
+  if (!Number.isFinite(tabId)) return;
+
+  // Every tab-specific Chrome side panel is a separate extension document.
+  // When an older document becomes visible again, its in-memory chat cache can
+  // predate writes made by the panel that was visible in the meantime. Reload
+  // from the shared session copy before that document is allowed to persist.
+  tabChats.delete(tabId);
+  const html = await loadTabChat(tabId);
+  if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+  renderedTabId = tabId;
+  if (html && html !== messagesEl.innerHTML) {
+    await hydrateRestoredChatHistory(tabId, html);
+    if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+    messagesEl.innerHTML = html;
+    messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+    rebindRestoredMessageControls();
+  } else if (!html) {
+    messagesEl.innerHTML = '';
+    addMessage('system', t('sp.help_message'));
+  }
+  await restoreActiveRunState(tabId);
+  if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+  await consumePendingContextMenuPrompt();
+  drainQueuedContextMenuPrompts();
+}
+
+function requestVisibleSidePanelStateRefresh() {
+  if (document.visibilityState === 'hidden') return;
+  visibleStateRefreshPending = true;
+  Promise.resolve(visibilityHandoffPromise).catch(() => {}).then(() => {
+    if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
+    visibleStateRefreshPending = false;
+    refreshVisibleSidePanelState().catch(() => {});
+  });
 }
 
 async function restoreActiveRunState(tabId = currentTabId) {
@@ -6890,9 +6947,14 @@ function updateApiBadge() {
 async function sendMessage(extraChatParams = {}) {
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
+  const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
+    ? extraChatParams.__onContextMenuClaimRejected
+    : null;
   const chatExtraParams = { ...(extraChatParams || {}) };
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
+  delete chatExtraParams.__onContextMenuClaimRejected;
+  const contextMenuClaim = chatExtraParams.contextMenuClaim;
   const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
   const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
     ? SELECTION_ONLY_SOURCE_GROUNDING
@@ -7010,6 +7072,29 @@ async function sendMessage(extraChatParams = {}) {
     return false;
   }
 
+  if (contextMenuClaim?.promptId && contextMenuClaim?.claimantId) {
+    let renewedClaim = null;
+    try {
+      renewedClaim = await sendToBackground('claim_context_menu_prompt', {
+        tabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch {
+      renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
+    }
+    if (!renewedClaim?.claimed) {
+      onContextMenuClaimRejected?.(renewedClaim || {
+        reason: 'claim-lost',
+        retryAfterMs: 1_000,
+      });
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
+  }
+
   let userEl = null;
   let assistantEl = null;
   // A selection-only shortcut must not inherit unrelated attachment chips
@@ -7058,6 +7143,7 @@ async function sendMessage(extraChatParams = {}) {
 
   let accepted = false;
   let captureStartFailed = false;
+  let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
   try {
@@ -7159,7 +7245,17 @@ async function sendMessage(extraChatParams = {}) {
   } catch (e) {
     captureStartFailed = !!runCaptureDirective
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
-    if (captureStartFailed) {
+    contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
+    if (contextMenuReservationRejected) {
+      onContextMenuClaimRejected?.({
+        reason: e.reason || 'claim-lost',
+        leaseExpiresAt: e.leaseExpiresAt,
+        retryAfterMs: e.retryAfterMs || 1_000,
+      });
+      userEl?.remove();
+      assistantEl?.remove();
+      if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+    } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
       restorePendingAttachmentsForTab(tabId, attachmentsForSend);
@@ -7204,7 +7300,7 @@ async function sendMessage(extraChatParams = {}) {
     if (renderToCurrentTab && currentTabId === tabId) scrollToBottom();
     if (renderToCurrentTab && renderedTabId === tabId) await flushRenderedTabChat();
     if (renderToCurrentTab && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    if (renderToCurrentTab && !wasAborted && !captureStartFailed) {
+    if (renderToCurrentTab && !wasAborted && !captureStartFailed && !contextMenuReservationRejected) {
       notifyCompletion({
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
@@ -7327,6 +7423,26 @@ let lastTranscript = null;
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
   acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    visibleStateRefreshPending = false;
+    // This document was authoritative immediately before it became hidden.
+    // Bypass the hidden-writer guard exactly once so the next visible panel
+    // cannot restore the older pre-debounce storage snapshot.
+    const snapshot = lastVisibleTabChatSnapshot;
+    if (snapshot && persistTimer && sameTabId(persistTimerTabId, snapshot.tabId)) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      persistTimerTabId = null;
+    }
+    visibilityHandoffPromise = snapshot
+      ? persistTabChat(snapshot.tabId, snapshot.html, { allowHidden: true }).catch(() => {})
+      : Promise.resolve();
+    return;
+  }
+  requestVisibleSidePanelStateRefresh();
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
