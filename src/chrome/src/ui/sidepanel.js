@@ -7104,6 +7104,20 @@ async function sendMessage(extraChatParams = {}) {
     return false;
   }
 
+  let renewedContextMenuClaim = false;
+  const releaseRenewedContextMenuClaim = async () => {
+    if (!renewedContextMenuClaim) return;
+    renewedContextMenuClaim = false;
+    try {
+      await sendToBackground('release_context_menu_prompt_claim', {
+        tabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch { /* the durable lease still expires if release fails */ }
+    onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
+  };
+
   if (contextMenuClaim?.promptId && contextMenuClaim?.claimantId) {
     let renewedClaim = null;
     try {
@@ -7115,18 +7129,12 @@ async function sendMessage(extraChatParams = {}) {
     } catch {
       renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
     }
+    renewedContextMenuClaim = renewedClaim?.claimed === true;
     const claimStillVisible = document.visibilityState !== 'hidden'
       && sameTabId(currentTabId, tabId)
       && sameTabId(renderedTabId, tabId);
-    if (renewedClaim?.claimed && !claimStillVisible) {
-      try {
-        await sendToBackground('release_context_menu_prompt_claim', {
-          tabId,
-          promptId: contextMenuClaim.promptId,
-          claimantId: contextMenuClaim.claimantId,
-        });
-      } catch { /* the durable lease still expires if release fails */ }
-      onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
+    if (renewedContextMenuClaim && !claimStillVisible) {
+      await releaseRenewedContextMenuClaim();
       setTabProcessing(tabId, false);
       setTabAbortRequested(tabId, false);
       if (sameTabId(currentTabId, tabId)) syncSendButtonState();
@@ -7148,6 +7156,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(currentTabId, tabId)
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
+    await releaseRenewedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);

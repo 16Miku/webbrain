@@ -21869,8 +21869,25 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sendToBackground\('claim_context_menu_prompt',[\s\S]*?const claimStillVisible = document\.visibilityState !== 'hidden'[\s\S]*?release_context_menu_prompt_claim[\s\S]*?let userEl = null;/,
-      `${label}: context-menu ownership should require visibility around renewal and be released before a hidden panel can start`,
+      /const releaseRenewedContextMenuClaim = async \(\) => \{[\s\S]*?renewedContextMenuClaim = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(\{ reason: 'panel-hidden', retryAfterMs: 250 \}\);[\s\S]*?renewedContextMenuClaim = renewedClaim\?\.claimed === true;/,
+      `${label}: renewed ownership should have one idempotent release-and-retry path`,
+    );
+    const sendMessageStart = panel.indexOf('async function sendMessage(extraChatParams = {}) {');
+    const sendMessageEnd = panel.indexOf(
+      label === 'chrome' ? '\nfunction formatRecordTimer(' : '\nfunction ensureCurrentRunAssistant(',
+      sendMessageStart,
+    );
+    assert.notEqual(sendMessageEnd, -1, `${label}: sendMessage boundary should remain inspectable`);
+    const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
+    assert.equal(
+      (sendMessageBody.match(/await releaseRenewedContextMenuClaim\(\);/g) || []).length,
+      2,
+      `${label}: both visibility checks after renewal should release the claim and schedule retry`,
+    );
+    assert.match(
+      sendMessageBody,
+      /renewedContextMenuClaim = renewedClaim\?\.claimed === true;[\s\S]*?const claimStillVisible[\s\S]*?if \(renewedContextMenuClaim && !claimStillVisible\) \{[\s\S]*?await releaseRenewedContextMenuClaim\(\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseRenewedContextMenuClaim\(\);/,
+      `${label}: the final post-renewal visibility failure should relinquish ownership before returning`,
     );
   }
 });
