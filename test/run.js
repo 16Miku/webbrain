@@ -10184,6 +10184,25 @@ test('completion form classification ignores passive localized utility shells wi
       },
       `${label}: mixed semantic and conventional search fields regressed`,
     );
+    assert.deepEqual(
+      classify({
+        outsidePrimaryContent: false,
+        editable: [
+          { tag: 'input', type: 'search', role: '', name: 'q', value: 'webbrain' },
+          { tag: 'select', type: '', role: '', name: 'filter', value: 'recent' },
+        ],
+        submits: [{ label: 'Search' }],
+      }),
+      {
+        label: '',
+        relevant: false,
+        utility: true,
+        utilityReason: 'semantic_search',
+        editableCount: 2,
+        submitCount: 1,
+      },
+      `${label}: retained search query and filter values were treated as task drafts`,
+    );
 
     for (const [caseName, override] of [
       ['primary-content form', { outsidePrimaryContent: false }],
@@ -10223,7 +10242,6 @@ test('completion form classification ignores passive localized utility shells wi
       ['search selector with hidden submitted state', { hiddenNamedCount: 1 }],
       ['required search selector', { editable: [{ ...semanticTaskSelector.editable[0], required: true }] }],
       ['focused search selector', { editable: [{ ...semanticTaskSelector.editable[0], focused: true }] }],
-      ['draft-bearing search selector', { editable: [{ ...semanticTaskSelector.editable[0], value: 'alice' }] }],
       ['named task search selector', { editable: [{ ...semanticTaskSelector.editable[0], name: 'assignee' }] }],
       ['search selector with non-search submit', { submits: [{ label: 'Add' }] }],
     ]) {

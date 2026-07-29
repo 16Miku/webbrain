@@ -132,7 +132,8 @@ export function classifyCompletionForm({
   // Preserve the previous per-field semantic-or-conventional behavior so a
   // search input plus a named filter control remains utility UI. Task evidence
   // gates the whole shortcut: semantic markup alone must not hide an assignee
-  // picker, dialog, POST form, populated draft, or non-search submission.
+  // picker, dialog, POST form, or non-search submission. A retained value is
+  // normal search-results state and is not task evidence by itself.
   const searchFieldsOnly = normalizedFields.length > 0
     && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
   const searchSubmitsOnly = normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
@@ -144,7 +145,6 @@ export function classifyCompletionForm({
     || normalizedFields.some(field => (
       field.required
       || field.focused
-      || !!field.value
       || (!!field.name && !conventionalSearchField(field))
     ))
   );
