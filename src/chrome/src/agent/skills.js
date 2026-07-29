@@ -99,7 +99,11 @@ function inferName(content, index) {
 
 function parseAgentSkillScalar(value) {
   const raw = String(value || '').trim();
-  if (!raw || /^[!&*\[{]/.test(raw)) return null;
+  if (
+    !raw
+    || /^[!&*\[\]{},#|>%@`]/.test(raw)
+    || /^[?:-](?:[ \t]|$)/.test(raw)
+  ) return null;
   const singleQuoted = raw.match(/^'((?:''|[^'])*)'(?:\s+#.*)?$/);
   if (singleQuoted) return singleQuoted[1].replace(/''/g, "'");
   const doubleQuoted = raw.match(/^("(?:\\.|[^"\\])*")(?:\s+#.*)?$/);

@@ -12934,6 +12934,27 @@ description: foo: bar
 # Safe fallback
 
 Keep the invalid scalar source.`;
+  const invalidPlainSequence = `---
+name: pdf-processing
+description: - item
+---
+# Safe fallback
+
+Keep the invalid sequence source.`;
+  const commentOnlyDescription = `---
+name: pdf-processing
+description: # comment
+---
+# Safe fallback
+
+Keep the comment-only source.`;
+  const reservedPlainIndicator = `---
+name: pdf-processing
+description: @invalid
+---
+# Safe fallback
+
+Keep the reserved-indicator source.`;
   const supportedRaw = '\uFEFF\r\n\r\n---\r\nname: pdf-processing\r\ndescription: Extract PDF text.\r\n---\r\n# PDF workflow\r\n\r\nFollow it.';
   const oversizedFrontmatter = `---
 name: pdf-processing
@@ -12970,6 +12991,9 @@ Keep the oversized source.`;
       ['tab-indented block', tabIndent, 'Tab-indented content.'],
       ['unknown top-level key', unknownKey, 'unexpected: value'],
       ['plain scalar mapping separator', invalidPlainColon, 'description: foo: bar'],
+      ['plain scalar sequence indicator', invalidPlainSequence, 'description: - item'],
+      ['comment-only required scalar', commentOnlyDescription, 'description: # comment'],
+      ['reserved plain scalar indicator', reservedPlainIndicator, 'description: @invalid'],
     ]) {
       const id = `invalid-${caseName.replace(/\s+/g, '-')}`;
       const [skill] = normalizeSkills([{ id, content }]);
@@ -12988,6 +13012,7 @@ Keep the oversized source.`;
       ['Chinese name', '技能', '技能', '处理技能。'],
       ['Russian name', 'мой-навык', 'мой-навык', 'Обрабатывает задачи.'],
       ['NFKC name', 'cafe\u0301', 'café', 'Handles café tasks.'],
+      ['indicator-like plain string', 'plain-name', 'plain-name', '-item remains a string.'],
     ]) {
       const [skill] = normalizeSkills([{
         id: `valid-${caseName}`,
