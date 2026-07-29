@@ -536,6 +536,12 @@ const CompletionInvariantCh = await import(
 const CompletionInvariantFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/completion-invariant.js').replace(/\\/g, '/')
 );
+const ReadPageWindowCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/read-page-window.js').replace(/\\/g, '/')
+);
+const ReadPageWindowFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/read-page-window.js').replace(/\\/g, '/')
+);
 const {
   buildGithubStargazerProgressItems,
   parseGithubStargazerFollowButtons,
@@ -3293,6 +3299,107 @@ test('trace export: preserves structured pageGate before truncated article text 
   assert.match(markdown, /read_page[^\n]*pageGate[^\n]*subscription[^\n]*blocking[^\n]*true/i);
   assert.ok(markdown.indexOf('pageGate') < markdown.indexOf('truncated'), 'pageGate should survive before result truncation');
   assert.ok(markdown.indexOf('read_page') < markdown.indexOf('fetch_nytimes_article'), 'fallback tool should follow the blocked browser read');
+});
+
+test('read_page paginates a long friend-link article without inventing a paywall', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/read-page-window.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/read-page-window.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox read_page window helpers drifted');
+
+  const longText = Array.from(
+    { length: 12 },
+    (_, index) => `SECTION-${String(index + 1).padStart(2, '0')}:`.padEnd(1000, String(index % 10)),
+  ).join('');
+  const friendLinkArticle = {
+    url: 'https://medium.example/long-article?source=friend_link',
+    title: 'A long article available through the author friend link',
+    text: longText,
+    textSource: 'article',
+    isArticlePage: true,
+    includeChrome: false,
+    links: Array.from({ length: 100 }, (_, index) => ({
+      text: `Reference ${index}`,
+      href: `https://medium.example/reference/${index}`,
+    })),
+    forms: [],
+    media: { videoCount: 0, imageCount: 0, videos: [], images: [] },
+  };
+
+  for (const [label, runtime] of [
+    ['chrome', ReadPageWindowCh],
+    ['firefox', ReadPageWindowFx],
+  ]) {
+    const pages = [];
+    let offset = 0;
+    do {
+      const page = runtime.applyReadPageWindow(friendLinkArticle, { offset, limit: 3000 });
+      pages.push(page);
+      assert.equal(page.originalLength, longText.length, `${label}: originalLength drifted`);
+      assert.equal(page.textOffset, offset, `${label}: textOffset drifted`);
+      assert.equal(page.accessState, 'no_blocking_page_gate', `${label}: readable friend link was treated as blocked`);
+      assert.equal(page.accessGateEvidence, 'none', `${label}: tool truncation invented access-gate evidence`);
+      assert.equal(page.truncationReason, 'tool_output_window', `${label}: long page lacks a structured tool-window reason`);
+      if (page.hasMore) {
+        assert.deepEqual(page.continuationArgs, {
+          offset: page.nextOffset,
+          limit: 3000,
+          includeChrome: false,
+        }, `${label}: continuation does not preserve extraction options`);
+      }
+      offset = page.nextOffset;
+    } while (offset !== null);
+
+    assert.equal(pages.map(page => page.text).join(''), longText, `${label}: continuation skipped or duplicated article text`);
+    assert.equal(pages.at(-1).hasMore, false, `${label}: final window still claims more text`);
+    assert.equal(pages.at(-1).nextOffset, null, `${label}: final window exposed a stale continuation`);
+    assert.equal(pages.at(-1).continuationArgs, null, `${label}: final window exposed stale continuation arguments`);
+
+    const chromeIncluded = runtime.applyReadPageWindow({
+      ...friendLinkArticle,
+      includeChrome: true,
+    }, { includeChrome: true, limit: 3000 });
+    assert.deepEqual(chromeIncluded.continuationArgs, {
+      offset: 3000,
+      limit: 3000,
+      includeChrome: true,
+    }, `${label}: includeChrome was lost across continuation`);
+
+    const blocked = runtime.applyReadPageWindow({
+      ...friendLinkArticle,
+      pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: 'Subscribe to continue' },
+    }, { limit: 3000 });
+    assert.equal(blocked.accessState, 'blocked_by_page_gate', `${label}: blocking pageGate was not preserved`);
+    assert.equal(blocked.accessGateEvidence, 'pageGate', `${label}: blocking pageGate lacks structured evidence`);
+
+    const fitted = runtime.fitReadPageWindowResult(pages[0], 8000);
+    assert.ok(JSON.stringify(fitted).length <= 8000, `${label}: model-facing read_page window exceeds the tool-result cap`);
+    assert.equal(fitted.nextOffset, fitted.textOffset + fitted.returnedLength, `${label}: compaction would skip unseen prose`);
+    const serialized = new (label === 'chrome' ? AgentCh : AgentFx)({})._limitToolResult(pages[0]);
+    const parsed = JSON.parse(serialized);
+    assert.equal(parsed.truncationReason, 'tool_output_window', `${label}: limiter discarded structured truncation metadata`);
+    assert.equal(parsed.accessState, 'no_blocking_page_gate', `${label}: limiter discarded structured access state`);
+    assert.doesNotMatch(serialized, /page text truncated/, `${label}: legacy prose-only truncation marker survived`);
+  }
+});
+
+test('read_page schema and prompts require nextOffset continuation in both browsers', () => {
+  for (const [label, getTools, prompt] of [
+    ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ASK_CH],
+    ['firefox', getToolsForModeFx, SYSTEM_PROMPT_ASK_FX],
+  ]) {
+    const tool = getTools('ask').find(item => item.function.name === 'read_page');
+    assert.ok(tool, `${label}: read_page missing from Ask mode`);
+    const properties = tool.function.parameters.properties;
+    assert.equal(properties.offset.type, 'integer', `${label}: offset is not an integer`);
+    assert.equal(properties.offset.minimum, 0, `${label}: offset accepts negative values`);
+    assert.equal(properties.limit.minimum, 500, `${label}: limit minimum drifted`);
+    assert.equal(properties.limit.maximum, 6000, `${label}: limit maximum drifted`);
+    assert.match(tool.function.description, /hasMore:true[\s\S]*continuationArgs[\s\S]*offset:nextOffset/i, `${label}: tool does not teach stable continuation`);
+    assert.match(tool.function.description, /tool_output_window[\s\S]*never evidence of a paywall/i, `${label}: tool truncation can be mistaken for a paywall`);
+    assert.match(prompt, /continuationArgs[\s\S]*offset: nextOffset[\s\S]*includeChrome/, `${label}: Ask prompt does not preserve continuation options`);
+    assert.match(prompt, /no_blocking_page_gate[\s\S]*NOT a paywall/i, `${label}: Ask prompt lacks the structural access distinction`);
+    assert.doesNotMatch(prompt, /scroll the tab and re-read/i, `${label}: stale scroll-and-reread guidance survived`);
+  }
 });
 
 test('trace export: empty input → empty transcript, zero counts', () => {
