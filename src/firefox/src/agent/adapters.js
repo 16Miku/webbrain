@@ -16292,6 +16292,20 @@ const ADAPTERS = [
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
+  // ─── Regional — Rakuten Ichiba (Japan) ────────────────────────────────
+  {
+    name: 'rakuten-ichiba',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|search|item)\.rakuten\.co\.jp|basket\.step\.rakuten\.co\.jp)\//.test(url),
+    notes: `
+- As of 2026-07, Rakuten Ichiba is a MARKETPLACE of independently operated "ショップ" (shops). Stable labels: "買い物かごに入れる" = add to cart, "買い物かご" = cart, and "ご購入手続き" = proceed to checkout.
+- Search results marked "[PR]" are sponsored. For a price comparison, use "同じ商品を安い順で見る" when available, then compare the exact variant's "価格+送料" and per-unit price; do not rank the first result or a bare "〜" price range as cheapest.
+- Select every size, color, pack count, delivery timing, and other required option before comparing or adding. "定期購入" is a recurring purchase with a different price — keep normal purchase selected unless the user explicitly asks for a subscription.
+- The cart is divided into boxes by shop. On desktop, items from different shops cannot share one checkout; mobile "おまとめ購入" may batch the steps, but each shop still creates a separate order and shipment. Read each box and click its own "ご購入手続き".
+- Shipping is shop- and destination-specific. A 39 Shop's 3,980円 free-shipping line applies within the same eligible shop and order, not across shops; "特定送料", remote regions, chilled delivery, and large items can remain chargeable. Verify every shop's cart total.
+- "ポイント", SPU, and スーパーDEAL are conditional rewards, not an immediate cash-price reduction; campaigns may require entry, membership, payment methods, or have caps, and shipping/tax do not earn ordinary points. Report the payable total separately from expected points.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,
