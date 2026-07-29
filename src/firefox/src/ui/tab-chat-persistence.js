@@ -192,25 +192,25 @@ export async function persistTabChatToSession(storageArea, key, html, warn = con
   }
 }
 
-export const TAB_CHAT_HANDOFF_SETTLE_MS = 25;
+export const TAB_CHAT_HANDOFF_PREFIX = 'tabChatHandoff:';
 
 /**
  * Serialize tab-chat reads and writes in the background's shared JavaScript
- * realm. The short settle window lets the outgoing panel enqueue its final
- * visibility snapshot even if the newly visible panel's message is delivered
- * first.
+ * realm. Coordinated loads explicitly request and acknowledge the outgoing
+ * document's final snapshot before assigning a new handoff generation.
  *
  * @param {browser.storage.StorageArea} storageArea
  * @param {{
  *   persist?: typeof persistTabChatToSession,
- *   settleHandoff?: () => Promise<void>,
+ *   requestHandoff?: (tabId: number, handoff: { ownerId: string, generation: number }) => Promise<object | null>,
  * }} options
  */
 export function createTabChatHandoffCoordinator(storageArea, {
   persist = persistTabChatToSession,
-  settleHandoff = () => new Promise(resolve => setTimeout(resolve, TAB_CHAT_HANDOFF_SETTLE_MS)),
+  requestHandoff = async () => null,
 } = {}) {
   const operations = new Map();
+  const handoffOperations = new Map();
   const latestHtml = new Map();
 
   function normalizeTabId(tabId) {
@@ -232,11 +232,56 @@ export function createTabChatHandoffCoordinator(storageArea, {
     return operation;
   }
 
-  function save(tabId, html) {
+  function enqueueHandoff(tabId, fn) {
+    const previous = handoffOperations.get(tabId) || Promise.resolve();
+    const operation = previous.catch(() => {}).then(fn);
+    handoffOperations.set(tabId, operation);
+    operation.finally(() => {
+      if (handoffOperations.get(tabId) === operation) handoffOperations.delete(tabId);
+    }).catch(() => {});
+    return operation;
+  }
+
+  async function readHandoffState(tabId) {
+    const key = TAB_CHAT_HANDOFF_PREFIX + tabId;
+    const stored = await storageArea.get(key);
+    const state = stored?.[key];
+    const ownerId = String(state?.ownerId || '');
+    const generation = Number(state?.generation);
+    return ownerId && Number.isFinite(generation) && generation > 0
+      ? { ownerId, generation }
+      : null;
+  }
+
+  async function readLatest(tabId) {
+    if (latestHtml.has(tabId)) {
+      return { ok: true, found: true, html: latestHtml.get(tabId) };
+    }
+    const key = TAB_CHAT_PREFIX + tabId;
+    const stored = await storageArea.get(key);
+    const html = stored?.[key];
+    if (typeof html === 'string') {
+      latestHtml.set(tabId, html);
+      return { ok: true, found: true, html };
+    }
+    return { ok: true, found: false, html: null };
+  }
+
+  function save(tabId, html, { ownerId = '', handoffGeneration = null } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     const source = String(html || '');
     return enqueue(numericTabId, async (queuedTabId) => {
+      const normalizedOwnerId = String(ownerId || '');
+      const normalizedGeneration = Number(handoffGeneration);
+      if (normalizedOwnerId && Number.isFinite(normalizedGeneration) && normalizedGeneration > 0) {
+        const state = await readHandoffState(queuedTabId);
+        if (!state
+            || state.ownerId !== normalizedOwnerId
+            || state.generation !== normalizedGeneration) {
+          return { ok: true, skipped: true, reason: 'stale-handoff' };
+        }
+      }
       // Retain the lossless copy even if persistence has to compact the
       // storage.session value for quota recovery.
       latestHtml.set(queuedTabId, source);
@@ -244,22 +289,53 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
-  async function load(tabId, { waitForHandoff = false } = {}) {
+  async function load(tabId, { waitForHandoff = false, claimantId = '' } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return { ok: false, found: false, error: 'No tab ID' };
-    if (waitForHandoff) await settleHandoff();
-    return enqueue(numericTabId, async (queuedTabId) => {
-      if (latestHtml.has(queuedTabId)) {
-        return { ok: true, found: true, html: latestHtml.get(queuedTabId) };
+    if (!waitForHandoff) {
+      return enqueue(numericTabId, queuedTabId => readLatest(queuedTabId));
+    }
+
+    return enqueueHandoff(numericTabId, async () => {
+      const outgoing = await enqueue(numericTabId, queuedTabId => readHandoffState(queuedTabId));
+      if (outgoing) {
+        let acknowledgement = null;
+        try {
+          acknowledgement = await requestHandoff(numericTabId, outgoing);
+        } catch { /* an unavailable outgoing document has no snapshot to acknowledge */ }
+        if (acknowledgement?.ok
+            && String(acknowledgement.ownerId || '') === outgoing.ownerId
+            && Number(acknowledgement.generation) === outgoing.generation
+            && typeof acknowledgement.html === 'string') {
+          await save(numericTabId, acknowledgement.html, {
+            ownerId: outgoing.ownerId,
+            handoffGeneration: outgoing.generation,
+          });
+        }
       }
-      const key = TAB_CHAT_PREFIX + queuedTabId;
-      const stored = await storageArea.get(key);
-      const html = stored?.[key];
-      if (typeof html === 'string') {
-        latestHtml.set(queuedTabId, html);
-        return { ok: true, found: true, html };
-      }
-      return { ok: true, found: false, html: null };
+
+      return enqueue(numericTabId, async (queuedTabId) => {
+        const current = await readHandoffState(queuedTabId);
+        const generation = Math.max(
+          Number(outgoing?.generation || 0),
+          Number(current?.generation || 0),
+        ) + 1;
+        const normalizedClaimantId = String(claimantId || '');
+        if (normalizedClaimantId) {
+          await storageArea.set({
+            [TAB_CHAT_HANDOFF_PREFIX + queuedTabId]: {
+              ownerId: normalizedClaimantId,
+              generation,
+            },
+          });
+        }
+        const result = await readLatest(queuedTabId);
+        return {
+          ...result,
+          handoffOwnerId: normalizedClaimantId || null,
+          handoffGeneration: normalizedClaimantId ? generation : null,
+        };
+      });
     });
   }
 
@@ -268,7 +344,10 @@ export function createTabChatHandoffCoordinator(storageArea, {
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     return enqueue(numericTabId, async (queuedTabId) => {
       latestHtml.delete(queuedTabId);
-      await storageArea.remove(TAB_CHAT_PREFIX + queuedTabId);
+      await storageArea.remove([
+        TAB_CHAT_PREFIX + queuedTabId,
+        TAB_CHAT_HANDOFF_PREFIX + queuedTabId,
+      ]);
       return { ok: true };
     });
   }

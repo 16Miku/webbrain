@@ -1403,6 +1403,10 @@ function updateActWarning() {
 // conversation survives the sidebar being closed and reopened.
 const tabChats = new Map();
 const tabChatOperations = new Map();
+const tabChatHandoffGenerations = new Map();
+const tabChatHandoffOwnerId = `sidepanel-chat-${
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}`;
 const tabInputDrafts = new Map();
 const permissionSkipCommandContextsByTab = new Map();
 const queuedComposerMessagesByTab = new Map();
@@ -1433,7 +1437,12 @@ async function loadTabChat(tabId, { waitForHandoff = false } = {}) {
       const stored = await sendToBackground('load_tab_chat', {
         tabId: queuedTabId,
         waitForHandoff,
+        handoffOwnerId: tabChatHandoffOwnerId,
       });
+      if (stored?.handoffOwnerId === tabChatHandoffOwnerId
+          && Number.isFinite(Number(stored?.handoffGeneration))) {
+        tabChatHandoffGenerations.set(queuedTabId, Number(stored.handoffGeneration));
+      }
       const html = stored?.found ? stored.html : null;
       if (typeof html === 'string') {
         tabChats.set(queuedTabId, html);
@@ -1452,18 +1461,25 @@ function persistTabChat(tabId, html, { allowHidden = false } = {}) {
   }
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: false, error: 'No tab ID' });
+  const handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+  const payload = {
+    tabId: numericTabId,
+    html,
+    handoffOwnerId: tabChatHandoffOwnerId,
+  };
+  if (Number.isFinite(handoffGeneration)) payload.handoffGeneration = handoffGeneration;
   if (document.visibilityState === 'hidden' && allowHidden) {
     // Do not wait behind this document's local queue. The shared background
     // coordinator orders this authoritative handoff behind any earlier write
     // and ahead of the newly visible document's restore.
     tabChats.set(numericTabId, html);
-    return sendToBackground('persist_tab_chat', { tabId: numericTabId, html });
+    return sendToBackground('persist_tab_chat', payload);
   }
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     // Keep the live transcript lossless. The background may compact only the
     // storage.session copy when the shared quota requires it.
     tabChats.set(numericTabId, html);
-    return sendToBackground('persist_tab_chat', { tabId: numericTabId, html });
+    return sendToBackground('persist_tab_chat', payload);
   });
 }
 
@@ -1491,6 +1507,7 @@ function clearCachedTabChat(tabId) {
     persistTimerTabId = null;
   }
   tabChats.delete(tabId);
+  tabChatHandoffGenerations.delete(Number(tabId));
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
     try {
@@ -7089,6 +7106,21 @@ async function sendMessage(extraChatParams = {}) {
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
   acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_handoff_request'
+      || String(msg.ownerId || '') !== tabChatHandoffOwnerId) return;
+  const snapshot = lastVisibleTabChatSnapshot;
+  if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) return;
+  sendResponse({
+    ok: true,
+    tabId: Number(snapshot.tabId),
+    ownerId: tabChatHandoffOwnerId,
+    generation: Number(msg.generation),
+    html: snapshot.html,
+  });
 });
 
 document.addEventListener('visibilitychange', () => {

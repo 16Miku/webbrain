@@ -126,7 +126,21 @@ function getContextMenuPromptStore() {
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
-const tabChatHandoff = createTabChatHandoffCoordinator(browser.storage.session);
+const tabChatHandoff = createTabChatHandoffCoordinator(browser.storage.session, {
+  requestHandoff: async (tabId, { ownerId, generation }) => {
+    try {
+      return await browser.runtime.sendMessage({
+        target: 'sidepanel',
+        action: 'tab_chat_handoff_request',
+        tabId,
+        ownerId,
+        generation,
+      });
+    } catch {
+      return null;
+    }
+  },
+});
 
 function createContextMenus() {
   const api = getContextMenuApi();
@@ -2345,11 +2359,15 @@ async function handleMessage(msg, sender) {
     }
 
     case 'persist_tab_chat':
-      return await tabChatHandoff.save(msg.tabId || sender.tab?.id, msg.html);
+      return await tabChatHandoff.save(msg.tabId || sender.tab?.id, msg.html, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
 
     case 'load_tab_chat':
       return await tabChatHandoff.load(msg.tabId || sender.tab?.id, {
         waitForHandoff: msg.waitForHandoff === true,
+        claimantId: msg.handoffOwnerId,
       });
 
     case 'clear_tab_chat':

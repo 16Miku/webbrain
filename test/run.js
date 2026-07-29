@@ -18103,39 +18103,80 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
   ]) {
     const values = { [`${persistence.TAB_CHAT_PREFIX}7`]: '<div>stale</div>' };
     const writes = [];
-    let releaseHandoff;
-    const handoffSettled = new Promise(resolve => { releaseHandoff = resolve; });
+    let acknowledgeHandoff;
+    let requestedHandoff = null;
+    let signalHandoffRequest;
+    const handoffAcknowledged = new Promise(resolve => { acknowledgeHandoff = resolve; });
+    const handoffRequested = new Promise(resolve => { signalHandoffRequest = resolve; });
     const storageArea = {
       async get(key) {
         return { [key]: values[key] };
       },
       async set(patch) {
-        writes.push(Object.values(patch)[0]);
+        if (Object.hasOwn(patch, `${persistence.TAB_CHAT_PREFIX}7`)) {
+          writes.push(patch[`${persistence.TAB_CHAT_PREFIX}7`]);
+        }
         Object.assign(values, patch);
       },
-      async remove(key) {
-        delete values[key];
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
       },
     };
     const coordinator = persistence.createTabChatHandoffCoordinator(storageArea, {
-      settleHandoff: () => handoffSettled,
+      requestHandoff: async (tabId, handoff) => {
+        requestedHandoff = { tabId, ...handoff };
+        signalHandoffRequest();
+        return handoffAcknowledged;
+      },
     });
 
-    // Model the cross-document delivery race: the returning panel asks first,
-    // then the hidden document publishes its final snapshot during the shared
-    // handoff window.
-    const restore = coordinator.load(7, { waitForHandoff: true });
-    await waitMicrotasks(2);
-    const save = coordinator.save(7, '<div>fresh</div>');
-    releaseHandoff();
+    const outgoing = await coordinator.load(7, {
+      waitForHandoff: true,
+      claimantId: 'outgoing-panel',
+    });
+    assert.equal(outgoing.handoffGeneration, 1, `${label}: the first visible panel should own generation one`);
 
-    assert.equal((await save).ok, true, `${label}: outgoing handoff should persist`);
+    // Model a service-worker/message delay longer than the removed settling
+    // timer: the restore must remain pending until the exact outgoing
+    // generation acknowledges its final lossless snapshot.
+    let restoreSettled = false;
+    const restore = coordinator.load(7, {
+      waitForHandoff: true,
+      claimantId: 'returning-panel',
+    }).finally(() => { restoreSettled = true; });
+    await handoffRequested;
+    assert.equal(restoreSettled, false, `${label}: restore must wait for an explicit handoff acknowledgement`);
+    assert.deepEqual(
+      requestedHandoff,
+      { tabId: 7, ownerId: 'outgoing-panel', generation: 1 },
+      `${label}: the barrier should target the current owner generation`,
+    );
+    acknowledgeHandoff({
+      ok: true,
+      ownerId: requestedHandoff.ownerId,
+      generation: requestedHandoff.generation,
+      html: '<div>fresh</div>',
+    });
+
+    const restored = await restore;
     assert.deepEqual(writes, ['<div>fresh</div>'], `${label}: final snapshot should be the coordinated write`);
     assert.deepEqual(
-      await restore,
-      { ok: true, found: true, html: '<div>fresh</div>' },
+      restored,
+      {
+        ok: true,
+        found: true,
+        html: '<div>fresh</div>',
+        handoffOwnerId: 'returning-panel',
+        handoffGeneration: 2,
+      },
       `${label}: returning panel must restore the final outgoing snapshot`,
     );
+    const staleWrite = await coordinator.save(7, '<div>late stale</div>', {
+      ownerId: 'outgoing-panel',
+      handoffGeneration: 1,
+    });
+    assert.equal(staleWrite.skipped, true, `${label}: a late write from the old generation must be rejected`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>fresh</div>', `${label}: stale delivery must not overwrite the acknowledged snapshot`);
   }
 });
 
@@ -18149,8 +18190,8 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'chrome: tab-chat restore should normalize tab ids before checking the cache');
   assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'chrome: coordinated handoff restores should bypass stale document-local HTML');
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'chrome: visible tab-chat persistence should enter the shared background queue');
-  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
+  assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'chrome: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
@@ -18169,8 +18210,8 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'firefox: tab-chat restore should normalize tab ids before checking the cache');
   assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'firefox: coordinated handoff restores should bypass stale document-local HTML');
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'firefox: visible tab-chat persistence should enter the shared background queue');
-  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
+  assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'firefox: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\n// Save current tab', clearStart) + 2);
@@ -21810,6 +21851,21 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       background,
       /createTabChatHandoffCoordinator\([\s\S]*?case 'persist_tab_chat':[\s\S]*?tabChatHandoff\.save[\s\S]*?case 'load_tab_chat':[\s\S]*?tabChatHandoff\.load/,
       `${label}: transcript handoff reads and writes should share a background coordinator`,
+    );
+    assert.match(
+      background,
+      /requestHandoff:[\s\S]*?tab_chat_handoff_request[\s\S]*?ownerId,[\s\S]*?generation,/,
+      `${label}: a returning panel should request an explicit acknowledgement from the outgoing owner generation`,
+    );
+    assert.match(
+      panel,
+      /action !== 'tab_chat_handoff_request'[\s\S]*?msg\.ownerId[\s\S]*?tabChatHandoffOwnerId[\s\S]*?sendResponse\(\{[\s\S]*?generation: Number\(msg\.generation\),[\s\S]*?html: snapshot\.html/,
+      `${label}: only the targeted owner should acknowledge with its final snapshot`,
+    );
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(ROOT, prefix, 'src/ui/tab-chat-persistence.js'), 'utf8'),
+      /TAB_CHAT_HANDOFF_SETTLE_MS|settleHandoff|setTimeout/,
+      `${label}: transcript handoff correctness must not depend on a settling timer`,
     );
     assert.match(
       panel,
