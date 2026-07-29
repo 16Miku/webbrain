@@ -191,3 +191,87 @@ export async function persistTabChatToSession(storageArea, key, html, warn = con
     }
   }
 }
+
+export const TAB_CHAT_HANDOFF_SETTLE_MS = 25;
+
+/**
+ * Serialize tab-chat reads and writes in the background's shared JavaScript
+ * realm. The short settle window lets the outgoing panel enqueue its final
+ * visibility snapshot even if the newly visible panel's message is delivered
+ * first.
+ *
+ * @param {chrome.storage.StorageArea | browser.storage.StorageArea} storageArea
+ * @param {{
+ *   persist?: typeof persistTabChatToSession,
+ *   settleHandoff?: () => Promise<void>,
+ * }} options
+ */
+export function createTabChatHandoffCoordinator(storageArea, {
+  persist = persistTabChatToSession,
+  settleHandoff = () => new Promise(resolve => setTimeout(resolve, TAB_CHAT_HANDOFF_SETTLE_MS)),
+} = {}) {
+  const operations = new Map();
+  const latestHtml = new Map();
+
+  function normalizeTabId(tabId) {
+    const numericTabId = Number(tabId);
+    return Number.isFinite(numericTabId) ? numericTabId : null;
+  }
+
+  function enqueue(tabId, fn) {
+    const numericTabId = normalizeTabId(tabId);
+    if (numericTabId == null) {
+      return Promise.resolve({ ok: false, error: 'No tab ID' });
+    }
+    const previous = operations.get(numericTabId) || Promise.resolve();
+    const operation = previous.catch(() => {}).then(() => fn(numericTabId));
+    operations.set(numericTabId, operation);
+    operation.finally(() => {
+      if (operations.get(numericTabId) === operation) operations.delete(numericTabId);
+    }).catch(() => {});
+    return operation;
+  }
+
+  function save(tabId, html) {
+    const numericTabId = normalizeTabId(tabId);
+    if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
+    const source = String(html || '');
+    return enqueue(numericTabId, async (queuedTabId) => {
+      // Retain the lossless copy even if persistence has to compact the
+      // storage.session value for quota recovery.
+      latestHtml.set(queuedTabId, source);
+      return persist(storageArea, TAB_CHAT_PREFIX + queuedTabId, source);
+    });
+  }
+
+  async function load(tabId, { waitForHandoff = false } = {}) {
+    const numericTabId = normalizeTabId(tabId);
+    if (numericTabId == null) return { ok: false, found: false, error: 'No tab ID' };
+    if (waitForHandoff) await settleHandoff();
+    return enqueue(numericTabId, async (queuedTabId) => {
+      if (latestHtml.has(queuedTabId)) {
+        return { ok: true, found: true, html: latestHtml.get(queuedTabId) };
+      }
+      const key = TAB_CHAT_PREFIX + queuedTabId;
+      const stored = await storageArea.get(key);
+      const html = stored?.[key];
+      if (typeof html === 'string') {
+        latestHtml.set(queuedTabId, html);
+        return { ok: true, found: true, html };
+      }
+      return { ok: true, found: false, html: null };
+    });
+  }
+
+  function clear(tabId) {
+    const numericTabId = normalizeTabId(tabId);
+    if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
+    return enqueue(numericTabId, async (queuedTabId) => {
+      latestHtml.delete(queuedTabId);
+      await storageArea.remove(TAB_CHAT_PREFIX + queuedTabId);
+      return { ok: true };
+    });
+  }
+
+  return { save, load, clear };
+}

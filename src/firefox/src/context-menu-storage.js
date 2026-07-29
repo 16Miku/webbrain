@@ -309,6 +309,53 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
+  async function release(tabId, promptId, claimantId) {
+    const normalizedPromptId = String(promptId || '');
+    const normalizedClaimantId = String(claimantId || '');
+    if (!normalizedPromptId || !normalizedClaimantId) {
+      return { ok: false, released: false, error: 'Prompt ID and claimant ID are required.' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const k = key(numericTabId);
+      const ck = claimKey(numericTabId);
+      const store = getStore();
+      let activeClaim = claims.get(numericTabId) || null;
+      if (!activeClaim && store) {
+        try {
+          const stored = await store.get(ck);
+          activeClaim = stored?.[ck] || null;
+        } catch { /* best effort */ }
+      }
+      const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
+      const sameClaimant = String(activeClaim?.claimantId || '') === normalizedClaimantId;
+      if (!samePrompt || !sameClaimant) {
+        return { ok: true, released: false, reason: activeClaim ? 'claim-lost' : 'missing' };
+      }
+
+      if (store) {
+        try {
+          await store.remove(ck);
+        } catch {
+          return { ok: false, released: false, reason: 'storage' };
+        }
+      }
+      claims.delete(numericTabId);
+
+      let prompt = pending.get(numericTabId) || null;
+      if (!prompt && store) {
+        try {
+          const stored = await store.get(k);
+          prompt = stored?.[k] || null;
+        } catch { /* best effort */ }
+      }
+      return {
+        ok: true,
+        released: true,
+        prompt: prompt?.text ? prompt : null,
+      };
+    });
+  }
+
   async function clear(tabId, promptId) {
     return enqueue(tabId, async (numericTabId) => {
       const k = key(numericTabId);
@@ -355,5 +402,5 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
-  return { key, claimKey, save, consume, claim, reserve, clear, cleanup };
+  return { key, claimKey, save, consume, claim, reserve, release, clear, cleanup };
 }

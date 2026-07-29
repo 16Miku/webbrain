@@ -38,7 +38,6 @@ import {
 } from './store-review-prompt.js';
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
-import { TAB_CHAT_PREFIX, persistTabChatToSession } from './tab-chat-persistence.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
@@ -1557,20 +1556,25 @@ function enqueueTabChatOperation(tabId, fn) {
   return operation;
 }
 
-async function loadTabChat(tabId) {
+async function loadTabChat(tabId, { waitForHandoff = false } = {}) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return null;
-  if (!tabChatOperations.has(numericTabId) && tabChats.has(numericTabId)) return tabChats.get(numericTabId);
+  if (!waitForHandoff && !tabChatOperations.has(numericTabId) && tabChats.has(numericTabId)) {
+    return tabChats.get(numericTabId);
+  }
   try {
     return await enqueueTabChatOperation(numericTabId, async (queuedTabId) => {
-      if (tabChats.has(queuedTabId)) return tabChats.get(queuedTabId);
-      const key = TAB_CHAT_PREFIX + queuedTabId;
-      const stored = await chrome.storage.session.get(key);
-      const html = stored?.[key];
+      if (!waitForHandoff && tabChats.has(queuedTabId)) return tabChats.get(queuedTabId);
+      const stored = await sendToBackground('load_tab_chat', {
+        tabId: queuedTabId,
+        waitForHandoff,
+      });
+      const html = stored?.found ? stored.html : null;
       if (typeof html === 'string') {
         tabChats.set(queuedTabId, html);
         return html;
       }
+      tabChats.delete(queuedTabId);
       return null;
     });
   } catch (e) { /* ignore */ }
@@ -1581,12 +1585,20 @@ function persistTabChat(tabId, html, { allowHidden = false } = {}) {
   if (tabId == null || (document.visibilityState === 'hidden' && !allowHidden)) {
     return Promise.resolve({ ok: false, skipped: true });
   }
-  return enqueueTabChatOperation(tabId, async (numericTabId) => {
-    // Keep the live transcript lossless. persistTabChatToSession may compact
-    // only the storage.session copy when the shared quota requires it.
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: false, error: 'No tab ID' });
+  if (document.visibilityState === 'hidden' && allowHidden) {
+    // Do not wait behind this document's local queue. The shared background
+    // coordinator orders this authoritative handoff behind any earlier write
+    // and ahead of the newly visible document's restore.
     tabChats.set(numericTabId, html);
-    const key = TAB_CHAT_PREFIX + numericTabId;
-    return persistTabChatToSession(chrome.storage.session, key, html);
+    return sendToBackground('persist_tab_chat', { tabId: numericTabId, html });
+  }
+  return enqueueTabChatOperation(tabId, async (numericTabId) => {
+    // Keep the live transcript lossless. The background may compact only the
+    // storage.session copy when the shared quota requires it.
+    tabChats.set(numericTabId, html);
+    return sendToBackground('persist_tab_chat', { tabId: numericTabId, html });
   });
 }
 
@@ -1617,7 +1629,7 @@ function clearCachedTabChat(tabId) {
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
     try {
-      await chrome.storage.session?.remove(TAB_CHAT_PREFIX + numericTabId).catch(() => {});
+      await sendToBackground('clear_tab_chat', { tabId: numericTabId });
     } catch (e) { /* ignore */ }
     return { ok: true };
   });
@@ -2072,7 +2084,6 @@ async function renderClearedConversationForTab(tabId) {
 // to thrash storage on every keystroke / streamed token.
 let persistTimer = null;
 let persistTimerTabId = null;
-let visibilityHandoffPromise = Promise.resolve();
 let visibleStateRefreshPending = false;
 let lastVisibleTabChatSnapshot = null;
 function schedulePersist() {
@@ -3718,7 +3729,7 @@ async function refreshVisibleSidePanelState() {
   // predate writes made by the panel that was visible in the meantime. Reload
   // from the shared session copy before that document is allowed to persist.
   tabChats.delete(tabId);
-  const html = await loadTabChat(tabId);
+  const html = await loadTabChat(tabId, { waitForHandoff: true });
   if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
   renderedTabId = tabId;
   if (html && html !== messagesEl.innerHTML) {
@@ -3740,7 +3751,7 @@ async function refreshVisibleSidePanelState() {
 function requestVisibleSidePanelStateRefresh() {
   if (document.visibilityState === 'hidden') return;
   visibleStateRefreshPending = true;
-  Promise.resolve(visibilityHandoffPromise).catch(() => {}).then(() => {
+  Promise.resolve().then(() => {
     if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
     visibleStateRefreshPending = false;
     refreshVisibleSidePanelState().catch(() => {});
@@ -7036,7 +7047,9 @@ async function sendMessage(extraChatParams = {}) {
   // Parse any leading slash command. parseSlashCommands may strip the
   // command from `text` and toggle apiMutationsAllowed as a side effect.
   if (!retryOptions) text = await parseSlashCommands(text, tabId, { permissionSkipContext });
-  let renderToCurrentTab = sameTabId(currentTabId, tabId) && sameTabId(renderedTabId, tabId);
+  let renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     if (text) saveInputDraftForTab(tabId, text);
     return false;
@@ -7063,7 +7076,9 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  renderToCurrentTab = sameTabId(currentTabId, tabId) && sameTabId(renderedTabId, tabId);
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     if (text) saveInputDraftForTab(tabId, text);
     setTabProcessing(tabId, false);
@@ -7083,6 +7098,23 @@ async function sendMessage(extraChatParams = {}) {
     } catch {
       renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
     }
+    const claimStillVisible = document.visibilityState !== 'hidden'
+      && sameTabId(currentTabId, tabId)
+      && sameTabId(renderedTabId, tabId);
+    if (renewedClaim?.claimed && !claimStillVisible) {
+      try {
+        await sendToBackground('release_context_menu_prompt_claim', {
+          tabId,
+          promptId: contextMenuClaim.promptId,
+          claimantId: contextMenuClaim.claimantId,
+        });
+      } catch { /* the durable lease still expires if release fails */ }
+      onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
     if (!renewedClaim?.claimed) {
       onContextMenuClaimRejected?.(renewedClaim || {
         reason: 'claim-lost',
@@ -7093,6 +7125,17 @@ async function sendMessage(extraChatParams = {}) {
       if (sameTabId(currentTabId, tabId)) syncSendButtonState();
       return false;
     }
+  }
+
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
+  if (!renderToCurrentTab) {
+    if (text) saveInputDraftForTab(tabId, text);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    return false;
   }
 
   let userEl = null;
@@ -7437,9 +7480,9 @@ document.addEventListener('visibilitychange', () => {
       persistTimer = null;
       persistTimerTabId = null;
     }
-    visibilityHandoffPromise = snapshot
-      ? persistTabChat(snapshot.tabId, snapshot.html, { allowHidden: true }).catch(() => {})
-      : Promise.resolve();
+    if (snapshot) {
+      persistTabChat(snapshot.tabId, snapshot.html, { allowHidden: true }).catch(() => {});
+    }
     return;
   }
   requestVisibleSidePanelStateRefresh();

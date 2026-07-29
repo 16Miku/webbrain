@@ -18096,42 +18096,87 @@ test('tab-chat persistence evicts an existing chat when older keys saturate the 
   }
 });
 
+test('tab-chat handoff coordinator orders a returning-panel read behind the outgoing snapshot', async () => {
+  for (const [label, persistence] of [
+    ['chrome', TabChatPersistenceCh],
+    ['firefox', TabChatPersistenceFx],
+  ]) {
+    const values = { [`${persistence.TAB_CHAT_PREFIX}7`]: '<div>stale</div>' };
+    const writes = [];
+    let releaseHandoff;
+    const handoffSettled = new Promise(resolve => { releaseHandoff = resolve; });
+    const storageArea = {
+      async get(key) {
+        return { [key]: values[key] };
+      },
+      async set(patch) {
+        writes.push(Object.values(patch)[0]);
+        Object.assign(values, patch);
+      },
+      async remove(key) {
+        delete values[key];
+      },
+    };
+    const coordinator = persistence.createTabChatHandoffCoordinator(storageArea, {
+      settleHandoff: () => handoffSettled,
+    });
+
+    // Model the cross-document delivery race: the returning panel asks first,
+    // then the hidden document publishes its final snapshot during the shared
+    // handoff window.
+    const restore = coordinator.load(7, { waitForHandoff: true });
+    await waitMicrotasks(2);
+    const save = coordinator.save(7, '<div>fresh</div>');
+    releaseHandoff();
+
+    assert.equal((await save).ok, true, `${label}: outgoing handoff should persist`);
+    assert.deepEqual(writes, ['<div>fresh</div>'], `${label}: final snapshot should be the coordinated write`);
+    assert.deepEqual(
+      await restore,
+      { ok: true, found: true, html: '<div>fresh</div>' },
+      `${label}: returning panel must restore the final outgoing snapshot`,
+    );
+  }
+});
+
 test('chrome sidepanel serializes tab-chat storage writes with clears and reads', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   assert.match(panel, /const tabChatOperations = new Map\(\);/, 'chrome: tab-chat operations should be queued per tab');
   assert.match(panel, /function enqueueTabChatOperation\(tabId, fn\) \{[\s\S]*?const previous = tabChatOperations\.get\(numericTabId\) \|\| Promise\.resolve\(\);[\s\S]*?tabChatOperations\.set\(numericTabId, operation\);[\s\S]*?\}/, 'chrome: tab-chat writes should be serialized behind prior operations');
-  const loadStart = panel.indexOf('async function loadTabChat(tabId) {');
+  const loadStart = panel.indexOf('async function loadTabChat(tabId, { waitForHandoff = false } = {}) {');
   assert.notEqual(loadStart, -1, 'chrome: loadTabChat missing');
   const loadBody = panel.slice(loadStart, panel.indexOf('\n}\n\nfunction persistTabChat', loadStart) + 2);
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'chrome: tab-chat restore should normalize tab ids before checking the cache');
-  assert.match(loadBody, /if \(!tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\) return tabChats\.get\(numericTabId\);/, 'chrome: tab-chat restore should only trust cached HTML when no queued operation can update it');
-  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?if \(tabChats\.has\(queuedTabId\)\) return tabChats\.get\(queuedTabId\);[\s\S]*?const stored = await chrome\.storage\.session\.get\(key\);/, 'chrome: tab-chat restore should wait behind pending per-tab operations before reading cache or storage');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?return persistTabChatToSession\(chrome\.storage\.session, key, html\);/, 'chrome: tab-chat persistence should be serialized through the queue and quota recovery helper');
+  assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'chrome: coordinated handoff restores should bypass stale document-local HTML');
+  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
+  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'chrome: visible tab-chat persistence should enter the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'chrome: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'chrome: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'chrome: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?chrome\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/, 'chrome: queued clears should delete stale HTML re-cached by older queued writes before removing storage');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/, 'chrome: queued clears should delete stale HTML before clearing the shared background state');
 });
 
 test('firefox sidepanel serializes tab-chat storage writes with clears and reads', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
   assert.match(panel, /const tabChatOperations = new Map\(\);/, 'firefox: tab-chat operations should be queued per tab');
   assert.match(panel, /function enqueueTabChatOperation\(tabId, fn\) \{[\s\S]*?const previous = tabChatOperations\.get\(numericTabId\) \|\| Promise\.resolve\(\);[\s\S]*?tabChatOperations\.set\(numericTabId, operation\);[\s\S]*?\}/, 'firefox: tab-chat writes should be serialized behind prior operations');
-  const loadStart = panel.indexOf('async function loadTabChat(tabId) {');
+  const loadStart = panel.indexOf('async function loadTabChat(tabId, { waitForHandoff = false } = {}) {');
   assert.notEqual(loadStart, -1, 'firefox: loadTabChat missing');
   const loadBody = panel.slice(loadStart, panel.indexOf('\n}\n\nfunction persistTabChat', loadStart) + 2);
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'firefox: tab-chat restore should normalize tab ids before checking the cache');
-  assert.match(loadBody, /if \(!tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\) return tabChats\.get\(numericTabId\);/, 'firefox: tab-chat restore should only trust cached HTML when no queued operation can update it');
-  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?if \(tabChats\.has\(queuedTabId\)\) return tabChats\.get\(queuedTabId\);[\s\S]*?const stored = await browser\.storage\.session\.get\(key\);/, 'firefox: tab-chat restore should wait behind pending per-tab operations before reading cache or storage');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?return persistTabChatToSession\(browser\.storage\.session, key, html\);/, 'firefox: tab-chat persistence should be serialized through the queue and quota recovery helper');
+  assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'firefox: coordinated handoff restores should bypass stale document-local HTML');
+  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
+  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'firefox: visible tab-chat persistence should enter the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', \{ tabId: numericTabId, html \}\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'firefox: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\n// Save current tab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'firefox: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'firefox: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?browser\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/, 'firefox: queued clears should delete stale HTML re-cached by older queued writes before removing storage');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/, 'firefox: queued clears should delete stale HTML before clearing the shared background state');
 });
 
 test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', () => {
@@ -18152,7 +18197,7 @@ test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', 
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(
     clearBody,
-    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?chrome\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/,
+    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/,
     'chrome: clearing a tab should cancel any pending stale write before removing cached chat',
   );
 });
@@ -20054,7 +20099,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(modeCaptureIdx < parseIdx && apiCaptureIdx < parseIdx, true, `${label}: stale-tab residual sends should not read visible-tab options after slash parsing`);
     assert.match(
       sendBody,
-      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = sameTabId\(currentTabId, tabId\) && sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
+      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
       `${label}: stale residual slash-command prompts should be preserved as drafts instead of hidden runs`,
     );
     assert.match(
@@ -20064,7 +20109,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     );
     assert.match(
       sendBody,
-      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?renderToCurrentTab = sameTabId\(currentTabId, tabId\) && sameTabId\(renderedTabId, tabId\);/,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);/,
       `${label}: aborted sends during history hydration should stop before chat dispatch`,
     );
     const staleReturnIdx = sendBody.indexOf('if (!renderToCurrentTab) {');
@@ -21702,8 +21747,8 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId\);[\s\S]*?await consumePendingContextMenuPrompt\(\);/,
-      `${label}: a returning panel should reload shared state before consuming prompts`,
+      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await consumePendingContextMenuPrompt\(\);/,
+      `${label}: a returning panel should wait for the shared handoff before consuming prompts`,
     );
     assert.match(
       panel,
@@ -21712,13 +21757,23 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /const snapshot = lastVisibleTabChatSnapshot;[\s\S]*?visibilityHandoffPromise = snapshot[\s\S]*?persistTabChat\(snapshot\.tabId, snapshot\.html, \{ allowHidden: true \}\)/,
-      `${label}: the last visible transcript should flush before hidden-writer protection takes over`,
+      /const snapshot = lastVisibleTabChatSnapshot;[\s\S]*?persistTabChat\(snapshot\.tabId, snapshot\.html, \{ allowHidden: true \}\)/,
+      `${label}: the last visible transcript should enter the shared handoff before hidden-writer protection takes over`,
+    );
+    assert.doesNotMatch(
+      panel,
+      /visibilityHandoffPromise/,
+      `${label}: a document-local promise cannot coordinate distinct side-panel documents`,
+    );
+    assert.match(
+      background,
+      /createTabChatHandoffCoordinator\([\s\S]*?case 'persist_tab_chat':[\s\S]*?tabChatHandoff\.save[\s\S]*?case 'load_tab_chat':[\s\S]*?tabChatHandoff\.load/,
+      `${label}: transcript handoff reads and writes should share a background coordinator`,
     );
     assert.match(
       panel,
-      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?sendToBackground\('claim_context_menu_prompt',[\s\S]*?let userEl = null;/,
-      `${label}: context-menu ownership should be renewed after async preflight and before rendering the submitted turn`,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sendToBackground\('claim_context_menu_prompt',[\s\S]*?const claimStillVisible = document\.visibilityState !== 'hidden'[\s\S]*?release_context_menu_prompt_claim[\s\S]*?let userEl = null;/,
+      `${label}: context-menu ownership should require visibility around renewal and be released before a hidden panel can start`,
     );
   }
 });
@@ -21770,11 +21825,19 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     assert.equal(currentOwner.requestId, 'reserved-run', `${label}: reservation should return the detached-run acknowledgement`);
     assert.equal(reservations, 1, `${label}: ownership validation and the run reservation callback should be exactly once`);
 
+    const released = await storage.release(prompt.tabId, prompt.id, 'panel-b');
+    assert.equal(released.released, true, `${label}: a panel that becomes hidden should relinquish its lease`);
+    assert.equal(released.prompt?.id, prompt.id, `${label}: releasing ownership must retain the durable prompt`);
+    assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: released ownership should clear only the lease`);
+    assert.equal(data.has(storage.key(prompt.tabId)), true, `${label}: released ownership must not consume the prompt`);
+    const reclaimed = await storage.claim(prompt.tabId, prompt.id, 'panel-c', takeover.leaseExpiresAt + 1);
+    assert.equal(reclaimed.claimed, true, `${label}: a newly visible panel should reclaim immediately after release`);
+
     const blockedByRun = await storage.claim(
       prompt.tabId,
       prompt.id,
-      'panel-c',
-      takeover.leaseExpiresAt,
+      'panel-d',
+      reclaimed.leaseExpiresAt,
       () => true,
     );
     assert.equal(blockedByRun.claimed, false, `${label}: a queued claimant must be rejected once a run is reserved`);
