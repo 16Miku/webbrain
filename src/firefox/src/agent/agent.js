@@ -1,5 +1,6 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { handleDoneJson } from './cloud-output.js';
+import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
@@ -11217,13 +11218,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _limitToolResult(result) {
     const maxResultChars = 8000; // ~2k tokens
-    const safeResult = result == null ? {
+    const windowSafeResult = isReadPageWindowResult(result)
+      ? fitReadPageWindowResult(result, maxResultChars)
+      : result;
+    const safeResult = windowSafeResult == null ? {
       success: false,
       errorCode: 'missing_tool_response',
       missingToolResponse: true,
       outcomeUnknown: false,
       error: 'Tool returned no result.',
-    } : result;
+    } : windowSafeResult;
     let json;
     try {
       json = JSON.stringify(safeResult);
@@ -11240,14 +11244,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (json.length <= maxResultChars) return json;
 
     // Try to trim the 'text' field specifically (page content)
-    if (result && typeof result.text === 'string' && result.text.length > 4000) {
-      const trimmed = { ...result, text: result.text.slice(0, 4000) + '\n[...page text truncated]' };
+    if (safeResult && typeof safeResult.text === 'string' && safeResult.text.length > 4000) {
+      const trimmed = { ...safeResult, text: safeResult.text.slice(0, 4000) + '\n[...page text truncated]' };
       json = JSON.stringify(trimmed);
       if (json.length <= maxResultChars) return json;
     }
 
-    if (result && result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
-      const originalData = result.data;
+    if (safeResult && safeResult.data && typeof safeResult.data === 'object' && !Array.isArray(safeResult.data)) {
+      const originalData = safeResult.data;
       const originalText = typeof originalData.text === 'string' ? originalData.text : null;
       const originalSegments = Array.isArray(originalData.segments) ? originalData.segments : null;
       if (originalText || originalSegments) {
@@ -11282,7 +11286,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               data.segmentsTruncated = true;
               data.originalSegmentCount = data.originalSegmentCount ?? originalSegments.length;
             }
-            const trimmed = { ...result, data };
+            const trimmed = { ...safeResult, data };
             json = JSON.stringify(trimmed);
             if (json.length <= maxResultChars) return json;
           }
@@ -14224,6 +14228,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       this._annotateCredentialField(name, response);
+      if (name === 'read_page') {
+        response = applyReadPageWindow(response, args);
+      }
       return response;
     } catch (e) {
       // Content script might not be injected — try injecting it
@@ -14250,6 +14257,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
         this._annotateCredentialField(name, response);
+        if (name === 'read_page') {
+          response = applyReadPageWindow(response, args);
+        }
         return response;
       } catch (e2) {
         let pageUrl = '';
