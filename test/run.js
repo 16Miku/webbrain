@@ -2489,6 +2489,44 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Coupang shopping surfaces and includes Korean marketplace guidance', () => {
+  const trustedUrls = [
+    'https://coupang.com/',
+    'https://www.coupang.com/np/search?q=bodywash',
+    'https://m.coupang.com/vm/products/40994378',
+    'https://cart.coupang.com/cartView.pang',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'coupang');
+    assert.equal(getActiveAdapterFx(url)?.name, 'coupang');
+  }
+
+  const rejectedUrls = [
+    'https://wing.coupang.com/',
+    'https://www.tw.coupang.com/',
+    'https://coupang.com.phishing.example/vp/products/40994378',
+    'https://example.com/coupang.com/vp/products/40994378',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'coupang');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'coupang');
+  }
+
+  const adapter = getActiveAdapter('https://www.coupang.com/vp/products/40994378');
+  const firefoxAdapter = getActiveAdapterFx('https://cart.coupang.com/');
+  assert.match(adapter?.notes || '', /2026-07/);
+  assert.match(adapter?.notes || '', /Akamai Access Denied/);
+  assert.match(adapter?.notes || '', /배송비 포함/);
+  assert.match(adapter?.notes || '', /낮은가격순/);
+  assert.match(adapter?.notes || '', /판매자/);
+  assert.match(adapter?.notes || '', /different sellers/i);
+  assert.match(adapter?.notes || '', /로켓배송/);
+  assert.match(adapter?.notes || '', /와우/);
+  assert.match(adapter?.notes || '', /장바구니 담기/);
+  assert.match(adapter?.notes || '', /바로구매/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Rakuten Ichiba shopping surfaces and includes marketplace guidance', () => {
   const trustedUrls = [
     'https://www.rakuten.co.jp/',

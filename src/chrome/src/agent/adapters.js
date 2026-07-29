@@ -16309,6 +16309,20 @@ const ADAPTERS = [
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
+  // ─── Regional — Coupang (Korea) ──────────────────────────────────────
+  {
+    name: 'coupang',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|cart)\.)?coupang\.com\//.test(url),
+    notes: `
+- As of 2026-07, background requests can return an Akamai Access Denied page even when the shopping page works in the active tab. If fetch_url or research_url is blocked, switch immediately to read_page, the accessibility tree, and DOM tools; do not retry the same URL.
+- Coupang is a Korean MARKETPLACE. Stable labels: "장바구니 담기" = add to cart, "바로구매" = buy now, "장바구니" = cart, and "판매자" = seller. "바로구매" skips the cart, so do not click it when the task is only to collect or compare items.
+- Search defaults to "쿠팡 랭킹순", and sponsored products are marked "AD". For a price comparison choose "낮은가격순" and enable "배송비 포함"; do not present the default ranking or an ad position as the cheapest result.
+- Product pages may group pack count, size, color, or other variants behind "모든 옵션 보기". Select the exact option first and compare the displayed unit price (for example, 100g당), not only the bundle total.
+- The same product can be fulfilled by different sellers. Read "판매자", seller rating, delivery fee, and arrival date for the selected offer; product reviews may be pooled across different sellers and are not evidence about that seller.
+- "로켓배송" describes Coupang-fulfilled delivery, while "와우" free shipping, free returns, or dawn delivery are membership-conditional. Confirm the selected offer and the cart total before promising delivery, savings, or a final price.`,
+  },
+
   // ─── Regional — Rakuten Ichiba (Japan) ────────────────────────────────
   {
     name: 'rakuten-ichiba',
