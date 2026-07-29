@@ -56,6 +56,9 @@ const baseCss = `
   .provider { --bg1:#f6f8fb; --bg2:#eef8f1; --ink:#182033; --muted:#5b6574;
     --accent:#3e6ff4; --accent2:#28a96b; --border:rgba(25,38,68,0.13);
     --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(24,52,90,0.19); }
+  .proof { --bg1:#f7f6ff; --bg2:#eef4ff; --ink:#171a2b; --muted:#5a6274;
+    --accent:#6e56cf; --accent2:#f0a52b; --border:rgba(30,34,64,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(38,34,78,0.18); }
   .content { position: relative; z-index: 1; width: 100%; height: 100%; padding: 44px 56px; }
   .brand { display: flex; align-items: center; gap: 13px; font-size: 22px; font-weight: 760; }
   .brand img { width: 40px; height: 40px; border-radius: 11px; box-shadow: 0 10px 24px rgba(0,0,0,0.13); }
@@ -317,7 +320,80 @@ function offerScene() {
   };
 }
 
-const scenes = [hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene()];
+/* ---------- 07 SOCIAL PROOF ---------- */
+function proofScene() {
+  const icon = (paths, color) =>
+    `<svg width="46" height="46" viewBox="0 0 24 24" fill="${color}" aria-hidden="true">${paths}</svg>`;
+  const stats = [
+    [icon('<path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>', 'var(--accent2)'),
+      '500+', 'GitHub stars'],
+    [icon('<path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.2.3a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM9 13.2c-3.4 0-6.6 1.75-6.6 3.9V20h13.2v-2.9c0-2.15-3.2-3.9-6.6-3.9Zm7.2.2c-.62 0-1.2.05-1.74.14 1.2.94 1.94 2.11 1.94 3.56V20h5.2v-2.5c0-1.9-2.5-3.1-5.4-3.1Z"/>', 'var(--accent)'),
+      '20+', 'contributors'],
+    [icon('<path d="M12 2.4c.6 0 1.1.5 1.1 1.1v.9l6.4 1.2a1 1 0 0 1-.18 1.98l-.5-.02 2.6 5.9c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.55-5.8-3.67-.68V18.6h3.3a1.1 1.1 0 1 1 0 2.2H7.6a1.1 1.1 0 1 1 0-2.2h3.3V6.81l-3.67.68 2.55 5.8c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.6-5.9-.5.02a1 1 0 0 1-.18-1.98l6.4-1.2v-.9c0-.6.5-1.1 1.1-1.1Zm5.82 7.7-1.5 3.42h3l-1.5-3.42Zm-11.64 0-1.5 3.42h3l-1.5-3.42Z"/>', 'var(--accent)'),
+      'MIT', 'licensed, free forever'],
+  ];
+  // Decorative contributor avatars: initials over a fixed palette.
+  const avatars = [
+    ['ES', '#6e56cf'], ['MK', '#e0644f'], ['AY', '#2b9f6b'], ['JR', '#2f6fe0'],
+    ['LP', '#c8478f'], ['DT', '#e08b2b'], ['SN', '#4a5568'], ['KV', '#0f9aa8'],
+    ['BW', '#8b5cf6'], ['RO', '#d14f6d'],
+  ];
+  return {
+    file: '07-social-proof.png',
+    theme: 'proof',
+    body: `
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        ${brandRow()}
+        <span class="eyebrow"><span class="dot"></span>Open source</span>
+      </div>
+
+      <div style="text-align:center; margin-top:44px;">
+        <h1 style="margin:0; font-size:64px;">Built in the open.</h1>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:26px; width:1120px; margin:52px auto 0;">
+        ${stats.map(([glyph, value, label]) => `
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:26px;
+            padding:40px 24px 36px; text-align:center; box-shadow:var(--shadow);">
+            <div style="height:46px; line-height:0;">${glyph}</div>
+            <div style="margin-top:22px; font-size:82px; font-weight:850; line-height:1;">${value}</div>
+            <div style="margin-top:14px; font-size:22px; font-weight:680; color:var(--muted);">${label}</div>
+          </div>`).join('')}
+      </div>
+
+      <div style="width:1120px; margin:44px auto 0; display:flex; align-items:center; justify-content:space-between;
+        gap:24px; background:#171827; border:1px solid rgba(255,255,255,0.12); border-radius:22px;
+        padding:22px 26px; color:#fff; box-shadow:0 24px 60px rgba(23,26,43,0.3);">
+        <div style="display:flex; align-items:center; gap:14px; min-width:0;">
+          <svg width="34" height="34" viewBox="0 0 16 16" fill="#ffffff" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          <div style="min-width:0;">
+            <div style="font-size:21px; font-weight:800;">github.com/webbrain-one/webbrain</div>
+            <div style="font-size:15px; font-weight:640; color:#9ba3b8; margin-top:4px;">Star it, fork it, ship a PR.</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:18px;">
+          <div style="display:flex; align-items:center;">
+            ${avatars.map(([initials, bg], i) => `
+              <span style="width:44px; height:44px; border-radius:999px; background:${bg}; color:#fff;
+                display:grid; place-items:center; font-size:15px; font-weight:800; letter-spacing:0.01em;
+                border:2px solid #171827; margin-left:${i === 0 ? 0 : -12}px;">${initials}</span>`).join('')}
+            <span style="height:44px; padding:0 14px; border-radius:999px; background:rgba(255,255,255,0.14);
+              color:#e7eaf3; display:grid; place-items:center; font-size:15px; font-weight:800;
+              border:2px solid #171827; margin-left:-12px;">+10</span>
+          </div>
+          <span style="display:inline-flex; align-items:center; gap:9px; height:46px; padding:0 20px; border-radius:12px;
+            background:var(--accent2); color:#2b1c00; font-size:17px; font-weight:850; white-space:nowrap;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="#2b1c00" aria-hidden="true">
+              <path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>
+            </svg>Star</span>
+        </div>
+      </div>`,
+  };
+}
+
+const scenes = [hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene()];
 
 function html(scene) {
   return `<!doctype html><html><head><meta charset="utf-8">
