@@ -106,7 +106,7 @@ function hero(light = false) {
           Automate. <span style="opacity:0.85;">Any LLM.</span>
         </div>
         <div style="display:flex; gap:10px; margin-top:30px;">
-          ${['Chrome & Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
+          ${['Chromium browsers and Firefox', 'Local or cloud models', 'MIT licensed'].map((c) => `
             <span style="padding:10px 15px; border:1px solid var(--border); background:var(--panel);
               border-radius:999px; font-size:15px; font-weight:700; color:var(--muted);">${c}</span>`).join('')}
         </div>
