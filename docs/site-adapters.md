@@ -12,14 +12,14 @@ Site adapters are the **#1 most-wanted contribution** (see CONTRIBUTING.md). The
 
 ### Matching
 
-`getActiveAdapter(url)` iterates the `ADAPTERS` array and returns the **first** adapter whose `match(url)` returns `true`:
+`getActiveAdapter(url)` iterates the `ADAPTERS` array and returns the **first** adapter whose `matches(url)` returns `true`:
 
 ```js
 export function getActiveAdapter(url) {
   if (!url) return null;
   for (const a of ADAPTERS) {
     try {
-      if (a.match(url)) return a;
+      if (a.matches(url)) return a;
     } catch (e) { /* skip malformed matchers */ }
   }
   return null;
@@ -52,7 +52,7 @@ injecting Mastodon guidance more broadly.
 {
   name: 'my-site',          // unique short identifier
   category: 'general',       // 'general' | 'finance'
-  match: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?example\.com\//.test(url),
   notes: `
 - Bullet 1: the actionable tip.
 - Bullet 2: another tip.
@@ -67,7 +67,7 @@ injecting Mastodon guidance more broadly.
 |---|---|---|
 | `name` | string | Unique identifier for the adapter. Used in system-prompt headings. |
 | `category` | `'general'` or `'finance'` | `'finance'` adds a `[FINANCE / HIGH-STAKES]` banner to the heading and triggers extra safety guidance in the system prompt. |
-| `match` | `(url) => boolean` | Returns `true` when the adapter should fire for this URL. Regex is preferred — keep it specific enough to avoid false matches. |
+| `matches` | `(url) => boolean` | Returns `true` when the adapter should fire for this URL. Regex is preferred — keep it specific enough to avoid false matches. |
 | `notes` | string | Bulleted guidance injected into the first user message. **Keep 4–8 lines max.** See style guidance below. |
 
 ### Ordering
@@ -108,7 +108,7 @@ Adapters are ordered by category/site in the `ADAPTERS` array. **Finance adapter
 {
   name: 'twitter',
   category: 'general',
-  match: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
   notes: `
 - The composer is a contenteditable, not a textarea. Character count is enforced client-side.
 - The timeline is virtualized — tweets scroll out of the DOM. Use search, not scroll, to find a tweet.
@@ -124,7 +124,7 @@ Adapters are ordered by category/site in the `ADAPTERS` array. **Finance adapter
 {
   name: 'stripe',
   category: 'finance',
-  match: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(dashboard\.)?stripe\.com\//.test(url),
   notes: `
 - LIVE vs TEST mode toggle in the top-right. Always confirm which mode.
 - Refunds are partial-by-default — check the amount carefully.
@@ -161,7 +161,7 @@ Open each adapted site and verify:
 
 - [ ] Add the adapter object to the `ADAPTERS` array in `src/chrome/src/agent/adapters.js`
 - [ ] Mirror the exact same change to `src/firefox/src/agent/adapters.js`
-- [ ] Ensure the `match()` regex is specific and doesn't shadow neighboring adapters
+- [ ] Ensure the `matches()` regex is specific and doesn't shadow neighboring adapters
 - [ ] If `category: 'finance'`, place it BEFORE `finance-generic` in the array
 - [ ] Verify the notes are 4–8 concise bullets
 - [ ] Test matching with `getActiveAdapter(url)`

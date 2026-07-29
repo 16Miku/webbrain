@@ -57,7 +57,7 @@ The shape is:
 {
   name: 'sahibinden',
   category: 'general',
-  match: (url) => /^https?:\/\/(www\.)?sahibinden\.com\//.test(url),
+  matches: (url) => /^https?:\/\/(www\.)?sahibinden\.com\//.test(url),
   notes: `
 - (one short bullet per non-obvious fact about the site, written in the
    imperative voice for an LLM that has never seen this page before.)
@@ -69,7 +69,7 @@ Each adapter needs four things:
 
 1. **`name`** — short identifier, lowercase, no spaces. Used in logs and the settings UI.
 2. **`category`** — usually `'general'`. Reserved for future filtering.
-3. **`match(url)`** — regex against the current tab URL. Match the broadest
+3. **`matches(url)`** — regex against the current tab URL. Match the broadest
    form of the domain (`.com`, `.co.uk`, `.com.tr` country variants if applicable),
    but don't match unrelated subdomains.
 4. **`notes`** — the body the agent will see prepended to its first message
