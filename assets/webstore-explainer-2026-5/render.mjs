@@ -10,8 +10,17 @@ const ROOT = path.resolve(DIR, '../..');
 // No product logo or wordmark in this variant — the Web Store already shows both beside the listing.
 const assets = {
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
-  models: dataUri('assets/screenshots_v1/s7-model-selector.png'),
+  modelProviders: dataUri('assets/webstore-explainer-2026-5/model-providers-short.png'),
 };
+
+const browserLogos = [
+  ['Chrome', svgUri('chrome.svg')],
+  ['Firefox', svgUri('firefox.svg')],
+  ['Microsoft Edge', svgUri('edge.svg')],
+  ['Opera', svgUri('opera.svg')],
+  ['Vivaldi', svgUri('vivaldi.svg')],
+  ['Brave Browser', svgUri('brave.svg')],
+];
 
 // Vendored so renders never depend on what happens to be installed locally. See fonts/OFL-*.txt.
 const fonts = {
@@ -23,6 +32,11 @@ const fonts = {
 function dataUri(relativePath) {
   const bytes = readFileSync(path.join(ROOT, relativePath));
   return `data:image/png;base64,${bytes.toString('base64')}`;
+}
+
+function svgUri(name) {
+  const bytes = readFileSync(path.join(DIR, 'browser-logos', name));
+  return `data:image/svg+xml;base64,${bytes.toString('base64')}`;
 }
 
 function fontUri(name) {
@@ -127,6 +141,15 @@ function hero(light = false) {
             <span style="padding:11px 16px; border:1px solid var(--border); background:var(--panel);
               border-radius:999px; font-family:var(--mono); font-size:13.5px; font-weight:650;
               letter-spacing:0.05em; text-transform:uppercase; color:var(--muted);">${c}</span>`).join('')}
+        </div>
+        <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-top:20px;"
+          aria-label="Supported browsers">
+          ${browserLogos.map(([name, src]) => `
+            <span title="${name}" style="width:46px; height:46px; display:grid; place-items:center;
+              border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,0.92);
+              box-shadow:0 10px 24px rgba(34,40,72,0.10);">
+              <img src="${src}" alt="${name}" style="display:block; width:30px; height:30px; object-fit:contain;">
+            </span>`).join('')}
         </div>
       </div>`,
   };
@@ -243,25 +266,45 @@ function askScene() {
   };
 }
 
-/* ---------- 04 ANY LLM (cropped to model dropdown) ---------- */
+/* ---------- 04 ANY LLM (large provider rows, cropped to their useful content) ---------- */
 function modelsScene() {
-  // Source 1280x800. Relevant UI: dropdown+header x 418-1162, y 6-748. Scale 0.82.
-  const s = 0.82;
-  const x = 418, y = 6, w = 744, h = 742;
+  // Source 1472x976. Each provider card is isolated so the screenshot's beige
+  // backdrop disappears. The left 924px carries the useful identity/model data;
+  // the masked edge lets it fade naturally into the slide rather than looking cut.
+  const sourceW = 1472;
+  const sourceScale = 0.7;
+  const cropX = 18;
+  const cropW = 924;
+  const cropH = 91;
+  const rowStarts = [23, 143, 263, 383, 503, 623, 743, 863];
+  const displayW = cropW * sourceScale;
+  const displayH = cropH * sourceScale;
   return {
     scale: 1.04,
     file: '04-any-llm.png',
     theme: 'provider',
     body: `
-      <div style="display:grid; grid-template-columns: 470px 1fr; gap:44px; align-items:center; height:100%;">
+      <div style="display:grid; grid-template-columns: 430px 1fr; gap:28px; align-items:center; height:100%;">
         <div>
           <h1>Use the model you trust.</h1>
           <div class="sub">Local, cloud, or your own keys &mdash; switch anytime.</div>
-        </div>
-        <div style="display:flex; justify-content:center;">
-          <div class="crop-frame" style="width:${w * s}px; height:${h * s}px; transform:rotate(-1.1deg);">
-            <img src="${assets.models}" style="width:${1280 * s}px; margin-left:${-x * s}px; margin-top:${-y * s}px;" alt="">
+          <div style="display:inline-flex; align-items:center; margin-top:38px; padding:11px 20px;
+            border:1px solid var(--border); border-radius:999px; background:rgba(255,255,255,0.68);
+            color:var(--muted); font-size:15px; font-weight:700; box-shadow:0 8px 24px rgba(24,52,90,0.06);">
+            100+ providers are supported!
           </div>
+        </div>
+        <div style="display:grid; gap:10px; justify-content:start; align-content:center;">
+          ${rowStarts.map((y, index) => `
+            <div style="position:relative; width:${displayW}px; height:${displayH}px; overflow:hidden;
+              border-radius:12px;
+              -webkit-mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              mask-image:linear-gradient(to right, #000 0%, #000 86%, transparent 100%);
+              filter:drop-shadow(0 9px 14px rgba(24,52,90,${index === 2 ? '0.10' : '0.055'}));">
+              <img src="${assets.modelProviders}" alt="" style="position:absolute; display:block;
+                width:${sourceW * sourceScale}px; max-width:none;
+                left:${-cropX * sourceScale}px; top:${-y * sourceScale}px;">
+            </div>`).join('')}
         </div>
       </div>`,
   };
@@ -429,7 +472,8 @@ function html(scene) {
 async function renderAll() {
   await mkdir(DIR, { recursive: true });
   const browser = await chromium.launch();
-  for (const scene of scenes) {
+  const only = new Set((process.env.ONLY ?? '').split(',').map((name) => name.trim()).filter(Boolean));
+  for (const scene of scenes.filter((candidate) => only.size === 0 || only.has(candidate.file))) {
     const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await page.setContent(html(scene), { waitUntil: 'load' });
     await page.evaluate(async () => {
