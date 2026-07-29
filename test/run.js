@@ -21926,18 +21926,28 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     assert.equal(data.get(storage.claimKey(prompt.tabId))?.claimantId, 'panel-b', `${label}: the durable claim should record the current owner`);
 
     let reservations = 0;
+    const reservationTime = takeover.leaseExpiresAt - 1;
     const staleOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-a', () => {
       reservations += 1;
       return { accepted: true };
-    });
+    }, reservationTime);
     const currentOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-b', () => {
       reservations += 1;
       return { accepted: true, requestId: 'reserved-run' };
-    });
+    }, reservationTime);
     assert.equal(staleOwner.reserved, false, `${label}: an expired prior owner must not reserve the run after takeover`);
     assert.equal(currentOwner.reserved, true, `${label}: the current claimant should reserve the run`);
     assert.equal(currentOwner.requestId, 'reserved-run', `${label}: reservation should return the detached-run acknowledgement`);
     assert.equal(reservations, 1, `${label}: ownership validation and the run reservation callback should be exactly once`);
+
+    const expiredOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-b', () => {
+      reservations += 1;
+      return { accepted: true };
+    }, takeover.leaseExpiresAt);
+    assert.equal(expiredOwner.reserved, false, `${label}: a claimant must not reserve at or after lease expiry`);
+    assert.equal(expiredOwner.reason, 'claim-lost', `${label}: expired ownership should require a fresh claim`);
+    assert.equal(expiredOwner.leaseExpiresAt, takeover.leaseExpiresAt, `${label}: expiry rejection should retain retry timing`);
+    assert.equal(reservations, 1, `${label}: an expired claimant must not invoke the run reservation callback`);
 
     const released = await storage.release(prompt.tabId, prompt.id, 'panel-b');
     assert.equal(released.released, true, `${label}: a panel that becomes hidden should relinquish its lease`);

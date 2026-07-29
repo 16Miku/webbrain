@@ -261,7 +261,7 @@ export function createContextMenuStorage(getStore) {
     });
   }
 
-  async function reserve(tabId, promptId, claimantId, onReserve) {
+  async function reserve(tabId, promptId, claimantId, onReserve, now = Date.now()) {
     const normalizedPromptId = String(promptId || '');
     const normalizedClaimantId = String(claimantId || '');
     if (!normalizedPromptId || !normalizedClaimantId || typeof onReserve !== 'function') {
@@ -291,12 +291,14 @@ export function createContextMenuStorage(getStore) {
       }
       const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
       const sameClaimant = String(activeClaim?.claimantId || '') === normalizedClaimantId;
-      if (!samePrompt || !sameClaimant) {
+      const leaseExpiresAt = Number(activeClaim?.expiresAt || 0);
+      const activeLease = leaseExpiresAt > Number(now);
+      if (!samePrompt || !sameClaimant || !activeLease) {
         return {
           ok: true,
           reserved: false,
-          reason: activeClaim ? 'leased' : 'claim-lost',
-          leaseExpiresAt: Number(activeClaim?.expiresAt || 0) || undefined,
+          reason: activeClaim && activeLease ? 'leased' : 'claim-lost',
+          leaseExpiresAt: leaseExpiresAt || undefined,
         };
       }
 
