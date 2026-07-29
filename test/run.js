@@ -4177,12 +4177,22 @@ test('trace record and JSON exports carry WebBrain version metadata', () => {
     assert.match(recorder, /runtimeConfig: normalizeRuntimeTraceConfig\(meta\.runtimeConfig\)/, `${label}: run record should retain only allowlisted runtime settings`);
     assert.match(agent, new RegExp(`webbrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: trace start should read the runtime manifest`);
     assert.match(agent, /runtimeConfig: this\._runtimeTraceConfig\(provider, \{ tabId, mode \}\)/, `${label}: trace start should snapshot effective runtime settings`);
+    assert.match(
+      agent,
+      /runtimeConfig: this\._runtimeTraceConfig\(this\.providerManager\?\.getActive\?\.\(\), \{\s*tabId,\s*mode: 'act',\s*\}\)/,
+      `${label}: workflow runs should snapshot effective runtime settings too`,
+    );
     assert.match(traceUi, new RegExp(`exportedByWebBrainVersion: ${runtimeName}\\.runtime\\.getManifest\\(\\)\\.version`), `${label}: JSON export should identify the exporting build`);
     assert.match(traceUi, /schema: 'webbrain-trace\/1'/, `${label}: additive version metadata should retain the v1 schema`);
   }
 });
 
 test('runtime trace config is versioned, bounded, and secret-free in both browsers', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/runtime-config.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/runtime-config.js'), 'utf8'),
+    'chrome and firefox runtime trace config modules must remain byte-identical',
+  );
   const candidate = {
     schema_version: 99,
     extension_version: '24.7.0-beta.1',
@@ -4234,10 +4244,29 @@ test('runtime trace config is versioned, bounded, and secret-free in both browse
     browser_target: 'safari',
     mode: 'admin',
     max_agent_steps: Infinity,
-    max_image_dimension: 42,
+    max_image_dimension: 1568.5,
+    max_screenshots_per_turn: -1,
     screenshot_redaction: 'yes',
   });
   assert.deepEqual(rejected, { schema_version: 1 });
+
+  // Integer ranges exist to bound the payload, not to re-validate settings:
+  // every value the agent's own normalizers can produce must survive, or the
+  // dump silently loses the setting it was added to attribute.
+  for (const [field, value] of [
+    ['max_agent_steps', 0],
+    ['max_agent_steps', 200],
+    ['max_image_dimension', 1],
+    ['max_image_dimension', 2048],
+    ['max_screenshots_per_turn', 0],
+    ['max_screenshots_per_turn', 5],
+  ]) {
+    assert.equal(
+      RuntimeTraceConfigCh.normalizeRuntimeTraceConfig({ [field]: value })[field],
+      value,
+      `${field}=${value} is producible by the agent and must not be dropped`,
+    );
+  }
 });
 
 test('trace recorders normalize done only from explicit loop error evidence', () => {
@@ -32472,6 +32501,23 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
     assert.equal(main.webbrainRuntimeConfig?.strict_secret_mode, true, `${label}: strict secret setting missing`);
     assert.equal(main.webbrainRuntimeConfig?.api_mutations_allowed, true, `${label}: per-tab API authorization missing`);
     assert.ok(!JSON.stringify(main.webbrainRuntimeConfig).includes('apiKey'), `${label}: runtime metadata must remain an allowlist`);
+    assert.equal(main.webbrainRuntimeConfig?.max_agent_steps, agent.maxSteps, `${label}: step budget missing`);
+
+    // "Unlimited" steps hydrate as Infinity; record the stored 0 sentinel so an
+    // unlimited run is attributable instead of missing the field entirely.
+    const previousMaxSteps = agent.maxSteps;
+    agent.maxSteps = Infinity;
+    const unlimited = agent._cloudGenerationOptions(cloud, {}, { tabId, generationName: 'main' });
+    assert.equal(unlimited.webbrainRuntimeConfig?.max_agent_steps, 0, `${label}: unlimited step budget should record as 0`);
+    agent.maxSteps = previousMaxSteps;
+
+    // Without a tab there is no observable mode or per-tab authorization, so
+    // those fields must be absent rather than asserted as ask/false.
+    const untabbed = agent._runtimeTraceConfig(cloud);
+    assert.equal('mode' in untabbed, false, `${label}: unknown mode should be omitted, not guessed`);
+    assert.equal('api_mutations_allowed' in untabbed, false, `${label}: per-tab API authorization should be omitted without a tab`);
+    assert.equal('selection_grounded' in untabbed, false, `${label}: selection grounding should be omitted without a tab`);
+    assert.equal(untabbed.browser_target, label, `${label}: browser target should survive without a tab`);
 
     const byoOptions = agent._cloudGenerationOptions({ config: { providerName: 'openai' } }, { temperature: 0 }, { tabId, generationName: 'memory' });
     assert.deepEqual(byoOptions, { temperature: 0 }, `${label}: BYO provider received Cloud collection fields`);
