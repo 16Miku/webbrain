@@ -15942,6 +15942,21 @@ const ADAPTERS = [
 - Login pages (\`wp-login.php\`) have a stable shape: \`#user_login\` (username/email), \`#user_pass\` (password), \`#wp-submit\` (submit). The password field is type=password — when the user provides credentials, do not echo them in any summary.`,
   },
 
+  {
+    name: 'wechat-official-account',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mp\.weixin\.qq\.com\/(?:$|[?#]|cgi-bin(?:[/?#]|$))/.test(url),
+    notes: `
+- Confirm the current official account name in the top bar before editing or publishing; an old tab or session-token URL may belong to a different account.
+- The article editor has separate title and body editable regions. The body uses ProseMirror/contenteditable; focus each region separately and verify its text after writing so the title is not inserted into the body or vice versa.
+- "保存为草稿" (Save as draft) and "发表" (Publish) are different outcomes. A saved draft is not publicly visible and must never be reported as published.
+- Under "封面" (Cover), "从正文选择" (Select from article) can reuse an inline image. Confirm the intended image and crop instead of accepting the first thumbnail automatically.
+- Before clicking "发表", re-check the account, title, author/byline, summary, and cover because publishing is externally visible.
+- Publishing can open stacked confirmation dialogs followed by "微信验证" with a QR code. Pause for the user to complete verification; do not dismiss, bypass, or repeatedly retry the dialog.
+- Treat publishing as successful only when "发表记录" shows the new article (or a final public article URL is available), not when the editor closes or a confirmation button was clicked.
+- Dashboard links contain short-lived session tokens. If a deep link expires or redirects, navigate from the current dashboard instead of inventing or reusing a tokenized URL.`,
+  },
+
   // ─── Commerce ─────────────────────────────────────────────────────────
   {
     name: 'amazon',
@@ -16306,6 +16321,20 @@ const ADAPTERS = [
 - Product pages may group pack count, size, color, or other variants behind "모든 옵션 보기". Select the exact option first and compare the displayed unit price (for example, 100g당), not only the bundle total.
 - The same product can be fulfilled by different sellers. Read "판매자", seller rating, delivery fee, and arrival date for the selected offer; product reviews may be pooled across different sellers and are not evidence about that seller.
 - "로켓배송" describes Coupang-fulfilled delivery, while "와우" free shipping, free returns, or dawn delivery are membership-conditional. Confirm the selected offer and the cart total before promising delivery, savings, or a final price.`,
+  },
+
+  // ─── Regional — Rakuten Ichiba (Japan) ────────────────────────────────
+  {
+    name: 'rakuten-ichiba',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|search|item)\.rakuten\.co\.jp|basket\.step\.rakuten\.co\.jp)\//.test(url),
+    notes: `
+- As of 2026-07, Rakuten Ichiba is a MARKETPLACE of independently operated "ショップ" (shops). Stable labels: "買い物かごに入れる" = add to cart, "買い物かご" = cart, and "ご購入手続き" = proceed to checkout.
+- Search results marked "[PR]" are sponsored. For a price comparison, use "同じ商品を安い順で見る" when available, then compare the exact variant's "価格+送料" and per-unit price; do not rank the first result or a bare "〜" price range as cheapest.
+- Select every size, color, pack count, delivery timing, and other required option before comparing or adding. "定期購入" is a recurring purchase with a different price — keep normal purchase selected unless the user explicitly asks for a subscription.
+- The cart is divided into boxes by shop. On desktop, items from different shops cannot share one checkout; mobile "おまとめ購入" may batch the steps, but each shop still creates a separate order and shipment. Read each box and click its own "ご購入手続き".
+- Shipping is shop- and destination-specific. A 39 Shop's 3,980円 free-shipping line applies within the same eligible shop and order, not across shops; "特定送料", remote regions, chilled delivery, and large items can remain chargeable. Verify every shop's cart total.
+- "ポイント", SPU, and スーパーDEAL are conditional rewards, not an immediate cash-price reduction; campaigns may require entry, membership, payment methods, or have caps, and shipping/tax do not earn ordinary points. Report the payable total separately from expected points.`,
   },
 
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────

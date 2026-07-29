@@ -1793,10 +1793,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -3587,6 +3587,14 @@ async function adoptRestoredRunState(tabId, state) {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
+    const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
+    if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+      renderPlannerRequestFailure(
+        assistantEl,
+        returnedPlannerFailure.data,
+        retryPayloadForRunAssistant(assistantEl),
+      );
+    }
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(update => update?.type === 'error')
       : null;
@@ -5002,7 +5010,7 @@ function bindErrorRetryButton(btn) {
 }
 
 function rebindRetryButtons() {
-  document.querySelectorAll('.error-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
 }
 
 function createActiveChatPayloadState(retryPayload, requestId = '') {
@@ -5039,6 +5047,94 @@ function retryPayloadForRunAssistant(assistantEl) {
     attachments: [],
     attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
   };
+}
+
+function plannerRequestFailureUpdate(updates = []) {
+  if (!Array.isArray(updates)) return null;
+  return updates.find(update => (
+    update?.type === 'warning'
+    && update?.data?.code === 'planner_request_failed'
+  )) || null;
+}
+
+function bindPlannerProviderSettingsButton(btn) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    btn.disabled = true;
+    try {
+      await openProvidersSettingsPage();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function rebindPlannerRequestFailureControls() {
+  document.querySelectorAll('.planner-request-failure-provider-btn')
+    .forEach(bindPlannerProviderSettingsButton);
+}
+
+function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
+  if (!assistantEl || data?.code !== 'planner_request_failed') return false;
+  const textEl = assistantEl.querySelector('.message-text');
+  if (!textEl) return false;
+  if (textEl.querySelector('.planner-request-failure-actions')) return true;
+
+  clearAssistantTextStreamState(assistantEl);
+  assistantEl.classList.add('planner-request-failure');
+  textEl.classList.add('planner-request-failure-content');
+  textEl.replaceChildren();
+  // Set the role on the empty container first: screen readers announce
+  // content inserted into an existing live region, not a region that arrives
+  // already populated. A restored card stays silent, which is what we want.
+  textEl.setAttribute('role', 'alert');
+
+  const message = document.createElement('div');
+  message.className = 'planner-request-failure-message';
+  message.textContent = data.message || 'Planner request failed before a valid response was available.';
+  // Name the provider that failed — with several configured, "open Providers"
+  // is only actionable if the user knows which one to look at. The label is a
+  // proper noun, so it needs no translation.
+  if (data.provider) {
+    const providerName = document.createElement('div');
+    providerName.className = 'planner-request-failure-provider';
+    providerName.textContent = data.provider;
+    message.appendChild(providerName);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'planner-request-failure-actions';
+
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'planner-request-failure-action planner-request-failure-retry-btn';
+  retryBtn.textContent = t('sp.retry');
+  retryBtn.title = t('sp.retry');
+  retryBtn.setAttribute('aria-label', t('sp.retry'));
+  const retryReady = configureRetryButton(retryBtn, retryPayload);
+
+  const providerBtn = document.createElement('button');
+  providerBtn.type = 'button';
+  providerBtn.className = 'planner-request-failure-action planner-request-failure-provider-btn';
+  providerBtn.textContent = t('st.tab.providers');
+  providerBtn.title = `${t('sp.btn.settings')}: ${t('st.tab.providers')}`;
+  providerBtn.setAttribute('aria-label', providerBtn.title);
+  bindPlannerProviderSettingsButton(providerBtn);
+
+  const orderedActions = data.failureKind === 'auth'
+    ? [providerBtn, retryReady ? retryBtn : null]
+    : [retryReady ? retryBtn : null, providerBtn];
+  const visibleActions = orderedActions.filter(Boolean);
+  visibleActions[0]?.classList.add('primary');
+  visibleActions.forEach(btn => actions.appendChild(btn));
+
+  textEl.append(message, actions);
+  addMessageCopyButton(assistantEl);
+  scrollToBottom();
+  return true;
 }
 
 function clearActiveChatPayloadForTab(tabId) {
@@ -5099,6 +5195,7 @@ function rebindRestoredMessageControls() {
   rebindCopyButtons();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
+  rebindPlannerRequestFailureControls();
   rebindContinueButtons();
   rebindClarifyCards();
   rebindPlanReviewCards();
@@ -6721,6 +6818,14 @@ async function sendMessage(extraChatParams = {}) {
     accepted = true;
     completedSuccessfully = res?.successfulDone === true || updatesContainSuccessfulDone(res?.updates);
     promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
+    const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
+    if (returnedPlannerFailure
+        && renderToCurrentTab
+        && currentTabId === tabId
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)) {
+      renderPlannerRequestFailure(assistantEl, returnedPlannerFailure.data, retryPayload);
+    }
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(u => u?.type === 'error')
       : null;
@@ -7054,7 +7159,12 @@ function handleAgentUpdateMessage(msg) {
 
     case 'warning':
       hideActivity();
-      if (data?.code === 'ask_stream_fallback') {
+      if (data?.code === 'planner_request_failed') {
+        const targetAssistantEl = eventAssistantEl || currentAssistantEl;
+        const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
+          || retryPayloadForRunAssistant(targetAssistantEl);
+        renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
+      } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       }
       break;
@@ -8399,7 +8509,8 @@ function configureRetryButton(btn, retryPayload) {
 }
 
 function addErrorRetryButton(msgEl, retryPayload) {
-  if (!msgEl || !retryPayload?.text || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn')) return;
+  if (!msgEl || !retryPayload?.text
+      || msgEl.querySelector('.error-retry-btn, .cost-allowance-retry-btn, .planner-request-failure-retry-btn')) return;
   msgEl.classList.add('retryable');
   const btn = document.createElement('button');
   btn.type = 'button';
