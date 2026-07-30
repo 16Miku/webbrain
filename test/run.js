@@ -21927,7 +21927,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     }
     assert.match(
       panel,
-      /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);\s*stopListening\(\);\s*let text = inputEl\.value\.trim\(\);/,
+      /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?stopListening\(\);\s*let text = inputEl\.value\.trim\(\);/,
       `${label}: user sends should not capture or append a turn until visibility reconciliation finishes`,
     );
     assert.match(
@@ -21987,8 +21987,18 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const releaseOwnedContextMenuClaim = async \([\s\S]*?reason: 'panel-hidden', retryAfterMs: 250[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(rejection\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
+      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const claimedContextMenuTabId = contextMenuClaimOwned[\s\S]*?chatExtraParams\.contextMenuClear\?\.tabId[\s\S]*?const releaseOwnedContextMenuClaim = async \([\s\S]*?reason: 'panel-hidden', retryAfterMs: 250[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?tabId: claimedContextMenuTabId,[\s\S]*?onContextMenuClaimRejected\?\.\(rejection\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
       `${label}: initial and renewed ownership should share one idempotent release-and-retry path`,
+    );
+    assert.match(
+      panel,
+      /const claimedContextMenuTabId = contextMenuClaimOwned[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?if \(contextMenuClaimOwned[\s\S]*?!sameTabId\(currentTabId, claimedContextMenuTabId\)[\s\S]*?!sameTabId\(renderedTabId, claimedContextMenuTabId\)[\s\S]*?await releaseOwnedContextMenuClaim\(\);[\s\S]*?return false;[\s\S]*?let text = inputEl\.value\.trim\(\);/,
+      `${label}: claimed prompts should remain bound to their source tab before reading the refreshed composer`,
+    );
+    assert.match(
+      panel,
+      /let text = inputEl\.value\.trim\(\);\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(
       panel,
@@ -22004,7 +22014,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
     assert.equal(
       (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
-      5,
+      6,
       `${label}: every visibility or preflight-abort exit should release the claim and schedule retry`,
     );
     assert.match(

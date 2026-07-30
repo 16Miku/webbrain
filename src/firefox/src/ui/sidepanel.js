@@ -6828,19 +6828,10 @@ async function sendMessage(extraChatParams = {}) {
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
   const contextMenuClaim = chatExtraParams.contextMenuClaim;
-  const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
-  const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
-  delete chatExtraParams.sourceGrounding;
-  if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
-  await waitForVisibleSidePanelStateRefresh();
-  stopListening();
-  let text = inputEl.value.trim();
-  if (!text) return;
-  const submittedText = text;
-  const tabId = currentTabId;
   let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
+  const claimedContextMenuTabId = contextMenuClaimOwned
+    ? Number(chatExtraParams.contextMenuClear?.tabId ?? currentTabId)
+    : null;
   const releaseOwnedContextMenuClaim = async (
     rejection = { reason: 'panel-hidden', retryAfterMs: 250 },
   ) => {
@@ -6848,13 +6839,38 @@ async function sendMessage(extraChatParams = {}) {
     contextMenuClaimOwned = false;
     try {
       await sendToBackground('release_context_menu_prompt_claim', {
-        tabId,
+        tabId: claimedContextMenuTabId,
         promptId: contextMenuClaim.promptId,
         claimantId: contextMenuClaim.claimantId,
       });
     } catch { /* the durable lease still expires if release fails */ }
     onContextMenuClaimRejected?.(rejection);
   };
+  const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
+  const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : null;
+  delete chatExtraParams.sourceGrounding;
+  if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
+  await waitForVisibleSidePanelStateRefresh();
+  if (contextMenuClaimOwned
+      && (document.visibilityState === 'hidden'
+        || !sameTabId(currentTabId, claimedContextMenuTabId)
+        || !sameTabId(renderedTabId, claimedContextMenuTabId))) {
+    await releaseOwnedContextMenuClaim();
+    return false;
+  }
+  stopListening();
+  let text = inputEl.value.trim();
+  if (!text) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
+      return false;
+    }
+    return;
+  }
+  const submittedText = text;
+  const tabId = currentTabId;
   if (isConversationClearInProgress(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
     return false;
