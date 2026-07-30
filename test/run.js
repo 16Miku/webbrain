@@ -415,6 +415,7 @@ const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
 const {
+  CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_CH,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
@@ -424,6 +425,7 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
+  CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_FX,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
@@ -15115,7 +15117,7 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
       `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
     );
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
-    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
+    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
     assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
@@ -16988,7 +16990,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
     assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
-    assert.match(panel, /async function flushRenderedTabChat\(\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);\s*await persistTabChat\(tabId, messagesEl\.innerHTML\);/, `${label}: tab switches should render a queued frame before serializing its last acknowledged stream chunk`);
+    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
     assert.match(panel, /function formatMarkdown\(text, options = \{\}\)[\s\S]*?const enhance = options\.enhance !== false;[\s\S]*?const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);[\s\S]*?if \(enhance\) scheduleMathRender\(\);[\s\S]*?if \(enhance && codeBlocks\.length > 0\)/, `${label}: syntax highlighting and interactive Markdown enhancements should wait for the terminal render`);
     assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && hasStreamedText\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
@@ -17702,7 +17704,7 @@ test('sidepanel queues target-tab updates and suppresses non-target updates duri
     const markIdx = body.indexOf('tabSwitchTransitionId = newTabId;');
     const flushIdx = body.indexOf('await flushRenderedTabChat();');
     const historyFlushIdx = body.indexOf('await flushChatHistorySnapshot(outgoingTabId);');
-    const loadIdx = body.indexOf('const html = await loadTabChat(newTabId);');
+    const loadIdx = body.indexOf('loadTabChat(newTabId');
     const clearTransitionIdx = body.indexOf('if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;');
     const replayIdx = body.indexOf('drainQueuedAgentUpdatesForTab(newTabId);');
     const consumeIdx = body.indexOf('consumePendingContextMenuPrompt()');
@@ -17797,7 +17799,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     const switchMatch = panel.match(/async function switchToTab\(newTabId\) \{([\s\S]*?)\n\}/);
     assert.ok(switchMatch, `${label}: switchToTab body missing`);
     const switchBody = switchMatch[1];
-    const loadIdx = switchBody.indexOf('const html = await loadTabChat(newTabId);');
+    const loadIdx = switchBody.indexOf('loadTabChat(newTabId');
     const restoredHasUserIdx = switchBody.indexOf('if (html) {');
     const hydrateRestoredIdx = switchBody.indexOf('await hydrateRestoredChatHistory(newTabId, html);');
     const postHydrateGuardIdx = switchBody.indexOf('if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;', hydrateRestoredIdx);
@@ -17812,7 +17814,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     const initMatch = panel.match(/async function init\(\) \{([\s\S]*?)\n  \/\/ Start observing the messages container/);
     assert.ok(initMatch, `${label}: init restore block missing`);
     const initBody = initMatch[1];
-    const initLoadIdx = initBody.indexOf('const html = await loadTabChat(restoreTabId);');
+    const initLoadIdx = initBody.indexOf('loadTabChat(restoreTabId, { waitForHandoff: true })');
     const initHydrateIdx = initBody.indexOf('await hydrateRestoredChatHistory(restoreTabId, html);');
     const initGuardIdx = initBody.indexOf('if (currentTabId === restoreTabId) {', initHydrateIdx);
     const initDomIdx = initBody.indexOf('messagesEl.innerHTML = html;', initGuardIdx);
@@ -17863,7 +17865,8 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
     const helperBody = panel.slice(helperStart, panel.indexOf('refreshScheduledJobs({', helperStart));
-    assert.match(helperBody, /await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should delete durable history before visible-tab guards`);
+    assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
+    assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
 
     const resetIdx = panel.indexOf("if (command.value === '/reset')");
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));
@@ -17941,7 +17944,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     if (label === 'chrome' || label === 'firefox') {
       assert.match(
         panel,
-        /async function flushRenderedTabChat\(\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?await persistTabChat\(tabId, messagesEl\.innerHTML\);[\s\S]*?\}/,
+        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
         `${label}: final flush should cancel stale debounced writes and persist the rendered tab immediately`,
       );
     }
@@ -18094,42 +18097,169 @@ test('tab-chat persistence evicts an existing chat when older keys saturate the 
   }
 });
 
+test('tab-chat handoff coordinator orders a returning-panel read behind the outgoing snapshot', async () => {
+  for (const [label, persistence] of [
+    ['chrome', TabChatPersistenceCh],
+    ['firefox', TabChatPersistenceFx],
+  ]) {
+    const values = { [`${persistence.TAB_CHAT_PREFIX}7`]: '<div>stale</div>' };
+    const writes = [];
+    let acknowledgeHandoff;
+    let requestedHandoff = null;
+    let signalHandoffRequest;
+    const handoffAcknowledged = new Promise(resolve => { acknowledgeHandoff = resolve; });
+    const handoffRequested = new Promise(resolve => { signalHandoffRequest = resolve; });
+    const storageArea = {
+      async get(key) {
+        return { [key]: values[key] };
+      },
+      async set(patch) {
+        if (Object.hasOwn(patch, `${persistence.TAB_CHAT_PREFIX}7`)) {
+          writes.push(patch[`${persistence.TAB_CHAT_PREFIX}7`]);
+        }
+        Object.assign(values, patch);
+      },
+      async remove(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
+      },
+    };
+    const coordinator = persistence.createTabChatHandoffCoordinator(storageArea, {
+      requestHandoff: async (tabId, handoff) => {
+        requestedHandoff = { tabId, ...handoff };
+        signalHandoffRequest();
+        return handoffAcknowledged;
+      },
+    });
+
+    const outgoing = await coordinator.load(7, {
+      waitForHandoff: true,
+      claimantId: 'outgoing-panel',
+    });
+    assert.equal(outgoing.handoffGeneration, 1, `${label}: the first visible panel should own generation one`);
+
+    // Model a service-worker/message delay longer than the removed settling
+    // timer: the restore must remain pending until the exact outgoing
+    // generation acknowledges its final lossless snapshot.
+    let restoreSettled = false;
+    const restore = coordinator.load(7, {
+      waitForHandoff: true,
+      claimantId: 'returning-panel',
+    }).finally(() => { restoreSettled = true; });
+    await handoffRequested;
+    assert.equal(restoreSettled, false, `${label}: restore must wait for an explicit handoff acknowledgement`);
+    assert.deepEqual(
+      requestedHandoff,
+      { tabId: 7, ownerId: 'outgoing-panel', generation: 1 },
+      `${label}: the barrier should target the current owner generation`,
+    );
+    acknowledgeHandoff({
+      ok: true,
+      ownerId: requestedHandoff.ownerId,
+      generation: requestedHandoff.generation,
+      html: '<div>fresh</div>',
+    });
+
+    const restored = await restore;
+    assert.deepEqual(writes, ['<div>fresh</div>'], `${label}: final snapshot should be the coordinated write`);
+    assert.deepEqual(
+      restored,
+      {
+        ok: true,
+        found: true,
+        html: '<div>fresh</div>',
+        handoffOwnerId: 'returning-panel',
+        handoffGeneration: 2,
+      },
+      `${label}: returning panel must restore the final outgoing snapshot`,
+    );
+    const staleWrite = await coordinator.save(7, '<div>late stale</div>', {
+      ownerId: 'outgoing-panel',
+      handoffGeneration: 1,
+    });
+    assert.equal(staleWrite.skipped, true, `${label}: a late write from the old generation must be rejected`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>fresh</div>', `${label}: stale delivery must not overwrite the acknowledged snapshot`);
+
+    const cleared = await coordinator.clear(7, {
+      ownerId: 'returning-panel',
+      handoffGeneration: 2,
+    });
+    assert.equal(cleared.ok, true, `${label}: the visible owner should clear its transcript`);
+    assert.equal(cleared.handoffGeneration, 3, `${label}: clear should rotate the visible owner's generation`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], undefined, `${label}: clear should remove transcript content`);
+    assert.deepEqual(
+      values[`${persistence.TAB_CHAT_HANDOFF_PREFIX}7`],
+      { ownerId: 'returning-panel', generation: 3 },
+      `${label}: clear should preserve the visible document's ownership under a fresh generation`,
+    );
+    const capturedAcknowledgementWrite = await coordinator.save(7, '<div>captured before clear</div>', {
+      ownerId: 'returning-panel',
+      handoffGeneration: 2,
+    });
+    assert.equal(capturedAcknowledgementWrite.skipped, true, `${label}: a pre-clear acknowledgement delivered after clear must be rejected`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], undefined, `${label}: a delayed pre-clear acknowledgement must not restore cleared content`);
+    const unversionedWrite = await coordinator.save(7, '<div>unversioned stale</div>', {
+      ownerId: 'returning-panel',
+    });
+    assert.equal(unversionedWrite.skipped, true, `${label}: owner-tagged writes without a generation must fail closed`);
+    const postClearWrite = await coordinator.save(7, '<div>new conversation</div>', {
+      ownerId: 'returning-panel',
+      handoffGeneration: 3,
+    });
+    assert.equal(postClearWrite.ok, true, `${label}: the owner should persist the new conversation under the rotated generation`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>new conversation</div>', `${label}: the post-clear transcript should remain current`);
+  }
+});
+
 test('chrome sidepanel serializes tab-chat storage writes with clears and reads', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   assert.match(panel, /const tabChatOperations = new Map\(\);/, 'chrome: tab-chat operations should be queued per tab');
   assert.match(panel, /function enqueueTabChatOperation\(tabId, fn\) \{[\s\S]*?const previous = tabChatOperations\.get\(numericTabId\) \|\| Promise\.resolve\(\);[\s\S]*?tabChatOperations\.set\(numericTabId, operation\);[\s\S]*?\}/, 'chrome: tab-chat writes should be serialized behind prior operations');
-  const loadStart = panel.indexOf('async function loadTabChat(tabId) {');
+  const loadStart = panel.indexOf('async function loadTabChat(tabId, { waitForHandoff = false } = {}) {');
   assert.notEqual(loadStart, -1, 'chrome: loadTabChat missing');
   const loadBody = panel.slice(loadStart, panel.indexOf('\n}\n\nfunction persistTabChat', loadStart) + 2);
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'chrome: tab-chat restore should normalize tab ids before checking the cache');
-  assert.match(loadBody, /if \(!tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\) return tabChats\.get\(numericTabId\);/, 'chrome: tab-chat restore should only trust cached HTML when no queued operation can update it');
-  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?if \(tabChats\.has\(queuedTabId\)\) return tabChats\.get\(queuedTabId\);[\s\S]*?const stored = await chrome\.storage\.session\.get\(key\);/, 'chrome: tab-chat restore should wait behind pending per-tab operations before reading cache or storage');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?return persistTabChatToSession\(chrome\.storage\.session, key, html\);/, 'chrome: tab-chat persistence should be serialized through the queue and quota recovery helper');
+  assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'chrome: coordinated handoff restores should bypass stale document-local HTML');
+  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
+  assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'chrome: coordinated load failures should remain distinct from successful empty restores');
+  assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'chrome: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'chrome: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'chrome: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'chrome: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?chrome\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/, 'chrome: queued clears should delete stale HTML re-cached by older queued writes before removing storage');
+  assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'chrome: clearing should invalidate the pre-clear handoff snapshot before yielding');
+  assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'chrome: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'chrome: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.match(clearBody, /clearResult\?\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?tabChatHandoffGenerations\.set\(numericTabId, Number\(clearResult\.handoffGeneration\)\)/, 'chrome: the clearing panel should adopt the generation rotated by the coordinator');
+  assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'chrome: clearing content must not discard the visible document handoff generation');
 });
 
 test('firefox sidepanel serializes tab-chat storage writes with clears and reads', () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
   assert.match(panel, /const tabChatOperations = new Map\(\);/, 'firefox: tab-chat operations should be queued per tab');
   assert.match(panel, /function enqueueTabChatOperation\(tabId, fn\) \{[\s\S]*?const previous = tabChatOperations\.get\(numericTabId\) \|\| Promise\.resolve\(\);[\s\S]*?tabChatOperations\.set\(numericTabId, operation\);[\s\S]*?\}/, 'firefox: tab-chat writes should be serialized behind prior operations');
-  const loadStart = panel.indexOf('async function loadTabChat(tabId) {');
+  const loadStart = panel.indexOf('async function loadTabChat(tabId, { waitForHandoff = false } = {}) {');
   assert.notEqual(loadStart, -1, 'firefox: loadTabChat missing');
   const loadBody = panel.slice(loadStart, panel.indexOf('\n}\n\nfunction persistTabChat', loadStart) + 2);
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'firefox: tab-chat restore should normalize tab ids before checking the cache');
-  assert.match(loadBody, /if \(!tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\) return tabChats\.get\(numericTabId\);/, 'firefox: tab-chat restore should only trust cached HTML when no queued operation can update it');
-  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?if \(tabChats\.has\(queuedTabId\)\) return tabChats\.get\(queuedTabId\);[\s\S]*?const stored = await browser\.storage\.session\.get\(key\);/, 'firefox: tab-chat restore should wait behind pending per-tab operations before reading cache or storage');
-  assert.match(panel, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?return persistTabChatToSession\(browser\.storage\.session, key, html\);/, 'firefox: tab-chat persistence should be serialized through the queue and quota recovery helper');
+  assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'firefox: coordinated handoff restores should bypass stale document-local HTML');
+  assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
+  assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'firefox: coordinated load failures should remain distinct from successful empty restores');
+  assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'firefox: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
+  assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
   assert.notEqual(clearStart, -1, 'firefox: clearCachedTabChat missing');
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\n// Save current tab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'firefox: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'firefox: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?browser\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/, 'firefox: queued clears should delete stale HTML re-cached by older queued writes before removing storage');
+  assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'firefox: clearing should invalidate the pre-clear handoff snapshot before yielding');
+  assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'firefox: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'firefox: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.match(clearBody, /clearResult\?\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?tabChatHandoffGenerations\.set\(numericTabId, Number\(clearResult\.handoffGeneration\)\)/, 'firefox: the clearing panel should adopt the generation rotated by the coordinator');
+  assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'firefox: clearing content must not discard the visible document handoff generation');
 });
 
 test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', () => {
@@ -18150,7 +18280,7 @@ test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', 
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(
     clearBody,
-    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?chrome\.storage\.session\?\.remove\(TAB_CHAT_PREFIX \+ numericTabId\)/,
+    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffGeneration,/,
     'chrome: clearing a tab should cancel any pending stale write before removing cached chat',
   );
 });
@@ -18191,11 +18321,11 @@ test('sidepanel does not miss startup tab switches before consuming tab-scoped s
 
     if (label === 'chrome') {
       const restoreCaptureIdx = body.indexOf('const restoreTabId = currentTabId;');
-      const restoreLoadIdx = body.indexOf('const html = await loadTabChat(restoreTabId);');
-      const restoreGuardIdx = body.indexOf('if (currentTabId === restoreTabId && html)');
+      const restoreLoadIdx = body.indexOf('loadTabChat(restoreTabId, { waitForHandoff: true })');
+      const restoreGuardIdx = body.indexOf('if (currentTabId === restoreTabId && html && html !== TAB_CHAT_LOAD_FAILED)');
       assert.notEqual(restoreCaptureIdx, -1, 'chrome: initial tab-chat restore should capture the target tab');
       assert.notEqual(restoreLoadIdx, -1, 'chrome: initial tab-chat restore should load the captured tab');
-      assert.notEqual(restoreGuardIdx, -1, 'chrome: initial tab-chat restore should drop stale async results');
+      assert.notEqual(restoreGuardIdx, -1, 'chrome: initial tab-chat restore should drop failed and stale async results');
       assert.equal(listenerIdx < restoreCaptureIdx && restoreCaptureIdx < restoreLoadIdx && restoreLoadIdx < restoreGuardIdx, true, 'chrome: initial restore must be guarded after listener-driven tab changes');
     }
   }
@@ -20052,7 +20182,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(modeCaptureIdx < parseIdx && apiCaptureIdx < parseIdx, true, `${label}: stale-tab residual sends should not read visible-tab options after slash parsing`);
     assert.match(
       sendBody,
-      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = sameTabId\(currentTabId, tabId\) && sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
+      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
       `${label}: stale residual slash-command prompts should be preserved as drafts instead of hidden runs`,
     );
     assert.match(
@@ -20062,7 +20192,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     );
     assert.match(
       sendBody,
-      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?renderToCurrentTab = sameTabId\(currentTabId, tabId\) && sameTabId\(renderedTabId, tabId\);/,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{[\s\S]*?setTabProcessing\(tabId, false\);[\s\S]*?setTabAbortRequested\(tabId, false\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);/,
       `${label}: aborted sends during history hydration should stop before chat dispatch`,
     );
     const staleReturnIdx = sendBody.indexOf('if (!renderToCurrentTab) {');
@@ -21397,7 +21527,10 @@ function createDeferredRemoveStore() {
     remove(k) {
       const gate = deferred();
       removes.push({ key: k, gate });
-      return gate.promise.then(() => { data.delete(k); });
+      return gate.promise.then(() => {
+        const keys = Array.isArray(k) ? k : [k];
+        keys.forEach(key => data.delete(key));
+      });
     },
   };
   return { store, data, removes };
@@ -21407,11 +21540,14 @@ async function waitMicrotasks(count = 2) {
   for (let i = 0; i < count; i += 1) await Promise.resolve();
 }
 
-function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
+function createContextMenuPromptHarness(createHandler, prompt, sendMessage, options = {}) {
   let currentTabId = prompt.tabId;
   let isProcessing = false;
+  let isVisible = options.isVisible !== false;
   let mode = 'act';
   const sends = [];
+  const claims = [];
+  const releases = [];
   const input = {
     value: '',
     events: [],
@@ -21431,17 +21567,32 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage) {
       return sendMessage(extra, sends.length);
     },
     sendToBackground: async (action, params) => {
+      if (action === 'claim_context_menu_prompt') {
+        claims.push(params);
+        if (typeof options.claimPrompt === 'function') {
+          return await options.claimPrompt(params, claims.length);
+        }
+        return { ok: true, claimed: true };
+      }
+      if (action === 'release_context_menu_prompt_claim') {
+        releases.push(params);
+        return { ok: true, released: true };
+      }
       assert.equal(action, 'consume_context_menu_prompt');
       assert.deepEqual(params, { tabId: currentTabId });
       return { prompt };
     },
+    getIsDocumentVisible: () => isVisible,
   });
   return {
     handler,
     input,
     sends,
+    claims,
+    releases,
     setProcessing(value) { isProcessing = value; },
     setTabId(value) { currentTabId = value; },
+    setVisible(value) { isVisible = value; },
   };
 }
 
@@ -21459,14 +21610,18 @@ test('context-menu prompt transport preserves only allowlisted selection groundi
     const h = createContextMenuPromptHarness(createHandler, prompt, async () => true);
     h.handler.acceptContextMenuPrompt(prompt);
     await waitMicrotasks(3);
-    assert.deepEqual(
-      h.sends[0].extra,
-      {
-        contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
-        sourceGrounding,
-      },
-      `${label}: selection-only provenance should survive sidepanel transport`,
-    );
+    const {
+      contextMenuClaim,
+      __onContextMenuClaimRejected,
+      ...groundedExtra
+    } = h.sends[0].extra;
+    assert.deepEqual(groundedExtra, {
+      contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+      sourceGrounding,
+    }, `${label}: selection-only provenance should survive sidepanel transport`);
+    assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: run-start ownership should stay prompt-scoped`);
+    assert.equal(typeof contextMenuClaim.claimantId, 'string', `${label}: run-start ownership should include the panel claimant`);
+    assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: reservation loss should remain locally retryable`);
 
     const invalidPrompt = {
       id: `${label}-invalid-grounding`,
@@ -21477,11 +21632,16 @@ test('context-menu prompt transport preserves only allowlisted selection groundi
     const invalid = createContextMenuPromptHarness(createHandler, invalidPrompt, async () => true);
     invalid.handler.acceptContextMenuPrompt(invalidPrompt);
     await waitMicrotasks(3);
-    assert.deepEqual(
-      invalid.sends[0].extra,
-      { contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id } },
-      `${label}: unknown grounding values must be dropped`,
-    );
+    const {
+      contextMenuClaim: invalidClaim,
+      __onContextMenuClaimRejected: invalidRejection,
+      ...invalidExtra
+    } = invalid.sends[0].extra;
+    assert.deepEqual(invalidExtra, {
+      contextMenuClear: { tabId: invalidPrompt.tabId, promptId: invalidPrompt.id },
+    }, `${label}: unknown grounding values must be dropped`);
+    assert.equal(invalidClaim.promptId, invalidPrompt.id, `${label}: invalid grounding must not remove run ownership`);
+    assert.equal(typeof invalidRejection, 'function', `${label}: invalid grounding must not remove retry handling`);
   }
 });
 
@@ -21501,11 +21661,16 @@ test('context-menu prompt recovery retries after an unaccepted send', async () =
     await h.handler.consumePendingContextMenuPrompt();
     await waitMicrotasks(3);
     assert.equal(h.sends.length, 2, `${label}: stored prompt should retry after the first send was not accepted`);
-    assert.deepEqual(
-      h.sends[1].extra,
-      { contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id } },
-      `${label}: retry should still clear the stored prompt when accepted`,
-    );
+    const {
+      contextMenuClaim,
+      __onContextMenuClaimRejected,
+      ...retryExtra
+    } = h.sends[1].extra;
+    assert.deepEqual(retryExtra, {
+      contextMenuClear: { tabId: prompt.tabId, promptId: prompt.id },
+    }, `${label}: retry should still clear the stored prompt when accepted`);
+    assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: recovered sends should retain prompt ownership`);
+    assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: recovered sends should remain retryable until reservation`);
   }
 });
 
@@ -21532,6 +21697,504 @@ test('context-menu prompt recovery does not duplicate an in-flight send', async 
     await h.handler.consumePendingContextMenuPrompt();
     await waitMicrotasks(3);
     assert.equal(h.sends.length, 1, `${label}: accepted prompts should not be replayed from storage`);
+  }
+});
+
+test('context-menu prompt leases deduplicate sends across sidepanel instances', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-cross-instance`, tabId: 10, text: 'Translate this selection' };
+    let leaseOwner = '';
+    const claimPrompt = async ({ claimantId }) => {
+      if (!leaseOwner) leaseOwner = claimantId;
+      return { ok: true, claimed: claimantId === leaseOwner };
+    };
+    const first = createContextMenuPromptHarness(createHandler, prompt, async () => true, { claimPrompt });
+    const second = createContextMenuPromptHarness(createHandler, prompt, async () => true, { claimPrompt });
+
+    first.handler.acceptContextMenuPrompt(prompt);
+    second.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(8);
+
+    assert.equal(first.claims.length + second.claims.length, 2, `${label}: both panel instances should contend through the background lease`);
+    assert.equal(first.sends.length + second.sends.length, 1, `${label}: only the lease owner may submit the prompt`);
+    assert.notEqual(first.claims[0].claimantId, second.claims[0].claimantId, `${label}: panel instances need distinct lease identities`);
+  }
+});
+
+test('context-menu prompts release an initial claim acquired after the panel becomes hidden', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-hidden-during-claim`, tabId: 10, text: 'Explain this selection' };
+    const claimGate = deferred();
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => claimGate.promise,
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    h.setVisible(false);
+    claimGate.resolve({ ok: true, claimed: true });
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 0, `${label}: a hidden panel must not submit after its initial claim resolves`);
+    assert.equal(h.releases.length, 1, `${label}: the successful hidden claim should be released`);
+    assert.equal(h.releases[0].tabId, prompt.tabId, `${label}: release should retain the prompt tab`);
+    assert.equal(h.releases[0].promptId, prompt.id, `${label}: release should target the claimed prompt`);
+    assert.equal(h.releases[0].claimantId, h.claims[0].claimantId, `${label}: only the claim owner may release it`);
+  }
+});
+
+test('context-menu prompts release and requeue when another run starts during claim acquisition', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-busy-during-claim`, tabId: 10, text: 'Explain this selection' };
+    const claimGate = deferred();
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async (_params, attempt) => (
+        attempt === 1 ? claimGate.promise : { ok: true, claimed: true }
+      ),
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    h.setProcessing(true);
+    claimGate.resolve({ ok: true, claimed: true });
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 0, `${label}: a prompt must not enter the ordinary composer queue after a run starts`);
+    assert.equal(h.releases.length, 1, `${label}: the prompt lease should be released while the active run owns the tab`);
+    assert.equal(h.input.value, '', `${label}: the claimed prompt should not replace the user's busy composer draft`);
+
+    h.setProcessing(false);
+    h.handler.drainQueuedContextMenuPrompts();
+    await waitMicrotasks(8);
+
+    assert.equal(h.claims.length, 2, `${label}: the context-menu queue should reclaim after the active run settles`);
+    assert.equal(h.sends.length, 1, `${label}: the full prompt payload should submit exactly once after reclaim`);
+    assert.equal(h.sends[0].extra.contextMenuClaim.promptId, prompt.id, `${label}: the deferred send must preserve ownership metadata`);
+    assert.equal(h.sends[0].extra.contextMenuClear.promptId, prompt.id, `${label}: the deferred send must still clear durable prompt storage`);
+  }
+});
+
+test('context-menu prompt lease recovery retries after an abandoned owner expires', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-lease-recovery`, tabId: 10, text: 'Proofread this selection' };
+    let claimAttempt = 0;
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => {
+        claimAttempt += 1;
+        if (claimAttempt === 1) {
+          return { ok: true, claimed: false, reason: 'leased', leaseExpiresAt: Date.now() + 5 };
+        }
+        return { ok: true, claimed: true };
+      },
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.claims.length, 2, `${label}: the surviving panel should reclaim after the abandoned lease expires`);
+    assert.equal(h.sends.length, 1, `${label}: lease recovery should submit the prompt exactly once`);
+  }
+});
+
+test('context-menu prompts retry after the background reports an active run', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-active-run-retry`, tabId: 10, text: 'Translate this selection' };
+    let claimAttempt = 0;
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async () => {
+        claimAttempt += 1;
+        return claimAttempt === 1
+          ? { ok: true, claimed: false, reason: 'run-active', retryAfterMs: 5 }
+          : { ok: true, claimed: true };
+      },
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await new Promise(resolve => setTimeout(resolve, 90));
+
+    assert.equal(h.claims.length, 2, `${label}: an active background run should trigger a later claim attempt`);
+    assert.equal(h.sends.length, 1, `${label}: the prompt should submit once the background run releases the tab`);
+  }
+});
+
+test('hidden sidepanel instances neither claim nor consume context-menu prompts', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-hidden`, tabId: 11, text: 'Revise this message' };
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, { isVisible: false });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await h.handler.consumePendingContextMenuPrompt();
+    await waitMicrotasks(3);
+    assert.equal(h.claims.length, 0, `${label}: hidden panels must not claim broadcast or stored prompts`);
+    assert.equal(h.sends.length, 0, `${label}: hidden panels must not submit prompts`);
+
+    h.setVisible(true);
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(5);
+    assert.equal(h.claims.length, 1, `${label}: the panel may claim after becoming visible`);
+    assert.equal(h.sends.length, 1, `${label}: the visible panel should submit after claiming`);
+  }
+});
+
+test('context-menu ownership and stale-panel persistence guards are wired in both builds', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const handler = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/context-menu-prompts.js'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+
+    assert.match(
+      background,
+      /case 'chat_start':[\s\S]*?contextMenuStorage\.reserve\([\s\S]*?launchDetachedRun\('chat', msg, sender\)/,
+      `${label}: background should validate prompt ownership while atomically reserving the detached run`,
+    );
+    assert.match(
+      background,
+      /case 'claim_context_menu_prompt':[\s\S]*?contextMenuStorage\.claim\([\s\S]*?agent\.activeRunState\(tabId\)\?\.running \|\| detachedRunStarts\.has\(tabId\)/,
+      `${label}: background should reject queued claim operations after another run reserves the tab`,
+    );
+    assert.doesNotMatch(
+      background,
+      /case 'claim_context_menu_prompt':[\s\S]*?contextMenuStorage\.claim\([\s\S]*?msg\.claimantId,\s*Date\.now\(\),/,
+      `${label}: claim timestamps must be sampled inside the serialized storage operation`,
+    );
+    assert.match(
+      handler,
+      /sendToBackground\('claim_context_menu_prompt', \{[\s\S]*?promptId: payload\.id,[\s\S]*?claimantId,[\s\S]*?\}\)/,
+      `${label}: panel handlers should claim before submitting`,
+    );
+    assert.match(
+      handler,
+      /contextMenuClaim: \{[\s\S]*?promptId: payload\.id,[\s\S]*?claimantId,[\s\S]*?\}[\s\S]*?__onContextMenuClaimRejected/,
+      `${label}: the claimed identity should follow the prompt into the run-start path`,
+    );
+    assert.match(
+      handler,
+      /const releasePromptClaim = async \(\) => \{[\s\S]*?release_context_menu_prompt_claim[\s\S]*?claimResult\?\.claimed && !getIsDocumentVisible\(\)[\s\S]*?await releasePromptClaim\(\);[\s\S]*?reason: 'panel-hidden'/,
+      `${label}: an initial claim that resolves after hiding should be released for the visible panel`,
+    );
+    assert.match(
+      panel,
+      /getIsDocumentVisible: \(\) => document\.visibilityState !== 'hidden'/,
+      `${label}: context-menu handling should be limited to visible panel documents`,
+    );
+    assert.match(
+      panel,
+      /function persistTabChat\(tabId, html, \{ allowHidden = false \} = \{\}\) \{[\s\S]*?document\.visibilityState === 'hidden'[\s\S]*?!allowHidden[\s\S]*?skipped: true/,
+      `${label}: hidden panel documents must not persist transcript snapshots`,
+    );
+    assert.match(
+      panel,
+      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?tabSwitchTransitionId != null \|\| visibleStateRefreshInProgress[\s\S]*?pendingRefresh !== visibleStateRefreshPromise[\s\S]*?\|\| tabSwitchTransitionId != null[\s\S]*?\|\| visibleStateRefreshInProgress/,
+      `${label}: sends should wait until visibility refreshes and coordinated tab switches settle`,
+    );
+    assert.match(
+      panel,
+      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await restoreActiveRunState\(tabId\);[\s\S]*?function requestVisibleSidePanelStateRefresh\(\) \{[\s\S]*?visibleStateRefreshPromise = visibleStateRefreshPromise\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]*?let refreshed = await refreshVisibleSidePanelState\(\);[\s\S]*?while \(refreshed === false[\s\S]*?visibleStateRefreshPending = true;[\s\S]*?await waitForTabChatHandoffRetry\(\);[\s\S]*?refreshed = await refreshVisibleSidePanelState\(\);[\s\S]*?refreshPromise\.then\(\(refreshed\) => \{[\s\S]*?refreshPromise !== visibleStateRefreshPromise[\s\S]*?consumePendingContextMenuPrompt\(\)/,
+      `${label}: a returning panel should serialize the shared handoff before consuming prompts`,
+    );
+    assert.match(
+      panel,
+      /function syncSendButtonState\(\) \{[\s\S]*?if \(tabSwitchTransitionId != null \|\| visibleStateRefreshPending \|\| visibleStateRefreshInProgress\) \{\s*sendBtn\.disabled = true;\s*return;/,
+      `${label}: the composer should stay disabled throughout tab-switch and visibility reconciliation`,
+    );
+    if (label === 'firefox') {
+      assert.match(
+        panel,
+        /async function switchToTab\(newTabId\) \{[\s\S]*?tabSwitchTransitionId = newTabId;[\s\S]*?let html = TAB_CHAT_LOAD_FAILED;[\s\S]*?while \(html === TAB_CHAT_LOAD_FAILED\) \{[\s\S]*?loadTabChat\(newTabId, \{ waitForHandoff: true \}\);[\s\S]*?await waitForTabChatHandoffRetry\(\);/,
+        'firefox: switching tabs should acquire destination handoff ownership and retry transient failures before rendering',
+      );
+    }
+    assert.match(
+      panel,
+      /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?stopListening\(\);\s*let text = inputEl\.value\.trim\(\);/,
+      `${label}: user sends should not capture or append a turn until visibility reconciliation finishes`,
+    );
+    assert.match(
+      panel,
+      /const restoreTabId = currentTabId;[\s\S]*?visibleStateRefreshInProgress = true;[\s\S]*?let html = TAB_CHAT_LOAD_FAILED;[\s\S]*?while \(html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId\) \{[\s\S]*?await loadTabChat\(restoreTabId, \{ waitForHandoff: true \}\);[\s\S]*?await waitForTabChatHandoffRetry\(\);[\s\S]*?finally \{[\s\S]*?visibleStateRefreshInProgress = false;/,
+      `${label}: an initially visible panel should stay blocked and retry until it acquires handoff ownership`,
+    );
+    assert.match(
+      panel,
+      /document\.addEventListener\('visibilitychange',[\s\S]*?requestVisibleSidePanelStateRefresh\(\)/,
+      `${label}: visibility restoration should trigger the stale-panel refresh`,
+    );
+    assert.match(
+      panel,
+      /const snapshot = lastVisibleTabChatSnapshot;[\s\S]*?persistTabChat\(snapshot\.tabId, snapshot\.html, \{ allowHidden: true \}\)/,
+      `${label}: the last visible transcript should enter the shared handoff before hidden-writer protection takes over`,
+    );
+    assert.doesNotMatch(
+      panel,
+      /visibilityHandoffPromise/,
+      `${label}: a document-local promise cannot coordinate distinct side-panel documents`,
+    );
+    assert.match(
+      background,
+      /createTabChatHandoffCoordinator\([\s\S]*?case 'persist_tab_chat':[\s\S]*?tabChatHandoff\.save[\s\S]*?case 'load_tab_chat':[\s\S]*?tabChatHandoff\.load/,
+      `${label}: transcript handoff reads and writes should share a background coordinator`,
+    );
+    assert.match(
+      background,
+      /case 'clear_tab_chat':[\s\S]*?tabChatHandoff\.clear\([\s\S]*?ownerId: msg\.handoffOwnerId,[\s\S]*?handoffGeneration: msg\.handoffGeneration/,
+      `${label}: New Chat should clear content through the visible document's validated handoff ownership`,
+    );
+    assert.match(
+      background,
+      /case 'clear_tab_chat':[\s\S]*?result\?\.ok && !result\.skipped[\s\S]*?action: 'tab_chat_cleared'[\s\S]*?handoffOwnerId: result\.handoffOwnerId/,
+      `${label}: a successful clear should notify other panel documents to refresh the cleared transcript`,
+    );
+    assert.match(
+      panel,
+      /action !== 'tab_chat_cleared'[\s\S]*?msg\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?requestVisibleSidePanelStateRefresh\(\);/,
+      `${label}: a different visible panel owner should reconcile immediately after a successful clear`,
+    );
+    assert.match(
+      background,
+      /requestHandoff:[\s\S]*?tab_chat_handoff_request[\s\S]*?ownerId,[\s\S]*?generation,/,
+      `${label}: a returning panel should request an explicit acknowledgement from the outgoing owner generation`,
+    );
+    assert.match(
+      panel,
+      /action !== 'tab_chat_handoff_request'[\s\S]*?msg\.ownerId[\s\S]*?tabChatHandoffOwnerId[\s\S]*?sendResponse\(\{[\s\S]*?generation: Number\(msg\.generation\),[\s\S]*?html: snapshot\.html/,
+      `${label}: only the targeted owner should acknowledge with its final snapshot`,
+    );
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(ROOT, prefix, 'src/ui/tab-chat-persistence.js'), 'utf8'),
+      /TAB_CHAT_HANDOFF_SETTLE_MS|settleHandoff|setTimeout/,
+      `${label}: transcript handoff correctness must not depend on a settling timer`,
+    );
+    assert.match(
+      panel,
+      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const claimedContextMenuTabId = contextMenuClaimOwned[\s\S]*?chatExtraParams\.contextMenuClear\?\.tabId[\s\S]*?const releaseOwnedContextMenuClaim = async \([\s\S]*?reason: 'panel-hidden', retryAfterMs: 250[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?tabId: claimedContextMenuTabId,[\s\S]*?onContextMenuClaimRejected\?\.\(rejection\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
+      `${label}: initial and renewed ownership should share one idempotent release-and-retry path`,
+    );
+    assert.match(
+      panel,
+      /const claimedContextMenuTabId = contextMenuClaimOwned[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?if \(contextMenuClaimOwned[\s\S]*?!sameTabId\(currentTabId, claimedContextMenuTabId\)[\s\S]*?!sameTabId\(renderedTabId, claimedContextMenuTabId\)[\s\S]*?await releaseOwnedContextMenuClaim\(\);[\s\S]*?return false;[\s\S]*?let text = inputEl\.value\.trim\(\);/,
+      `${label}: claimed prompts should remain bound to their source tab before reading the refreshed composer`,
+    );
+    assert.match(
+      panel,
+      /let text = inputEl\.value\.trim\(\);\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      `${label}: an empty refreshed composer should release and retry an owned prompt`,
+    );
+    assert.match(
+      panel,
+      /if \(isProcessing\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'run-active', retryAfterMs: 1_000 \}\);\s*return false;/,
+      `${label}: a context-menu claim must never fall through to the ordinary busy composer queue`,
+    );
+    const sendMessageStart = panel.indexOf('async function sendMessage(extraChatParams = {}) {');
+    const sendMessageEnd = panel.indexOf(
+      label === 'chrome' ? '\nfunction formatRecordTimer(' : '\nfunction ensureCurrentRunAssistant(',
+      sendMessageStart,
+    );
+    assert.notEqual(sendMessageEnd, -1, `${label}: sendMessage boundary should remain inspectable`);
+    const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
+    assert.equal(
+      (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
+      6,
+      `${label}: every visibility or preflight-abort exit should release the claim and schedule retry`,
+    );
+    assert.match(
+      sendMessageBody,
+      /contextMenuReservationRejected = e\?\.code === 'context-menu-reservation-rejected';[\s\S]*?const rejection = \{[\s\S]*?if \(contextMenuClaimOwned\) await releaseOwnedContextMenuClaim\(rejection\);[\s\S]*?else onContextMenuClaimRejected\?\.\(rejection\);/,
+      `${label}: a run-active reservation rejection should release the renewed prompt lease before retrying`,
+    );
+    assert.match(
+      sendMessageBody,
+      /if \(!retryOptions\) text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: the first visibility failure after refresh and command parsing should relinquish initial ownership`,
+    );
+    assert.match(
+      sendMessageBody,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: aborting preflight should relinquish initial ownership before resetting run state`,
+    );
+    assert.match(
+      sendMessageBody,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;[\s\S]*?const claimStillVisible[\s\S]*?if \(contextMenuClaimOwned && !claimStillVisible\) \{[\s\S]*?await releaseOwnedContextMenuClaim\(\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: every post-preflight visibility failure should relinquish initial or renewed ownership before returning`,
+    );
+  }
+});
+
+test('context-menu prompt storage enforces a durable expiring lease', async () => {
+  for (const [label, createStorage, leaseMs] of [
+    ['chrome', createContextMenuStorageCh, CONTEXT_MENU_CLAIM_LEASE_MS_CH],
+    ['firefox', createContextMenuStorageFx, CONTEXT_MENU_CLAIM_LEASE_MS_FX],
+  ]) {
+    const data = new Map();
+    let nextSetGate = null;
+    const store = {
+      async set(values) {
+        const gate = nextSetGate;
+        nextSetGate = null;
+        if (gate) await gate.promise;
+        Object.entries(values || {}).forEach(([key, value]) => data.set(key, value));
+      },
+      async get(key) {
+        return data.has(key) ? { [key]: data.get(key) } : {};
+      },
+      async remove(keys) {
+        (Array.isArray(keys) ? keys : [keys]).forEach(key => data.delete(key));
+      },
+    };
+    const storage = createStorage(() => store);
+    const prompt = { id: `${label}-lease`, tabId: 12, text: 'Explain this selection' };
+    await storage.save(prompt.tabId, prompt);
+
+    const first = await storage.claim(prompt.tabId, prompt.id, 'panel-a', () => false, 1_000);
+    const duplicateOwner = await storage.claim(prompt.tabId, prompt.id, 'panel-a', () => false, 1_001);
+    const contender = await storage.claim(prompt.tabId, prompt.id, 'panel-b', () => false, 1_002);
+    const takeover = await storage.claim(prompt.tabId, prompt.id, 'panel-b', () => false, duplicateOwner.leaseExpiresAt);
+
+    assert.equal(first.claimed, true, `${label}: first panel should acquire the lease`);
+    assert.equal(duplicateOwner.claimed, true, `${label}: lease acquisition should be idempotent for its owner`);
+    assert.equal(contender.claimed, false, `${label}: a second panel must be rejected while the lease is active`);
+    assert.equal(contender.reason, 'leased', `${label}: active lease rejection should be explicit`);
+    assert.equal(takeover.claimed, true, `${label}: another panel may recover the prompt after lease expiry`);
+    assert.equal(data.get(storage.claimKey(prompt.tabId))?.claimantId, 'panel-b', `${label}: the durable claim should record the current owner`);
+
+    let reservations = 0;
+    const reservationTime = takeover.leaseExpiresAt - 1;
+    const staleOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-a', () => {
+      reservations += 1;
+      return { accepted: true };
+    }, reservationTime);
+    const currentOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-b', () => {
+      reservations += 1;
+      return { accepted: true, requestId: 'reserved-run' };
+    }, reservationTime);
+    assert.equal(staleOwner.reserved, false, `${label}: an expired prior owner must not reserve the run after takeover`);
+    assert.equal(currentOwner.reserved, true, `${label}: the current claimant should reserve the run`);
+    assert.equal(currentOwner.requestId, 'reserved-run', `${label}: reservation should return the detached-run acknowledgement`);
+    assert.equal(reservations, 1, `${label}: ownership validation and the run reservation callback should be exactly once`);
+
+    const expiredOwner = await storage.reserve(prompt.tabId, prompt.id, 'panel-b', () => {
+      reservations += 1;
+      return { accepted: true };
+    }, takeover.leaseExpiresAt);
+    assert.equal(expiredOwner.reserved, false, `${label}: a claimant must not reserve at or after lease expiry`);
+    assert.equal(expiredOwner.reason, 'claim-lost', `${label}: expired ownership should require a fresh claim`);
+    assert.equal(expiredOwner.leaseExpiresAt, takeover.leaseExpiresAt, `${label}: expiry rejection should retain retry timing`);
+    assert.equal(reservations, 1, `${label}: an expired claimant must not invoke the run reservation callback`);
+
+    const released = await storage.release(prompt.tabId, prompt.id, 'panel-b');
+    assert.equal(released.released, true, `${label}: a panel that becomes hidden should relinquish its lease`);
+    assert.equal(released.prompt?.id, prompt.id, `${label}: releasing ownership must retain the durable prompt`);
+    assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: released ownership should clear only the lease`);
+    assert.equal(data.has(storage.key(prompt.tabId)), true, `${label}: released ownership must not consume the prompt`);
+    const reclaimed = await storage.claim(prompt.tabId, prompt.id, 'panel-c', () => false, takeover.leaseExpiresAt + 1);
+    assert.equal(reclaimed.claimed, true, `${label}: a newly visible panel should reclaim immediately after release`);
+
+    const blockedByRun = await storage.claim(
+      prompt.tabId,
+      prompt.id,
+      'panel-d',
+      () => true,
+      reclaimed.leaseExpiresAt,
+    );
+    assert.equal(blockedByRun.claimed, false, `${label}: a queued claimant must be rejected once a run is reserved`);
+    assert.equal(blockedByRun.reason, 'run-active', `${label}: run reservation rejection should remain retryable`);
+    assert.equal(blockedByRun.retryAfterMs, 1_000, `${label}: active-run rejection should include a retry interval`);
+
+    await storage.clear(prompt.tabId, prompt.id);
+    assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
+    assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
+
+    const delayedClaimPrompt = {
+      id: `${label}-queued-claim-clock`,
+      tabId: 14,
+      text: 'Explain this page',
+    };
+    await storage.save(delayedClaimPrompt.tabId, delayedClaimPrompt);
+    const incumbentClaim = await storage.claim(
+      delayedClaimPrompt.tabId,
+      delayedClaimPrompt.id,
+      'incumbent-panel',
+      () => false,
+      2_000,
+    );
+    const claimSetGate = deferred();
+    nextSetGate = claimSetGate;
+    const claimBlockingSave = storage.save(delayedClaimPrompt.tabId, delayedClaimPrompt);
+    await waitMicrotasks(3);
+
+    const claimOriginalNow = Date.now;
+    let delayedClaim = null;
+    try {
+      Date.now = () => 2_000;
+      const queuedTakeover = storage.claim(
+        delayedClaimPrompt.tabId,
+        delayedClaimPrompt.id,
+        'next-panel',
+        () => false,
+      );
+      Date.now = () => incumbentClaim.leaseExpiresAt;
+      claimSetGate.resolve();
+      await claimBlockingSave;
+      delayedClaim = await queuedTakeover;
+    } finally {
+      Date.now = claimOriginalNow;
+      claimSetGate.resolve();
+    }
+    assert.equal(delayedClaim?.claimed, true, `${label}: queued claims should re-sample time and take over an expired lease`);
+    assert.equal(delayedClaim?.leaseExpiresAt, incumbentClaim.leaseExpiresAt + leaseMs, `${label}: a delayed claim should receive a fresh full lease`);
+
+    const queuedPrompt = {
+      id: `${label}-queued-expiry`,
+      tabId: 13,
+      text: 'Summarize this selection',
+    };
+    await storage.save(queuedPrompt.tabId, queuedPrompt);
+    const queuedClaim = await storage.claim(queuedPrompt.tabId, queuedPrompt.id, 'queued-panel', () => false, 1_000);
+    const setGate = deferred();
+    nextSetGate = setGate;
+    const blockingSave = storage.save(queuedPrompt.tabId, queuedPrompt);
+    await waitMicrotasks(3);
+
+    const originalNow = Date.now;
+    let queuedReservation = null;
+    try {
+      Date.now = () => 1_000;
+      const reservation = storage.reserve(
+        queuedPrompt.tabId,
+        queuedPrompt.id,
+        'queued-panel',
+        () => ({ accepted: true }),
+      );
+      Date.now = () => queuedClaim.leaseExpiresAt;
+      setGate.resolve();
+      await blockingSave;
+      queuedReservation = await reservation;
+    } finally {
+      Date.now = originalNow;
+      setGate.resolve();
+    }
+    assert.equal(queuedReservation?.reserved, false, `${label}: queued validation must reject a lease that expired while waiting`);
+    assert.equal(queuedReservation?.reason, 'claim-lost', `${label}: queued expiry should require a fresh claim`);
   }
 });
 
@@ -21702,7 +22365,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /if \(!text\) \{\s*scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
+      /if \(!text\) \{[\s\S]*?scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
       `${label}: fully consumed slash commands should reveal synchronous UI output`,
     );
     assert.match(
@@ -32798,7 +33461,7 @@ test('detached chat lifecycle owns the default-on Ask streaming kill switch', ()
     const continueBody = background.match(/case 'continue': \{([\s\S]*?)\n\s+case 'abort'/)?.[1] || '';
 
     assert.match(panel, /sendRunWithReconnect\('chat_start'/, `${label}: sidepanel must retain detached chat_start`);
-    assert.match(background, /case 'chat_start':\s*return launchDetachedRun\('chat'/, `${label}: background must retain detached launch/reconnect ownership`);
+    assert.match(background, /case 'chat_start':\s*\{[\s\S]*?launchDetachedRun\('chat'/, `${label}: background must retain detached launch/reconnect ownership`);
     assert.match(chatBody, new RegExp(`await ${storageName}\\.storage\\.local\\.get\\('openaiAskStreamingEnabled'\\)`), `${label}: each detached chat should read the current kill switch`);
     assert.match(chatBody, /interactiveChat: true/, `${label}: only interactive chat should receive streaming capability`);
     assert.match(chatBody, /askStreamingEnabled: askStreamingSettings\.openaiAskStreamingEnabled !== false/, `${label}: streaming should default on`);
@@ -51853,7 +52516,7 @@ test('sidepanel: restored plan review cards rebind approve and cancel actions', 
     assert.match(source, /sendToBackground\('agent_run_state'/, `${file} should ask background for active-run state`);
     assert.match(source, /const awaitingPlanReviewTabs = new Set\(\);/, `${file} should track tabs awaiting plan approval`);
     assert.match(source, /function isAwaitingPlanReviewForTab\(/, `${file} should detect awaiting plan-review tabs`);
-    assert.match(source, /if \(isAwaitingPlanReviewForTab\(tabId\)\) \{[\s\S]*?sp\.plan\.awaiting_review[\s\S]*?return false;/, `${file} should block normal sends while a plan awaits approval`);
+    assert.match(source, /if \(isAwaitingPlanReviewForTab\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'plan-review-pending', retryAfterMs: 1_000 \}\);[\s\S]*?sp\.plan\.awaiting_review[\s\S]*?return false;/, `${file} should release claimed context-menu prompts before blocking sends for plan approval`);
     assert.match(source, /rebindPlanReviewCards\(\);/, `${file} should call the rebinder after chat restore`);
     assert.match(source, /plan-review-approve[\s\S]*submitPlanReview\(card, tabId, planId, 'approve'/, `${file} should rebind approve`);
     assert.match(source, /plan-review-change[\s\S]*setPlanReviewRawEditing\(card, enableRaw/, `${file} should toggle raw markdown via Edit as text`);
@@ -52342,6 +53005,36 @@ test('detached terminal journals win over duplicate task rejection records', asy
 
     assert.equal(response.content, 'Error: Cloud cost allowance reached.', `${label}: terminal content should remain renderable`);
     assert.equal(response.submittedTurnDurable, false, `${label}: terminal durability proof should survive duplicate rejection state`);
+  }
+});
+
+test('detached run rejections preserve structured reservation metadata', async () => {
+  for (const [label, runDetachedWithReconnect] of [
+    ['chrome', runDetachedWithReconnectCh],
+    ['firefox', runDetachedWithReconnectFx],
+  ]) {
+    const requestId = `${label}-structured-rejection`;
+    await assert.rejects(
+      runDetachedWithReconnect({
+        initialAction: 'chat_start',
+        payload: { tabId: 64, requestId, mode: 'ask', text: 'translate this' },
+        start: async () => ({
+          accepted: false,
+          code: 'context-menu-reservation-rejected',
+          reason: 'run-active',
+          retryAfterMs: 1_000,
+        }),
+        probe: async () => {
+          throw new Error('a rejected reservation must not enter the probe loop');
+        },
+        isConnectionError: () => false,
+        wait: async () => {},
+      }),
+      error => error?.code === 'context-menu-reservation-rejected'
+        && error?.reason === 'run-active'
+        && error?.retryAfterMs === 1_000,
+      `${label}: the sidepanel should receive enough rejection metadata to retry without rendering an error`,
+    );
   }
 });
 

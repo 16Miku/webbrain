@@ -125,16 +125,23 @@ export function buildContextMenuPrompt(selectionText) {
 }
 
 const CONTEXT_MENU_PENDING_PREFIX = 'contextMenuPrompt:';
+const CONTEXT_MENU_CLAIM_PREFIX = 'contextMenuPromptClaim:';
+export const CONTEXT_MENU_CLAIM_LEASE_MS = 15_000;
 
 /**
  * @param {() => (chrome.storage.StorageArea | browser.storage.StorageArea | null)} getStore
  */
 export function createContextMenuStorage(getStore) {
   const pending = new Map();
+  const claims = new Map();
   const operations = new Map();
 
   function key(tabId) {
     return `${CONTEXT_MENU_PENDING_PREFIX}${tabId}`;
+  }
+
+  function claimKey(tabId) {
+    return `${CONTEXT_MENU_CLAIM_PREFIX}${tabId}`;
   }
 
   function enqueue(tabId, fn) {
@@ -189,18 +196,199 @@ export function createContextMenuStorage(getStore) {
     return { ok: true, prompt: prompt?.text ? prompt : null };
   }
 
+  async function claim(tabId, promptId, claimantId, isRunActive = () => false, now) {
+    const normalizedPromptId = String(promptId || '');
+    const normalizedClaimantId = String(claimantId || '');
+    if (!normalizedPromptId || !normalizedClaimantId) {
+      return { ok: false, claimed: false, error: 'Prompt ID and claimant ID are required.' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const k = key(numericTabId);
+      const ck = claimKey(numericTabId);
+      const store = getStore();
+      let prompt = pending.get(numericTabId) || null;
+      if (!prompt && store) {
+        try {
+          const stored = await store.get(k);
+          prompt = stored?.[k] || null;
+        } catch { /* best effort */ }
+      }
+      if (!prompt?.text || String(prompt.id || '') !== normalizedPromptId) {
+        return { ok: true, claimed: false, reason: 'missing' };
+      }
+
+      let activeClaim = claims.get(numericTabId) || null;
+      if (!activeClaim && store) {
+        try {
+          const stored = await store.get(ck);
+          activeClaim = stored?.[ck] || null;
+        } catch { /* best effort */ }
+      }
+      if (isRunActive()) {
+        return {
+          ok: true,
+          claimed: false,
+          reason: 'run-active',
+          retryAfterMs: 1_000,
+        };
+      }
+      const suppliedNow = Number(now);
+      const nowMs = now == null || !Number.isFinite(suppliedNow)
+        ? Date.now()
+        : suppliedNow;
+      const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
+      const activeLease = samePrompt && Number(activeClaim?.expiresAt || 0) > nowMs;
+      if (activeLease && String(activeClaim?.claimantId || '') !== normalizedClaimantId) {
+        return {
+          ok: true,
+          claimed: false,
+          reason: 'leased',
+          leaseExpiresAt: Number(activeClaim.expiresAt),
+        };
+      }
+
+      const nextClaim = {
+        promptId: normalizedPromptId,
+        claimantId: normalizedClaimantId,
+        expiresAt: nowMs + CONTEXT_MENU_CLAIM_LEASE_MS,
+      };
+      claims.set(numericTabId, nextClaim);
+      if (store) {
+        try { await store.set({ [ck]: nextClaim }); } catch { /* best effort */ }
+      }
+      return {
+        ok: true,
+        claimed: true,
+        leaseExpiresAt: nextClaim.expiresAt,
+      };
+    });
+  }
+
+  async function reserve(tabId, promptId, claimantId, onReserve, now) {
+    const normalizedPromptId = String(promptId || '');
+    const normalizedClaimantId = String(claimantId || '');
+    if (!normalizedPromptId || !normalizedClaimantId || typeof onReserve !== 'function') {
+      return { ok: false, reserved: false, reason: 'invalid' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const k = key(numericTabId);
+      const ck = claimKey(numericTabId);
+      const store = getStore();
+      let prompt = pending.get(numericTabId) || null;
+      if (!prompt && store) {
+        try {
+          const stored = await store.get(k);
+          prompt = stored?.[k] || null;
+        } catch { /* best effort */ }
+      }
+      if (!prompt?.text || String(prompt.id || '') !== normalizedPromptId) {
+        return { ok: true, reserved: false, reason: 'missing' };
+      }
+
+      let activeClaim = claims.get(numericTabId) || null;
+      if (!activeClaim && store) {
+        try {
+          const stored = await store.get(ck);
+          activeClaim = stored?.[ck] || null;
+        } catch { /* best effort */ }
+      }
+      const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
+      const sameClaimant = String(activeClaim?.claimantId || '') === normalizedClaimantId;
+      const leaseExpiresAt = Number(activeClaim?.expiresAt || 0);
+      const suppliedNow = Number(now);
+      const validationNow = now == null || !Number.isFinite(suppliedNow)
+        ? Date.now()
+        : suppliedNow;
+      const activeLease = leaseExpiresAt > validationNow;
+      if (!samePrompt || !sameClaimant || !activeLease) {
+        return {
+          ok: true,
+          reserved: false,
+          reason: activeClaim && activeLease ? 'leased' : 'claim-lost',
+          leaseExpiresAt: leaseExpiresAt || undefined,
+        };
+      }
+
+      // Invoke the reservation callback while this tab's storage operation is
+      // still exclusive. The callback synchronously installs the background
+      // run guard, so a queued claimant cannot slip between ownership
+      // validation and detached-run reservation.
+      const result = onReserve(numericTabId);
+      return { ...result, reserved: true };
+    });
+  }
+
+  async function release(tabId, promptId, claimantId) {
+    const normalizedPromptId = String(promptId || '');
+    const normalizedClaimantId = String(claimantId || '');
+    if (!normalizedPromptId || !normalizedClaimantId) {
+      return { ok: false, released: false, error: 'Prompt ID and claimant ID are required.' };
+    }
+    return enqueue(tabId, async (numericTabId) => {
+      const k = key(numericTabId);
+      const ck = claimKey(numericTabId);
+      const store = getStore();
+      let activeClaim = claims.get(numericTabId) || null;
+      if (!activeClaim && store) {
+        try {
+          const stored = await store.get(ck);
+          activeClaim = stored?.[ck] || null;
+        } catch { /* best effort */ }
+      }
+      const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
+      const sameClaimant = String(activeClaim?.claimantId || '') === normalizedClaimantId;
+      if (!samePrompt || !sameClaimant) {
+        return { ok: true, released: false, reason: activeClaim ? 'claim-lost' : 'missing' };
+      }
+
+      if (store) {
+        try {
+          await store.remove(ck);
+        } catch {
+          return { ok: false, released: false, reason: 'storage' };
+        }
+      }
+      claims.delete(numericTabId);
+
+      let prompt = pending.get(numericTabId) || null;
+      if (!prompt && store) {
+        try {
+          const stored = await store.get(k);
+          prompt = stored?.[k] || null;
+        } catch { /* best effort */ }
+      }
+      return {
+        ok: true,
+        released: true,
+        prompt: prompt?.text ? prompt : null,
+      };
+    });
+  }
+
   async function clear(tabId, promptId) {
     return enqueue(tabId, async (numericTabId) => {
       const k = key(numericTabId);
+      const ck = claimKey(numericTabId);
       const store = getStore();
       const p = pending.get(numericTabId);
       if (!promptId || p?.id === promptId) pending.delete(numericTabId);
+      const inMemoryClaim = claims.get(numericTabId);
+      if (!promptId || inMemoryClaim?.promptId === promptId) claims.delete(numericTabId);
       if (store) {
+        const keysToRemove = [];
         try {
           const stored = await store.get(k);
           const storedPrompt = stored?.[k] || null;
-          if (!promptId || storedPrompt?.id === promptId) await store.remove(k);
+          if (!promptId || storedPrompt?.id === promptId) keysToRemove.push(k);
         } catch { /* best effort */ }
+        try {
+          const stored = await store.get(ck);
+          const storedClaim = stored?.[ck] || null;
+          if (!promptId || storedClaim?.promptId === promptId) keysToRemove.push(ck);
+        } catch { /* best effort */ }
+        if (keysToRemove.length) {
+          try { await store.remove(keysToRemove); } catch { /* best effort */ }
+        }
       }
       return { ok: true };
     });
@@ -212,13 +400,16 @@ export function createContextMenuStorage(getStore) {
   async function cleanup(tabId) {
     return enqueue(tabId, async (numericTabId) => {
       pending.delete(numericTabId);
+      claims.delete(numericTabId);
       const store = getStore();
       if (store) {
-        try { await store.remove(key(numericTabId)); } catch { /* best effort */ }
+        try {
+          await store.remove([key(numericTabId), claimKey(numericTabId)]);
+        } catch { /* best effort */ }
       }
       return { ok: true };
     });
   }
 
-  return { key, save, consume, clear, cleanup };
+  return { key, claimKey, save, consume, claim, reserve, release, clear, cleanup };
 }

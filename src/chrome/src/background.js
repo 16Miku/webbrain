@@ -37,6 +37,7 @@ import {
   buildSelectionPrompt,
   createContextMenuStorage,
 } from './context-menu-storage.js';
+import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import {
   prepareRecordingHost,
   startTabRecording,
@@ -164,6 +165,21 @@ function getContextMenuPromptStore() {
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
+const tabChatHandoff = createTabChatHandoffCoordinator(chrome.storage.session, {
+  requestHandoff: async (tabId, { ownerId, generation }) => {
+    try {
+      return await chrome.runtime.sendMessage({
+        target: 'sidepanel',
+        action: 'tab_chat_handoff_request',
+        tabId,
+        ownerId,
+        generation,
+      });
+    } catch {
+      return null;
+    }
+  },
+});
 
 function createContextMenus() {
   if (!chrome.contextMenus?.create) return;
@@ -1689,8 +1705,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   clearTimeout(pendingContextMenuNotifications.get(tabId));
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
+  tabChatHandoff.clear(tabId).catch(() => {});
   savePanelTabs();
-  chrome.storage.session?.remove(`tabChat:${tabId}`).catch(() => {});
   scheduler.cancelForTab(tabId).catch(() => {});
   agent.clearDevCssPatchesForTab(tabId).catch(() => {});
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
@@ -1928,7 +1944,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function handleMessage(msg, sender) {
-  const lightweightAction = msg.action === 'get_recording_state';
+  const lightweightAction = [
+    'get_recording_state',
+    'persist_tab_chat',
+    'load_tab_chat',
+    'clear_tab_chat',
+    'release_context_menu_prompt_claim',
+  ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
     if (providerManager.providers.size === 0) {
@@ -2151,8 +2173,41 @@ async function handleMessage(msg, sender) {
       };
     }
 
-    case 'chat_start':
-      return launchDetachedRun('chat', msg, sender);
+    case 'chat_start': {
+      const claim = msg.contextMenuClaim;
+      if (!claim?.promptId || !claim?.claimantId) {
+        return launchDetachedRun('chat', msg, sender);
+      }
+      const tabId = msg.tabId || sender.tab?.id;
+      try {
+        const reservation = await contextMenuStorage.reserve(
+          tabId,
+          claim.promptId,
+          claim.claimantId,
+          () => launchDetachedRun('chat', msg, sender),
+        );
+        if (reservation?.reserved) return reservation;
+        return {
+          ok: false,
+          accepted: false,
+          code: 'context-menu-reservation-rejected',
+          reason: reservation?.reason || 'claim-lost',
+          leaseExpiresAt: reservation?.leaseExpiresAt,
+          retryAfterMs: reservation?.reason === 'run-active' ? 1_000 : undefined,
+        };
+      } catch (error) {
+        if (/run is already active/i.test(String(error?.message || ''))) {
+          return {
+            ok: false,
+            accepted: false,
+            code: 'context-menu-reservation-rejected',
+            reason: 'run-active',
+            retryAfterMs: 1_000,
+          };
+        }
+        throw error;
+      }
+    }
 
     case 'continue_start':
       return launchDetachedRun('continue', msg, sender);
@@ -2586,9 +2641,63 @@ async function handleMessage(msg, sender) {
       return await contextMenuStorage.consume(tabId);
     }
 
+    case 'claim_context_menu_prompt': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, claimed: false, error: 'No tab ID' };
+      return await contextMenuStorage.claim(
+        tabId,
+        msg.promptId,
+        msg.claimantId,
+        () => agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId),
+      );
+    }
+
+    case 'release_context_menu_prompt_claim': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const result = await contextMenuStorage.release(
+        tabId,
+        msg.promptId,
+        msg.claimantId,
+      );
+      if (result?.released && result.prompt?.text) {
+        notifySidePanelOfContextMenuPrompt(result.prompt);
+      }
+      return result;
+    }
+
     case 'clear_context_menu_prompt': {
       const tabId = msg.tabId || sender.tab?.id;
       return await contextMenuStorage.clear(tabId, msg.promptId);
+    }
+
+    case 'persist_tab_chat':
+      return await tabChatHandoff.save(msg.tabId || sender.tab?.id, msg.html, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
+
+    case 'load_tab_chat':
+      return await tabChatHandoff.load(msg.tabId || sender.tab?.id, {
+        waitForHandoff: msg.waitForHandoff === true,
+        claimantId: msg.handoffOwnerId,
+      });
+
+    case 'clear_tab_chat': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const result = await tabChatHandoff.clear(tabId, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
+      if (result?.ok && !result.skipped) {
+        chrome.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: result.handoffOwnerId,
+          handoffGeneration: result.handoffGeneration,
+        }).catch(() => {});
+      }
+      return result;
     }
 
     case 'list_scheduled_jobs': {

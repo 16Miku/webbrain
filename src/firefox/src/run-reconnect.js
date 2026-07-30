@@ -114,7 +114,13 @@ export async function runDetachedWithReconnect({
     } else {
       try {
         const ack = await start(action, actionPayload);
-        if (ack?.accepted === false) throw new Error(ack.error || 'The background rejected the run.');
+        if (ack?.accepted === false) {
+          const rejection = new Error(ack.error || 'The background rejected the run.');
+          for (const field of ['code', 'reason', 'leaseExpiresAt', 'retryAfterMs']) {
+            if (ack?.[field] != null) rejection[field] = ack[field];
+          }
+          throw rejection;
+        }
         if (ack?.requestId && !requestMatches(ack.requestId, requestId)) {
           throw new Error('The background acknowledged a different run request.');
         }
