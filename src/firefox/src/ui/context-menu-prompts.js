@@ -135,6 +135,15 @@ export function createContextMenuPromptHandler({
 
     const currentTabId = getCurrentTabId();
     const clearPayload = { tabId: payload.tabId ?? currentTabId, promptId: payload.id };
+    const releasePromptClaim = async () => {
+      try {
+        await sendToBackground('release_context_menu_prompt_claim', {
+          tabId: clearPayload.tabId,
+          promptId: payload.id,
+          claimantId,
+        });
+      } catch { /* the durable lease still expires if release fails */ }
+    };
     let claimResult = null;
     try {
       claimResult = await sendToBackground('claim_context_menu_prompt', {
@@ -148,13 +157,7 @@ export function createContextMenuPromptHandler({
       claimResult = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
     }
     if (claimResult?.claimed && !getIsDocumentVisible()) {
-      try {
-        await sendToBackground('release_context_menu_prompt_claim', {
-          tabId: clearPayload.tabId,
-          promptId: payload.id,
-          claimantId,
-        });
-      } catch { /* the durable lease still expires if release fails */ }
+      await releasePromptClaim();
       claimResult = { claimed: false, reason: 'panel-hidden', retryAfterMs: 250 };
     }
     if (!claimResult?.claimed || !getIsDocumentVisible()) {
@@ -163,6 +166,15 @@ export function createContextMenuPromptHandler({
       // A different panel instance owns an active lease. A repeated delivery
       // may re-check the lease, but it cannot submit until the lease expires.
       scheduleClaimRetry(payload, claimResult?.leaseExpiresAt, claimResult?.retryAfterMs);
+      drainQueuedContextMenuPrompts();
+      return;
+    }
+    const promptTabStillActive = getCurrentTabId() != null
+      && contextMenuPromptMatchesCurrentTab(payload);
+    if (getIsProcessing() || !promptTabStillActive) {
+      await releasePromptClaim();
+      runningContextMenuPromptId = null;
+      queuedContextMenuPrompts.push(payload);
       drainQueuedContextMenuPrompts();
       return;
     }

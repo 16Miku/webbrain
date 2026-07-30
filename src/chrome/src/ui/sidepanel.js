@@ -1537,6 +1537,7 @@ function isSuccessfulAskCompletion(mode, response) {
 // Also mirrored to chrome.storage.session keyed `tabChat:<tabId>` so the
 // conversation survives the side panel being closed and reopened.
 const tabChats = new Map();
+const TAB_CHAT_LOAD_FAILED = Symbol('tab-chat-load-failed');
 const tabChatOperations = new Map();
 const tabChatHandoffGenerations = new Map();
 const tabChatHandoffOwnerId = `sidepanel-chat-${
@@ -1586,7 +1587,9 @@ async function loadTabChat(tabId, { waitForHandoff = false } = {}) {
       tabChats.delete(queuedTabId);
       return null;
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    if (waitForHandoff) return TAB_CHAT_LOAD_FAILED;
+  }
   return null;
 }
 
@@ -3598,7 +3601,7 @@ async function init() {
   const restoreTabId = currentTabId;
   if (restoreTabId != null) {
     const html = await loadTabChat(restoreTabId, { waitForHandoff: true });
-    if (currentTabId === restoreTabId && html) {
+    if (html !== TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId && html) {
       await hydrateRestoredChatHistory(restoreTabId, html);
       if (currentTabId === restoreTabId) {
         messagesEl.innerHTML = html;
@@ -3759,6 +3762,7 @@ async function refreshVisibleSidePanelState() {
   // from the shared session copy before that document is allowed to persist.
   tabChats.delete(tabId);
   const html = await loadTabChat(tabId, { waitForHandoff: true });
+  if (html === TAB_CHAT_LOAD_FAILED) return false;
   if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
   renderedTabId = tabId;
   if (html && html !== messagesEl.innerHTML) {
@@ -7023,7 +7027,9 @@ async function sendMessage(extraChatParams = {}) {
   const submittedText = text;
   const tabId = currentTabId;
   let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
-  const releaseOwnedContextMenuClaim = async () => {
+  const releaseOwnedContextMenuClaim = async (
+    rejection = { reason: 'panel-hidden', retryAfterMs: 250 },
+  ) => {
     if (!contextMenuClaimOwned) return;
     contextMenuClaimOwned = false;
     try {
@@ -7033,7 +7039,7 @@ async function sendMessage(extraChatParams = {}) {
         claimantId: contextMenuClaim.claimantId,
       });
     } catch { /* the durable lease still expires if release fails */ }
-    onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
+    onContextMenuClaimRejected?.(rejection);
   };
   if (isConversationClearInProgress(tabId)) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
@@ -7049,6 +7055,10 @@ async function sendMessage(extraChatParams = {}) {
     return false;
   }
   if (isProcessing) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'run-active', retryAfterMs: 1_000 });
+      return false;
+    }
     if (isOutOfBandSlashDraft(text)) {
       resetComposerHistoryNavigation(tabId);
       saveInputDraftForTab(tabId, '');

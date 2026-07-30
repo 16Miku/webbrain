@@ -18190,6 +18190,8 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'chrome: tab-chat restore should normalize tab ids before checking the cache');
   assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'chrome: coordinated handoff restores should bypass stale document-local HTML');
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
+  assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'chrome: coordinated load failures should remain distinct from successful empty restores');
+  assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'chrome: a failed visibility handoff must preserve the current transcript DOM');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -18210,6 +18212,8 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(loadBody, /const numericTabId = Number\(tabId\);[\s\S]*?if \(!Number\.isFinite\(numericTabId\)\) return null;/, 'firefox: tab-chat restore should normalize tab ids before checking the cache');
   assert.match(loadBody, /if \(!waitForHandoff && !tabChatOperations\.has\(numericTabId\) && tabChats\.has\(numericTabId\)\)/, 'firefox: coordinated handoff restores should bypass stale document-local HTML');
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
+  assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'firefox: coordinated load failures should remain distinct from successful empty restores');
+  assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'firefox: a failed visibility handoff must preserve the current transcript DOM');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -18280,10 +18284,10 @@ test('sidepanel does not miss startup tab switches before consuming tab-scoped s
     if (label === 'chrome') {
       const restoreCaptureIdx = body.indexOf('const restoreTabId = currentTabId;');
       const restoreLoadIdx = body.indexOf('const html = await loadTabChat(restoreTabId, { waitForHandoff: true });');
-      const restoreGuardIdx = body.indexOf('if (currentTabId === restoreTabId && html)');
+      const restoreGuardIdx = body.indexOf('if (html !== TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId && html)');
       assert.notEqual(restoreCaptureIdx, -1, 'chrome: initial tab-chat restore should capture the target tab');
       assert.notEqual(restoreLoadIdx, -1, 'chrome: initial tab-chat restore should load the captured tab');
-      assert.notEqual(restoreGuardIdx, -1, 'chrome: initial tab-chat restore should drop stale async results');
+      assert.notEqual(restoreGuardIdx, -1, 'chrome: initial tab-chat restore should drop failed and stale async results');
       assert.equal(listenerIdx < restoreCaptureIdx && restoreCaptureIdx < restoreLoadIdx && restoreLoadIdx < restoreGuardIdx, true, 'chrome: initial restore must be guarded after listener-driven tab changes');
     }
   }
@@ -21707,6 +21711,40 @@ test('context-menu prompts release an initial claim acquired after the panel bec
   }
 });
 
+test('context-menu prompts release and requeue when another run starts during claim acquisition', async () => {
+  for (const [label, createHandler] of [
+    ['chrome', createContextMenuPromptHandlerCh],
+    ['firefox', createContextMenuPromptHandlerFx],
+  ]) {
+    const prompt = { id: `${label}-busy-during-claim`, tabId: 10, text: 'Explain this selection' };
+    const claimGate = deferred();
+    const h = createContextMenuPromptHarness(createHandler, prompt, async () => true, {
+      claimPrompt: async (_params, attempt) => (
+        attempt === 1 ? claimGate.promise : { ok: true, claimed: true }
+      ),
+    });
+
+    h.handler.acceptContextMenuPrompt(prompt);
+    await waitMicrotasks(3);
+    h.setProcessing(true);
+    claimGate.resolve({ ok: true, claimed: true });
+    await waitMicrotasks(8);
+
+    assert.equal(h.sends.length, 0, `${label}: a prompt must not enter the ordinary composer queue after a run starts`);
+    assert.equal(h.releases.length, 1, `${label}: the prompt lease should be released while the active run owns the tab`);
+    assert.equal(h.input.value, '', `${label}: the claimed prompt should not replace the user's busy composer draft`);
+
+    h.setProcessing(false);
+    h.handler.drainQueuedContextMenuPrompts();
+    await waitMicrotasks(8);
+
+    assert.equal(h.claims.length, 2, `${label}: the context-menu queue should reclaim after the active run settles`);
+    assert.equal(h.sends.length, 1, `${label}: the full prompt payload should submit exactly once after reclaim`);
+    assert.equal(h.sends[0].extra.contextMenuClaim.promptId, prompt.id, `${label}: the deferred send must preserve ownership metadata`);
+    assert.equal(h.sends[0].extra.contextMenuClear.promptId, prompt.id, `${label}: the deferred send must still clear durable prompt storage`);
+  }
+});
+
 test('context-menu prompt lease recovery retries after an abandoned owner expires', async () => {
   for (const [label, createHandler] of [
     ['chrome', createContextMenuPromptHandlerCh],
@@ -21809,7 +21847,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       handler,
-      /claimResult\?\.claimed && !getIsDocumentVisible\(\)[\s\S]*?release_context_menu_prompt_claim[\s\S]*?reason: 'panel-hidden'/,
+      /const releasePromptClaim = async \(\) => \{[\s\S]*?release_context_menu_prompt_claim[\s\S]*?claimResult\?\.claimed && !getIsDocumentVisible\(\)[\s\S]*?await releasePromptClaim\(\);[\s\S]*?reason: 'panel-hidden'/,
       `${label}: an initial claim that resolves after hiding should be released for the visible panel`,
     );
     assert.match(
@@ -21884,8 +21922,13 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const releaseOwnedContextMenuClaim = async \(\) => \{[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(\{ reason: 'panel-hidden', retryAfterMs: 250 \}\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
+      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const releaseOwnedContextMenuClaim = async \([\s\S]*?reason: 'panel-hidden', retryAfterMs: 250[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(rejection\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
       `${label}: initial and renewed ownership should share one idempotent release-and-retry path`,
+    );
+    assert.match(
+      panel,
+      /if \(isProcessing\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'run-active', retryAfterMs: 1_000 \}\);\s*return false;/,
+      `${label}: a context-menu claim must never fall through to the ordinary busy composer queue`,
     );
     const sendMessageStart = panel.indexOf('async function sendMessage(extraChatParams = {}) {');
     const sendMessageEnd = panel.indexOf(
