@@ -17814,7 +17814,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     const initMatch = panel.match(/async function init\(\) \{([\s\S]*?)\n  \/\/ Start observing the messages container/);
     assert.ok(initMatch, `${label}: init restore block missing`);
     const initBody = initMatch[1];
-    const initLoadIdx = initBody.indexOf('const html = await loadTabChat(restoreTabId, { waitForHandoff: true });');
+    const initLoadIdx = initBody.indexOf('loadTabChat(restoreTabId, { waitForHandoff: true })');
     const initHydrateIdx = initBody.indexOf('await hydrateRestoredChatHistory(restoreTabId, html);');
     const initGuardIdx = initBody.indexOf('if (currentTabId === restoreTabId) {', initHydrateIdx);
     const initDomIdx = initBody.indexOf('messagesEl.innerHTML = html;', initGuardIdx);
@@ -18307,8 +18307,8 @@ test('sidepanel does not miss startup tab switches before consuming tab-scoped s
 
     if (label === 'chrome') {
       const restoreCaptureIdx = body.indexOf('const restoreTabId = currentTabId;');
-      const restoreLoadIdx = body.indexOf('const html = await loadTabChat(restoreTabId, { waitForHandoff: true });');
-      const restoreGuardIdx = body.indexOf('if (html !== TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId && html)');
+      const restoreLoadIdx = body.indexOf('loadTabChat(restoreTabId, { waitForHandoff: true })');
+      const restoreGuardIdx = body.indexOf('if (currentTabId === restoreTabId && html && html !== TAB_CHAT_LOAD_FAILED)');
       assert.notEqual(restoreCaptureIdx, -1, 'chrome: initial tab-chat restore should capture the target tab');
       assert.notEqual(restoreLoadIdx, -1, 'chrome: initial tab-chat restore should load the captured tab');
       assert.notEqual(restoreGuardIdx, -1, 'chrome: initial tab-chat restore should drop failed and stale async results');
@@ -21859,6 +21859,11 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       /case 'claim_context_menu_prompt':[\s\S]*?contextMenuStorage\.claim\([\s\S]*?agent\.activeRunState\(tabId\)\?\.running \|\| detachedRunStarts\.has\(tabId\)/,
       `${label}: background should reject queued claim operations after another run reserves the tab`,
     );
+    assert.doesNotMatch(
+      background,
+      /case 'claim_context_menu_prompt':[\s\S]*?contextMenuStorage\.claim\([\s\S]*?msg\.claimantId,\s*Date\.now\(\),/,
+      `${label}: claim timestamps must be sampled inside the serialized storage operation`,
+    );
     assert.match(
       handler,
       /sendToBackground\('claim_context_menu_prompt', \{[\s\S]*?promptId: payload\.id,[\s\S]*?claimantId,[\s\S]*?\}\)/,
@@ -21886,7 +21891,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?tabSwitchTransitionId != null[\s\S]*?pendingRefresh !== visibleStateRefreshPromise \|\| tabSwitchTransitionId != null/,
+      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?tabSwitchTransitionId != null \|\| visibleStateRefreshInProgress[\s\S]*?pendingRefresh !== visibleStateRefreshPromise[\s\S]*?\|\| tabSwitchTransitionId != null[\s\S]*?\|\| visibleStateRefreshInProgress/,
       `${label}: sends should wait until visibility refreshes and coordinated tab switches settle`,
     );
     assert.match(
@@ -21913,8 +21918,8 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /const restoreTabId = currentTabId;[\s\S]*?await loadTabChat\(restoreTabId, \{ waitForHandoff: true \}\);/,
-      `${label}: an initially visible panel should also wait for an outgoing document handoff`,
+      /const restoreTabId = currentTabId;[\s\S]*?visibleStateRefreshInProgress = true;[\s\S]*?let html = TAB_CHAT_LOAD_FAILED;[\s\S]*?while \(html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId\) \{[\s\S]*?await loadTabChat\(restoreTabId, \{ waitForHandoff: true \}\);[\s\S]*?await waitForTabChatHandoffRetry\(\);[\s\S]*?finally \{[\s\S]*?visibleStateRefreshInProgress = false;/,
+      `${label}: an initially visible panel should stay blocked and retry until it acquires handoff ownership`,
     );
     assert.match(
       panel,
@@ -22021,10 +22026,10 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     const prompt = { id: `${label}-lease`, tabId: 12, text: 'Explain this selection' };
     await storage.save(prompt.tabId, prompt);
 
-    const first = await storage.claim(prompt.tabId, prompt.id, 'panel-a', 1_000);
-    const duplicateOwner = await storage.claim(prompt.tabId, prompt.id, 'panel-a', 1_001);
-    const contender = await storage.claim(prompt.tabId, prompt.id, 'panel-b', 1_002);
-    const takeover = await storage.claim(prompt.tabId, prompt.id, 'panel-b', duplicateOwner.leaseExpiresAt);
+    const first = await storage.claim(prompt.tabId, prompt.id, 'panel-a', () => false, 1_000);
+    const duplicateOwner = await storage.claim(prompt.tabId, prompt.id, 'panel-a', () => false, 1_001);
+    const contender = await storage.claim(prompt.tabId, prompt.id, 'panel-b', () => false, 1_002);
+    const takeover = await storage.claim(prompt.tabId, prompt.id, 'panel-b', () => false, duplicateOwner.leaseExpiresAt);
 
     assert.equal(first.claimed, true, `${label}: first panel should acquire the lease`);
     assert.equal(duplicateOwner.claimed, true, `${label}: lease acquisition should be idempotent for its owner`);
@@ -22062,15 +22067,15 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     assert.equal(released.prompt?.id, prompt.id, `${label}: releasing ownership must retain the durable prompt`);
     assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: released ownership should clear only the lease`);
     assert.equal(data.has(storage.key(prompt.tabId)), true, `${label}: released ownership must not consume the prompt`);
-    const reclaimed = await storage.claim(prompt.tabId, prompt.id, 'panel-c', takeover.leaseExpiresAt + 1);
+    const reclaimed = await storage.claim(prompt.tabId, prompt.id, 'panel-c', () => false, takeover.leaseExpiresAt + 1);
     assert.equal(reclaimed.claimed, true, `${label}: a newly visible panel should reclaim immediately after release`);
 
     const blockedByRun = await storage.claim(
       prompt.tabId,
       prompt.id,
       'panel-d',
-      reclaimed.leaseExpiresAt,
       () => true,
+      reclaimed.leaseExpiresAt,
     );
     assert.equal(blockedByRun.claimed, false, `${label}: a queued claimant must be rejected once a run is reserved`);
     assert.equal(blockedByRun.reason, 'run-active', `${label}: run reservation rejection should remain retryable`);
@@ -22080,13 +22085,52 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
     assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
 
+    const delayedClaimPrompt = {
+      id: `${label}-queued-claim-clock`,
+      tabId: 14,
+      text: 'Explain this page',
+    };
+    await storage.save(delayedClaimPrompt.tabId, delayedClaimPrompt);
+    const incumbentClaim = await storage.claim(
+      delayedClaimPrompt.tabId,
+      delayedClaimPrompt.id,
+      'incumbent-panel',
+      () => false,
+      2_000,
+    );
+    const claimSetGate = deferred();
+    nextSetGate = claimSetGate;
+    const claimBlockingSave = storage.save(delayedClaimPrompt.tabId, delayedClaimPrompt);
+    await waitMicrotasks(3);
+
+    const claimOriginalNow = Date.now;
+    let delayedClaim = null;
+    try {
+      Date.now = () => 2_000;
+      const queuedTakeover = storage.claim(
+        delayedClaimPrompt.tabId,
+        delayedClaimPrompt.id,
+        'next-panel',
+        () => false,
+      );
+      Date.now = () => incumbentClaim.leaseExpiresAt;
+      claimSetGate.resolve();
+      await claimBlockingSave;
+      delayedClaim = await queuedTakeover;
+    } finally {
+      Date.now = claimOriginalNow;
+      claimSetGate.resolve();
+    }
+    assert.equal(delayedClaim?.claimed, true, `${label}: queued claims should re-sample time and take over an expired lease`);
+    assert.equal(delayedClaim?.leaseExpiresAt, incumbentClaim.leaseExpiresAt + leaseMs, `${label}: a delayed claim should receive a fresh full lease`);
+
     const queuedPrompt = {
       id: `${label}-queued-expiry`,
       tabId: 13,
       text: 'Summarize this selection',
     };
     await storage.save(queuedPrompt.tabId, queuedPrompt);
-    const queuedClaim = await storage.claim(queuedPrompt.tabId, queuedPrompt.id, 'queued-panel', 1_000);
+    const queuedClaim = await storage.claim(queuedPrompt.tabId, queuedPrompt.id, 'queued-panel', () => false, 1_000);
     const setGate = deferred();
     nextSetGate = setGate;
     const blockingSave = storage.save(queuedPrompt.tabId, queuedPrompt);

@@ -1556,8 +1556,12 @@ async function waitForVisibleSidePanelStateRefresh() {
   do {
     pendingRefresh = visibleStateRefreshPromise;
     await pendingRefresh.catch(() => {});
-    if (tabSwitchTransitionId != null) await waitForTabChatHandoffRetry();
-  } while (pendingRefresh !== visibleStateRefreshPromise || tabSwitchTransitionId != null);
+    if (tabSwitchTransitionId != null || visibleStateRefreshInProgress) {
+      await waitForTabChatHandoffRetry();
+    }
+  } while (pendingRefresh !== visibleStateRefreshPromise
+      || tabSwitchTransitionId != null
+      || visibleStateRefreshInProgress);
 }
 
 function schedulePersist() {
@@ -3474,14 +3478,27 @@ async function init() {
   // Restore prior conversation for this tab (if any) — survives close/reopen.
   const restoreTabId = currentTabId;
   if (restoreTabId != null) {
-    const html = await loadTabChat(restoreTabId, { waitForHandoff: true });
-    if (html !== TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId && html) {
-      await hydrateRestoredChatHistory(restoreTabId, html);
-      if (currentTabId === restoreTabId) {
-        messagesEl.innerHTML = html;
-        messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
-        rebindRestoredMessageControls();
+    visibleStateRefreshInProgress = true;
+    syncSendButtonState();
+    try {
+      let html = TAB_CHAT_LOAD_FAILED;
+      while (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+        html = await loadTabChat(restoreTabId, { waitForHandoff: true });
+        if (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+          await waitForTabChatHandoffRetry();
+        }
       }
+      if (currentTabId === restoreTabId && html && html !== TAB_CHAT_LOAD_FAILED) {
+        await hydrateRestoredChatHistory(restoreTabId, html);
+        if (currentTabId === restoreTabId) {
+          messagesEl.innerHTML = html;
+          messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+          rebindRestoredMessageControls();
+        }
+      }
+    } finally {
+      visibleStateRefreshInProgress = false;
+      syncSendButtonState();
     }
   }
 

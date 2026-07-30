@@ -2335,7 +2335,6 @@ async function handleMessage(msg, sender) {
         tabId,
         msg.promptId,
         msg.claimantId,
-        Date.now(),
         () => agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId),
       );
     }

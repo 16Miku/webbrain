@@ -196,7 +196,7 @@ export function createContextMenuStorage(getStore) {
     return { ok: true, prompt: prompt?.text ? prompt : null };
   }
 
-  async function claim(tabId, promptId, claimantId, now = Date.now(), isRunActive = () => false) {
+  async function claim(tabId, promptId, claimantId, isRunActive = () => false, now) {
     const normalizedPromptId = String(promptId || '');
     const normalizedClaimantId = String(claimantId || '');
     if (!normalizedPromptId || !normalizedClaimantId) {
@@ -232,7 +232,10 @@ export function createContextMenuStorage(getStore) {
           retryAfterMs: 1_000,
         };
       }
-      const nowMs = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+      const suppliedNow = Number(now);
+      const nowMs = now == null || !Number.isFinite(suppliedNow)
+        ? Date.now()
+        : suppliedNow;
       const samePrompt = String(activeClaim?.promptId || '') === normalizedPromptId;
       const activeLease = samePrompt && Number(activeClaim?.expiresAt || 0) > nowMs;
       if (activeLease && String(activeClaim?.claimantId || '') !== normalizedClaimantId) {
