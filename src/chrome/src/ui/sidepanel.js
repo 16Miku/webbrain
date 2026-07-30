@@ -7103,16 +7103,21 @@ async function sendMessage(extraChatParams = {}) {
     } catch { /* the durable lease still expires if release fails */ }
     onContextMenuClaimRejected?.(rejection);
   };
-  if (isConversationClearInProgress(tabId)) return false;
+  if (isConversationClearInProgress(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
+    return false;
+  }
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
   text = normalizeScreenshotCommandText(text);
   if (isAwaitingPlanReviewForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'plan-review-pending', retryAfterMs: 1_000 });
     showComposerToast(t('sp.plan.awaiting_review'), { duration: 5000 });
     syncSendButtonState();
     return false;
   }
   if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
     syncSendButtonState();
     return false;
   }
@@ -7188,6 +7193,7 @@ async function sendMessage(extraChatParams = {}) {
   // If the entire message was just the slash command, there's nothing
   // left to send to the agent — bail out after the side effect.
   if (!text) {
+    await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
     scrollToBottom({ force: true });
     inputEl.value = '';
     autoResizeInput();

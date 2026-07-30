@@ -15117,7 +15117,7 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
       `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
     );
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
-    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
+    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
     assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
@@ -22329,7 +22329,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /if \(!text\) \{\s*scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
+      /if \(!text\) \{[\s\S]*?scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
       `${label}: fully consumed slash commands should reveal synchronous UI output`,
     );
     assert.match(
@@ -52480,7 +52480,7 @@ test('sidepanel: restored plan review cards rebind approve and cancel actions', 
     assert.match(source, /sendToBackground\('agent_run_state'/, `${file} should ask background for active-run state`);
     assert.match(source, /const awaitingPlanReviewTabs = new Set\(\);/, `${file} should track tabs awaiting plan approval`);
     assert.match(source, /function isAwaitingPlanReviewForTab\(/, `${file} should detect awaiting plan-review tabs`);
-    assert.match(source, /if \(isAwaitingPlanReviewForTab\(tabId\)\) \{[\s\S]*?sp\.plan\.awaiting_review[\s\S]*?return false;/, `${file} should block normal sends while a plan awaits approval`);
+    assert.match(source, /if \(isAwaitingPlanReviewForTab\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'plan-review-pending', retryAfterMs: 1_000 \}\);[\s\S]*?sp\.plan\.awaiting_review[\s\S]*?return false;/, `${file} should release claimed context-menu prompts before blocking sends for plan approval`);
     assert.match(source, /rebindPlanReviewCards\(\);/, `${file} should call the rebinder after chat restore`);
     assert.match(source, /plan-review-approve[\s\S]*submitPlanReview\(card, tabId, planId, 'approve'/, `${file} should rebind approve`);
     assert.match(source, /plan-review-change[\s\S]*setPlanReviewRawEditing\(card, enableRaw/, `${file} should toggle raw markdown via Edit as text`);
