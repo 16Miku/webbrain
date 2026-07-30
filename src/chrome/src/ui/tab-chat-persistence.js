@@ -361,12 +361,23 @@ export function createTabChatHandoffCoordinator(storageArea, {
       }
       latestHtml.delete(queuedTabId);
       const keys = [TAB_CHAT_PREFIX + queuedTabId];
-      if (!normalizedOwnerId) keys.push(TAB_CHAT_HANDOFF_PREFIX + queuedTabId);
+      let nextGeneration = null;
+      if (normalizedOwnerId) {
+        nextGeneration = normalizedGeneration + 1;
+        await storageArea.set({
+          [TAB_CHAT_HANDOFF_PREFIX + queuedTabId]: {
+            ownerId: normalizedOwnerId,
+            generation: nextGeneration,
+          },
+        });
+      } else {
+        keys.push(TAB_CHAT_HANDOFF_PREFIX + queuedTabId);
+      }
       await storageArea.remove(keys);
       return {
         ok: true,
         handoffOwnerId: normalizedOwnerId || null,
-        handoffGeneration: normalizedOwnerId ? normalizedGeneration : null,
+        handoffGeneration: nextGeneration,
       };
     });
   }

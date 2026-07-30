@@ -18184,21 +18184,28 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
       handoffGeneration: 2,
     });
     assert.equal(cleared.ok, true, `${label}: the visible owner should clear its transcript`);
+    assert.equal(cleared.handoffGeneration, 3, `${label}: clear should rotate the visible owner's generation`);
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], undefined, `${label}: clear should remove transcript content`);
     assert.deepEqual(
       values[`${persistence.TAB_CHAT_HANDOFF_PREFIX}7`],
-      { ownerId: 'returning-panel', generation: 2 },
-      `${label}: clear should preserve the visible document's validated handoff ownership`,
+      { ownerId: 'returning-panel', generation: 3 },
+      `${label}: clear should preserve the visible document's ownership under a fresh generation`,
     );
+    const capturedAcknowledgementWrite = await coordinator.save(7, '<div>captured before clear</div>', {
+      ownerId: 'returning-panel',
+      handoffGeneration: 2,
+    });
+    assert.equal(capturedAcknowledgementWrite.skipped, true, `${label}: a pre-clear acknowledgement delivered after clear must be rejected`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], undefined, `${label}: a delayed pre-clear acknowledgement must not restore cleared content`);
     const unversionedWrite = await coordinator.save(7, '<div>unversioned stale</div>', {
       ownerId: 'returning-panel',
     });
     assert.equal(unversionedWrite.skipped, true, `${label}: owner-tagged writes without a generation must fail closed`);
     const postClearWrite = await coordinator.save(7, '<div>new conversation</div>', {
       ownerId: 'returning-panel',
-      handoffGeneration: 2,
+      handoffGeneration: 3,
     });
-    assert.equal(postClearWrite.ok, true, `${label}: the preserved owner should persist the new conversation`);
+    assert.equal(postClearWrite.ok, true, `${label}: the owner should persist the new conversation under the rotated generation`);
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>new conversation</div>', `${label}: the post-clear transcript should remain current`);
   }
 });
@@ -18225,6 +18232,7 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'chrome: clearing should invalidate the pre-clear handoff snapshot before yielding');
   assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'chrome: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'chrome: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.match(clearBody, /clearResult\?\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?tabChatHandoffGenerations\.set\(numericTabId, Number\(clearResult\.handoffGeneration\)\)/, 'chrome: the clearing panel should adopt the generation rotated by the coordinator');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'chrome: clearing content must not discard the visible document handoff generation');
 });
 
@@ -18250,6 +18258,7 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'firefox: clearing should invalidate the pre-clear handoff snapshot before yielding');
   assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'firefox: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'firefox: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.match(clearBody, /clearResult\?\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?tabChatHandoffGenerations\.set\(numericTabId, Number\(clearResult\.handoffGeneration\)\)/, 'firefox: the clearing panel should adopt the generation rotated by the coordinator');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'firefox: clearing content must not discard the visible document handoff generation');
 });
 
@@ -21997,6 +22006,11 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
       5,
       `${label}: every visibility or preflight-abort exit should release the claim and schedule retry`,
+    );
+    assert.match(
+      sendMessageBody,
+      /contextMenuReservationRejected = e\?\.code === 'context-menu-reservation-rejected';[\s\S]*?const rejection = \{[\s\S]*?if \(contextMenuClaimOwned\) await releaseOwnedContextMenuClaim\(rejection\);[\s\S]*?else onContextMenuClaimRejected\?\.\(rejection\);/,
+      `${label}: a run-active reservation rejection should release the renewed prompt lease before retrying`,
     );
     assert.match(
       sendMessageBody,

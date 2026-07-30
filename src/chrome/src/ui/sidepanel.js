@@ -1671,7 +1671,13 @@ function clearCachedTabChat(tabId) {
         handoffOwnerId: tabChatHandoffOwnerId,
         handoffGeneration,
       });
-      if (!clearResult?.skipped || clearResult.reason !== 'stale-handoff') return clearResult;
+      if (!clearResult?.skipped || clearResult.reason !== 'stale-handoff') {
+        if (clearResult?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(clearResult?.handoffGeneration))) {
+          tabChatHandoffGenerations.set(numericTabId, Number(clearResult.handoffGeneration));
+        }
+        return clearResult;
+      }
     }
   });
 }
@@ -7428,11 +7434,13 @@ async function sendMessage(extraChatParams = {}) {
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
     contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
     if (contextMenuReservationRejected) {
-      onContextMenuClaimRejected?.({
+      const rejection = {
         reason: e.reason || 'claim-lost',
         leaseExpiresAt: e.leaseExpiresAt,
         retryAfterMs: e.retryAfterMs || 1_000,
-      });
+      };
+      if (contextMenuClaimOwned) await releaseOwnedContextMenuClaim(rejection);
+      else onContextMenuClaimRejected?.(rejection);
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
