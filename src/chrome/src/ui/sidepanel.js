@@ -38,7 +38,6 @@ import {
 } from './store-review-prompt.js';
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
-import { TAB_CHAT_PREFIX, persistTabChatToSession } from './tab-chat-persistence.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
@@ -1143,6 +1142,7 @@ const {
   autoResizeInput,
   sendMessage,
   sendToBackground,
+  getIsDocumentVisible: () => document.visibilityState !== 'hidden',
 });
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
@@ -1537,7 +1537,12 @@ function isSuccessfulAskCompletion(mode, response) {
 // Also mirrored to chrome.storage.session keyed `tabChat:<tabId>` so the
 // conversation survives the side panel being closed and reopened.
 const tabChats = new Map();
+const TAB_CHAT_LOAD_FAILED = Symbol('tab-chat-load-failed');
 const tabChatOperations = new Map();
+const tabChatHandoffGenerations = new Map();
+const tabChatHandoffOwnerId = `sidepanel-chat-${
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}`;
 const tabInputDrafts = new Map();
 const permissionSkipCommandContextsByTab = new Map();
 const queuedComposerMessagesByTab = new Map();
@@ -1556,38 +1561,67 @@ function enqueueTabChatOperation(tabId, fn) {
   return operation;
 }
 
-async function loadTabChat(tabId) {
+async function loadTabChat(tabId, { waitForHandoff = false } = {}) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return null;
-  if (!tabChatOperations.has(numericTabId) && tabChats.has(numericTabId)) return tabChats.get(numericTabId);
+  if (!waitForHandoff && !tabChatOperations.has(numericTabId) && tabChats.has(numericTabId)) {
+    return tabChats.get(numericTabId);
+  }
   try {
     return await enqueueTabChatOperation(numericTabId, async (queuedTabId) => {
-      if (tabChats.has(queuedTabId)) return tabChats.get(queuedTabId);
-      const key = TAB_CHAT_PREFIX + queuedTabId;
-      const stored = await chrome.storage.session.get(key);
-      const html = stored?.[key];
+      if (!waitForHandoff && tabChats.has(queuedTabId)) return tabChats.get(queuedTabId);
+      const stored = await sendToBackground('load_tab_chat', {
+        tabId: queuedTabId,
+        waitForHandoff,
+        handoffOwnerId: tabChatHandoffOwnerId,
+      });
+      if (stored?.handoffOwnerId === tabChatHandoffOwnerId
+          && Number.isFinite(Number(stored?.handoffGeneration))) {
+        tabChatHandoffGenerations.set(queuedTabId, Number(stored.handoffGeneration));
+      }
+      const html = stored?.found ? stored.html : null;
       if (typeof html === 'string') {
         tabChats.set(queuedTabId, html);
         return html;
       }
+      tabChats.delete(queuedTabId);
       return null;
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    if (waitForHandoff) return TAB_CHAT_LOAD_FAILED;
+  }
   return null;
 }
 
-function persistTabChat(tabId, html) {
-  if (tabId == null) return;
-  return enqueueTabChatOperation(tabId, async (numericTabId) => {
-    // Keep the live transcript lossless. persistTabChatToSession may compact
-    // only the storage.session copy when the shared quota requires it.
+function persistTabChat(tabId, html, { allowHidden = false } = {}) {
+  if (tabId == null || (document.visibilityState === 'hidden' && !allowHidden)) {
+    return Promise.resolve({ ok: false, skipped: true });
+  }
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: false, error: 'No tab ID' });
+  const handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+  const payload = {
+    tabId: numericTabId,
+    html,
+    handoffOwnerId: tabChatHandoffOwnerId,
+  };
+  if (Number.isFinite(handoffGeneration)) payload.handoffGeneration = handoffGeneration;
+  if (document.visibilityState === 'hidden' && allowHidden) {
+    // Do not wait behind this document's local queue. The shared background
+    // coordinator orders this authoritative handoff behind any earlier write
+    // and ahead of the newly visible document's restore.
     tabChats.set(numericTabId, html);
-    const key = TAB_CHAT_PREFIX + numericTabId;
-    return persistTabChatToSession(chrome.storage.session, key, html);
+    return sendToBackground('persist_tab_chat', payload);
+  }
+  return enqueueTabChatOperation(tabId, async (numericTabId) => {
+    // Keep the live transcript lossless. The background may compact only the
+    // storage.session copy when the shared quota requires it.
+    tabChats.set(numericTabId, html);
+    return sendToBackground('persist_tab_chat', payload);
   });
 }
 
-async function flushRenderedTabChat() {
+async function flushRenderedTabChat({ allowHidden = false } = {}) {
   const tabId = renderedTabId;
   if (tabId == null) return;
   if (persistTimer && persistTimerTabId === tabId) {
@@ -1596,7 +1630,11 @@ async function flushRenderedTabChat() {
     persistTimerTabId = null;
   }
   flushPendingStreamedAssistantMarkdownRenders();
-  await persistTabChat(tabId, messagesEl.innerHTML);
+  const html = messagesEl.innerHTML;
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden });
 }
 
 function clearCachedTabChat(tabId) {
@@ -1606,13 +1644,41 @@ function clearCachedTabChat(tabId) {
     persistTimer = null;
     persistTimerTabId = null;
   }
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
   tabChats.delete(tabId);
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
-    try {
-      await chrome.storage.session?.remove(TAB_CHAT_PREFIX + numericTabId).catch(() => {});
-    } catch (e) { /* ignore */ }
-    return { ok: true };
+    let handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+    let clearResult = null;
+    while (true) {
+      if (!Number.isFinite(handoffGeneration) || clearResult?.reason === 'stale-handoff') {
+        const ownership = await sendToBackground('load_tab_chat', {
+          tabId: numericTabId,
+          waitForHandoff: true,
+          handoffOwnerId: tabChatHandoffOwnerId,
+        });
+        if (ownership?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(ownership?.handoffGeneration))) {
+          handoffGeneration = Number(ownership.handoffGeneration);
+          tabChatHandoffGenerations.set(numericTabId, handoffGeneration);
+        }
+      }
+      clearResult = await sendToBackground('clear_tab_chat', {
+        tabId: numericTabId,
+        handoffOwnerId: tabChatHandoffOwnerId,
+        handoffGeneration,
+      });
+      if (!clearResult?.skipped || clearResult.reason !== 'stale-handoff') {
+        if (clearResult?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(clearResult?.handoffGeneration))) {
+          tabChatHandoffGenerations.set(numericTabId, Number(clearResult.handoffGeneration));
+        }
+        return clearResult;
+      }
+    }
   });
 }
 
@@ -2040,7 +2106,10 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
-  clearCachedTabChat(tabId);
+  const clearResult = await clearCachedTabChat(tabId);
+  if (!clearResult?.ok || clearResult?.skipped) {
+    throw new Error(clearResult?.error || 'Unable to clear tab chat.');
+  }
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   clearPendingAttachmentsForTab(tabId);
@@ -2057,6 +2126,10 @@ async function renderClearedConversationForTab(tabId) {
   autoResizeInput();
   syncSendButtonState();
   addMessage('system', t('sp.cleared_message'));
+  const clearedHtml = messagesEl.innerHTML;
+  lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: clearedHtml };
+  tabChats.set(Number(tabId), clearedHtml);
+  await persistTabChat(tabId, clearedHtml, { allowHidden: true }).catch(() => {});
   refreshScheduledJobs({ tabId });
   refreshRecommendedActions();
 }
@@ -2065,10 +2138,39 @@ async function renderClearedConversationForTab(tabId) {
 // to thrash storage on every keystroke / streamed token.
 let persistTimer = null;
 let persistTimerTabId = null;
+let visibleStateRefreshPending = false;
+let visibleStateRefreshPromise = Promise.resolve();
+let visibleStateRefreshInProgress = false;
+let visibleStateRefreshGeneration = 0;
+let lastVisibleTabChatSnapshot = null;
+const TAB_CHAT_HANDOFF_RETRY_MS = 250;
+
+function waitForTabChatHandoffRetry() {
+  return new Promise(resolve => setTimeout(resolve, TAB_CHAT_HANDOFF_RETRY_MS));
+}
+
+async function waitForVisibleSidePanelStateRefresh() {
+  let pendingRefresh;
+  do {
+    pendingRefresh = visibleStateRefreshPromise;
+    await pendingRefresh.catch(() => {});
+    if (tabSwitchTransitionId != null || visibleStateRefreshInProgress) {
+      await waitForTabChatHandoffRetry();
+    }
+  } while (pendingRefresh !== visibleStateRefreshPromise
+      || tabSwitchTransitionId != null
+      || visibleStateRefreshInProgress);
+}
+
 function schedulePersist() {
+  if (document.visibilityState === 'hidden') return;
   if (persistTimer) clearTimeout(persistTimer);
   const tabId = renderedTabId;
   const html = messagesEl.innerHTML;
+  if (tabId != null) {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+    tabChats.set(Number(tabId), html);
+  }
   persistTimerTabId = tabId;
   persistTimer = setTimeout(() => {
     persistTimer = null;
@@ -2204,7 +2306,9 @@ async function prepareChatHistoryForTurn(tabId, mode) {
 
 async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {
   const numericTabId = Number(tabId);
-  if (!Number.isFinite(numericTabId) || renderedTabId !== numericTabId) return;
+  if (document.visibilityState === 'hidden'
+      || !Number.isFinite(numericTabId)
+      || renderedTabId !== numericTabId) return;
   const messages = extractChatHistoryMessages(messagesEl);
   if (!messages.some((message) => message.role === 'user')) return;
   const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);
@@ -3540,14 +3644,27 @@ async function init() {
   // Restore prior conversation for this tab (if any) — survives close/reopen.
   const restoreTabId = currentTabId;
   if (restoreTabId != null) {
-    const html = await loadTabChat(restoreTabId);
-    if (currentTabId === restoreTabId && html) {
-      await hydrateRestoredChatHistory(restoreTabId, html);
-      if (currentTabId === restoreTabId) {
-        messagesEl.innerHTML = html;
-        messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
-        rebindRestoredMessageControls();
+    visibleStateRefreshInProgress = true;
+    syncSendButtonState();
+    try {
+      let html = TAB_CHAT_LOAD_FAILED;
+      while (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+        html = await loadTabChat(restoreTabId, { waitForHandoff: true });
+        if (html === TAB_CHAT_LOAD_FAILED && currentTabId === restoreTabId) {
+          await waitForTabChatHandoffRetry();
+        }
       }
+      if (currentTabId === restoreTabId && html && html !== TAB_CHAT_LOAD_FAILED) {
+        await hydrateRestoredChatHistory(restoreTabId, html);
+        if (currentTabId === restoreTabId) {
+          messagesEl.innerHTML = html;
+          messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+          rebindRestoredMessageControls();
+        }
+      }
+    } finally {
+      visibleStateRefreshInProgress = false;
+      syncSendButtonState();
     }
   }
 
@@ -3635,6 +3752,7 @@ async function switchToTab(newTabId) {
   const switchGeneration = ++tabSwitchGeneration;
   tabSwitchTransitionId = newTabId;
   queuedTabSwitchMessages = [];
+  syncSendButtonState();
   // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
   // chat and run journals. Clear the outgoing tab's transient status before
   // any async restore work can yield; restoreActiveRunState (or a queued target
@@ -3659,7 +3777,9 @@ async function switchToTab(newTabId) {
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
 
-    // Restore new tab's chat from memory or storage.
+    // Chrome gives each tab-specific side panel its own document. The
+    // visibility refresh below coordinates ownership when the destination
+    // document becomes active, so this in-document switch only restores cache.
     const html = await loadTabChat(newTabId);
     if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
     if (html) {
@@ -3685,9 +3805,73 @@ async function switchToTab(newTabId) {
     refreshRecommendedActions();
   } finally {
     if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;
+    syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
   consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+}
+
+async function refreshVisibleSidePanelState() {
+  if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
+  const tabId = Number(currentTabId);
+  if (!Number.isFinite(tabId)) return;
+
+  // Every tab-specific Chrome side panel is a separate extension document.
+  // When an older document becomes visible again, its in-memory chat cache can
+  // predate writes made by the panel that was visible in the meantime. Reload
+  // from the shared session copy before that document is allowed to persist.
+  tabChats.delete(tabId);
+  const html = await loadTabChat(tabId, { waitForHandoff: true });
+  if (html === TAB_CHAT_LOAD_FAILED) return false;
+  if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+  renderedTabId = tabId;
+  if (html && html !== messagesEl.innerHTML) {
+    await hydrateRestoredChatHistory(tabId, html);
+    if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
+    messagesEl.innerHTML = html;
+    messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
+    rebindRestoredMessageControls();
+  } else if (!html) {
+    messagesEl.innerHTML = '';
+    addMessage('system', t('sp.help_message'));
+  }
+  await restoreActiveRunState(tabId);
+  return document.visibilityState !== 'hidden' && sameTabId(currentTabId, tabId);
+}
+
+function requestVisibleSidePanelStateRefresh() {
+  if (document.visibilityState === 'hidden') return;
+  visibleStateRefreshPending = true;
+  visibleStateRefreshInProgress = true;
+  const refreshGeneration = ++visibleStateRefreshGeneration;
+  syncSendButtonState();
+  visibleStateRefreshPromise = visibleStateRefreshPromise.catch(() => {}).then(async () => {
+    if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
+    visibleStateRefreshPending = false;
+    let refreshed = await refreshVisibleSidePanelState();
+    while (refreshed === false
+        && document.visibilityState !== 'hidden'
+        && tabSwitchTransitionId == null) {
+      visibleStateRefreshPending = true;
+      syncSendButtonState();
+      await waitForTabChatHandoffRetry();
+      if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
+      visibleStateRefreshPending = false;
+      refreshed = await refreshVisibleSidePanelState();
+    }
+    return refreshed;
+  });
+  const refreshPromise = visibleStateRefreshPromise;
+  refreshPromise.finally(() => {
+    if (refreshGeneration !== visibleStateRefreshGeneration) return;
+    visibleStateRefreshInProgress = false;
+    syncSendButtonState();
+  }).catch(() => {});
+  refreshPromise.then((refreshed) => {
+    if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
+    consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  }).catch(() => {});
 }
 
 async function restoreActiveRunState(tabId = currentTabId) {
@@ -6168,6 +6352,10 @@ function isOutOfBandSlashDraft(value) {
 function syncSendButtonState() {
   if (!sendBtn) return;
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
+  if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
+    sendBtn.disabled = true;
+    return;
+  }
   if (isAwaitingPlanReviewForTab()) {
     sendBtn.disabled = true;
     return;
@@ -6890,34 +7078,80 @@ function updateApiBadge() {
 async function sendMessage(extraChatParams = {}) {
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
+  const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
+    ? extraChatParams.__onContextMenuClaimRejected
+    : null;
   const chatExtraParams = { ...(extraChatParams || {}) };
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
+  delete chatExtraParams.__onContextMenuClaimRejected;
+  const contextMenuClaim = chatExtraParams.contextMenuClaim;
+  let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
+  const claimedContextMenuTabId = contextMenuClaimOwned
+    ? Number(chatExtraParams.contextMenuClear?.tabId ?? currentTabId)
+    : null;
+  const releaseOwnedContextMenuClaim = async (
+    rejection = { reason: 'panel-hidden', retryAfterMs: 250 },
+  ) => {
+    if (!contextMenuClaimOwned) return;
+    contextMenuClaimOwned = false;
+    try {
+      await sendToBackground('release_context_menu_prompt_claim', {
+        tabId: claimedContextMenuTabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch { /* the durable lease still expires if release fails */ }
+    onContextMenuClaimRejected?.(rejection);
+  };
   const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
   const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
     ? SELECTION_ONLY_SOURCE_GROUNDING
     : null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
+  await waitForVisibleSidePanelStateRefresh();
+  if (contextMenuClaimOwned
+      && (document.visibilityState === 'hidden'
+        || !sameTabId(currentTabId, claimedContextMenuTabId)
+        || !sameTabId(renderedTabId, claimedContextMenuTabId))) {
+    await releaseOwnedContextMenuClaim();
+    return false;
+  }
   stopListening();
   let text = inputEl.value.trim();
-  if (!text) return;
+  if (!text) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
+      return false;
+    }
+    return;
+  }
   const submittedText = text;
   const tabId = currentTabId;
-  if (isConversationClearInProgress(tabId)) return false;
+  if (isConversationClearInProgress(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
+    return false;
+  }
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
   text = normalizeScreenshotCommandText(text);
   if (isAwaitingPlanReviewForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'plan-review-pending', retryAfterMs: 1_000 });
     showComposerToast(t('sp.plan.awaiting_review'), { duration: 5000 });
     syncSendButtonState();
     return false;
   }
   if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
     syncSendButtonState();
     return false;
   }
   if (isProcessing) {
+    if (contextMenuClaimOwned) {
+      await releaseOwnedContextMenuClaim({ reason: 'run-active', retryAfterMs: 1_000 });
+      return false;
+    }
     if (isOutOfBandSlashDraft(text)) {
       resetComposerHistoryNavigation(tabId);
       saveInputDraftForTab(tabId, '');
@@ -6974,14 +7208,18 @@ async function sendMessage(extraChatParams = {}) {
   // Parse any leading slash command. parseSlashCommands may strip the
   // command from `text` and toggle apiMutationsAllowed as a side effect.
   if (!retryOptions) text = await parseSlashCommands(text, tabId, { permissionSkipContext });
-  let renderToCurrentTab = sameTabId(currentTabId, tabId) && sameTabId(renderedTabId, tabId);
+  let renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     return false;
   }
   // If the entire message was just the slash command, there's nothing
   // left to send to the agent — bail out after the side effect.
   if (!text) {
+    await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
     scrollToBottom({ force: true });
     inputEl.value = '';
     autoResizeInput();
@@ -6996,13 +7234,63 @@ async function sendMessage(extraChatParams = {}) {
 
   await prepareChatHistoryForTurn(tabId, modeForSend);
   if (isTabAbortRequested(tabId)) {
+    await releaseOwnedContextMenuClaim();
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     return false;
   }
-  renderToCurrentTab = sameTabId(currentTabId, tabId) && sameTabId(renderedTabId, tabId);
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
+    if (text) saveInputDraftForTab(tabId, text);
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    syncSendButtonState();
+    return false;
+  }
+
+  if (contextMenuClaim?.promptId && contextMenuClaim?.claimantId) {
+    let renewedClaim = null;
+    try {
+      renewedClaim = await sendToBackground('claim_context_menu_prompt', {
+        tabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch {
+      renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
+    }
+    contextMenuClaimOwned = renewedClaim?.claimed === true;
+    const claimStillVisible = document.visibilityState !== 'hidden'
+      && sameTabId(currentTabId, tabId)
+      && sameTabId(renderedTabId, tabId);
+    if (contextMenuClaimOwned && !claimStillVisible) {
+      await releaseOwnedContextMenuClaim();
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
+    if (!renewedClaim?.claimed) {
+      onContextMenuClaimRejected?.(renewedClaim || {
+        reason: 'claim-lost',
+        retryAfterMs: 1_000,
+      });
+      setTabProcessing(tabId, false);
+      setTabAbortRequested(tabId, false);
+      if (sameTabId(currentTabId, tabId)) syncSendButtonState();
+      return false;
+    }
+  }
+
+  renderToCurrentTab = document.visibilityState !== 'hidden'
+    && sameTabId(currentTabId, tabId)
+    && sameTabId(renderedTabId, tabId);
+  if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
@@ -7058,6 +7346,7 @@ async function sendMessage(extraChatParams = {}) {
 
   let accepted = false;
   let captureStartFailed = false;
+  let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
   try {
@@ -7159,7 +7448,19 @@ async function sendMessage(extraChatParams = {}) {
   } catch (e) {
     captureStartFailed = !!runCaptureDirective
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
-    if (captureStartFailed) {
+    contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
+    if (contextMenuReservationRejected) {
+      const rejection = {
+        reason: e.reason || 'claim-lost',
+        leaseExpiresAt: e.leaseExpiresAt,
+        retryAfterMs: e.retryAfterMs || 1_000,
+      };
+      if (contextMenuClaimOwned) await releaseOwnedContextMenuClaim(rejection);
+      else onContextMenuClaimRejected?.(rejection);
+      userEl?.remove();
+      assistantEl?.remove();
+      if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+    } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
       restorePendingAttachmentsForTab(tabId, attachmentsForSend);
@@ -7204,7 +7505,7 @@ async function sendMessage(extraChatParams = {}) {
     if (renderToCurrentTab && currentTabId === tabId) scrollToBottom();
     if (renderToCurrentTab && renderedTabId === tabId) await flushRenderedTabChat();
     if (renderToCurrentTab && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    if (renderToCurrentTab && !wasAborted && !captureStartFailed) {
+    if (renderToCurrentTab && !wasAborted && !captureStartFailed && !contextMenuReservationRejected) {
       notifyCompletion({
         success: currentTabId === tabId && completedSuccessfully,
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
@@ -7327,6 +7628,55 @@ let lastTranscript = null;
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
   acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_handoff_request'
+      || String(msg.ownerId || '') !== tabChatHandoffOwnerId) return;
+  const snapshot = lastVisibleTabChatSnapshot;
+  if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) return;
+  sendResponse({
+    ok: true,
+    tabId: Number(snapshot.tabId),
+    ownerId: tabChatHandoffOwnerId,
+    generation: Number(msg.generation),
+    html: snapshot.html,
+  });
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_cleared'
+      || msg.handoffOwnerId === tabChatHandoffOwnerId
+      || document.visibilityState === 'hidden'
+      || !sameTabId(currentTabId, msg.tabId)) return;
+  tabChats.delete(Number(msg.tabId));
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, msg.tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
+  requestVisibleSidePanelStateRefresh();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    visibleStateRefreshPending = false;
+    // This document was authoritative immediately before it became hidden.
+    // Bypass the hidden-writer guard exactly once so the next visible panel
+    // cannot restore the older pre-debounce storage snapshot.
+    const snapshot = lastVisibleTabChatSnapshot;
+    if (snapshot && persistTimer && sameTabId(persistTimerTabId, snapshot.tabId)) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      persistTimerTabId = null;
+    }
+    if (snapshot) {
+      persistTabChat(snapshot.tabId, snapshot.html, { allowHidden: true }).catch(() => {});
+    }
+    return;
+  }
+  requestVisibleSidePanelStateRefresh();
 });
 
 chrome.runtime.onMessage.addListener((msg) => {

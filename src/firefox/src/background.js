@@ -35,6 +35,7 @@ import {
   buildSelectionPrompt,
   createContextMenuStorage,
 } from './context-menu-storage.js';
+import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
 import { RunUiJournal, RunUiPersistenceScheduler, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
@@ -125,6 +126,21 @@ function getContextMenuPromptStore() {
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
+const tabChatHandoff = createTabChatHandoffCoordinator(browser.storage.session, {
+  requestHandoff: async (tabId, { ownerId, generation }) => {
+    try {
+      return await browser.runtime.sendMessage({
+        target: 'sidepanel',
+        action: 'tab_chat_handoff_request',
+        tabId,
+        ownerId,
+        generation,
+      });
+    } catch {
+      return null;
+    }
+  },
+});
 
 function createContextMenus() {
   const api = getContextMenuApi();
@@ -1137,7 +1153,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   clearTimeout(pendingContextMenuNotifications.get(tabId));
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
-  browser.storage.session?.remove(`tabChat:${tabId}`).catch(() => {});
+  tabChatHandoff.clear(tabId).catch(() => {});
   scheduler.cancelForTab(tabId).catch(() => {});
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
 });
@@ -1724,14 +1740,22 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 });
 
 async function handleMessage(msg, sender) {
-  if (providerManager.providers.size === 0) {
-    await providerManager.load();
+  const lightweightAction = [
+    'persist_tab_chat',
+    'load_tab_chat',
+    'clear_tab_chat',
+    'release_context_menu_prompt_claim',
+  ].includes(msg.action);
+  if (!lightweightAction) {
+    if (providerManager.providers.size === 0) {
+      await providerManager.load();
+    }
+    // Hydrate agent toggles and prompt add-ons once at boot (not per message);
+    // onChanged keeps them in sync afterward.
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await screenshotRedactionReady;
+    await imageBudgetReady;
   }
-  // Hydrate agent toggles and prompt add-ons once at boot (not per message);
-  // onChanged keeps them in sync afterward.
-  await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
-  await screenshotRedactionReady;
-  await imageBudgetReady;
 
   switch (msg.action) {
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
@@ -1876,8 +1900,41 @@ async function handleMessage(msg, sender) {
       };
     }
 
-    case 'chat_start':
-      return launchDetachedRun('chat', msg, sender);
+    case 'chat_start': {
+      const claim = msg.contextMenuClaim;
+      if (!claim?.promptId || !claim?.claimantId) {
+        return launchDetachedRun('chat', msg, sender);
+      }
+      const tabId = msg.tabId || sender.tab?.id;
+      try {
+        const reservation = await contextMenuStorage.reserve(
+          tabId,
+          claim.promptId,
+          claim.claimantId,
+          () => launchDetachedRun('chat', msg, sender),
+        );
+        if (reservation?.reserved) return reservation;
+        return {
+          ok: false,
+          accepted: false,
+          code: 'context-menu-reservation-rejected',
+          reason: reservation?.reason || 'claim-lost',
+          leaseExpiresAt: reservation?.leaseExpiresAt,
+          retryAfterMs: reservation?.reason === 'run-active' ? 1_000 : undefined,
+        };
+      } catch (error) {
+        if (/run is already active/i.test(String(error?.message || ''))) {
+          return {
+            ok: false,
+            accepted: false,
+            code: 'context-menu-reservation-rejected',
+            reason: 'run-active',
+            retryAfterMs: 1_000,
+          };
+        }
+        throw error;
+      }
+    }
 
     case 'continue_start':
       return launchDetachedRun('continue', msg, sender);
@@ -2271,9 +2328,63 @@ async function handleMessage(msg, sender) {
       return await contextMenuStorage.consume(tabId);
     }
 
+    case 'claim_context_menu_prompt': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, claimed: false, error: 'No tab ID' };
+      return await contextMenuStorage.claim(
+        tabId,
+        msg.promptId,
+        msg.claimantId,
+        () => agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId),
+      );
+    }
+
+    case 'release_context_menu_prompt_claim': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const result = await contextMenuStorage.release(
+        tabId,
+        msg.promptId,
+        msg.claimantId,
+      );
+      if (result?.released && result.prompt?.text) {
+        notifySidePanelOfContextMenuPrompt(result.prompt);
+      }
+      return result;
+    }
+
     case 'clear_context_menu_prompt': {
       const tabId = msg.tabId || sender.tab?.id;
       return await contextMenuStorage.clear(tabId, msg.promptId);
+    }
+
+    case 'persist_tab_chat':
+      return await tabChatHandoff.save(msg.tabId || sender.tab?.id, msg.html, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
+
+    case 'load_tab_chat':
+      return await tabChatHandoff.load(msg.tabId || sender.tab?.id, {
+        waitForHandoff: msg.waitForHandoff === true,
+        claimantId: msg.handoffOwnerId,
+      });
+
+    case 'clear_tab_chat': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const result = await tabChatHandoff.clear(tabId, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
+      if (result?.ok && !result.skipped) {
+        browser.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: result.handoffOwnerId,
+          handoffGeneration: result.handoffGeneration,
+        }).catch(() => {});
+      }
+      return result;
     }
 
     case 'list_scheduled_jobs': {
