@@ -2371,7 +2371,10 @@ async function handleMessage(msg, sender) {
       });
 
     case 'clear_tab_chat':
-      return await tabChatHandoff.clear(msg.tabId || sender.tab?.id);
+      return await tabChatHandoff.clear(msg.tabId || sender.tab?.id, {
+        ownerId: msg.handoffOwnerId,
+        handoffGeneration: msg.handoffGeneration,
+      });
 
     case 'list_scheduled_jobs': {
       const tabId = msg.tabId || sender.tab?.id || null;

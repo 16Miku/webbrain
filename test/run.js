@@ -18177,6 +18177,28 @@ test('tab-chat handoff coordinator orders a returning-panel read behind the outg
     });
     assert.equal(staleWrite.skipped, true, `${label}: a late write from the old generation must be rejected`);
     assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>fresh</div>', `${label}: stale delivery must not overwrite the acknowledged snapshot`);
+
+    const cleared = await coordinator.clear(7, {
+      ownerId: 'returning-panel',
+      handoffGeneration: 2,
+    });
+    assert.equal(cleared.ok, true, `${label}: the visible owner should clear its transcript`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], undefined, `${label}: clear should remove transcript content`);
+    assert.deepEqual(
+      values[`${persistence.TAB_CHAT_HANDOFF_PREFIX}7`],
+      { ownerId: 'returning-panel', generation: 2 },
+      `${label}: clear should preserve the visible document's validated handoff ownership`,
+    );
+    const unversionedWrite = await coordinator.save(7, '<div>unversioned stale</div>', {
+      ownerId: 'returning-panel',
+    });
+    assert.equal(unversionedWrite.skipped, true, `${label}: owner-tagged writes without a generation must fail closed`);
+    const postClearWrite = await coordinator.save(7, '<div>new conversation</div>', {
+      ownerId: 'returning-panel',
+      handoffGeneration: 2,
+    });
+    assert.equal(postClearWrite.ok, true, `${label}: the preserved owner should persist the new conversation`);
+    assert.equal(values[`${persistence.TAB_CHAT_PREFIX}7`], '<div>new conversation</div>', `${label}: the post-clear transcript should remain current`);
   }
 });
 
@@ -18199,7 +18221,8 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'chrome: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'chrome: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/, 'chrome: queued clears should delete stale HTML before clearing the shared background state');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'chrome: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'chrome: clearing content must not discard the visible document handoff generation');
 });
 
 test('firefox sidepanel serializes tab-chat storage writes with clears and reads', () => {
@@ -18221,7 +18244,8 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\n// Save current tab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'firefox: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'firefox: clearing tab chat should be serialized through the queue');
-  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/, 'firefox: queued clears should delete stale HTML before clearing the shared background state');
+  assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'firefox: queued clears should retain or reacquire ownership before clearing shared state');
+  assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'firefox: clearing content must not discard the visible document handoff generation');
 });
 
 test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', () => {
@@ -18242,7 +18266,7 @@ test('chrome sidepanel cancels stale tab-chat persistence when clearing a tab', 
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(
     clearBody,
-    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{ tabId: numericTabId \}\)/,
+    /if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?persistTimer = null;[\s\S]*?persistTimerTabId = null;[\s\S]*?\}[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffGeneration,/,
     'chrome: clearing a tab should cancel any pending stale write before removing cached chat',
   );
 });
@@ -21907,6 +21931,11 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       background,
+      /case 'clear_tab_chat':[\s\S]*?tabChatHandoff\.clear\([\s\S]*?ownerId: msg\.handoffOwnerId,[\s\S]*?handoffGeneration: msg\.handoffGeneration/,
+      `${label}: New Chat should clear content through the visible document's validated handoff ownership`,
+    );
+    assert.match(
+      background,
       /requestHandoff:[\s\S]*?tab_chat_handoff_request[\s\S]*?ownerId,[\s\S]*?generation,/,
       `${label}: a returning panel should request an explicit acknowledgement from the outgoing owner generation`,
     );
@@ -21966,8 +21995,12 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     ['firefox', createContextMenuStorageFx, CONTEXT_MENU_CLAIM_LEASE_MS_FX],
   ]) {
     const data = new Map();
+    let nextSetGate = null;
     const store = {
       async set(values) {
+        const gate = nextSetGate;
+        nextSetGate = null;
+        if (gate) await gate.promise;
         Object.entries(values || {}).forEach(([key, value]) => data.set(key, value));
       },
       async get(key) {
@@ -22039,6 +22072,39 @@ test('context-menu prompt storage enforces a durable expiring lease', async () =
     await storage.clear(prompt.tabId, prompt.id);
     assert.equal(data.has(storage.key(prompt.tabId)), false, `${label}: accepting the run should clear the durable prompt`);
     assert.equal(data.has(storage.claimKey(prompt.tabId)), false, `${label}: accepting the run should clear its lease`);
+
+    const queuedPrompt = {
+      id: `${label}-queued-expiry`,
+      tabId: 13,
+      text: 'Summarize this selection',
+    };
+    await storage.save(queuedPrompt.tabId, queuedPrompt);
+    const queuedClaim = await storage.claim(queuedPrompt.tabId, queuedPrompt.id, 'queued-panel', 1_000);
+    const setGate = deferred();
+    nextSetGate = setGate;
+    const blockingSave = storage.save(queuedPrompt.tabId, queuedPrompt);
+    await waitMicrotasks(3);
+
+    const originalNow = Date.now;
+    let queuedReservation = null;
+    try {
+      Date.now = () => 1_000;
+      const reservation = storage.reserve(
+        queuedPrompt.tabId,
+        queuedPrompt.id,
+        'queued-panel',
+        () => ({ accepted: true }),
+      );
+      Date.now = () => queuedClaim.leaseExpiresAt;
+      setGate.resolve();
+      await blockingSave;
+      queuedReservation = await reservation;
+    } finally {
+      Date.now = originalNow;
+      setGate.resolve();
+    }
+    assert.equal(queuedReservation?.reserved, false, `${label}: queued validation must reject a lease that expired while waiting`);
+    assert.equal(queuedReservation?.reason, 'claim-lost', `${label}: queued expiry should require a fresh claim`);
   }
 });
 

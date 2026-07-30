@@ -1510,11 +1510,27 @@ function clearCachedTabChat(tabId) {
     persistTimerTabId = null;
   }
   tabChats.delete(tabId);
-  tabChatHandoffGenerations.delete(Number(tabId));
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
     try {
-      await sendToBackground('clear_tab_chat', { tabId: numericTabId });
+      let handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+      if (!Number.isFinite(handoffGeneration)) {
+        const ownership = await sendToBackground('load_tab_chat', {
+          tabId: numericTabId,
+          waitForHandoff: true,
+          handoffOwnerId: tabChatHandoffOwnerId,
+        });
+        if (ownership?.handoffOwnerId === tabChatHandoffOwnerId
+            && Number.isFinite(Number(ownership?.handoffGeneration))) {
+          handoffGeneration = Number(ownership.handoffGeneration);
+          tabChatHandoffGenerations.set(numericTabId, handoffGeneration);
+        }
+      }
+      await sendToBackground('clear_tab_chat', {
+        tabId: numericTabId,
+        handoffOwnerId: tabChatHandoffOwnerId,
+        handoffGeneration,
+      });
     } catch (e) { /* ignore */ }
     return { ok: true };
   });

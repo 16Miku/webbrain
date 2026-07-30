@@ -274,7 +274,10 @@ export function createTabChatHandoffCoordinator(storageArea, {
     return enqueue(numericTabId, async (queuedTabId) => {
       const normalizedOwnerId = String(ownerId || '');
       const normalizedGeneration = Number(handoffGeneration);
-      if (normalizedOwnerId && Number.isFinite(normalizedGeneration) && normalizedGeneration > 0) {
+      if (normalizedOwnerId) {
+        if (!Number.isFinite(normalizedGeneration) || normalizedGeneration <= 0) {
+          return { ok: true, skipped: true, reason: 'stale-handoff' };
+        }
         const state = await readHandoffState(queuedTabId);
         if (!state
             || state.ownerId !== normalizedOwnerId
@@ -339,16 +342,32 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
-  function clear(tabId) {
+  function clear(tabId, { ownerId = '', handoffGeneration = null } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     return enqueue(numericTabId, async (queuedTabId) => {
+      const normalizedOwnerId = String(ownerId || '');
+      const normalizedGeneration = Number(handoffGeneration);
+      if (normalizedOwnerId) {
+        if (!Number.isFinite(normalizedGeneration) || normalizedGeneration <= 0) {
+          return { ok: true, skipped: true, reason: 'stale-handoff' };
+        }
+        const state = await readHandoffState(queuedTabId);
+        if (!state
+            || state.ownerId !== normalizedOwnerId
+            || state.generation !== normalizedGeneration) {
+          return { ok: true, skipped: true, reason: 'stale-handoff' };
+        }
+      }
       latestHtml.delete(queuedTabId);
-      await storageArea.remove([
-        TAB_CHAT_PREFIX + queuedTabId,
-        TAB_CHAT_HANDOFF_PREFIX + queuedTabId,
-      ]);
-      return { ok: true };
+      const keys = [TAB_CHAT_PREFIX + queuedTabId];
+      if (!normalizedOwnerId) keys.push(TAB_CHAT_HANDOFF_PREFIX + queuedTabId);
+      await storageArea.remove(keys);
+      return {
+        ok: true,
+        handoffOwnerId: normalizedOwnerId || null,
+        handoffGeneration: normalizedOwnerId ? normalizedGeneration : null,
+      };
     });
   }
 
