@@ -21939,13 +21939,18 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
     assert.equal(
       (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
-      4,
-      `${label}: every visibility exit should release the claim and schedule retry`,
+      5,
+      `${label}: every visibility or preflight-abort exit should release the claim and schedule retry`,
     );
     assert.match(
       sendMessageBody,
       /if \(!retryOptions\) text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
       `${label}: the first visibility failure after refresh and command parsing should relinquish initial ownership`,
+    );
+    assert.match(
+      sendMessageBody,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);\s*if \(isTabAbortRequested\(tabId\)\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: aborting preflight should relinquish initial ownership before resetting run state`,
     );
     assert.match(
       sendMessageBody,

@@ -7140,6 +7140,7 @@ async function sendMessage(extraChatParams = {}) {
 
   await prepareChatHistoryForTurn(tabId, modeForSend);
   if (isTabAbortRequested(tabId)) {
+    await releaseOwnedContextMenuClaim();
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
