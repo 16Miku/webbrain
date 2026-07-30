@@ -17865,7 +17865,8 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     const helperStart = panel.indexOf('async function renderClearedConversationForTab(tabId)');
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
     const helperBody = panel.slice(helperStart, panel.indexOf('refreshScheduledJobs({', helperStart));
-    assert.match(helperBody, /await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should delete durable history before visible-tab guards`);
+    assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
+    assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
 
     const resetIdx = panel.indexOf("if (command.value === '/reset')");
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));
@@ -18221,6 +18222,7 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\nasync function renderClearedConversationForTab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'chrome: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'chrome: clearing tab chat should be serialized through the queue');
+  assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'chrome: clearing should invalidate the pre-clear handoff snapshot before yielding');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'chrome: queued clears should retain or reacquire ownership before clearing shared state');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'chrome: clearing content must not discard the visible document handoff generation');
 });
@@ -18244,6 +18246,7 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   const clearBody = panel.slice(clearStart, panel.indexOf('\n}\n\n// Save current tab', clearStart) + 2);
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'firefox: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'firefox: clearing tab chat should be serialized through the queue');
+  assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'firefox: clearing should invalidate the pre-clear handoff snapshot before yielding');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'firefox: queued clears should retain or reacquire ownership before clearing shared state');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'firefox: clearing content must not discard the visible document handoff generation');
 });

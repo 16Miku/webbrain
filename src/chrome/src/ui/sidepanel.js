@@ -1644,6 +1644,10 @@ function clearCachedTabChat(tabId) {
     persistTimer = null;
     persistTimerTabId = null;
   }
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
   tabChats.delete(tabId);
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
@@ -2095,7 +2099,7 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
-  clearCachedTabChat(tabId);
+  await clearCachedTabChat(tabId);
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   clearPendingAttachmentsForTab(tabId);
@@ -2112,6 +2116,10 @@ async function renderClearedConversationForTab(tabId) {
   autoResizeInput();
   syncSendButtonState();
   addMessage('system', t('sp.cleared_message'));
+  const clearedHtml = messagesEl.innerHTML;
+  lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: clearedHtml };
+  tabChats.set(Number(tabId), clearedHtml);
+  await persistTabChat(tabId, clearedHtml, { allowHidden: true }).catch(() => {});
   refreshScheduledJobs({ tabId });
   refreshRecommendedActions();
 }
