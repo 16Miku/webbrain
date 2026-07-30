@@ -21824,8 +21824,23 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await consumePendingContextMenuPrompt\(\);/,
-      `${label}: a returning panel should wait for the shared handoff before consuming prompts`,
+      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?pendingRefresh !== visibleStateRefreshPromise/,
+      `${label}: sends should wait until the complete serialized visibility refresh queue settles`,
+    );
+    assert.match(
+      panel,
+      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await restoreActiveRunState\(tabId\);[\s\S]*?function requestVisibleSidePanelStateRefresh\(\) \{[\s\S]*?visibleStateRefreshPromise = visibleStateRefreshPromise\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]*?return refreshVisibleSidePanelState\(\);[\s\S]*?refreshPromise\.then\(\(refreshed\) => \{[\s\S]*?refreshPromise !== visibleStateRefreshPromise[\s\S]*?consumePendingContextMenuPrompt\(\)/,
+      `${label}: a returning panel should serialize the shared handoff before consuming prompts`,
+    );
+    assert.match(
+      panel,
+      /function syncSendButtonState\(\) \{[\s\S]*?if \(visibleStateRefreshPending \|\| visibleStateRefreshInProgress\) \{\s*sendBtn\.disabled = true;\s*return;/,
+      `${label}: the composer should stay disabled throughout visibility reconciliation`,
+    );
+    assert.match(
+      panel,
+      /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);\s*stopListening\(\);\s*let text = inputEl\.value\.trim\(\);/,
+      `${label}: user sends should not capture or append a turn until visibility reconciliation finishes`,
     );
     assert.match(
       panel,
@@ -21869,8 +21884,8 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /const releaseRenewedContextMenuClaim = async \(\) => \{[\s\S]*?renewedContextMenuClaim = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(\{ reason: 'panel-hidden', retryAfterMs: 250 \}\);[\s\S]*?renewedContextMenuClaim = renewedClaim\?\.claimed === true;/,
-      `${label}: renewed ownership should have one idempotent release-and-retry path`,
+      /let contextMenuClaimOwned = Boolean\(contextMenuClaim\?\.promptId && contextMenuClaim\?\.claimantId\);[\s\S]*?const releaseOwnedContextMenuClaim = async \(\) => \{[\s\S]*?contextMenuClaimOwned = false;[\s\S]*?release_context_menu_prompt_claim[\s\S]*?onContextMenuClaimRejected\?\.\(\{ reason: 'panel-hidden', retryAfterMs: 250 \}\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;/,
+      `${label}: initial and renewed ownership should share one idempotent release-and-retry path`,
     );
     const sendMessageStart = panel.indexOf('async function sendMessage(extraChatParams = {}) {');
     const sendMessageEnd = panel.indexOf(
@@ -21880,14 +21895,14 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     assert.notEqual(sendMessageEnd, -1, `${label}: sendMessage boundary should remain inspectable`);
     const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
     assert.equal(
-      (sendMessageBody.match(/await releaseRenewedContextMenuClaim\(\);/g) || []).length,
-      2,
-      `${label}: both visibility checks after renewal should release the claim and schedule retry`,
+      (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
+      3,
+      `${label}: visibility exits after preflight and renewal should release the claim and schedule retry`,
     );
     assert.match(
       sendMessageBody,
-      /renewedContextMenuClaim = renewedClaim\?\.claimed === true;[\s\S]*?const claimStillVisible[\s\S]*?if \(renewedContextMenuClaim && !claimStillVisible\) \{[\s\S]*?await releaseRenewedContextMenuClaim\(\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseRenewedContextMenuClaim\(\);/,
-      `${label}: the final post-renewal visibility failure should relinquish ownership before returning`,
+      /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);[\s\S]*?contextMenuClaimOwned = renewedClaim\?\.claimed === true;[\s\S]*?const claimStillVisible[\s\S]*?if \(contextMenuClaimOwned && !claimStillVisible\) \{[\s\S]*?await releaseOwnedContextMenuClaim\(\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: every post-preflight visibility failure should relinquish initial or renewed ownership before returning`,
     );
   }
 });

@@ -2102,7 +2102,19 @@ async function renderClearedConversationForTab(tabId) {
 let persistTimer = null;
 let persistTimerTabId = null;
 let visibleStateRefreshPending = false;
+let visibleStateRefreshPromise = Promise.resolve();
+let visibleStateRefreshInProgress = false;
+let visibleStateRefreshGeneration = 0;
 let lastVisibleTabChatSnapshot = null;
+
+async function waitForVisibleSidePanelStateRefresh() {
+  let pendingRefresh;
+  do {
+    pendingRefresh = visibleStateRefreshPromise;
+    await pendingRefresh.catch(() => {});
+  } while (pendingRefresh !== visibleStateRefreshPromise);
+}
+
 function schedulePersist() {
   if (document.visibilityState === 'hidden') return;
   if (persistTimer) clearTimeout(persistTimer);
@@ -3760,19 +3772,30 @@ async function refreshVisibleSidePanelState() {
     addMessage('system', t('sp.help_message'));
   }
   await restoreActiveRunState(tabId);
-  if (document.visibilityState === 'hidden' || !sameTabId(currentTabId, tabId)) return;
-  await consumePendingContextMenuPrompt();
-  drainQueuedContextMenuPrompts();
+  return document.visibilityState !== 'hidden' && sameTabId(currentTabId, tabId);
 }
 
 function requestVisibleSidePanelStateRefresh() {
   if (document.visibilityState === 'hidden') return;
   visibleStateRefreshPending = true;
-  Promise.resolve().then(() => {
-    if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
+  visibleStateRefreshInProgress = true;
+  const refreshGeneration = ++visibleStateRefreshGeneration;
+  syncSendButtonState();
+  visibleStateRefreshPromise = visibleStateRefreshPromise.catch(() => {}).then(async () => {
+    if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
     visibleStateRefreshPending = false;
-    refreshVisibleSidePanelState().catch(() => {});
+    return refreshVisibleSidePanelState();
   });
+  const refreshPromise = visibleStateRefreshPromise;
+  refreshPromise.finally(() => {
+    if (refreshGeneration !== visibleStateRefreshGeneration) return;
+    visibleStateRefreshInProgress = false;
+    syncSendButtonState();
+  }).catch(() => {});
+  refreshPromise.then((refreshed) => {
+    if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
+    consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  }).catch(() => {});
 }
 
 async function restoreActiveRunState(tabId = currentTabId) {
@@ -6253,6 +6276,10 @@ function isOutOfBandSlashDraft(value) {
 function syncSendButtonState() {
   if (!sendBtn) return;
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
+  if (visibleStateRefreshPending || visibleStateRefreshInProgress) {
+    sendBtn.disabled = true;
+    return;
+  }
   if (isAwaitingPlanReviewForTab()) {
     sendBtn.disabled = true;
     return;
@@ -6989,11 +7016,25 @@ async function sendMessage(extraChatParams = {}) {
     : null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
+  await waitForVisibleSidePanelStateRefresh();
   stopListening();
   let text = inputEl.value.trim();
   if (!text) return;
   const submittedText = text;
   const tabId = currentTabId;
+  let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
+  const releaseOwnedContextMenuClaim = async () => {
+    if (!contextMenuClaimOwned) return;
+    contextMenuClaimOwned = false;
+    try {
+      await sendToBackground('release_context_menu_prompt_claim', {
+        tabId,
+        promptId: contextMenuClaim.promptId,
+        claimantId: contextMenuClaim.claimantId,
+      });
+    } catch { /* the durable lease still expires if release fails */ }
+    onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
+  };
   if (isConversationClearInProgress(tabId)) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
@@ -7097,26 +7138,13 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(currentTabId, tabId)
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     return false;
   }
-
-  let renewedContextMenuClaim = false;
-  const releaseRenewedContextMenuClaim = async () => {
-    if (!renewedContextMenuClaim) return;
-    renewedContextMenuClaim = false;
-    try {
-      await sendToBackground('release_context_menu_prompt_claim', {
-        tabId,
-        promptId: contextMenuClaim.promptId,
-        claimantId: contextMenuClaim.claimantId,
-      });
-    } catch { /* the durable lease still expires if release fails */ }
-    onContextMenuClaimRejected?.({ reason: 'panel-hidden', retryAfterMs: 250 });
-  };
 
   if (contextMenuClaim?.promptId && contextMenuClaim?.claimantId) {
     let renewedClaim = null;
@@ -7129,12 +7157,12 @@ async function sendMessage(extraChatParams = {}) {
     } catch {
       renewedClaim = { claimed: false, reason: 'connection', retryAfterMs: 1_000 };
     }
-    renewedContextMenuClaim = renewedClaim?.claimed === true;
+    contextMenuClaimOwned = renewedClaim?.claimed === true;
     const claimStillVisible = document.visibilityState !== 'hidden'
       && sameTabId(currentTabId, tabId)
       && sameTabId(renderedTabId, tabId);
-    if (renewedContextMenuClaim && !claimStillVisible) {
-      await releaseRenewedContextMenuClaim();
+    if (contextMenuClaimOwned && !claimStillVisible) {
+      await releaseOwnedContextMenuClaim();
       setTabProcessing(tabId, false);
       setTabAbortRequested(tabId, false);
       if (sameTabId(currentTabId, tabId)) syncSendButtonState();
@@ -7156,7 +7184,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(currentTabId, tabId)
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
-    await releaseRenewedContextMenuClaim();
+    await releaseOwnedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
