@@ -18223,6 +18223,7 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'chrome: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'chrome: clearing tab chat should be serialized through the queue');
   assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'chrome: clearing should invalidate the pre-clear handoff snapshot before yielding');
+  assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'chrome: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'chrome: queued clears should retain or reacquire ownership before clearing shared state');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'chrome: clearing content must not discard the visible document handoff generation');
 });
@@ -18247,6 +18248,7 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(clearBody, /tabChats\.delete\(tabId\);/, 'firefox: clearing tab chat should delete the cached HTML before queuing storage removal');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{/, 'firefox: clearing tab chat should be serialized through the queue');
   assert.match(clearBody, /lastVisibleTabChatSnapshot[\s\S]*?sameTabId\(lastVisibleTabChatSnapshot\.tabId, tabId\)[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?return enqueueTabChatOperation/, 'firefox: clearing should invalidate the pre-clear handoff snapshot before yielding');
+  assert.match(clearBody, /while \(true\)[\s\S]*?clearResult\?\.reason === 'stale-handoff'[\s\S]*?sendToBackground\('load_tab_chat'[\s\S]*?clearResult = await sendToBackground\('clear_tab_chat'[\s\S]*?clearResult\.reason !== 'stale-handoff'/, 'firefox: a stale clear should reacquire ownership and retry before rendering the cleared conversation');
   assert.match(clearBody, /return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?tabChats\.delete\(numericTabId\);[\s\S]*?handoffGeneration = tabChatHandoffGenerations\.get\(numericTabId\);[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff: true,[\s\S]*?sendToBackground\('clear_tab_chat', \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration,/, 'firefox: queued clears should retain or reacquire ownership before clearing shared state');
   assert.doesNotMatch(clearBody, /tabChatHandoffGenerations\.delete/, 'firefox: clearing content must not discard the visible document handoff generation');
 });
@@ -21948,6 +21950,16 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
       background,
       /case 'clear_tab_chat':[\s\S]*?tabChatHandoff\.clear\([\s\S]*?ownerId: msg\.handoffOwnerId,[\s\S]*?handoffGeneration: msg\.handoffGeneration/,
       `${label}: New Chat should clear content through the visible document's validated handoff ownership`,
+    );
+    assert.match(
+      background,
+      /case 'clear_tab_chat':[\s\S]*?result\?\.ok && !result\.skipped[\s\S]*?action: 'tab_chat_cleared'[\s\S]*?handoffOwnerId: result\.handoffOwnerId/,
+      `${label}: a successful clear should notify other panel documents to refresh the cleared transcript`,
+    );
+    assert.match(
+      panel,
+      /action !== 'tab_chat_cleared'[\s\S]*?msg\.handoffOwnerId === tabChatHandoffOwnerId[\s\S]*?lastVisibleTabChatSnapshot = null;[\s\S]*?requestVisibleSidePanelStateRefresh\(\);/,
+      `${label}: a different visible panel owner should reconcile immediately after a successful clear`,
     );
     assert.match(
       background,

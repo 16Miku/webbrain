@@ -2682,11 +2682,23 @@ async function handleMessage(msg, sender) {
         claimantId: msg.handoffOwnerId,
       });
 
-    case 'clear_tab_chat':
-      return await tabChatHandoff.clear(msg.tabId || sender.tab?.id, {
+    case 'clear_tab_chat': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const result = await tabChatHandoff.clear(tabId, {
         ownerId: msg.handoffOwnerId,
         handoffGeneration: msg.handoffGeneration,
       });
+      if (result?.ok && !result.skipped) {
+        chrome.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: result.handoffOwnerId,
+          handoffGeneration: result.handoffGeneration,
+        }).catch(() => {});
+      }
+      return result;
+    }
 
     case 'list_scheduled_jobs': {
       const tabId = msg.tabId || sender.tab?.id || null;

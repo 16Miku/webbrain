@@ -1516,9 +1516,10 @@ function clearCachedTabChat(tabId) {
   tabChats.delete(tabId);
   return enqueueTabChatOperation(tabId, async (numericTabId) => {
     tabChats.delete(numericTabId);
-    try {
-      let handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
-      if (!Number.isFinite(handoffGeneration)) {
+    let handoffGeneration = tabChatHandoffGenerations.get(numericTabId);
+    let clearResult = null;
+    while (true) {
+      if (!Number.isFinite(handoffGeneration) || clearResult?.reason === 'stale-handoff') {
         const ownership = await sendToBackground('load_tab_chat', {
           tabId: numericTabId,
           waitForHandoff: true,
@@ -1530,13 +1531,13 @@ function clearCachedTabChat(tabId) {
           tabChatHandoffGenerations.set(numericTabId, handoffGeneration);
         }
       }
-      await sendToBackground('clear_tab_chat', {
+      clearResult = await sendToBackground('clear_tab_chat', {
         tabId: numericTabId,
         handoffOwnerId: tabChatHandoffOwnerId,
         handoffGeneration,
       });
-    } catch (e) { /* ignore */ }
-    return { ok: true };
+      if (!clearResult?.skipped || clearResult.reason !== 'stale-handoff') return clearResult;
+    }
   });
 }
 
@@ -2220,7 +2221,10 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
-  await clearCachedTabChat(tabId);
+  const clearResult = await clearCachedTabChat(tabId);
+  if (!clearResult?.ok || clearResult?.skipped) {
+    throw new Error(clearResult?.error || 'Unable to clear tab chat.');
+  }
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
   clearPendingAttachmentsForTab(tabId);
@@ -7244,6 +7248,20 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     generation: Number(msg.generation),
     html: snapshot.html,
   });
+});
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'tab_chat_cleared'
+      || msg.handoffOwnerId === tabChatHandoffOwnerId
+      || document.visibilityState === 'hidden'
+      || !sameTabId(currentTabId, msg.tabId)) return;
+  tabChats.delete(Number(msg.tabId));
+  if (lastVisibleTabChatSnapshot
+      && sameTabId(lastVisibleTabChatSnapshot.tabId, msg.tabId)) {
+    lastVisibleTabChatSnapshot = null;
+  }
+  requestVisibleSidePanelStateRefresh();
 });
 
 document.addEventListener('visibilitychange', () => {
