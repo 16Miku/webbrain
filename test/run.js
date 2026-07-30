@@ -21939,8 +21939,13 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     const sendMessageBody = panel.slice(sendMessageStart, sendMessageEnd);
     assert.equal(
       (sendMessageBody.match(/await releaseOwnedContextMenuClaim\(\);/g) || []).length,
-      3,
-      `${label}: visibility exits after preflight and renewal should release the claim and schedule retry`,
+      4,
+      `${label}: every visibility exit should release the claim and schedule retry`,
+    );
+    assert.match(
+      sendMessageBody,
+      /if \(!retryOptions\) text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?if \(!renderToCurrentTab\) \{\s*await releaseOwnedContextMenuClaim\(\);/,
+      `${label}: the first visibility failure after refresh and command parsing should relinquish initial ownership`,
     );
     assert.match(
       sendMessageBody,

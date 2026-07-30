@@ -7119,6 +7119,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(currentTabId, tabId)
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
+    await releaseOwnedContextMenuClaim();
     if (text) saveInputDraftForTab(tabId, text);
     return false;
   }
