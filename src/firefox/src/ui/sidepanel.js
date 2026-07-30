@@ -1545,13 +1545,19 @@ let visibleStateRefreshPromise = Promise.resolve();
 let visibleStateRefreshInProgress = false;
 let visibleStateRefreshGeneration = 0;
 let lastVisibleTabChatSnapshot = null;
+const TAB_CHAT_HANDOFF_RETRY_MS = 250;
+
+function waitForTabChatHandoffRetry() {
+  return new Promise(resolve => setTimeout(resolve, TAB_CHAT_HANDOFF_RETRY_MS));
+}
 
 async function waitForVisibleSidePanelStateRefresh() {
   let pendingRefresh;
   do {
     pendingRefresh = visibleStateRefreshPromise;
     await pendingRefresh.catch(() => {});
-  } while (pendingRefresh !== visibleStateRefreshPromise);
+    if (tabSwitchTransitionId != null) await waitForTabChatHandoffRetry();
+  } while (pendingRefresh !== visibleStateRefreshPromise || tabSwitchTransitionId != null);
 }
 
 function schedulePersist() {
@@ -3560,6 +3566,7 @@ async function switchToTab(newTabId) {
   const switchGeneration = ++tabSwitchGeneration;
   tabSwitchTransitionId = newTabId;
   queuedTabSwitchMessages = [];
+  syncSendButtonState();
   // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
   // chat and run journals. Clear the outgoing tab's transient status before
   // any async restore work can yield; restoreActiveRunState (or a queued target
@@ -3584,8 +3591,16 @@ async function switchToTab(newTabId) {
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
 
-    // Restore new tab's chat from memory or storage.
-    const html = await loadTabChat(newTabId);
+    // Acquire shared handoff ownership for the destination before its DOM can
+    // render or persist. Retry transient background failures while this remains
+    // the current tab-switch generation.
+    let html = TAB_CHAT_LOAD_FAILED;
+    while (html === TAB_CHAT_LOAD_FAILED) {
+      html = await loadTabChat(newTabId, { waitForHandoff: true });
+      if (html !== TAB_CHAT_LOAD_FAILED) break;
+      if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
+      await waitForTabChatHandoffRetry();
+    }
     if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;
     if (html) {
       await hydrateRestoredChatHistory(newTabId, html);
@@ -3610,6 +3625,7 @@ async function switchToTab(newTabId) {
     refreshRecommendedActions();
   } finally {
     if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;
+    syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
   consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
@@ -3652,7 +3668,18 @@ function requestVisibleSidePanelStateRefresh() {
   visibleStateRefreshPromise = visibleStateRefreshPromise.catch(() => {}).then(async () => {
     if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
     visibleStateRefreshPending = false;
-    return refreshVisibleSidePanelState();
+    let refreshed = await refreshVisibleSidePanelState();
+    while (refreshed === false
+        && document.visibilityState !== 'hidden'
+        && tabSwitchTransitionId == null) {
+      visibleStateRefreshPending = true;
+      syncSendButtonState();
+      await waitForTabChatHandoffRetry();
+      if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return false;
+      visibleStateRefreshPending = false;
+      refreshed = await refreshVisibleSidePanelState();
+    }
+    return refreshed;
   });
   const refreshPromise = visibleStateRefreshPromise;
   refreshPromise.finally(() => {
@@ -6130,7 +6157,7 @@ function isOutOfBandSlashDraft(value) {
 function syncSendButtonState() {
   if (!sendBtn) return;
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
-  if (visibleStateRefreshPending || visibleStateRefreshInProgress) {
+  if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
     return;
   }

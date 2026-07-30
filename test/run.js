@@ -17704,7 +17704,7 @@ test('sidepanel queues target-tab updates and suppresses non-target updates duri
     const markIdx = body.indexOf('tabSwitchTransitionId = newTabId;');
     const flushIdx = body.indexOf('await flushRenderedTabChat();');
     const historyFlushIdx = body.indexOf('await flushChatHistorySnapshot(outgoingTabId);');
-    const loadIdx = body.indexOf('const html = await loadTabChat(newTabId);');
+    const loadIdx = body.indexOf('loadTabChat(newTabId');
     const clearTransitionIdx = body.indexOf('if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;');
     const replayIdx = body.indexOf('drainQueuedAgentUpdatesForTab(newTabId);');
     const consumeIdx = body.indexOf('consumePendingContextMenuPrompt()');
@@ -17799,7 +17799,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     const switchMatch = panel.match(/async function switchToTab\(newTabId\) \{([\s\S]*?)\n\}/);
     assert.ok(switchMatch, `${label}: switchToTab body missing`);
     const switchBody = switchMatch[1];
-    const loadIdx = switchBody.indexOf('const html = await loadTabChat(newTabId);');
+    const loadIdx = switchBody.indexOf('loadTabChat(newTabId');
     const restoredHasUserIdx = switchBody.indexOf('if (html) {');
     const hydrateRestoredIdx = switchBody.indexOf('await hydrateRestoredChatHistory(newTabId, html);');
     const postHydrateGuardIdx = switchBody.indexOf('if (switchGeneration !== tabSwitchGeneration || currentTabId !== newTabId) return;', hydrateRestoredIdx);
@@ -21886,19 +21886,26 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?pendingRefresh !== visibleStateRefreshPromise/,
-      `${label}: sends should wait until the complete serialized visibility refresh queue settles`,
+      /let visibleStateRefreshPromise = Promise\.resolve\(\);[\s\S]*?async function waitForVisibleSidePanelStateRefresh\(\) \{[\s\S]*?pendingRefresh = visibleStateRefreshPromise;[\s\S]*?await pendingRefresh\.catch\(\(\) => \{\}\);[\s\S]*?tabSwitchTransitionId != null[\s\S]*?pendingRefresh !== visibleStateRefreshPromise \|\| tabSwitchTransitionId != null/,
+      `${label}: sends should wait until visibility refreshes and coordinated tab switches settle`,
     );
     assert.match(
       panel,
-      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await restoreActiveRunState\(tabId\);[\s\S]*?function requestVisibleSidePanelStateRefresh\(\) \{[\s\S]*?visibleStateRefreshPromise = visibleStateRefreshPromise\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]*?return refreshVisibleSidePanelState\(\);[\s\S]*?refreshPromise\.then\(\(refreshed\) => \{[\s\S]*?refreshPromise !== visibleStateRefreshPromise[\s\S]*?consumePendingContextMenuPrompt\(\)/,
+      /async function refreshVisibleSidePanelState\(\) \{[\s\S]*?tabChats\.delete\(tabId\);[\s\S]*?await loadTabChat\(tabId, \{ waitForHandoff: true \}\);[\s\S]*?await restoreActiveRunState\(tabId\);[\s\S]*?function requestVisibleSidePanelStateRefresh\(\) \{[\s\S]*?visibleStateRefreshPromise = visibleStateRefreshPromise\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]*?let refreshed = await refreshVisibleSidePanelState\(\);[\s\S]*?while \(refreshed === false[\s\S]*?visibleStateRefreshPending = true;[\s\S]*?await waitForTabChatHandoffRetry\(\);[\s\S]*?refreshed = await refreshVisibleSidePanelState\(\);[\s\S]*?refreshPromise\.then\(\(refreshed\) => \{[\s\S]*?refreshPromise !== visibleStateRefreshPromise[\s\S]*?consumePendingContextMenuPrompt\(\)/,
       `${label}: a returning panel should serialize the shared handoff before consuming prompts`,
     );
     assert.match(
       panel,
-      /function syncSendButtonState\(\) \{[\s\S]*?if \(visibleStateRefreshPending \|\| visibleStateRefreshInProgress\) \{\s*sendBtn\.disabled = true;\s*return;/,
-      `${label}: the composer should stay disabled throughout visibility reconciliation`,
+      /function syncSendButtonState\(\) \{[\s\S]*?if \(tabSwitchTransitionId != null \|\| visibleStateRefreshPending \|\| visibleStateRefreshInProgress\) \{\s*sendBtn\.disabled = true;\s*return;/,
+      `${label}: the composer should stay disabled throughout tab-switch and visibility reconciliation`,
     );
+    if (label === 'firefox') {
+      assert.match(
+        panel,
+        /async function switchToTab\(newTabId\) \{[\s\S]*?tabSwitchTransitionId = newTabId;[\s\S]*?let html = TAB_CHAT_LOAD_FAILED;[\s\S]*?while \(html === TAB_CHAT_LOAD_FAILED\) \{[\s\S]*?loadTabChat\(newTabId, \{ waitForHandoff: true \}\);[\s\S]*?await waitForTabChatHandoffRetry\(\);/,
+        'firefox: switching tabs should acquire destination handoff ownership and retry transient failures before rendering',
+      );
+    }
     assert.match(
       panel,
       /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?await waitForVisibleSidePanelStateRefresh\(\);\s*stopListening\(\);\s*let text = inputEl\.value\.trim\(\);/,
