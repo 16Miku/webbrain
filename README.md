@@ -20,6 +20,7 @@
   <a href="README.fr.md">Français</a> ·
   <a href="docs/">Docs</a> ·
   <a href="https://webbrain.one">Website</a> ·
+  <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
@@ -65,10 +66,10 @@ Click the WebBrain icon to open the side panel, then type something like:
 
 Three modes control what the agent is allowed to do:
 
-| Mode | What it can do |
-|---|---|
-| **Ask** | Read-only. Reads the page, answers questions, fetches URLs. |
-| **Act** | Clicks, types, navigates, uploads, downloads, fills forms. |
+| Mode    | What it can do                                                         |
+| ------- | ---------------------------------------------------------------------- |
+| **Ask** | Read-only. Reads the page, answers questions, fetches URLs.            |
+| **Act** | Clicks, types, navigates, uploads, downloads, fills forms.             |
 | **Dev** | Adds page source, styles, console, network, and reversible page edits. |
 
 ## Pick a model
@@ -138,18 +139,18 @@ The full tool-by-tier matrix, WebMCP notes, and Dev-mode diagnostics are in
 
 Type `/help` in the panel for full signatures and flags. The most useful ones:
 
-| Command | What it does |
-|---------|--------------|
-| `/ask` · `/act` · `/dev` · `/plan` | Switch mode before sending |
-| `/schedule [prompt]` | Create a scheduled task |
-| `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met |
-| `/workflow --save <name>` | Compile the last successful run into a reusable workflow |
-| `/memory --add <text>` | Save a user preference |
-| `/screenshot [--full-page]` | Capture the tab, or the full scrollable page |
-| `/record [--transcribe]` | Record the current tab, optionally saving a transcript |
-| `/export [--traces \| --config]` | Download the conversation, tool chain, or a Settings snapshot |
-| `/compact` · `/reset` · `/verbose` | Compact context, clear the conversation, toggle tool detail |
-| `/allow-api` | Per-conversation override letting `fetch_url` mutate when the UI is failing |
+| Command                                                                                | What it does                                                                |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `/ask` · `/act` · `/dev` · `/plan`                                                     | Switch mode before sending                                                  |
+| `/schedule [prompt]`                                                                   | Create a scheduled task                                                     |
+| `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met                       |
+| `/workflow --save <name>`                                                              | Compile the last successful run into a reusable workflow                    |
+| `/memory --add <text>`                                                                 | Save a user preference                                                      |
+| `/screenshot [--full-page]`                                                            | Capture the tab, or the full scrollable page                                |
+| `/record [--transcribe]`                                                               | Record the current tab, optionally saving a transcript                      |
+| `/export [--traces \| --config]`                                                       | Download the conversation, tool chain, or a Settings snapshot               |
+| `/compact` · `/reset` · `/verbose`                                                     | Compact context, clear the conversation, toggle tool detail                 |
+| `/allow-api`                                                                           | Per-conversation override letting `fetch_url` mutate when the UI is failing |
 
 `/watch` runs its first check immediately, then polls every 60 seconds
 (`--secs` accepts 30–120). Relative conditions like "when a new commit appears"
@@ -163,33 +164,44 @@ suffixes: [slash commands](docs/slash-commands.md).
 
 Chrome side panel shortcuts work when the WebBrain side panel has focus.
 
-| Shortcut | What it does |
-|----------|--------------|
-| `Ctrl+/` or `Cmd+/` | Focus the input |
-| `Ctrl+Shift+A` or `Cmd+Shift+A` | Switch to Ask mode |
-| `Ctrl+Shift+X` or `Cmd+Shift+X` | Switch to Act mode |
-| `Ctrl+Shift+D` or `Cmd+Shift+D` | Switch to Dev mode |
-| `Escape` | Stop the active run, unless it is only dismissing slash-command autocomplete |
-| `Escape` twice | Stop an active recording from WebBrain or browser pages |
+| Shortcut                        | What it does                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `Ctrl+/` or `Cmd+/`             | Focus the input                                                              |
+| `Ctrl+Shift+A` or `Cmd+Shift+A` | Switch to Ask mode                                                           |
+| `Ctrl+Shift+X` or `Cmd+Shift+X` | Switch to Act mode                                                           |
+| `Ctrl+Shift+D` or `Cmd+Shift+D` | Switch to Dev mode                                                           |
+| `Escape`                        | Stop the active run, unless it is only dismissing slash-command autocomplete |
+| `Escape` twice                  | Stop an active recording from WebBrain or browser pages                      |
 
 ## Documentation
 
-| | |
-|---|---|
-| [Architecture](docs/architecture.md) | System overview, turn flow, subsystems |
-| [Agent tools](docs/agent-tools.md) | Tiers, modes, and the full tool matrix |
-| [Slash commands](docs/slash-commands.md) | Every command and flag |
-| [Providers and models](docs/providers-and-models.md) | All 104 provider cards, local setup, tiers |
-| [Skills](docs/skills.md) | Bundled skills, importing, skill tools |
-| [Security model](docs/security-model.md) | Permissions, credentials, trust boundaries |
-| [Prompt-injection defense](docs/prompt-injection-defense.md) | Defense layers and known gaps |
-| [Privacy and data flow](docs/privacy-and-data-flow.md) | What leaves the browser, and what doesn't |
-| [Accessibility tree and refs](docs/accessibility-tree-and-refs.md) | How pages are read and targeted |
-| [Site adapters](docs/site-adapters.md) | Per-site guidance |
-| [Export and workflow formats](docs/export-and-workflow-formats.md) | `webbrain-config/1`, `webbrain-workflow/1` |
-| [Adding a tool](docs/adding-a-tool.md) · [Localization](docs/localization.md) · [Test scenarios](docs/test-scenarios.md) | Contributor guides |
+|                                                                                                                          |                                                          |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
+| [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
+| [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
+| [Providers and models](docs/providers-and-models.md)                                                                     | All 104 provider cards, local setup, tiers               |
+| [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
+| [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
+| [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
+| [Privacy and data flow](docs/privacy-and-data-flow.md)                                                                   | What leaves the browser, and what doesn't                |
+| [Accessibility tree and refs](docs/accessibility-tree-and-refs.md)                                                       | How pages are read and targeted                          |
+| [Site adapters](docs/site-adapters.md)                                                                                   | Per-site guidance                                        |
+| [Export and workflow formats](docs/export-and-workflow-formats.md)                                                       | `webbrain-config/1`, `webbrain-workflow/1`               |
+| [Adding a tool](docs/adding-a-tool.md) · [Localization](docs/localization.md) · [Test scenarios](docs/test-scenarios.md) | Contributor guides                                       |
+| [Community](docs/community.md)                                                                                           | Discord server guide: channels, roles, rules, escalation |
 
 Also available in [中文](docs/zh-CN/) and [Français](docs/fr/).
+
+## Community
+
+Chat about everything WebBrain — help, local and cloud model setups, site
+adapters, show-and-tell, and contributor coordination — on the
+[WebBrain Discord](https://discord.gg/cgC325ssfw). See
+[community](docs/community.md) for how the server is organized, and
+[discord-setup](docs/discord-setup.md) for the channel, role, and welcome-screen
+configuration. Bug reports and feature requests belong in
+[GitHub issues](https://github.com/webbrain-one/webbrain/issues), not Discord.
 
 ## Repository layout
 
@@ -216,7 +228,7 @@ SPA-navigation-aware retry, and no CDP screenshots. It uses `tabs.captureTab`
 for viewport screenshots, including inactive run tabs, but still cannot provide
 Chrome's pixel-perfect or full-page CDP capture. Site adapters, vision
 detection, loop detection, the auto-screenshot loop, and the Compact prompt/tool
-set *are* mirrored to Firefox. Some single-page apps may also fail to trigger
+set _are_ mirrored to Firefox. Some single-page apps may also fail to trigger
 content-script re-injection after client-side navigation.
 
 ## Contributing

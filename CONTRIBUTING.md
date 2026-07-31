@@ -18,8 +18,8 @@ WebBrain's agent loop is generic — `click`, `type_text`, `scroll`,
 even a frontier model struggles to navigate without prior knowledge. The
 "site adapter" mechanism injects 5-15 lines of hand-written guidance into the
 agent's first message when it lands on a known site, telling it things like:
-*"the body editor is a CodeMirror, not a textarea"* or *"the file upload
-input is `input#releases-upload`, not the generic `input[type='file']`"*.
+_"the body editor is a CodeMirror, not a textarea"_ or _"the file upload
+input is `input#releases-upload`, not the generic `input[type='file']`"_.
 
 We have decent coverage for English-first global sites: GitHub, GitLab,
 Stack Overflow, Hacker News, Gmail, Google Docs/Calendar, Slack, Notion,
@@ -29,18 +29,18 @@ What we don't have, and what causes user-facing failures every day, is
 **adapters for the sites people in non-US markets actually use**. Examples
 of the kind of thing we'd love a PR for:
 
-| Region | High-priority sites |
-|--------|---------------------|
-| **Türkiye** | sahibinden.com, hepsiburada.com, trendyol.com, n11.com, yemeksepeti.com, getir.com, gittigidiyor.com |
-| **LATAM** | mercadolibre.com.ar / .com.mx / .com.br, olx.com.br, despegar.com, rappi.com |
-| **Brasil** | mercadolivre.com.br, americanas.com, magazineluiza.com.br, ifood.com.br |
-| **Russia / CIS** | wildberries.ru, ozon.ru, yandex.market, avito.ru, vk.com |
-| **India** | flipkart.com, snapdeal.com, swiggy.in, zomato.com, irctc.co.in, paytm.com |
-| **SE Asia** | shopee.com, lazada.com, tokopedia.com, traveloka.com, gojek.com, grab.com |
-| **East Asia** | rakuten.co.jp, mercari.com, yahoo.co.jp, naver.com, coupang.com |
-| **MENA / Gulf** | noon.com, souq.com, hepsiburada (also TR), careem.com, talabat.com |
-| **Africa** | jumia.com, takealot.com, kilimall.com |
-| **Europe (non-en)** | allegro.pl, leboncoin.fr, bol.com, otto.de, marktplaats.nl, willhaben.at |
+| Region              | High-priority sites                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Türkiye**         | sahibinden.com, hepsiburada.com, trendyol.com, n11.com, yemeksepeti.com, getir.com, gittigidiyor.com |
+| **LATAM**           | mercadolibre.com.ar / .com.mx / .com.br, olx.com.br, despegar.com, rappi.com                         |
+| **Brasil**          | mercadolivre.com.br, americanas.com, magazineluiza.com.br, ifood.com.br                              |
+| **Russia / CIS**    | wildberries.ru, ozon.ru, yandex.market, avito.ru, vk.com                                             |
+| **India**           | flipkart.com, snapdeal.com, swiggy.in, zomato.com, irctc.co.in, paytm.com                            |
+| **SE Asia**         | shopee.com, lazada.com, tokopedia.com, traveloka.com, gojek.com, grab.com                            |
+| **East Asia**       | rakuten.co.jp, mercari.com, yahoo.co.jp, naver.com, coupang.com                                      |
+| **MENA / Gulf**     | noon.com, souq.com, hepsiburada (also TR), careem.com, talabat.com                                   |
+| **Africa**          | jumia.com, takealot.com, kilimall.com                                                                |
+| **Europe (non-en)** | allegro.pl, leboncoin.fr, bol.com, otto.de, marktplaats.nl, willhaben.at                             |
 
 This list is not exhaustive — if you use a site that WebBrain handles badly,
 you're probably the right person to write its adapter. **A PR adding one
@@ -80,25 +80,25 @@ Each adapter needs four things:
 Adapter notes are **not documentation for humans**. They're prompt fragments
 for an LLM that's about to drive the page. The bar is:
 
-- **Imperative voice.** *"Click `<text>`"* not *"You should click `<text>`"*.
+- **Imperative voice.** _"Click `<text>`"_ not _"You should click `<text>`"_.
 - **Names actual selectors, URL patterns, or visible button text** — not vague
-  guidance. *"The login button is labeled 'Giriş Yap', not 'Login'"* is
-  useful. *"Be careful with the login flow"* is useless.
+  guidance. _"The login button is labeled 'Giriş Yap', not 'Login'"_ is
+  useful. _"Be careful with the login flow"_ is useless.
 - **Mentions traps the model would otherwise fall into.** That's the whole
   point. If the search field looks like a normal `<input>` but actually opens
   a typeahead modal, **say so**.
-- **Names the success indicators.** *"After posting, the new listing appears
+- **Names the success indicators.** _"After posting, the new listing appears
   at the top of /ilanlarim with a 'Yayında' (Published) badge — not in
-  /ilanlar."*
-- **Says what NOT to do.** *"Don't click the green 'Hemen Al' button unless
-  you actually want to buy — there is no confirm dialog."* Anti-patterns
+  /ilanlar."_
+- **Says what NOT to do.** _"Don't click the green 'Hemen Al' button unless
+  you actually want to buy — there is no confirm dialog."_ Anti-patterns
   matter as much as patterns.
 - **Stays short.** 5-15 bullets. The notes ride along with every first-turn
   request on that site, so they cost tokens. If your adapter is approaching
   20 bullets, split common patterns into shorter sentences or trim the
   least-likely scenarios.
-- **Is dated when the UI is volatile.** If you write *"As of 2026-04, the
-  listing form is at /ilan-ver/step-1"*, future contributors know how stale
+- **Is dated when the UI is volatile.** If you write _"As of 2026-04, the
+  listing form is at /ilan-ver/step-1"_, future contributors know how stale
   the note is.
 
 A canonical example to imitate is the **github** adapter — it tells the model
@@ -109,9 +109,9 @@ the Pull Requests link).
 
 ### What bad adapter notes look like
 
-- *"GitHub is a code hosting site."* (Tells the model nothing useful.)
-- *"Be careful when posting comments."* (Vague — what specifically goes wrong?)
-- *"The site has many features."* (Filler.)
+- _"GitHub is a code hosting site."_ (Tells the model nothing useful.)
+- _"Be careful when posting comments."_ (Vague — what specifically goes wrong?)
+- _"The site has many features."_ (Filler.)
 - 30+ bullets covering every page on the site. (Exceeds the budget; the
   model will skim.)
 - Quoting screenshots or ASCII art. (Tokens you can't afford.)
@@ -123,7 +123,7 @@ the Pull Requests link).
 2. Open the WebBrain side panel on the target site.
 3. **Settings → Display → Site adapters** must be on (it is by default).
 4. Run a representative task in Act mode — for sahibinden, something like
-   *"find me 5 listings under 35,000 TL for X"*. Watch what the agent does.
+   _"find me 5 listings under 35,000 TL for X"_. Watch what the agent does.
 5. Toggle **Settings → Display → Record traces** before the run. After
    the run, open the Traces page and inspect the timeline. Did the agent
    hit any of the dead-ends your adapter is meant to prevent? Did it follow
@@ -135,7 +135,7 @@ the Pull Requests link).
 
 - One adapter per PR is ideal. If you've got two unrelated adapters, two PRs.
 - Title: `agent: add adapter for <site>`.
-- Body: a one-liner of *what real failure mode this adapter prevents*, plus
+- Body: a one-liner of _what real failure mode this adapter prevents_, plus
   one or two trace-based examples if you have them. We don't need a long
   rationale; we trust your judgment if you've actually used the site.
 - Mirror to both `src/chrome/` and `src/firefox/` so neither browser regresses.
@@ -204,8 +204,8 @@ want a code task.
   It explains what counts as untrusted page content, the two registries that
   must stay exhaustive (`UNTRUSTED_CONTENT_TOOLS` and the capability map), and
   the rule that page-derived bytes must go through `_wrapUntrusted` — not a
-  prose label. The unit tests check that tools are *listed*, not that you
-  classified them *correctly*.
+  prose label. The unit tests check that tools are _listed_, not that you
+  classified them _correctly_.
 
 ---
 
@@ -221,4 +221,8 @@ the commit history, forever.
 
 Open a [GitHub Discussion](https://github.com/webbrain-one/webbrain/discussions)
 or file an issue. Don't email Emre directly with code questions; the
-conversation is more useful in public.
+conversation is more useful in public. For quick help and community discussion,
+join the [WebBrain Discord](https://discord.gg/cgC325ssfw) — see
+[`docs/community.md`](docs/community.md) for the channel layout and rules.
+Questions that turn into bugs or features should be moved back to a GitHub issue
+so they stay tracked.
