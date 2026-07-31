@@ -15270,8 +15270,11 @@ test('logo metadata and generated icon assets use the correct canonical artwork 
       assert.ok(expected.equals(read(rel)), `${rel}: same-size logo derivatives should be identical`);
     }
   }
-  assert.deepEqual(dimensions('web/twitter-image.png'), [512, 512]);
+  assert.deepEqual(dimensions('web/twitter-image.png'), [1200, 630]);
   assert.deepEqual(dimensions('web/og-image.png'), [1200, 630]);
+  const websiteSocial = read('assets/brand-assets-2026-2/website/og-image.png');
+  assert.ok(websiteSocial.equals(read('web/og-image.png')), 'website OG image should match its rendered source');
+  assert.ok(websiteSocial.equals(read('web/twitter-image.png')), 'website Twitter image should match its rendered source');
   assert.deepEqual(dimensions('assets/store-promo-440x280.png'), [440, 280]);
   assert.deepEqual(dimensions('assets/store-promo-1400x560.png'), [1400, 560]);
   for (const [rel, size] of [
@@ -15281,6 +15284,13 @@ test('logo metadata and generated icon assets use the correct canonical artwork 
     ['assets/webbrain-social-card-300x188.png', [300, 188]],
     ['assets/webbrain-social-card.png', [1280, 640]],
     ['web/assets/webbrain-ollama-heart.png', [1200, 630]],
+    ['assets/brand-assets-2026-2/webbrain-social-card-300x188.png', [300, 188]],
+    ['assets/brand-assets-2026-2/webbrain-social-card.png', [1280, 640]],
+    ['assets/brand-assets-2026-2/store-promo-440x280.png', [440, 280]],
+    ['assets/brand-assets-2026-2/store-promo-1400x560.png', [1400, 560]],
+    ['assets/brand-assets-2026-2/banners/webbrain-banner-en.png', [2560, 800]],
+    ['assets/brand-assets-2026-2/banners/webbrain-banner-tr.png', [2560, 800]],
+    ['assets/brand-assets-2026-2/banners/webbrain-banner-vertical-en.png', [1280, 2560]],
   ]) {
     assert.deepEqual(dimensions(rel), size, `${rel}: branded composite dimensions changed`);
   }
@@ -15289,19 +15299,28 @@ test('logo metadata and generated icon assets use the correct canonical artwork 
   assert.match(packageJson.scripts['sync:logo'], /sync-logo-assets\.py/);
   assert.match(packageJson.scripts['sync:logo'], /gen-store-promos\.py/);
   assert.match(packageJson.scripts['sync:logo'], /webstore-explainer-2026\/render\.mjs/);
+  assert.match(packageJson.scripts['sync:logo'], /brand-assets-2026-2\/render\.mjs/);
 
   const logoSync = fs.readFileSync(path.join(ROOT, 'scripts/sync-logo-assets.py'), 'utf8');
   assert.match(logoSync, /MARK = ROOT \/ "assets" \/ "logo-mark\.png"/);
   assert.match(logoSync, /save_png\(icon_logo\(mark, size\), icon_dir/);
   assert.match(logoSync, /save_jpeg\(full_logo\(source, 128\), ASSETS \/ "logo-github-128\.jpg"\)/);
   assert.match(logoSync, /replace_composite_logo\(path, source, box, radius\)/);
+  assert.doesNotMatch(logoSync, /WEB \/ "twitter-image\.png"|WEB \/ "og-image\.png"/);
 
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const blogBuilder = fs.readFileSync(path.join(ROOT, 'scripts/build-blog.mjs'), 'utf8');
   assert.match(template, /<link rel="icon" type="image\/png" href="\/favicon\.png">/);
   assert.match(template, /class="brand-logo" src="\/logo-github\.png"/);
   assert.match(blogBuilder, /class="brand-logo" src="\/logo-github\.png"/);
+  assert.match(template, /<meta name="twitter:card" content="summary_large_image">/);
+  assert.match(template, /<meta property="og:image:alt" content="\{\{t:meta\.og_title\}\}">/);
+  assert.match(blogBuilder, /<meta name="twitter:card" content="summary_large_image">/);
   assert.doesNotMatch(template + blogBuilder, /favicon\.svg|brain emoji icon|&#129504;/);
+
+  const brandRenderer = fs.readFileSync(path.join(ROOT, 'assets/brand-assets-2026-2/render.mjs'), 'utf8');
+  assert.match(brandRenderer, /const SUPERSAMPLE = 2/);
+  assert.match(brandRenderer, /imageSmoothingQuality = 'high'/);
 
   for (const [label, rel] of [
     ['chrome', 'src/chrome/manifest.json'],

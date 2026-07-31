@@ -1159,12 +1159,12 @@ function sharedHead({ title, description, canonical, ogType = 'website', ogTitle
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="${SOCIAL_IMAGE_WIDTH}">
   <meta property="og:image:height" content="${SOCIAL_IMAGE_HEIGHT}">
-  <meta property="og:image:alt" content="WebBrain detailed brain logo">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${escAttr(twitterTitle || ogTitle || title)}">
   <meta name="twitter:description" content="${escAttr(twitterDescription || ogDescription || description)}">
   <meta name="twitter:image" content="${escAttr(twitterImageUrl)}">
-  <meta name="twitter:image:alt" content="WebBrain detailed brain logo">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="canonical" href="${escAttr(canonical)}">
   <!-- Blog is English-only; alternates point to locale homepages. -->
