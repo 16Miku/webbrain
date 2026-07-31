@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain sekmemde çalışırken yukarı veya aşağı kaydırabilir miyim?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Çoğu zaman evet — özellikle “Bu sayfayı özetle” gibi salt okunur isteklerde Ask modunda. WebBrain çalışırken kaydırmaya devam edebilirsiniz. Ne zaman bundan kaçınmalıyım? Otomatik ekran görüntüleri sekmenin o anki görünüm alanını yansıtır. WebBrain Act veya Dev modunda görünür içeriği etkin biçimde incelerken ya da içerikle etkileşirken kaydırmak hedefi yerinden oynatabilir veya modelin gördüklerini değiştirebilir. Kaydırmadan önce o adımın bitmesini bekleyin; bu anların dışında sayfayı kullanmaya devam edebilirsiniz."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain bir sayfada çalışırken başka bir sekmeye geçebilir miyim?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Evet, Chrome'da — ajan arka plan service worker'ında çalışır ve başladığı sekmeye bağlıdır; yani odağını başka yere taşısan bile o belirli sekmeyi tıklamaya, yazmaya ve okumaya devam eder. Bir sekmeyi hedefleyen araçlar (CDP ile tıklama, yazma, gezinme, ekran görüntüsü) Chrome'da arka plan sekmelerinde çalışır. Bir görev sürerken yan çubuk girişi kilitler; böylece yeni sekmede kazara ikinci bir görev başlatamazsın — mevcut olanı beklemen ya da durdurman gerekir. Tarayıcılar arka plan sekmelerindeki zamanlayıcıları ve animasyonları yavaşlattığı için ağır animasyonlu siteler biraz daha yavaş tepki verebilir. Firefox'ta ajan yine orijinal sekmesinde çalışmaya devam eder, ancak otomatik ekran görüntüleri kısıtlıdır: Firefox'un ekran görüntüsü API'si yalnızca aktif sekmeyi yakalayabilir, arka plandaki belirli bir sekmeyi değil. WebBrain bunu algılar ve alakasız bir sayfanın görüntüsünü modele beslemektense o tur için ekran görüntüsünü atlar. Ajan, sen sekmesine geri dönene dek metin tabanlı bağlamla planlamaya devam eder. Ajanın çalıştığı sekmede aktif olarak tıklamaktan ya da yazmaktan kaçın — aynı sayfa üzerinde senin ve ajanın birbirinizle yarıştığı yarış koşulları doğar. Sekme değiştirmek sorun değil; aynı sekmeyi beraber sürmek sorun."
+        "text": "Evet. 27.0.0 sürümünden itibaren WebBrain, ön plan erişimi kesinlikle gerekmediği sürece hem Chromium tabanlı tarayıcılarda hem de Firefox'ta odağı ele geçirmez. Çalışma, başladığı sekmeye bağlı kalır; böylece başka bir sekmede güvenle çalışabilirsiniz. Nadiren bir adımın özgün sekmeyi ön plana getirmesi gerekirse WebBrain kısa süreliğine o sekmeye odaklanabilir. WebBrain etkin olarak işlem yaparken aynı sekmede tıklamaktan veya yazmaktan kaçının."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>WebBrain sekmemde çalışırken yukarı veya aşağı kaydırabilir miyim?</summary>
+      <p>Çoğu zaman evet — özellikle “Bu sayfayı özetle” gibi salt okunur isteklerde <strong>Ask modunda</strong>. WebBrain çalışırken kaydırmaya devam edebilirsiniz.</p><p><strong>Ne zaman bundan kaçınmalıyım?</strong> Otomatik ekran görüntüleri sekmenin o anki görünüm alanını yansıtır. WebBrain <strong>Act veya Dev modunda</strong> görünür içeriği etkin biçimde incelerken ya da içerikle etkileşirken kaydırmak hedefi yerinden oynatabilir veya modelin gördüklerini değiştirebilir. Kaydırmadan önce o adımın bitmesini bekleyin; bu anların dışında sayfayı kullanmaya devam edebilirsiniz.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>WebBrain bir sayfada çalışırken başka bir sekmeye geçebilir miyim?</summary>
-      <p>Evet, Chrome'da — ajan arka plan service worker'ında çalışır ve başladığı sekmeye bağlıdır; yani odağını başka yere taşısan bile o belirli sekmeyi tıklamaya, yazmaya ve okumaya devam eder. Bir sekmeyi hedefleyen araçlar (CDP ile tıklama, yazma, gezinme, ekran görüntüsü) Chrome'da arka plan sekmelerinde çalışır. Bir görev sürerken yan çubuk girişi kilitler; böylece yeni sekmede kazara ikinci bir görev başlatamazsın — mevcut olanı beklemen ya da durdurman gerekir. Tarayıcılar arka plan sekmelerindeki zamanlayıcıları ve animasyonları yavaşlattığı için ağır animasyonlu siteler biraz daha yavaş tepki verebilir.</p><p>Firefox'ta ajan yine orijinal sekmesinde çalışmaya devam eder, ancak otomatik ekran görüntüleri kısıtlıdır: Firefox'un ekran görüntüsü API'si yalnızca aktif sekmeyi yakalayabilir, arka plandaki belirli bir sekmeyi değil. WebBrain bunu algılar ve alakasız bir sayfanın görüntüsünü modele beslemektense o tur için ekran görüntüsünü atlar. Ajan, sen sekmesine geri dönene dek metin tabanlı bağlamla planlamaya devam eder.</p><p><strong>Ajanın çalıştığı sekmede aktif olarak tıklamaktan ya da yazmaktan kaçın</strong> — aynı sayfa üzerinde senin ve ajanın birbirinizle yarıştığı yarış koşulları doğar. Sekme değiştirmek sorun değil; aynı sekmeyi beraber sürmek sorun.</p>
+      <p>Evet. <strong>27.0.0</strong> sürümünden itibaren WebBrain, ön plan erişimi kesinlikle gerekmediği sürece hem Chromium tabanlı tarayıcılarda hem de Firefox'ta odağı ele geçirmez. Çalışma, başladığı sekmeye bağlı kalır; böylece başka bir sekmede güvenle çalışabilirsiniz.</p><p>Nadiren bir adımın özgün sekmeyi ön plana getirmesi gerekirse WebBrain kısa süreliğine o sekmeye odaklanabilir. WebBrain etkin olarak işlem yaparken aynı sekmede tıklamaktan veya yazmaktan kaçının.</p>
     </details>
 
     <details class="faq-item">

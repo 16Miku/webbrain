@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
-      "name": "Can I switch to another tab while WebBrain is working on a page?",
+      "name": "Can I scroll up or down while WebBrain is working on my tab?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes, on Chrome — the agent runs in the background service worker and is bound to the tab it started on, so it keeps clicking, typing, and reading that specific tab even when you move focus elsewhere. Tools that target a tab (CDP click, type, navigate, screenshot) all work on backgrounded tabs in Chrome. The sidebar locks the input while a task is running so you can't accidentally start a second task on the new tab — you'll need to wait or stop the current one. Note that browsers throttle timers and animations on background tabs, so heavily animated sites may respond slightly slower. On Firefox, the agent will keep running on its original tab too, but auto-screenshots are limited: Firefox's screenshot API can only capture the currently active tab, not a specific tab in the background. WebBrain detects this and skips the screenshot for that turn rather than feeding the model an image of an unrelated page. The agent will continue planning from text-based context until you switch back to its tab. Avoid actively clicking or typing on the same tab the agent is working on — that creates race conditions where you and the agent fight over the same page. Switching tabs is fine; co-driving the same tab is not."
+        "text": "Most of the time, yes — especially in Ask mode for read-only requests such as \"Summarize this page.\" You can continue scrolling while WebBrain works. When should I avoid it? Auto-screenshots reflect the tab's current viewport. While WebBrain is actively inspecting or interacting with visible content in Act or Dev mode, scrolling can move a target or change what the model sees. Let that step finish before scrolling; outside those moments, you can continue using the page."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I switch tabs while WebBrain is working?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. As of 27.0.0, WebBrain avoids stealing focus in both Chromium-based browsers and Firefox unless foreground access is strictly necessary. The run stays attached to the tab where it started, so you can safely work in another tab. If a rare step needs the original tab in front, WebBrain may briefly focus it. Avoid clicking or typing in the same tab while WebBrain is actively acting on it."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
-      <summary>Can I switch to another tab while WebBrain is working on a page?</summary>
-      <p>Yes, on Chrome — the agent runs in the background service worker and is bound to the tab it started on, so it keeps clicking, typing, and reading that specific tab even when you move focus elsewhere. Tools that target a tab (CDP click, type, navigate, screenshot) all work on backgrounded tabs in Chrome. The sidebar locks the input while a task is running so you can't accidentally start a second task on the new tab — you'll need to wait or stop the current one. Note that browsers throttle timers and animations on background tabs, so heavily animated sites may respond slightly slower.</p><p>On Firefox, the agent will keep running on its original tab too, but auto-screenshots are limited: Firefox's screenshot API can only capture the currently active tab, not a specific tab in the background. WebBrain detects this and skips the screenshot for that turn rather than feeding the model an image of an unrelated page. The agent will continue planning from text-based context until you switch back to its tab.</p><p><strong>Avoid actively clicking or typing on the same tab the agent is working on</strong> — that creates race conditions where you and the agent fight over the same page. Switching tabs is fine; co-driving the same tab is not.</p>
+      <summary>Can I scroll up or down while WebBrain is working on my tab?</summary>
+      <p>Most of the time, yes — especially in <strong>Ask mode</strong> for read-only requests such as "Summarize this page." You can continue scrolling while WebBrain works.</p><p><strong>When should I avoid it?</strong> Auto-screenshots reflect the tab's current viewport. While WebBrain is actively inspecting or interacting with visible content in <strong>Act or Dev mode</strong>, scrolling can move a target or change what the model sees. Let that step finish before scrolling; outside those moments, you can continue using the page.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Can I switch tabs while WebBrain is working?</summary>
+      <p>Yes. As of <strong>27.0.0</strong>, WebBrain avoids stealing focus in both Chromium-based browsers and Firefox unless foreground access is strictly necessary. The run stays attached to the tab where it started, so you can safely work in another tab.</p><p>If a rare step needs the original tab in front, WebBrain may briefly focus it. Avoid clicking or typing in the same tab while WebBrain is actively acting on it.</p>
     </details>
 
     <details class="faq-item">

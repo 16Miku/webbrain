@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Maaari ba akong mag-scroll pataas o pababa habang gumagana ang WebBrain sa tab ko?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Kadalasan, oo — lalo na sa Ask mode para sa mga read-only na kahilingan gaya ng “Ibuod ang pahinang ito.” Maaari kang magpatuloy sa pag-scroll habang gumagana ang WebBrain. Kailan ko ito dapat iwasan? Ang mga auto-screenshot ay nakabatay sa kasalukuyang viewport ng tab. Habang aktibong sinusuri o ginagamit ng WebBrain ang nakikitang content sa Act o Dev mode, maaaring mailipat ng pag-scroll ang target o mabago ang nakikita ng modelo. Hintaying matapos ang hakbang na iyon bago mag-scroll; sa labas ng mga sandaling iyon, maaari mong patuloy na gamitin ang pahina."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Maaari ba akong lumipat sa ibang tab habang gumagawa ang WebBrain sa isang pahina?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Oo, sa Chrome — tumatakbo ang ahente sa background service worker at naka-bind sa tab kung saan ito nagsimula, kaya patuloy itong magki-click, magta-type, at magbabasa sa partikular na tab na iyon kahit gumagalaw ka sa ibang lugar. Ang mga tool na may target na tab (CDP click, type, navigate, screenshot) ay gumagana lahat sa mga backgrounded tab sa Chrome. Nilalock ng sidebar ang input habang tumatakbo ang isang task para hindi ka makapagsimula nang aksidente ng pangalawang task sa bagong tab — kailangan mong maghintay o ipahinto ang kasalukuyan. Tandaan na nililimitahan ng mga browser ang mga timer at animation sa mga background tab, kaya maaaring medyo bumagal ang pagresponde ng mga animated na site. Sa Firefox, magpapatuloy ang ahente na tumakbo sa orihinal nitong tab, pero limitado ang auto-screenshots: ang screenshot API ng Firefox ay nakakakuha lamang ng kasalukuyang aktibong tab, hindi ng partikular na tab sa background. Tinutukoy ito ng WebBrain at nilalaktawan ang screenshot para sa turn na iyon sa halip na ipakain sa modelo ang isang larawan ng isang walang kaugnayang pahina. Patuloy na magpa-plan ang ahente mula sa text-based na konteksto hanggang sa bumalik ka sa tab nito. Iwasang aktibong mag-click o mag-type sa parehong tab na ginagamit ng ahente — gumagawa iyon ng race conditions kung saan kayong dalawa ng ahente ay naglalaban para sa parehong pahina. OK lang ang paglipat sa ibang tab; hindi OK ang sabay na pagpapatakbo ng parehong tab."
+        "text": "Oo. Simula sa bersyong 27.0.0, iniiwasan ng WebBrain na agawin ang focus sa mga browser na nakabatay sa Chromium at sa Firefox maliban kung talagang kailangan ang foreground access. Nananatiling nakatali ang run sa tab kung saan ito nagsimula, kaya ligtas kang makakapagtrabaho sa ibang tab. Kung kailangan ng isang pambihirang hakbang na nasa harapan ang orihinal na tab, maaaring pansamantalang ituon dito ng WebBrain ang focus. Iwasang mag-click o mag-type sa parehong tab habang aktibong kumikilos dito ang WebBrain."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Maaari ba akong mag-scroll pataas o pababa habang gumagana ang WebBrain sa tab ko?</summary>
+      <p>Kadalasan, oo — lalo na sa <strong>Ask mode</strong> para sa mga read-only na kahilingan gaya ng “Ibuod ang pahinang ito.” Maaari kang magpatuloy sa pag-scroll habang gumagana ang WebBrain.</p><p><strong>Kailan ko ito dapat iwasan?</strong> Ang mga auto-screenshot ay nakabatay sa kasalukuyang viewport ng tab. Habang aktibong sinusuri o ginagamit ng WebBrain ang nakikitang content sa <strong>Act o Dev mode</strong>, maaaring mailipat ng pag-scroll ang target o mabago ang nakikita ng modelo. Hintaying matapos ang hakbang na iyon bago mag-scroll; sa labas ng mga sandaling iyon, maaari mong patuloy na gamitin ang pahina.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Maaari ba akong lumipat sa ibang tab habang gumagawa ang WebBrain sa isang pahina?</summary>
-      <p>Oo, sa Chrome — tumatakbo ang ahente sa background service worker at naka-bind sa tab kung saan ito nagsimula, kaya patuloy itong magki-click, magta-type, at magbabasa sa partikular na tab na iyon kahit gumagalaw ka sa ibang lugar. Ang mga tool na may target na tab (CDP click, type, navigate, screenshot) ay gumagana lahat sa mga backgrounded tab sa Chrome. Nilalock ng sidebar ang input habang tumatakbo ang isang task para hindi ka makapagsimula nang aksidente ng pangalawang task sa bagong tab — kailangan mong maghintay o ipahinto ang kasalukuyan. Tandaan na nililimitahan ng mga browser ang mga timer at animation sa mga background tab, kaya maaaring medyo bumagal ang pagresponde ng mga animated na site.</p><p>Sa Firefox, magpapatuloy ang ahente na tumakbo sa orihinal nitong tab, pero limitado ang auto-screenshots: ang screenshot API ng Firefox ay nakakakuha lamang ng kasalukuyang aktibong tab, hindi ng partikular na tab sa background. Tinutukoy ito ng WebBrain at nilalaktawan ang screenshot para sa turn na iyon sa halip na ipakain sa modelo ang isang larawan ng isang walang kaugnayang pahina. Patuloy na magpa-plan ang ahente mula sa text-based na konteksto hanggang sa bumalik ka sa tab nito.</p><p><strong>Iwasang aktibong mag-click o mag-type sa parehong tab na ginagamit ng ahente</strong> — gumagawa iyon ng race conditions kung saan kayong dalawa ng ahente ay naglalaban para sa parehong pahina. OK lang ang paglipat sa ibang tab; hindi OK ang sabay na pagpapatakbo ng parehong tab.</p>
+      <p>Oo. Simula sa bersyong <strong>27.0.0</strong>, iniiwasan ng WebBrain na agawin ang focus sa mga browser na nakabatay sa Chromium at sa Firefox maliban kung talagang kailangan ang foreground access. Nananatiling nakatali ang run sa tab kung saan ito nagsimula, kaya ligtas kang makakapagtrabaho sa ibang tab.</p><p>Kung kailangan ng isang pambihirang hakbang na nasa harapan ang orihinal na tab, maaaring pansamantalang ituon dito ng WebBrain ang focus. Iwasang mag-click o mag-type sa parehong tab habang aktibong kumikilos dito ang WebBrain.</p>
     </details>
 
     <details class="faq-item">

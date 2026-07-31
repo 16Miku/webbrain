@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
-      "name": "Posso mudar para outra guia enquanto WebBrain está trabalhando em uma página?",
+      "name": "Posso rolar para cima ou para baixo enquanto o WebBrain trabalha na minha guia?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Sim, em Chrome – o agente é executado no service worker em segundo plano e está vinculado à guia em que foi iniciado, portanto, continua clicando, digitando e lendo essa guia específica, mesmo quando você move o foco para outro lugar. Todas as ferramentas direcionadas a uma guia (clique, digitação, navegação, captura de tela do CDP) funcionam em guias em segundo plano no Chrome. A barra lateral bloqueia a entrada enquanto uma tarefa está em execução para que você não possa iniciar acidentalmente uma segunda tarefa na nova guia – você precisará esperar ou interromper a atual. Observe que os navegadores aceleram os temporizadores e as animações nas guias de fundo, portanto, sites muito animados podem responder um pouco mais lentamente. No Firefox, o agente continuará executando em sua guia original também, mas as capturas de tela automáticas são limitadas: a API de captura de tela do Firefox só pode capturar a guia atualmente ativa, não uma guia específica em segundo plano. WebBrain detecta isso e pula a captura de tela desse turno, em vez de alimentar o modelo com uma imagem de uma página não relacionada. O agente continuará planejando no contexto baseado em texto até você voltar para sua guia. Evite clicar ou digitar ativamente na mesma guia em que o agente está trabalhando – isso cria condições de corrida onde você e o agente brigam pela mesma página. Alternar entre guias é bom; co-dirigir a mesma guia não é."
+        "text": "Na maioria das vezes, sim — especialmente no modo Ask para solicitações somente de leitura, como “Resuma esta página”. Você pode continuar rolando enquanto o WebBrain trabalha. Quando devo evitar isso? As capturas automáticas refletem a área visível atual da guia. Enquanto o WebBrain inspeciona ou interage ativamente com conteúdo visível no modo Act ou Dev, a rolagem pode deslocar um alvo ou mudar o que o modelo vê. Deixe essa etapa terminar antes de rolar; fora desses momentos, você pode continuar usando a página."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Posso mudar para outra guia enquanto o WebBrain está trabalhando em uma página?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sim. A partir da versão 27.0.0, o WebBrain evita tomar o foco tanto em navegadores baseados em Chromium quanto no Firefox, a menos que o acesso em primeiro plano seja estritamente necessário. A execução permanece vinculada à guia onde começou, portanto você pode trabalhar com segurança em outra guia. Se uma etapa rara precisar da guia original em primeiro plano, o WebBrain poderá focalizá-la brevemente. Evite clicar ou digitar na mesma guia enquanto o WebBrain estiver agindo ativamente nela."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
-      <summary>Posso mudar para outra guia enquanto WebBrain está trabalhando em uma página?</summary>
-      <p>Sim, em Chrome – o agente é executado no service worker em segundo plano e está vinculado à guia em que foi iniciado, portanto, continua clicando, digitando e lendo essa guia específica, mesmo quando você move o foco para outro lugar. Todas as ferramentas direcionadas a uma guia (clique, digitação, navegação, captura de tela do CDP) funcionam em guias em segundo plano no Chrome. A barra lateral bloqueia a entrada enquanto uma tarefa está em execução para que você não possa iniciar acidentalmente uma segunda tarefa na nova guia – você precisará esperar ou interromper a atual. Observe que os navegadores aceleram os temporizadores e as animações nas guias de fundo, portanto, sites muito animados podem responder um pouco mais lentamente.</p><p>No Firefox, o agente continuará executando em sua guia original também, mas as capturas de tela automáticas são limitadas: a API de captura de tela do Firefox só pode capturar a guia atualmente ativa, não uma guia específica em segundo plano. WebBrain detecta isso e pula a captura de tela desse turno, em vez de alimentar o modelo com uma imagem de uma página não relacionada. O agente continuará planejando no contexto baseado em texto até você voltar para sua guia.</p><p><strong>Evite clicar ou digitar ativamente na mesma guia em que o agente está trabalhando</strong> – isso cria condições de corrida onde você e o agente brigam pela mesma página. Alternar entre guias é bom; co-dirigir a mesma guia não é.</p>
+      <summary>Posso rolar para cima ou para baixo enquanto o WebBrain trabalha na minha guia?</summary>
+      <p>Na maioria das vezes, sim — especialmente no <strong>modo Ask</strong> para solicitações somente de leitura, como “Resuma esta página”. Você pode continuar rolando enquanto o WebBrain trabalha.</p><p><strong>Quando devo evitar isso?</strong> As capturas automáticas refletem a área visível atual da guia. Enquanto o WebBrain inspeciona ou interage ativamente com conteúdo visível no <strong>modo Act ou Dev</strong>, a rolagem pode deslocar um alvo ou mudar o que o modelo vê. Deixe essa etapa terminar antes de rolar; fora desses momentos, você pode continuar usando a página.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Posso mudar para outra guia enquanto o WebBrain está trabalhando em uma página?</summary>
+      <p>Sim. A partir da versão <strong>27.0.0</strong>, o WebBrain evita tomar o foco tanto em navegadores baseados em Chromium quanto no Firefox, a menos que o acesso em primeiro plano seja estritamente necessário. A execução permanece vinculada à guia onde começou, portanto você pode trabalhar com segurança em outra guia.</p><p>Se uma etapa rara precisar da guia original em primeiro plano, o WebBrain poderá focalizá-la brevemente. Evite clicar ou digitar na mesma guia enquanto o WebBrain estiver agindo ativamente nela.</p>
     </details>
 
     <details class="faq-item">

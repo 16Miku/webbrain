@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Kan ik omhoog of omlaag scrollen terwijl WebBrain in mijn tabblad werkt?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Meestal wel — vooral in de Ask-modus voor alleen-lezenverzoeken zoals “Vat deze pagina samen”. U kunt blijven scrollen terwijl WebBrain werkt. Wanneer kan ik dit beter niet doen? Automatische screenshots geven het huidige zichtbare gedeelte van het tabblad weer. Terwijl WebBrain in de Act- of Dev-modus zichtbare inhoud actief inspecteert of ermee werkt, kan scrollen een doel verplaatsen of wijzigen wat het model ziet. Laat die stap afronden voordat u scrollt; buiten die momenten kunt u de pagina gewoon blijven gebruiken."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Kan ik naar een ander tabblad schakelen terwijl WebBrain aan een pagina werkt?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Ja, op Chrome — de agent draait in de achtergrond-service worker en is gebonden aan het tabblad waarop het is gestart, dus het blijft klikken, typen en lezen van dat specifieke tabblad, zelfs wanneer u de focus verplaatst. Tools die een tabblad targeten (CDP klik, type, navigate, screenshot) werken allemaal op op de achtergrond geplaatste tabbladen in Chrome. De zijbalk vergrendelt de invoer zolang een taak actief is, zodat u per ongeluk geen tweede taak kunt starten op het nieuwe tabblad — u moet wachten of de huidige stoppen. Merk op dat browsers timers en animaties op achtergrondtabbladen beperken, dus sterk geanimeerde sites mogelijk iets langzamer reageren. Op Firefox blijft de agent ook op zijn originele tabblad draaien, maar automatische screenshots zijn beperkt: Firefox's screenshot-API kan alleen het actieve tabblad vastleggen, niet een specifiek tabblad op de achtergrond. WebBrain detecteert dit en slaat de screenshot voor die beurt over in plaats van het model een afbeelding van een ongerelateerde pagina te geven. De agent blijft plannen op basis van tekstcontext totdat u terugkeert naar zijn tabblad. Vermijd actief klikken of typen op hetzelfde tabblad waar de agent aan werkt — dat veroorzaakt racecondities waarbij u en het agent om dezelfde pagina strijden. Tabbladen wisselen is prima; samen hetzelfde tabblad besturen niet."
+        "text": "Ja. Sinds versie 27.0.0 voorkomt WebBrain dat het de focus overneemt in zowel Chromium-gebaseerde browsers als Firefox, tenzij toegang op de voorgrond strikt noodzakelijk is. De uitvoering blijft gekoppeld aan het tabblad waarop deze is gestart, zodat u veilig in een ander tabblad kunt werken. Als voor een zeldzame stap het oorspronkelijke tabblad op de voorgrond moet staan, kan WebBrain er kort de focus op zetten. Klik of typ niet in hetzelfde tabblad terwijl WebBrain daar actief handelingen uitvoert."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Kan ik omhoog of omlaag scrollen terwijl WebBrain in mijn tabblad werkt?</summary>
+      <p>Meestal wel — vooral in de <strong>Ask-modus</strong> voor alleen-lezenverzoeken zoals “Vat deze pagina samen”. U kunt blijven scrollen terwijl WebBrain werkt.</p><p><strong>Wanneer kan ik dit beter niet doen?</strong> Automatische screenshots geven het huidige zichtbare gedeelte van het tabblad weer. Terwijl WebBrain in de <strong>Act- of Dev-modus</strong> zichtbare inhoud actief inspecteert of ermee werkt, kan scrollen een doel verplaatsen of wijzigen wat het model ziet. Laat die stap afronden voordat u scrollt; buiten die momenten kunt u de pagina gewoon blijven gebruiken.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Kan ik naar een ander tabblad schakelen terwijl WebBrain aan een pagina werkt?</summary>
-      <p>Ja, op Chrome — de agent draait in de achtergrond-service worker en is gebonden aan het tabblad waarop het is gestart, dus het blijft klikken, typen en lezen van dat specifieke tabblad, zelfs wanneer u de focus verplaatst. Tools die een tabblad targeten (CDP klik, type, navigate, screenshot) werken allemaal op op de achtergrond geplaatste tabbladen in Chrome. De zijbalk vergrendelt de invoer zolang een taak actief is, zodat u per ongeluk geen tweede taak kunt starten op het nieuwe tabblad — u moet wachten of de huidige stoppen. Merk op dat browsers timers en animaties op achtergrondtabbladen beperken, dus sterk geanimeerde sites mogelijk iets langzamer reageren.</p><p>Op Firefox blijft de agent ook op zijn originele tabblad draaien, maar automatische screenshots zijn beperkt: Firefox's screenshot-API kan alleen het actieve tabblad vastleggen, niet een specifiek tabblad op de achtergrond. WebBrain detecteert dit en slaat de screenshot voor die beurt over in plaats van het model een afbeelding van een ongerelateerde pagina te geven. De agent blijft plannen op basis van tekstcontext totdat u terugkeert naar zijn tabblad.</p><p><strong>Vermijd actief klikken of typen op hetzelfde tabblad waar de agent aan werkt</strong> — dat veroorzaakt racecondities waarbij u en het agent om dezelfde pagina strijden. Tabbladen wisselen is prima; samen hetzelfde tabblad besturen niet.</p>
+      <p>Ja. Sinds versie <strong>27.0.0</strong> voorkomt WebBrain dat het de focus overneemt in zowel Chromium-gebaseerde browsers als Firefox, tenzij toegang op de voorgrond strikt noodzakelijk is. De uitvoering blijft gekoppeld aan het tabblad waarop deze is gestart, zodat u veilig in een ander tabblad kunt werken.</p><p>Als voor een zeldzame stap het oorspronkelijke tabblad op de voorgrond moet staan, kan WebBrain er kort de focus op zetten. Klik of typ niet in hetzelfde tabblad terwijl WebBrain daar actief handelingen uitvoert.</p>
     </details>
 
     <details class="faq-item">

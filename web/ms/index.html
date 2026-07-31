@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Bolehkah saya menatal ke atas atau ke bawah semasa WebBrain bekerja dalam tab saya?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Kebiasaannya boleh — terutamanya dalam mod Ask untuk permintaan baca sahaja seperti “Ringkaskan halaman ini.” Anda boleh terus menatal semasa WebBrain bekerja. Bilakah saya patut mengelakkannya? Tangkapan skrin automatik mencerminkan ruang pandang semasa tab. Ketika WebBrain sedang aktif memeriksa atau berinteraksi dengan kandungan yang kelihatan dalam mod Act atau Dev, menatal boleh mengalihkan sasaran atau mengubah perkara yang dilihat oleh model. Tunggu sehingga langkah itu selesai sebelum menatal; di luar waktu tersebut, anda boleh terus menggunakan halaman."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Bolehkah saya bertukar ke tab lain semasa WebBrain sedang bekerja pada halaman?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Boleh, pada Chrome — ejen berjalan dalam service worker latar belakang dan terikat pada tab tempat ia bermula, jadi ia terus mengklik, menaip dan membaca tab tertentu itu walaupun anda mengalihkan tumpuan ke tempat lain. Alat yang menyasarkan tab (klik CDP, taip, navigasi, tangkapan skrin) semuanya berfungsi pada tab latar belakang di Chrome. Bar sisi mengunci input semasa tugas dijalankan supaya anda tidak boleh memulakan tugas kedua secara tidak sengaja pada tab baharu — anda perlu menunggu atau menghentikan tugas semasa. Perhatikan bahawa pelayar mendaifkan pemasa dan animasi pada tab latar belakang, jadi tapak yang banyak beranimasi mungkin bertindak balas sedikit lebih perlahan. Pada Firefox, ejen akan terus berjalan pada tab asalnya juga, tetapi tangkapan skrin automatik terhad: API tangkapan skrin Firefox hanya boleh menangkap tab yang sedang aktif, bukan tab tertentu di latar belakang. WebBrain mengesan ini dan melangkau tangkapan skrin untuk giliran itu dan bukannya menyuap model imej halaman yang tidak berkaitan. Ejen akan terus merancang daripada konteks berasaskan teks sehingga anda kembali ke tabnya. Elakkan mengklik atau menaip secara aktif pada tab yang sama yang sedang dikerjakan oleh ejen — itu mencipta keadaan perlumbaan di mana anda dan ejen bergaduh untuk halaman yang sama. Bertukar tab tidak mengapa; memandu bersama tab yang sama tidak."
+        "text": "Boleh. Sejak versi 27.0.0, WebBrain mengelak daripada merampas fokus dalam pelayar berasaskan Chromium dan Firefox kecuali akses latar depan benar-benar diperlukan. Proses kekal terikat pada tab tempat ia bermula, jadi anda boleh bekerja dengan selamat dalam tab lain. Jika langkah yang jarang berlaku memerlukan tab asal berada di latar depan, WebBrain mungkin memfokuskannya sebentar. Elakkan mengklik atau menaip dalam tab yang sama ketika WebBrain sedang aktif bertindak di situ."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Bolehkah saya menatal ke atas atau ke bawah semasa WebBrain bekerja dalam tab saya?</summary>
+      <p>Kebiasaannya boleh — terutamanya dalam <strong>mod Ask</strong> untuk permintaan baca sahaja seperti “Ringkaskan halaman ini.” Anda boleh terus menatal semasa WebBrain bekerja.</p><p><strong>Bilakah saya patut mengelakkannya?</strong> Tangkapan skrin automatik mencerminkan ruang pandang semasa tab. Ketika WebBrain sedang aktif memeriksa atau berinteraksi dengan kandungan yang kelihatan dalam <strong>mod Act atau Dev</strong>, menatal boleh mengalihkan sasaran atau mengubah perkara yang dilihat oleh model. Tunggu sehingga langkah itu selesai sebelum menatal; di luar waktu tersebut, anda boleh terus menggunakan halaman.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Bolehkah saya bertukar ke tab lain semasa WebBrain sedang bekerja pada halaman?</summary>
-      <p>Boleh, pada Chrome — ejen berjalan dalam service worker latar belakang dan terikat pada tab tempat ia bermula, jadi ia terus mengklik, menaip dan membaca tab tertentu itu walaupun anda mengalihkan tumpuan ke tempat lain. Alat yang menyasarkan tab (klik CDP, taip, navigasi, tangkapan skrin) semuanya berfungsi pada tab latar belakang di Chrome. Bar sisi mengunci input semasa tugas dijalankan supaya anda tidak boleh memulakan tugas kedua secara tidak sengaja pada tab baharu — anda perlu menunggu atau menghentikan tugas semasa. Perhatikan bahawa pelayar mendaifkan pemasa dan animasi pada tab latar belakang, jadi tapak yang banyak beranimasi mungkin bertindak balas sedikit lebih perlahan.</p><p>Pada Firefox, ejen akan terus berjalan pada tab asalnya juga, tetapi tangkapan skrin automatik terhad: API tangkapan skrin Firefox hanya boleh menangkap tab yang sedang aktif, bukan tab tertentu di latar belakang. WebBrain mengesan ini dan melangkau tangkapan skrin untuk giliran itu dan bukannya menyuap model imej halaman yang tidak berkaitan. Ejen akan terus merancang daripada konteks berasaskan teks sehingga anda kembali ke tabnya.</p><p><strong>Elakkan mengklik atau menaip secara aktif pada tab yang sama yang sedang dikerjakan oleh ejen</strong> — itu mencipta keadaan perlumbaan di mana anda dan ejen bergaduh untuk halaman yang sama. Bertukar tab tidak mengapa; memandu bersama tab yang sama tidak.</p>
+      <p>Boleh. Sejak versi <strong>27.0.0</strong>, WebBrain mengelak daripada merampas fokus dalam pelayar berasaskan Chromium dan Firefox kecuali akses latar depan benar-benar diperlukan. Proses kekal terikat pada tab tempat ia bermula, jadi anda boleh bekerja dengan selamat dalam tab lain.</p><p>Jika langkah yang jarang berlaku memerlukan tab asal berada di latar depan, WebBrain mungkin memfokuskannya sebentar. Elakkan mengklik atau menaip dalam tab yang sama ketika WebBrain sedang aktif bertindak di situ.</p>
     </details>
 
     <details class="faq-item">

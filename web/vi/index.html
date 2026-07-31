@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Tôi có thể cuộn lên hoặc xuống trong khi WebBrain đang làm việc trên tab của mình không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Hầu hết thời gian là có — đặc biệt trong chế độ Ask đối với các yêu cầu chỉ đọc như “Tóm tắt trang này”. Bạn có thể tiếp tục cuộn trong khi WebBrain làm việc. Khi nào tôi nên tránh? Ảnh chụp màn hình tự động phản ánh khung nhìn hiện tại của tab. Khi WebBrain đang chủ động kiểm tra hoặc tương tác với nội dung hiển thị trong chế độ Act hoặc Dev, việc cuộn có thể làm dịch chuyển mục tiêu hoặc thay đổi nội dung mà mô hình nhìn thấy. Hãy để bước đó hoàn tất trước khi cuộn; ngoài những lúc đó, bạn có thể tiếp tục sử dụng trang."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Tôi có thể chuyển sang tab khác trong khi WebBrain đang hoạt động trên một trang không?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Có, trên Chrome — tác nhân chạy trong trình chạy dịch vụ nền và được liên kết với tab mà nó đã bắt đầu, do đó, tác nhân sẽ tiếp tục nhấp, nhập và đọc tab cụ thể đó ngay cả khi bạn di chuyển tiêu điểm sang nơi khác. Các công cụ nhắm mục tiêu một tab (nhấp CDP, nhập, điều hướng, chụp màn hình) đều hoạt động trên các tab nền trong Chrome. Thanh bên khóa đầu vào trong khi một tác vụ đang chạy để bạn không thể vô tình bắt đầu tác vụ thứ hai trên tab mới — bạn sẽ cần đợi hoặc dừng tác vụ hiện tại. Lưu ý rằng trình duyệt điều chỉnh bộ tính giờ và hoạt ảnh trên các tab nền, vì vậy các trang web có nhiều hoạt ảnh có thể phản hồi chậm hơn một chút. Trên Firefox, tác nhân cũng sẽ tiếp tục chạy trên tab gốc nhưng ảnh chụp màn hình tự động bị hạn chế: API ảnh chụp màn hình của Firefox chỉ có thể chụp tab hiện đang hoạt động chứ không thể chụp một tab cụ thể ở chế độ nền. WebBrain phát hiện điều này và bỏ qua ảnh chụp màn hình cho lượt đó thay vì cung cấp cho mô hình hình ảnh của một trang không liên quan. Nhân viên hỗ trợ sẽ tiếp tục lập kế hoạch từ ngữ cảnh dựa trên văn bản cho đến khi bạn chuyển về tab của nhân viên đó. Tránh chủ động nhấp hoặc gõ vào cùng một tab mà nhân viên đang làm việc - điều đó tạo ra các điều kiện chạy đua trong đó bạn và người đại diện chiến đấu trên cùng một trang. Chuyển đổi tab là tốt; đồng lái xe cùng một tab thì không."
+        "text": "Có. Kể từ phiên bản 27.0.0, WebBrain tránh chiếm tiêu điểm trên cả trình duyệt dựa trên Chromium và Firefox, trừ khi quyền truy cập ở nền trước là thực sự cần thiết. Phiên chạy vẫn gắn với tab nơi nó bắt đầu, vì vậy bạn có thể làm việc an toàn trong một tab khác. Nếu một bước hiếm gặp cần đưa tab ban đầu ra nền trước, WebBrain có thể chuyển tiêu điểm sang tab đó trong giây lát. Tránh nhấp hoặc nhập trong cùng tab khi WebBrain đang chủ động thao tác trên đó."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Tôi có thể cuộn lên hoặc xuống trong khi WebBrain đang làm việc trên tab của mình không?</summary>
+      <p>Hầu hết thời gian là có — đặc biệt trong <strong>chế độ Ask</strong> đối với các yêu cầu chỉ đọc như “Tóm tắt trang này”. Bạn có thể tiếp tục cuộn trong khi WebBrain làm việc.</p><p><strong>Khi nào tôi nên tránh?</strong> Ảnh chụp màn hình tự động phản ánh khung nhìn hiện tại của tab. Khi WebBrain đang chủ động kiểm tra hoặc tương tác với nội dung hiển thị trong <strong>chế độ Act hoặc Dev</strong>, việc cuộn có thể làm dịch chuyển mục tiêu hoặc thay đổi nội dung mà mô hình nhìn thấy. Hãy để bước đó hoàn tất trước khi cuộn; ngoài những lúc đó, bạn có thể tiếp tục sử dụng trang.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Tôi có thể chuyển sang tab khác trong khi WebBrain đang hoạt động trên một trang không?</summary>
-      <p>Có, trên Chrome — tác nhân chạy trong trình chạy dịch vụ nền và được liên kết với tab mà nó đã bắt đầu, do đó, tác nhân sẽ tiếp tục nhấp, nhập và đọc tab cụ thể đó ngay cả khi bạn di chuyển tiêu điểm sang nơi khác. Các công cụ nhắm mục tiêu một tab (nhấp CDP, nhập, điều hướng, chụp màn hình) đều hoạt động trên các tab nền trong Chrome. Thanh bên khóa đầu vào trong khi một tác vụ đang chạy để bạn không thể vô tình bắt đầu tác vụ thứ hai trên tab mới — bạn sẽ cần đợi hoặc dừng tác vụ hiện tại. Lưu ý rằng trình duyệt điều chỉnh bộ tính giờ và hoạt ảnh trên các tab nền, vì vậy các trang web có nhiều hoạt ảnh có thể phản hồi chậm hơn một chút.</p><p>Trên Firefox, tác nhân cũng sẽ tiếp tục chạy trên tab gốc nhưng ảnh chụp màn hình tự động bị hạn chế: API ảnh chụp màn hình của Firefox chỉ có thể chụp tab hiện đang hoạt động chứ không thể chụp một tab cụ thể ở chế độ nền. WebBrain phát hiện điều này và bỏ qua ảnh chụp màn hình cho lượt đó thay vì cung cấp cho mô hình hình ảnh của một trang không liên quan. Nhân viên hỗ trợ sẽ tiếp tục lập kế hoạch từ ngữ cảnh dựa trên văn bản cho đến khi bạn chuyển về tab của nhân viên đó.</p><p><strong>Tránh chủ động nhấp hoặc gõ vào cùng một tab mà nhân viên đang làm việc</strong> - điều đó tạo ra các điều kiện chạy đua trong đó bạn và người đại diện chiến đấu trên cùng một trang. Chuyển đổi tab là tốt; đồng lái xe cùng một tab thì không.</p>
+      <p>Có. Kể từ phiên bản <strong>27.0.0</strong>, WebBrain tránh chiếm tiêu điểm trên cả trình duyệt dựa trên Chromium và Firefox, trừ khi quyền truy cập ở nền trước là thực sự cần thiết. Phiên chạy vẫn gắn với tab nơi nó bắt đầu, vì vậy bạn có thể làm việc an toàn trong một tab khác.</p><p>Nếu một bước hiếm gặp cần đưa tab ban đầu ra nền trước, WebBrain có thể chuyển tiêu điểm sang tab đó trong giây lát. Tránh nhấp hoặc nhập trong cùng tab khi WebBrain đang chủ động thao tác trên đó.</p>
     </details>
 
     <details class="faq-item">

@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Bisakah saya menggulir ke atas atau ke bawah saat WebBrain bekerja di tab saya?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Biasanya bisa — terutama dalam mode Ask untuk permintaan hanya-baca seperti “Ringkas halaman ini.” Anda dapat terus menggulir saat WebBrain bekerja. Kapan sebaiknya dihindari? Tangkapan layar otomatis mencerminkan viewport tab saat ini. Saat WebBrain sedang aktif memeriksa atau berinteraksi dengan konten yang terlihat dalam mode Act atau Dev, menggulir dapat menggeser target atau mengubah apa yang dilihat model. Tunggu hingga langkah tersebut selesai sebelum menggulir; di luar momen itu, Anda dapat terus menggunakan halaman."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Bisakah saya beralih ke tab lain saat WebBrain sedang bekerja pada sebuah halaman?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Ya, di Chrome — agen berjalan di service worker latar belakang dan terikat pada tab tempat ia mulai, jadi ia terus mengeklik, mengetik, dan membaca tab spesifik itu walau Anda memindahkan fokus ke tempat lain. Alat yang menargetkan tab (klik CDP, mengetik, navigasi, tangkapan layar) semuanya bekerja pada tab latar belakang di Chrome. Sidebar mengunci input saat tugas berjalan agar Anda tidak tak sengaja memulai tugas kedua pada tab baru — Anda perlu menunggu atau menghentikan yang sedang berjalan. Perlu diingat bahwa peramban membatasi timer dan animasi pada tab latar belakang, jadi situs yang banyak animasi mungkin merespons sedikit lebih lambat. Di Firefox, agen juga akan terus berjalan pada tab aslinya, tetapi tangkapan layar otomatis terbatas: API tangkapan layar Firefox hanya dapat menangkap tab yang sedang aktif, bukan tab tertentu di latar belakang. WebBrain mendeteksi ini dan melewatkan tangkapan layar pada giliran itu alih-alih memberi model gambar halaman yang tidak relevan. Agen akan terus merencanakan dari konteks berbasis teks sampai Anda beralih kembali ke tab miliknya. Hindari mengeklik atau mengetik secara aktif pada tab yang sama tempat agen bekerja — itu menciptakan kondisi balapan di mana Anda dan agen saling memperebutkan halaman yang sama. Beralih tab tidak masalah; menyetir bersama-sama tab yang sama tidak."
+        "text": "Ya. Sejak versi 27.0.0, WebBrain tidak mengambil alih fokus di peramban berbasis Chromium maupun Firefox kecuali akses latar depan benar-benar diperlukan. Proses tetap terikat pada tab tempat proses dimulai, sehingga Anda dapat bekerja dengan aman di tab lain. Jika suatu langkah yang jarang terjadi membutuhkan tab asli berada di latar depan, WebBrain mungkin memfokuskan tab tersebut sebentar. Hindari mengeklik atau mengetik di tab yang sama saat WebBrain sedang aktif bertindak di sana."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Bisakah saya menggulir ke atas atau ke bawah saat WebBrain bekerja di tab saya?</summary>
+      <p>Biasanya bisa — terutama dalam <strong>mode Ask</strong> untuk permintaan hanya-baca seperti “Ringkas halaman ini.” Anda dapat terus menggulir saat WebBrain bekerja.</p><p><strong>Kapan sebaiknya dihindari?</strong> Tangkapan layar otomatis mencerminkan viewport tab saat ini. Saat WebBrain sedang aktif memeriksa atau berinteraksi dengan konten yang terlihat dalam <strong>mode Act atau Dev</strong>, menggulir dapat menggeser target atau mengubah apa yang dilihat model. Tunggu hingga langkah tersebut selesai sebelum menggulir; di luar momen itu, Anda dapat terus menggunakan halaman.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Bisakah saya beralih ke tab lain saat WebBrain sedang bekerja pada sebuah halaman?</summary>
-      <p>Ya, di Chrome — agen berjalan di service worker latar belakang dan terikat pada tab tempat ia mulai, jadi ia terus mengeklik, mengetik, dan membaca tab spesifik itu walau Anda memindahkan fokus ke tempat lain. Alat yang menargetkan tab (klik CDP, mengetik, navigasi, tangkapan layar) semuanya bekerja pada tab latar belakang di Chrome. Sidebar mengunci input saat tugas berjalan agar Anda tidak tak sengaja memulai tugas kedua pada tab baru — Anda perlu menunggu atau menghentikan yang sedang berjalan. Perlu diingat bahwa peramban membatasi timer dan animasi pada tab latar belakang, jadi situs yang banyak animasi mungkin merespons sedikit lebih lambat.</p><p>Di Firefox, agen juga akan terus berjalan pada tab aslinya, tetapi tangkapan layar otomatis terbatas: API tangkapan layar Firefox hanya dapat menangkap tab yang sedang aktif, bukan tab tertentu di latar belakang. WebBrain mendeteksi ini dan melewatkan tangkapan layar pada giliran itu alih-alih memberi model gambar halaman yang tidak relevan. Agen akan terus merencanakan dari konteks berbasis teks sampai Anda beralih kembali ke tab miliknya.</p><p><strong>Hindari mengeklik atau mengetik secara aktif pada tab yang sama tempat agen bekerja</strong> — itu menciptakan kondisi balapan di mana Anda dan agen saling memperebutkan halaman yang sama. Beralih tab tidak masalah; menyetir bersama-sama tab yang sama tidak.</p>
+      <p>Ya. Sejak versi <strong>27.0.0</strong>, WebBrain tidak mengambil alih fokus di peramban berbasis Chromium maupun Firefox kecuali akses latar depan benar-benar diperlukan. Proses tetap terikat pada tab tempat proses dimulai, sehingga Anda dapat bekerja dengan aman di tab lain.</p><p>Jika suatu langkah yang jarang terjadi membutuhkan tab asli berada di latar depan, WebBrain mungkin memfokuskan tab tersebut sebentar. Hindari mengeklik atau mengetik di tab yang sama saat WebBrain sedang aktif bertindak di sana.</p>
     </details>
 
     <details class="faq-item">

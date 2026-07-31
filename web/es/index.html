@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "¿Puedo desplazarme hacia arriba o abajo mientras WebBrain trabaja en mi pestaña?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "La mayoría de las veces, sí — especialmente en modo Ask para solicitudes de solo lectura como «Resume esta página». Puedes seguir desplazándote mientras WebBrain trabaja. ¿Cuándo debería evitarlo? Las capturas automáticas reflejan el área visible actual de la pestaña. Mientras WebBrain inspecciona o interactúa activamente con contenido visible en modo Act o Dev, desplazarte puede mover un objetivo o cambiar lo que ve el modelo. Deja que termine ese paso antes de desplazarte; fuera de esos momentos, puedes seguir usando la página."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "¿Puedo cambiar a otra pestaña mientras WebBrain trabaja en una página?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Sí, en Chrome — el agente se ejecuta en el service worker en segundo plano y está anclado a la pestaña donde comenzó, así que sigue haciendo clic, escribiendo y leyendo esa pestaña concreta aunque cambies el foco. Las herramientas que apuntan a una pestaña (clic, escritura, navegación y captura por CDP) funcionan en pestañas en segundo plano en Chrome. La barra lateral bloquea la entrada mientras hay una tarea en marcha para que no inicies accidentalmente una segunda tarea en la pestaña nueva — tendrás que esperar o detener la actual. Ten en cuenta que los navegadores limitan temporizadores y animaciones en pestañas de fondo, así que los sitios muy animados pueden responder algo más lentos. En Firefox, el agente también seguirá ejecutándose en su pestaña original, pero las capturas automáticas están limitadas: la API de capturas de Firefox solo puede capturar la pestaña activa, no una concreta en segundo plano. WebBrain lo detecta y salta la captura en ese turno en lugar de enviarle al modelo una imagen de una página sin relación. El agente seguirá planificando con el contexto textual hasta que vuelvas a su pestaña. Evita hacer clic o escribir activamente en la misma pestaña en la que trabaja el agente — genera condiciones de carrera donde ambos compiten por la misma página. Cambiar de pestaña está bien; co-pilotar la misma pestaña no lo está."
+        "text": "Sí. Desde la versión 27.0.0, WebBrain evita quitarte el foco tanto en navegadores basados en Chromium como en Firefox, salvo que el acceso en primer plano sea estrictamente necesario. La ejecución permanece vinculada a la pestaña donde comenzó, por lo que puedes trabajar con seguridad en otra pestaña. Si algún paso poco frecuente necesita que la pestaña original esté en primer plano, WebBrain puede enfocarla brevemente. Evita hacer clic o escribir en la misma pestaña mientras WebBrain actúa activamente en ella."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>¿Puedo desplazarme hacia arriba o abajo mientras WebBrain trabaja en mi pestaña?</summary>
+      <p>La mayoría de las veces, sí — especialmente en <strong>modo Ask</strong> para solicitudes de solo lectura como «Resume esta página». Puedes seguir desplazándote mientras WebBrain trabaja.</p><p><strong>¿Cuándo debería evitarlo?</strong> Las capturas automáticas reflejan el área visible actual de la pestaña. Mientras WebBrain inspecciona o interactúa activamente con contenido visible en <strong>modo Act o Dev</strong>, desplazarte puede mover un objetivo o cambiar lo que ve el modelo. Deja que termine ese paso antes de desplazarte; fuera de esos momentos, puedes seguir usando la página.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>¿Puedo cambiar a otra pestaña mientras WebBrain trabaja en una página?</summary>
-      <p>Sí, en Chrome — el agente se ejecuta en el service worker en segundo plano y está anclado a la pestaña donde comenzó, así que sigue haciendo clic, escribiendo y leyendo esa pestaña concreta aunque cambies el foco. Las herramientas que apuntan a una pestaña (clic, escritura, navegación y captura por CDP) funcionan en pestañas en segundo plano en Chrome. La barra lateral bloquea la entrada mientras hay una tarea en marcha para que no inicies accidentalmente una segunda tarea en la pestaña nueva — tendrás que esperar o detener la actual. Ten en cuenta que los navegadores limitan temporizadores y animaciones en pestañas de fondo, así que los sitios muy animados pueden responder algo más lentos.</p><p>En Firefox, el agente también seguirá ejecutándose en su pestaña original, pero las capturas automáticas están limitadas: la API de capturas de Firefox solo puede capturar la pestaña activa, no una concreta en segundo plano. WebBrain lo detecta y salta la captura en ese turno en lugar de enviarle al modelo una imagen de una página sin relación. El agente seguirá planificando con el contexto textual hasta que vuelvas a su pestaña.</p><p><strong>Evita hacer clic o escribir activamente en la misma pestaña en la que trabaja el agente</strong> — genera condiciones de carrera donde ambos compiten por la misma página. Cambiar de pestaña está bien; co-pilotar la misma pestaña no lo está.</p>
+      <p>Sí. Desde la versión <strong>27.0.0</strong>, WebBrain evita quitarte el foco tanto en navegadores basados en Chromium como en Firefox, salvo que el acceso en primer plano sea estrictamente necesario. La ejecución permanece vinculada a la pestaña donde comenzó, por lo que puedes trabajar con seguridad en otra pestaña.</p><p>Si algún paso poco frecuente necesita que la pestaña original esté en primer plano, WebBrain puede enfocarla brevemente. Evita hacer clic o escribir en la misma pestaña mientras WebBrain actúa activamente en ella.</p>
     </details>
 
     <details class="faq-item">

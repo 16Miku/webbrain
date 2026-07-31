@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Puis-je faire défiler la page vers le haut ou le bas pendant que WebBrain travaille dans mon onglet ?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "La plupart du temps, oui — surtout en mode Ask pour les demandes en lecture seule telles que « Résume cette page ». Vous pouvez continuer à faire défiler la page pendant que WebBrain travaille. Quand faut-il éviter de le faire ? Les captures automatiques reflètent la zone actuellement visible dans l'onglet. Lorsque WebBrain inspecte ou manipule activement du contenu visible en mode Act ou Dev, le défilement peut déplacer une cible ou modifier ce que voit le modèle. Laissez cette étape se terminer avant de faire défiler la page ; en dehors de ces moments, vous pouvez continuer à l'utiliser."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Puis-je changer d'onglet pendant que WebBrain travaille sur une page ?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Oui, sur Chrome — l'agent tourne dans le service worker d'arrière-plan, lié à l'onglet où il a démarré, et continue donc à cliquer, taper et lire cet onglet précis même quand vous changez de focus. Les outils ciblant un onglet (clic, saisie, navigation, capture via CDP) fonctionnent sur des onglets en arrière-plan sous Chrome. La barre latérale verrouille la saisie tant qu'une tâche est en cours, pour ne pas en démarrer une seconde par inadvertance sur le nouvel onglet — vous devez attendre ou arrêter la première. À noter que les navigateurs limitent les timers et animations des onglets d'arrière-plan, donc les sites très animés peuvent répondre un peu plus lentement. Sur Firefox, l'agent continue aussi de s'exécuter sur son onglet d'origine, mais les captures automatiques sont limitées : l'API de capture de Firefox ne sait capturer que l'onglet actif, pas un onglet précis en arrière-plan. WebBrain le détecte et saute la capture pour ce tour plutôt que d'envoyer au modèle l'image d'une page sans rapport. L'agent continue alors à planifier à partir du contexte textuel jusqu'à ce que vous reveniez à son onglet. Évitez de cliquer ou de saisir activement dans le même onglet que l'agent — cela crée des conditions de course où vous et l'agent vous disputez la même page. Changer d'onglet : très bien. Co-piloter le même onglet : à éviter."
+        "text": "Oui. Depuis la version 27.0.0, WebBrain évite de prendre le focus dans les navigateurs basés sur Chromium comme dans Firefox, sauf si un accès au premier plan est strictement nécessaire. L'exécution reste liée à l'onglet où elle a commencé, vous pouvez donc travailler sans risque dans un autre onglet. Si une étape rare exige que l'onglet d'origine soit au premier plan, WebBrain peut lui donner brièvement le focus. Évitez de cliquer ou de saisir du texte dans ce même onglet pendant que WebBrain y effectue activement des actions."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Puis-je faire défiler la page vers le haut ou le bas pendant que WebBrain travaille dans mon onglet ?</summary>
+      <p>La plupart du temps, oui — surtout en <strong>mode Ask</strong> pour les demandes en lecture seule telles que « Résume cette page ». Vous pouvez continuer à faire défiler la page pendant que WebBrain travaille.</p><p><strong>Quand faut-il éviter de le faire ?</strong> Les captures automatiques reflètent la zone actuellement visible dans l'onglet. Lorsque WebBrain inspecte ou manipule activement du contenu visible en <strong>mode Act ou Dev</strong>, le défilement peut déplacer une cible ou modifier ce que voit le modèle. Laissez cette étape se terminer avant de faire défiler la page ; en dehors de ces moments, vous pouvez continuer à l'utiliser.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Puis-je changer d&#39;onglet pendant que WebBrain travaille sur une page ?</summary>
-      <p>Oui, sur Chrome — l'agent tourne dans le service worker d'arrière-plan, lié à l'onglet où il a démarré, et continue donc à cliquer, taper et lire cet onglet précis même quand vous changez de focus. Les outils ciblant un onglet (clic, saisie, navigation, capture via CDP) fonctionnent sur des onglets en arrière-plan sous Chrome. La barre latérale verrouille la saisie tant qu'une tâche est en cours, pour ne pas en démarrer une seconde par inadvertance sur le nouvel onglet — vous devez attendre ou arrêter la première. À noter que les navigateurs limitent les timers et animations des onglets d'arrière-plan, donc les sites très animés peuvent répondre un peu plus lentement.</p><p>Sur Firefox, l'agent continue aussi de s'exécuter sur son onglet d'origine, mais les captures automatiques sont limitées : l'API de capture de Firefox ne sait capturer que l'onglet actif, pas un onglet précis en arrière-plan. WebBrain le détecte et saute la capture pour ce tour plutôt que d'envoyer au modèle l'image d'une page sans rapport. L'agent continue alors à planifier à partir du contexte textuel jusqu'à ce que vous reveniez à son onglet.</p><p><strong>Évitez de cliquer ou de saisir activement dans le même onglet que l'agent</strong> — cela crée des conditions de course où vous et l'agent vous disputez la même page. Changer d'onglet : très bien. Co-piloter le même onglet : à éviter.</p>
+      <p>Oui. Depuis la version <strong>27.0.0</strong>, WebBrain évite de prendre le focus dans les navigateurs basés sur Chromium comme dans Firefox, sauf si un accès au premier plan est strictement nécessaire. L'exécution reste liée à l'onglet où elle a commencé, vous pouvez donc travailler sans risque dans un autre onglet.</p><p>Si une étape rare exige que l'onglet d'origine soit au premier plan, WebBrain peut lui donner brièvement le focus. Évitez de cliquer ou de saisir du texte dans ce même onglet pendant que WebBrain y effectue activement des actions.</p>
     </details>
 
     <details class="faq-item">

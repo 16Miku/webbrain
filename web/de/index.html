@@ -222,10 +222,18 @@
     },
     {
       "@type": "Question",
+      "name": "Kann ich nach oben oder unten scrollen, während WebBrain in meinem Tab arbeitet?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Meistens ja — besonders im Ask-Modus bei schreibgeschützten Anfragen wie „Fasse diese Seite zusammen“. Sie können weiter scrollen, während WebBrain arbeitet. Wann sollte ich es vermeiden? Automatische Screenshots zeigen den aktuell sichtbaren Bereich des Tabs. Während WebBrain im Act- oder Dev-Modus sichtbare Inhalte aktiv prüft oder damit interagiert, kann Scrollen ein Ziel verschieben oder verändern, was das Modell sieht. Warten Sie mit dem Scrollen, bis dieser Schritt abgeschlossen ist; außerhalb dieser Momente können Sie die Seite weiter verwenden."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Kann ich zu einem anderen Tab wechseln, während WebBrain an einer Seite arbeitet?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Ja, auf Chrome — der Agent läuft im Hintergrund-Service Worker und ist an den Tab gebunden, auf dem er gestartet wurde, daher klickt, tipft und liest er diesen bestimmten Tab weiterhin, selbst wenn Sie den Fokus woanders hin verschieben. Tools, die einen Tab ansprechen (CDP Klick, Tippen, Navigation, Screenshot), funktionieren alle auf im Hintergrund befindlichen Tabs in Chrome. Die Seitenleiste sperrt die Eingabe, solange eine Aufgabe läuft, damit Sie nicht versehentlich eine zweite Aufgabe auf dem neuen Tab starten — Sie müssen warten oder die aktuelle stoppen. Beachten Sie, dass Browser Timer und Animationen auf Hintergrund-Tabs drosseln, daher können stark animierte Seiten etwas langsamer reagieren. Auf Firefox läuft der Agent ebenfalls weiterhin auf seinem ursprünglichen Tab, aber automatische Screenshots sind eingeschränkt: Firefox' Screenshot-API kann nur den aktiven Tab erfassen, nicht einen bestimmten Tab im Hintergrund. WebBrain erkennt das und überspringt den Screenshot für diesen Durchgang, anstatt dem Modell ein Bild einer irrelevanten Seite zu füttern. Der Agent plant weiterhin auf Basis von textbasiertem Kontext, bis Sie zu seinem Tab zurückkehren. Vermeiden Sie aktives Klicken oder Tippen auf demselben Tab, an dem der Agent arbeitet — das erzeugt Race Conditions, bei denen Sie und der Agent um dieselbe Seite konkurrieren. Tab-Wechsel ist in Ordnung; gemeinsam denselben Tab steuern ist es nicht."
+        "text": "Ja. Seit Version 27.0.0 vermeidet WebBrain es, sowohl in Chromium-basierten Browsern als auch in Firefox den Fokus zu übernehmen, sofern der Zugriff im Vordergrund nicht unbedingt erforderlich ist. Die Ausführung bleibt an den Tab gebunden, in dem sie gestartet wurde, sodass Sie sicher in einem anderen Tab arbeiten können. Wenn ein seltener Schritt den ursprünglichen Tab im Vordergrund benötigt, kann WebBrain ihn kurz fokussieren. Klicken oder tippen Sie nicht im selben Tab, während WebBrain dort aktiv Aktionen ausführt."
       }
     },
     {
@@ -3698,8 +3706,13 @@
     </details>
 
     <details class="faq-item">
+      <summary>Kann ich nach oben oder unten scrollen, während WebBrain in meinem Tab arbeitet?</summary>
+      <p>Meistens ja — besonders im <strong>Ask-Modus</strong> bei schreibgeschützten Anfragen wie „Fasse diese Seite zusammen“. Sie können weiter scrollen, während WebBrain arbeitet.</p><p><strong>Wann sollte ich es vermeiden?</strong> Automatische Screenshots zeigen den aktuell sichtbaren Bereich des Tabs. Während WebBrain im <strong>Act- oder Dev-Modus</strong> sichtbare Inhalte aktiv prüft oder damit interagiert, kann Scrollen ein Ziel verschieben oder verändern, was das Modell sieht. Warten Sie mit dem Scrollen, bis dieser Schritt abgeschlossen ist; außerhalb dieser Momente können Sie die Seite weiter verwenden.</p>
+    </details>
+
+    <details class="faq-item">
       <summary>Kann ich zu einem anderen Tab wechseln, während WebBrain an einer Seite arbeitet?</summary>
-      <p>Ja, auf Chrome — der Agent läuft im Hintergrund-Service Worker und ist an den Tab gebunden, auf dem er gestartet wurde, daher klickt, tipft und liest er diesen bestimmten Tab weiterhin, selbst wenn Sie den Fokus woanders hin verschieben. Tools, die einen Tab ansprechen (CDP Klick, Tippen, Navigation, Screenshot), funktionieren alle auf im Hintergrund befindlichen Tabs in Chrome. Die Seitenleiste sperrt die Eingabe, solange eine Aufgabe läuft, damit Sie nicht versehentlich eine zweite Aufgabe auf dem neuen Tab starten — Sie müssen warten oder die aktuelle stoppen. Beachten Sie, dass Browser Timer und Animationen auf Hintergrund-Tabs drosseln, daher können stark animierte Seiten etwas langsamer reagieren.</p><p>Auf Firefox läuft der Agent ebenfalls weiterhin auf seinem ursprünglichen Tab, aber automatische Screenshots sind eingeschränkt: Firefox' Screenshot-API kann nur den aktiven Tab erfassen, nicht einen bestimmten Tab im Hintergrund. WebBrain erkennt das und überspringt den Screenshot für diesen Durchgang, anstatt dem Modell ein Bild einer irrelevanten Seite zu füttern. Der Agent plant weiterhin auf Basis von textbasiertem Kontext, bis Sie zu seinem Tab zurückkehren.</p><p><strong>Vermeiden Sie aktives Klicken oder Tippen auf demselben Tab, an dem der Agent arbeitet</strong> — das erzeugt Race Conditions, bei denen Sie und der Agent um dieselbe Seite konkurrieren. Tab-Wechsel ist in Ordnung; gemeinsam denselben Tab steuern ist es nicht.</p>
+      <p>Ja. Seit Version <strong>27.0.0</strong> vermeidet WebBrain es, sowohl in Chromium-basierten Browsern als auch in Firefox den Fokus zu übernehmen, sofern der Zugriff im Vordergrund nicht unbedingt erforderlich ist. Die Ausführung bleibt an den Tab gebunden, in dem sie gestartet wurde, sodass Sie sicher in einem anderen Tab arbeiten können.</p><p>Wenn ein seltener Schritt den ursprünglichen Tab im Vordergrund benötigt, kann WebBrain ihn kurz fokussieren. Klicken oder tippen Sie nicht im selben Tab, während WebBrain dort aktiv Aktionen ausführt.</p>
     </details>
 
     <details class="faq-item">
