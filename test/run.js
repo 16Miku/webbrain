@@ -2691,6 +2691,42 @@ test('matches foodpanda.pk and includes food-delivery guidance', () => {
   assert.notEqual(getActiveAdapterFx('https://www.foodpanda.com.bd/')?.name, 'foodpanda');
 });
 
+test('matches Takealot shopping surfaces and includes South African checkout guidance', () => {
+  const trustedUrls = [
+    'https://takealot.com/',
+    'https://www.takealot.com/all?qsearch=laptop',
+    'https://www.takealot.com/example-product/PLID12345678',
+    'https://www.takealot.com/cart',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'takealot');
+    assert.equal(getActiveAdapterFx(url)?.name, 'takealot');
+  }
+
+  const rejectedUrls = [
+    'https://takealot.co.za/',
+    'https://takealot.com.phishing.example/PLID12345678',
+    'https://example.com/?next=https://www.takealot.com/PLID12345678',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'takealot');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'takealot');
+  }
+
+  const adapter = getActiveAdapter('https://www.takealot.com/example-product/PLID12345678');
+  const firefoxAdapter = getActiveAdapterFx('https://www.takealot.com/cart');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /MARKETPLACE/);
+  assert.match(adapter?.notes || '', /Sold by/);
+  assert.match(adapter?.notes || '', /Pickup Point/);
+  assert.match(adapter?.notes || '', /checkout/i);
+  assert.match(adapter?.notes || '', /pre-order/i);
+  assert.match(adapter?.notes || '', /digital/i);
+  assert.match(adapter?.notes || '', /R5/);
+  assert.match(adapter?.notes || '', /order number/i);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches galaxus + digitec and includes anti-bot fetch guidance', () => {
   assert.equal(getActiveAdapter('https://www.galaxus.ch/de/s1/product/x-123')?.name, 'galaxus');
   assert.equal(getActiveAdapter('https://www.digitec.ch/de/s1/product/x-123')?.name, 'galaxus');

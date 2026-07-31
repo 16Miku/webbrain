@@ -16437,6 +16437,20 @@ const ADAPTERS = [
 - Use the on-page search ("Search for restaurants, cuisines, and dishes") and the left-rail sort/filters (Relevance / Fastest delivery / Distance / Top rated, "Ratings 4+") rather than guessing URL params.`,
   },
 
+  // ─── Regional — Takealot (South Africa) ──────────────────────────────
+  {
+    name: 'takealot',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?takealot\.com\//.test(url),
+    notes: `
+- As of 2026-08, Takealot is a South African retailer and MARKETPLACE. Read the product page's "Sold by" value: third-party seller products use the same ordering flow, but seller identity, stock, and product details still belong to the selected offer.
+- Delivery is South Africa-only. At checkout choose "Delivery" to an address or "Collect" from a Takealot Pickup Point; item mix, destination, and payment affect timing, and any delivery fee appears there. Treat the checkout date and fee as authoritative, not the product-page estimate.
+- Pre-order products must be ordered individually: do not combine one with normal products or another pre-order variety. The release date can change, so report it as an estimate and re-check before payment.
+- Digital products such as airtime, data, courses, gaming vouchers, and downloads are delivered immediately by email and cannot be cancelled. Obtain the user's explicit confirmation before completing payment for one.
+- Checkout may show an optional R5 charity donation. Leave it unselected unless the user requested it, then review the Order Summary after any voucher or coupon and before completing payment.
+- An added cart item is not a completed order. Success is the confirmation page with an order number and estimated delivery or collection date (also emailed); verify those before reporting that the order was placed.`,
+  },
+
   // ─── Regional — Digitec Galaxus (CH + EU: one in-house platform) ──────
   // galaxus.* (CH/DE/AT/FR/IT/BE/NL) and digitec.ch share product IDs, slugs, and
   // UI, so one adapter covers both. digitec.ch = the CH tech-only storefront.
