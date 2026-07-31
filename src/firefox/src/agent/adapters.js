@@ -16335,6 +16335,20 @@ const ADAPTERS = [
 - "ポイント", SPU, and スーパーDEAL are conditional rewards, not an immediate cash-price reduction; campaigns may require entry, membership, payment methods, or have caps, and shipping/tax do not earn ordinary points. Report the payable total separately from expected points.`,
   },
 
+  // ─── Regional — Allegro (Poland) ─────────────────────────────────────
+  {
+    name: 'allegro',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?allegro\.pl\//.test(url),
+    notes: `
+- As of 2026-07, Allegro.pl is a Polish MARKETPLACE. Stable labels: "dodaj do koszyka" = add to cart, "dostawa i płatność" = delivery and payment, and "kup i zapłać" = buy and pay.
+- Search placements marked "Sponsorowane" or "Promowane" are paid placements. For price comparisons choose "cena z dostawą: od najniższej" and compare the delivered total, not the default relevance order or bare item price.
+- Product cards can group variants and sellers: "dostępne warianty" means variants are available, while "zobacz N ofert" opens the other offers for that product. Select the exact variant and compare seller, delivery date, and delivered price before choosing.
+- The cart can contain products from multiple sellers and groups them by seller. All added products are selected by default, adding does not reserve stock, and delivery is still calculated per seller; re-check the selected rows and totals before continuing.
+- "kup i zapłać" is the quick-purchase path and skips the delivery/payment form by reusing saved choices. Do not click it for collection or comparison tasks; use the cart and "dostawa i płatność" when the user wants to review details first.
+- Smart! free delivery is conditional on an eligible offer, one seller's qualifying total, the selected delivery method, and the account's current terms. Verify the Smart! badge and cart delivery charge instead of promising free delivery from the badge alone.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,

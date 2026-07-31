@@ -2575,6 +2575,43 @@ test('matches Rakuten Ichiba shopping surfaces and includes marketplace guidance
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Allegro.pl shopping surfaces and includes Polish marketplace guidance', () => {
+  const trustedUrls = [
+    'https://allegro.pl/',
+    'https://www.allegro.pl/listing?string=sluchawki',
+    'https://allegro.pl/oferta/example-product-123456789',
+    'https://allegro.pl/koszyk',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'allegro');
+    assert.equal(getActiveAdapterFx(url)?.name, 'allegro');
+  }
+
+  const rejectedUrls = [
+    'https://allegrolokalnie.pl/oferta/example',
+    'https://allegro.cz/listing?string=sluchawki',
+    'https://allegro.pl.phishing.example/oferta/example',
+    'https://example.com/allegro.pl/oferta/example',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'allegro');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'allegro');
+  }
+
+  const adapter = getActiveAdapter('https://allegro.pl/listing?string=sluchawki');
+  const firefoxAdapter = getActiveAdapterFx('https://allegro.pl/oferta/example-product-123456789');
+  assert.match(adapter?.notes || '', /2026-07/);
+  assert.match(adapter?.notes || '', /MARKETPLACE/);
+  assert.match(adapter?.notes || '', /Sponsorowane/);
+  assert.match(adapter?.notes || '', /Promowane/);
+  assert.match(adapter?.notes || '', /cena z dostawą: od najniższej/);
+  assert.match(adapter?.notes || '', /zobacz N ofert/);
+  assert.match(adapter?.notes || '', /kup i zapłać/);
+  assert.match(adapter?.notes || '', /dostawa i płatność/);
+  assert.match(adapter?.notes || '', /Smart!/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
