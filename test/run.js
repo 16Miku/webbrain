@@ -2612,6 +2612,41 @@ test('matches Allegro.pl shopping surfaces and includes Polish marketplace guida
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Marktplaats.nl classifieds and distinguishes its transaction paths', () => {
+  const trustedUrls = [
+    'https://marktplaats.nl/',
+    'https://www.marktplaats.nl/l/fietsen-en-brommers/fietsen-heren/',
+    'https://www.marktplaats.nl/v/fietsen-en-brommers/fietsen-heren/m1234567890-example',
+    'https://www.marktplaats.nl/messages/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'marktplaats');
+    assert.equal(getActiveAdapterFx(url)?.name, 'marktplaats');
+  }
+
+  const rejectedUrls = [
+    'https://marktplaats.be/',
+    'https://marktplaats.nl.phishing.example/v/example',
+    'https://example.com/?next=https://www.marktplaats.nl/v/example',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'marktplaats');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'marktplaats');
+  }
+
+  const adapter = getActiveAdapter('https://www.marktplaats.nl/v/fietsen-en-brommers/fietsen-heren/m1234567890-example');
+  const firefoxAdapter = getActiveAdapterFx('https://www.marktplaats.nl/l/fietsen-en-brommers/fietsen-heren/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /CLASSIFIEDS/);
+  assert.match(adapter?.notes || '', /Bieden/);
+  assert.match(adapter?.notes || '', /Berichten/);
+  assert.match(adapter?.notes || '', /Direct Kopen/);
+  assert.match(adapter?.notes || '', /Kopersbescherming/);
+  assert.match(adapter?.notes || '', /72 hours/);
+  assert.match(adapter?.notes || '', /final payable total/i);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
