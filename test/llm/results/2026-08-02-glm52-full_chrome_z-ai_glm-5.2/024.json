@@ -1,0 +1,45 @@
+{
+  "id": "024",
+  "user": "find tweets about react 19",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1604,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://x.com/search?q=react%2019&f=live"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll search Twitter/X for tweets about React 19. Let me navigate to the search.",
+  "usage": {
+    "prompt_tokens": 22658,
+    "completion_tokens": 77,
+    "total_tokens": 22735,
+    "cost": 0.00630512,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22592,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00630512,
+      "upstream_inference_prompt_cost": 0.00596632,
+      "upstream_inference_completions_cost": 0.0003388
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 33,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

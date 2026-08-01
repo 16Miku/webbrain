@@ -1,0 +1,30 @@
+{
+  "runTag": "2026-08-02-gpt56-terra-full",
+  "model": "openai/gpt-5.6-terra-pro",
+  "browser": "chrome",
+  "base": "https://openrouter.ai/api/v1",
+  "saveRequest": false,
+  "tier": "full",
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "reasoningEffort": null,
+  "freeze": null,
+  "cases": 100,
+  "totalLatencyMs": 128701,
+  "errors": 0,
+  "withToolCall": 94,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "get_accessibility_tree": 80,
+    "new_tab": 2,
+    "navigate": 2,
+    "read_page": 2,
+    "download_resource_from_page": 1,
+    "download_social_media": 2,
+    "list_downloads": 1,
+    "(no_tool_call)": 6,
+    "get_selection": 1,
+    "clarify": 3
+  }
+}

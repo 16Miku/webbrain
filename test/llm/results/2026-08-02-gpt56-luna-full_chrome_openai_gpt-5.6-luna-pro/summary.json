@@ -1,0 +1,32 @@
+{
+  "runTag": "2026-08-02-gpt56-luna-full",
+  "model": "openai/gpt-5.6-luna-pro",
+  "browser": "chrome",
+  "base": "https://openrouter.ai/api/v1",
+  "saveRequest": false,
+  "tier": "full",
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "reasoningEffort": null,
+  "freeze": null,
+  "cases": 100,
+  "totalLatencyMs": 133177,
+  "errors": 0,
+  "withToolCall": 89,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "navigate": 15,
+    "list_downloads": 2,
+    "new_tab": 3,
+    "get_accessibility_tree": 54,
+    "read_page": 3,
+    "extract_data": 2,
+    "download_social_media": 2,
+    "(no_tool_call)": 11,
+    "get_selection": 1,
+    "clarify": 5,
+    "go_back": 1,
+    "fetch_url": 1
+  }
+}

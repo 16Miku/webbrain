@@ -1,0 +1,50 @@
+{
+  "id": "070",
+  "user": "log in",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4450,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Which website or service would you like to log into?",
+      "options": [
+        "Gmail",
+        "GitHub",
+        "Other (please specify)"
+      ]
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I see you're on a New Tab page with no specific site loaded yet. Which site or service would you like to log into?",
+  "usage": {
+    "prompt_tokens": 35137,
+    "completion_tokens": 198,
+    "total_tokens": 35335,
+    "cost": 0.072254,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.072254,
+      "upstream_inference_prompt_cost": 0.070274,
+      "upstream_inference_completions_cost": 0.00198
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 46,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

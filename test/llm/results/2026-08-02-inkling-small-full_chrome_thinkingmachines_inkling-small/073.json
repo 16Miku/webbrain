@@ -1,0 +1,40 @@
+{
+  "id": "073",
+  "user": "buy it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1428,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "What would you like to buy? Could you clarify:\n\n- Which item, product, or service?\n- Which site or store (e.g., Amazon, a specific shop, a ticket site)?\n- Or are you referring to something on a particular page I should navigate to?\n\nAlso, please note that \"buy it\" could involve spending money or making a purchase — once you confirm the item and site, I'll help you complete it through the browser UI.",
+  "usage": {
+    "prompt_tokens": 21475,
+    "completion_tokens": 138,
+    "total_tokens": 21613,
+    "cost": 0.0023527,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 21376,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0023527,
+      "upstream_inference_prompt_cost": 0.0021871,
+      "upstream_inference_completions_cost": 0.0001656
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 41,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,46 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 34355,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to send, and through which app or site (e.g., an email via Gmail, a Slack message, a file attachment)? Please include the content or file, the recipient, and the subject if it's an email.",
+      "reason": "There's no prior draft or prepared content in this session and the current page is a blank New Tab, so I can't determine what \"it\" is on my own."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I don't have any prior context in this session about what \"it\" refers to — no draft, file, or message was prepared earlier, and you're on a blank New Tab page.",
+  "usage": {
+    "prompt_tokens": 21690,
+    "completion_tokens": 690,
+    "total_tokens": 22380,
+    "cost": 0.020124,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.020124,
+      "upstream_inference_prompt_cost": 0.009774,
+      "upstream_inference_completions_cost": 0.01035
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 506,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

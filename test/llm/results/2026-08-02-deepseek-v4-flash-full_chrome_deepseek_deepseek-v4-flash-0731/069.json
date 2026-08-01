@@ -1,0 +1,40 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1956,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'd love to help, but I don't have any context about what \"it\" refers to — the current page is just a new tab (about:home), and there's no earlier link, file, or item in this conversation for me to open.\n\nCould you tell me what you'd like me to open? For example:\n- A specific URL or website\n- A file on your computer\n- A link you have in mind\n\nJust paste the link or describe it and I'll open it right away.",
+  "usage": {
+    "prompt_tokens": 23500,
+    "completion_tokens": 151,
+    "total_tokens": 23651,
+    "cost": 0.000464868,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000464868,
+      "upstream_inference_prompt_cost": 0.000437688,
+      "upstream_inference_completions_cost": 0.00002718
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 44,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

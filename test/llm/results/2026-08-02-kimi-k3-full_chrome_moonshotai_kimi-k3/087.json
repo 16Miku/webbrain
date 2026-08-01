@@ -1,0 +1,45 @@
+{
+  "id": "087",
+  "user": "open this link in a new tab",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 14804,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "Let me look at the current page to see which link you're referring to.",
+  "usage": {
+    "prompt_tokens": 21711,
+    "completion_tokens": 297,
+    "total_tokens": 22008,
+    "cost": 0.014292,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.014292,
+      "upstream_inference_prompt_cost": 0.009837,
+      "upstream_inference_completions_cost": 0.004455
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 229,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,40 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3771,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI don't have context for what to open yet — this is a fresh new tab. What would you like me to open? For example, a URL, a search, or a specific site?",
+  "usage": {
+    "prompt_tokens": 23054,
+    "completion_tokens": 97,
+    "total_tokens": 23151,
+    "cost": 0.001503,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23040,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.001503,
+      "upstream_inference_prompt_cost": 0.0013866,
+      "upstream_inference_completions_cost": 0.0001164
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 57,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

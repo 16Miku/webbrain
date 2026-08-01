@@ -1,0 +1,40 @@
+{
+  "id": "048",
+  "user": "open my inbox",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1319,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Your Gmail inbox is already open — you're on the Inbox tab with3 messages (URL: `https://mail.google.com/mail/u/0/#inbox`).If you meant to open a different folder (e.g., Sent, Drafts, a label), or if you want me to read/search the messages, just let me know what you'd like to do.",
+  "usage": {
+    "prompt_tokens": 21971,
+    "completion_tokens": 146,
+    "total_tokens": 22117,
+    "cost": 0.0026103,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 21376,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0026103,
+      "upstream_inference_prompt_cost": 0.0024351,
+      "upstream_inference_completions_cost": 0.0001752
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 65,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

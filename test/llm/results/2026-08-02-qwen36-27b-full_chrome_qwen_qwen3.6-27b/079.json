@@ -1,0 +1,45 @@
+{
+  "id": "079",
+  "user": "sell all my bitcoin",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.coinbase.com/assets/bitcoin",
+    "title": "Bitcoin — Coinbase"
+  },
+  "latencyMs": 4441,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "\"visible\""
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\nI'll help you sell your Bitcoin. Since this involves real money and crypto, I'll move carefully and show you the review details before confirming. Let me start by reading the current page.\n\n",
+  "usage": {
+    "prompt_tokens": 22485,
+    "completion_tokens": 198,
+    "total_tokens": 22683,
+    "cost": 0.006973365,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22208,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006973365,
+      "upstream_inference_prompt_cost": 0.006498165,
+      "upstream_inference_completions_cost": 0.0004752
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 148,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

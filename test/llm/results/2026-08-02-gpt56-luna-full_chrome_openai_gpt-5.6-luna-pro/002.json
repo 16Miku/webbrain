@@ -1,0 +1,46 @@
+{
+  "id": "002",
+  "user": "open gmail",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5524,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://mail.google.com/",
+      "force": false
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 71988,
+    "completion_tokens": 325,
+    "total_tokens": 72313,
+    "cost": 0.00201117,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59807,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00201117,
+      "upstream_inference_prompt_cost": 0.00181617,
+      "upstream_inference_completions_cost": 0.00019500000000000002
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 212,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

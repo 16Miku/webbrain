@@ -1,0 +1,40 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4758,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have the ability to switch between your browser tabs — that's something only you can do. I can only operate within the tab I'm currently running in.\n\nTo switch to your Netflix tab, just click on it in your browser's tab bar, or use the keyboard shortcut **Ctrl+Tab** (Windows/Linux) or **Cmd+Option+→** (Mac) to cycle through tabs.\n\nOnce you're on the Netflix tab, let me know what you'd like help with there and I can assist!",
+  "usage": {
+    "prompt_tokens": 22530,
+    "completion_tokens": 236,
+    "total_tokens": 22766,
+    "cost": 0.0053885304,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 19826,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0053885304,
+      "upstream_inference_prompt_cost": 0.0048277944,
+      "upstream_inference_completions_cost": 0.000560736
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 129,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

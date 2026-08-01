@@ -1,0 +1,46 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 24913,
+  "error": null,
+  "firstToolCall": {
+    "name": "download_files",
+    "args": {
+      "filename": "rick_astley_thumbnail.jpg",
+      "url": "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\n",
+  "usage": {
+    "prompt_tokens": 22597,
+    "completion_tokens": 162,
+    "total_tokens": 22759,
+    "cost": 0.006919333,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006919333,
+      "upstream_inference_prompt_cost": 0.006530533,
+      "upstream_inference_completions_cost": 0.0003888
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 105,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}
