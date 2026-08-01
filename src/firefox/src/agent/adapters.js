@@ -16359,7 +16359,7 @@ const ADAPTERS = [
 - A bid is not a completed purchase. The seller can accept, reject, or counter it; after acceptance, eligible listings expose "Nu betalen" in Berichten and the buyer has 72 hours to pay. Do not report success until the conversation shows "Betaling geslaagd".
 - "Direct Kopen" is available only on eligible shippable listings and skips negotiation. It always adds Kopersbescherming and Verzenden via Marktplaats; review the final payable total, including buyer-protection, shipping, and service costs, before submitting payment.
 - For comparisons, distinguish the seller's asking price from a bid and from the final delivered total. Check the exact item condition, pickup/shipping option, seller profile, and "Ervaringen" rating instead of ranking on the displayed number alone.
-- Keep negotiation, payment requests, and shipping inside "Berichten". Do not move to an external payment link or share bank/address details in chat; Marktplaats collects required payment and delivery details in its own flow.
+- Keep negotiation, payment requests, and shipping inside "Berichten". Do not follow seller-supplied or otherwise untrusted external payment links or share bank/address details in chat. A bank redirect opened by Marktplaats's own "Bestel en betaal" or "Naar jouw bank" payment controls is part of its legitimate checkout flow and may be followed.
 - Shipping choices and costs depend on parcel size and carrier. Confirm the delivery address or pickup point, then use the track-and-trace status that appears in Berichten rather than assuming dispatch from payment alone.`,
   },
 

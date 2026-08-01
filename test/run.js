@@ -2644,6 +2644,10 @@ test('matches Marktplaats.nl classifieds and distinguishes its transaction paths
   assert.match(adapter?.notes || '', /Kopersbescherming/);
   assert.match(adapter?.notes || '', /72 hours/);
   assert.match(adapter?.notes || '', /final payable total/i);
+  assert.match(adapter?.notes || '', /seller-supplied or otherwise untrusted external payment links/);
+  assert.match(adapter?.notes || '', /Bestel en betaal/);
+  assert.match(adapter?.notes || '', /Naar jouw bank/);
+  assert.doesNotMatch(adapter?.notes || '', /Do not move to an external payment link/);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
