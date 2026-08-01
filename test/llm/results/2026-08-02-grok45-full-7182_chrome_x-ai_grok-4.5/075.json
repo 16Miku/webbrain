@@ -1,0 +1,45 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2956,
+  "error": null,
+  "firstToolCall": {
+    "name": "progress_read",
+    "args": {
+      "limit": 50
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll check our saved progress and any pinned notes to see exactly where we left off.",
+  "usage": {
+    "prompt_tokens": 23777,
+    "completion_tokens": 118,
+    "total_tokens": 23895,
+    "cost": 0.008006,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.008006,
+      "upstream_inference_prompt_cost": 0.007298,
+      "upstream_inference_completions_cost": 0.000708
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 69,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

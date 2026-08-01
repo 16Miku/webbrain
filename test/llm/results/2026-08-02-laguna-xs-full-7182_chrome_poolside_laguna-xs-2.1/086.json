@@ -1,0 +1,40 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3266,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "CORS stands for **Cross-Origin Resource Sharing**.\n\nIt's a security mechanism implemented by web browsers that controls how web pages can make requests to a different domain than the one that originally served the page. \n\nFor example, if you're on `https://example.com` and the page tries to fetch data from `https://api.another-site.com`, that's a \"cross-origin\" request. CORS defines rules that the server at `api.another-site.com` must follow to allow such requests to succeed.\n\nCORS works by:\n1. The browser sends a \"preflight\" OPTIONS request to the target server\n2. The server responds with headers indicating whether the request is allowed\n3. If approved, the actual request proceeds; if not, the browser blocks it\n\nThis protects users from malicious websites trying to make unauthorized requests to other sites where they're already authenticated (like making requests to your bank or email account).\n\nIs there anything specific about CORS you'd like to know more about?\n</thinking>done<arg_key>summary</arg_key><arg_value>CORS stands for Cross-Origin Resource Sharing. It's a security mechanism that controls how web pages can make requests to different domains than the one serving the page. CORS works by having the browser send preflight OPTIONS requests to target servers, which respond with headers indicating whether the request is allowed. This protects users from malicious websites making unauthorized requests to sites where they're already authenticated.</arg_value><arg_key>outcome</arg_key><arg_value>success</arg_value></tool_call>",
+  "usage": {
+    "prompt_tokens": 23180,
+    "completion_tokens": 396,
+    "total_tokens": 23576,
+    "cost": 0.00074376,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23152,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00074376,
+      "upstream_inference_prompt_cost": 0.00069624,
+      "upstream_inference_completions_cost": 0.00004752
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 81,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,45 @@
+{
+  "id": "090",
+  "user": "switch to my netflix tab",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 7722,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.netflix.com"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I can’t switch browser tabs from here — I only control the current tab. Opening Netflix in this tab instead.",
+  "usage": {
+    "prompt_tokens": 23778,
+    "completion_tokens": 366,
+    "total_tokens": 24144,
+    "cost": 0.009496,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.009496,
+      "upstream_inference_prompt_cost": 0.0073,
+      "upstream_inference_completions_cost": 0.002196
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 329,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,50 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2960,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What should I open?",
+      "options": [
+        "A specific URL",
+        "A file or download",
+        "Something from a previous step"
+      ]
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'm on a new tab right now, so I'm not sure what “it” refers to. What should I open?",
+  "usage": {
+    "prompt_tokens": 23774,
+    "completion_tokens": 146,
+    "total_tokens": 23920,
+    "cost": 0.008168,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.008168,
+      "upstream_inference_prompt_cost": 0.007292,
+      "upstream_inference_completions_cost": 0.000876
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 86,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

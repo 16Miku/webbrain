@@ -1,0 +1,46 @@
+{
+  "id": "033",
+  "user": "whats the price",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.amazon.com/dp/B0EXAMPLE",
+    "title": "Acme Earbuds — Amazon"
+  },
+  "latencyMs": 2710,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 12
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll check the current Amazon product page for the price.",
+  "usage": {
+    "prompt_tokens": 23898,
+    "completion_tokens": 57,
+    "total_tokens": 23955,
+    "cost": 0.0479204,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 128,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0479204,
+      "upstream_inference_prompt_cost": 0.0475784,
+      "upstream_inference_completions_cost": 0.000342
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 26,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

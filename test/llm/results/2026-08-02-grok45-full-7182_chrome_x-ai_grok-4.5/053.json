@@ -1,0 +1,46 @@
+{
+  "id": "053",
+  "user": "search my email for invoice",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1650,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "interactive",
+      "maxDepth": 10
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll search your Gmail for invoices.",
+  "usage": {
+    "prompt_tokens": 24298,
+    "completion_tokens": 55,
+    "total_tokens": 24353,
+    "cost": 0.0077996,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 24192,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0077996,
+      "upstream_inference_prompt_cost": 0.0074696,
+      "upstream_inference_completions_cost": 0.00033
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 27,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}
