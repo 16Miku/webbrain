@@ -1,0 +1,40 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1952,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I'd be happy to help, but I need a few clarifications before sending anything:\n\n1. **Which contacts?** Do you mean everyone in your Google Contacts, or everyone you've recently emailed? (There's no single \"all contacts\" button in Gmail.)\n2. **Message content:** What should the thank-you email say? Should I include a specific subject line?\n3. **Send or draft?** Should I actually send it, or save it as a draft for you to review first? Sending to a large group without confirmation could be hard to undo.\n\nAlso, just to confirm — you want this sent to multiple recipients in one email (To/CC), not individual separate emails?",
+  "usage": {
+    "prompt_tokens": 21978,
+    "completion_tokens": 252,
+    "total_tokens": 22230,
+    "cost": 0.0025362,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 21888,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0025362,
+      "upstream_inference_prompt_cost": 0.0022338,
+      "upstream_inference_completions_cost": 0.0003024
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 108,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

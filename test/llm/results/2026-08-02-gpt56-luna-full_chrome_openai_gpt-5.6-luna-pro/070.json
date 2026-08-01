@@ -1,0 +1,51 @@
+{
+  "id": "070",
+  "user": "log in",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6329,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Which website would you like me to log in to?",
+      "options": [
+        "Navigate to a specific website",
+        "Use a website already open in another tab",
+        "I’ll provide the URL"
+      ],
+      "reason": "The current tab is a blank New Tab, so there is no login page or website to act on."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72204,
+    "completion_tokens": 649,
+    "total_tokens": 72853,
+    "cost": 0.0022281700000000002,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59807,
+      "cache_write_tokens": 40,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0022281700000000002,
+      "upstream_inference_prompt_cost": 0.00183877,
+      "upstream_inference_completions_cost": 0.0003894000000000001
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 364,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

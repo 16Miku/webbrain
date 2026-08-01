@@ -1,0 +1,40 @@
+{
+  "id": "065",
+  "user": "take a screenshot",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 5122,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Screenshots are triggered via a slash command rather than something I can do directly as a tool call. To capture this page, type:\n\n- `/screenshot` — captures the visible viewport\n- `/screenshot --full-page` — captures the entire page\n\nJust run one of those in the chat and it'll insert the image here.",
+  "usage": {
+    "prompt_tokens": 35165,
+    "completion_tokens": 151,
+    "total_tokens": 35316,
+    "cost": 0.07184,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.07184,
+      "upstream_inference_prompt_cost": 0.07033,
+      "upstream_inference_completions_cost": 0.00151
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 35,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

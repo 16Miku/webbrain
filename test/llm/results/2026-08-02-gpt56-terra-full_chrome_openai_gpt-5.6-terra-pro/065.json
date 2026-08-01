@@ -1,0 +1,40 @@
+{
+  "id": "065",
+  "user": "take a screenshot",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 3518,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "Type `/screenshot` to capture the visible viewport, or `/screenshot --full-page` to capture the entire page.",
+  "usage": {
+    "prompt_tokens": 72085,
+    "completion_tokens": 187,
+    "total_tokens": 72272,
+    "cost": 0.04226125,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 39930,
+      "cache_write_tokens": 19965,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.04226125,
+      "upstream_inference_prompt_cost": 0.04113925,
+      "upstream_inference_completions_cost": 0.001122
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 80,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,46 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6553,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What exactly would you like me to send, and where (e.g., an email, a chat message, a form)?",
+      "reason": "The current page is a blank New Tab with no draft, form, or prior conversation content — there's nothing identifiable as 'it' to send."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I don't have any context for what you'd like me to send — the current page is just a blank New Tab, and there's no draft, email, form, or message set up anywhere yet.\n\nCould you clarify what you want sent? For example:\n- An email (if so, to whom, and what should it say?)\n- A message on a specific site/app\n- Something else entirely",
+  "usage": {
+    "prompt_tokens": 35137,
+    "completion_tokens": 349,
+    "total_tokens": 35486,
+    "cost": 0.073764,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.073764,
+      "upstream_inference_prompt_cost": 0.070274,
+      "upstream_inference_completions_cost": 0.00349
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 66,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

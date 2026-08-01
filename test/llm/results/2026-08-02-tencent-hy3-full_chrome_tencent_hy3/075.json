@@ -1,0 +1,45 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5863,
+  "error": null,
+  "firstToolCall": {
+    "name": "scratchpad_write",
+    "args": {
+      "text": "Checking for prior task context."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I don't have any prior context in this conversation, and the current page is just a New Tab. Let me check my scratchpad and progress ledger to see if there's a record of what we were working on.",
+  "usage": {
+    "prompt_tokens": 23536,
+    "completion_tokens": 238,
+    "total_tokens": 23774,
+    "cost": 0.00091344,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23424,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00091344,
+      "upstream_inference_prompt_cost": 0.000787776,
+      "upstream_inference_completions_cost": 0.000125664
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 150,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

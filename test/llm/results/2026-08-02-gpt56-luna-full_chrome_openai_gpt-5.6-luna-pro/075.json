@@ -1,0 +1,49 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5623,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8,
+      "maxChars": 8000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72077,
+    "completion_tokens": 475,
+    "total_tokens": 72552,
+    "cost": 0.002110605,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59813,
+      "cache_write_tokens": 43,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.002110605,
+      "upstream_inference_prompt_cost": 0.001825605,
+      "upstream_inference_completions_cost": 0.00028500000000000004
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 338,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

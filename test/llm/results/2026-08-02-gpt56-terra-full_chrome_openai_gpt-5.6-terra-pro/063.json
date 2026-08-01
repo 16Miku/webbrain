@@ -1,0 +1,49 @@
+{
+  "id": "063",
+  "user": "whats my shipping address",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.amazon.com/gp/buy/spc/handlers/display.html",
+    "title": "Amazon Checkout"
+  },
+  "latencyMs": 5054,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72534,
+    "completion_tokens": 305,
+    "total_tokens": 72839,
+    "cost": 0.02035705,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 60053,
+      "cache_write_tokens": 163,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.02035705,
+      "upstream_inference_prompt_cost": 0.018527050000000003,
+      "upstream_inference_completions_cost": 0.00183
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 162,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

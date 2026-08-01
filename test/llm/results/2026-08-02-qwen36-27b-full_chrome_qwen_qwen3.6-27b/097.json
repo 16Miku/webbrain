@@ -1,0 +1,45 @@
+{
+  "id": "097",
+  "user": "show me alt text for all images",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 2229,
+  "error": null,
+  "firstToolCall": {
+    "name": "extract_data",
+    "args": {
+      "type": "images"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 22262,
+    "completion_tokens": 57,
+    "total_tokens": 22319,
+    "cost": 0.006570518,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22208,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006570518,
+      "upstream_inference_prompt_cost": 0.006433718,
+      "upstream_inference_completions_cost": 0.0001368
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 33,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,46 @@
+{
+  "id": "003",
+  "user": "take me to youtube",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4174,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.youtube.com",
+      "force": false
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 71957,
+    "completion_tokens": 165,
+    "total_tokens": 72122,
+    "cost": 0.00191171,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59811,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00191171,
+      "upstream_inference_prompt_cost": 0.00181271,
+      "upstream_inference_completions_cost": 0.00009900000000000002
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 67,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

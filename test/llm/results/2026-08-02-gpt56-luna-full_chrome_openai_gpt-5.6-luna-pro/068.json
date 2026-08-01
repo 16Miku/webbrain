@@ -1,0 +1,49 @@
+{
+  "id": "068",
+  "user": "click that",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6240,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72031,
+    "completion_tokens": 441,
+    "total_tokens": 72472,
+    "cost": 0.00208507,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59807,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00208507,
+      "upstream_inference_prompt_cost": 0.00182047,
+      "upstream_inference_completions_cost": 0.00026460000000000003
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 304,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

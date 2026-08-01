@@ -1,0 +1,40 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5781,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI don't have a tool to close tabs or list all open tabs. You'll need to do this manually:\n\n**Quick options:**\n1. **Right-click** any tab → select **\"Close other tabs\"**\n2. **Keyboard shortcut**: There isn't a universal one, but you can hold `Ctrl` and click each tab you want to close, then press `Ctrl+W`\n3. **Right-click** the tab you want to keep → **\"Close other tabs\"**\n\nWould you like me to help with something else on this page?",
+  "usage": {
+    "prompt_tokens": 22244,
+    "completion_tokens": 338,
+    "total_tokens": 22582,
+    "cost": 0.007239716,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22208,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.007239716,
+      "upstream_inference_prompt_cost": 0.006428516,
+      "upstream_inference_completions_cost": 0.0008112
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 235,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

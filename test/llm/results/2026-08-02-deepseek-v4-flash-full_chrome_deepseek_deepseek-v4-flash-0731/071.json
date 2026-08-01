@@ -1,0 +1,40 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2280,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have any context about what you'd like me to send — the current page is just a new tab, and there's no draft, message, or file in progress in this conversation.\n\nCould you let me know what you'd like to send, and where? For example:\n- An email (to whom, subject, and body)?\n- A message on a specific site (which site, to whom)?\n- A file or document (which one, and to whom)?\n\nOnce you give me the details, I'll take care of it.",
+  "usage": {
+    "prompt_tokens": 23500,
+    "completion_tokens": 180,
+    "total_tokens": 23680,
+    "cost": 0.000470088,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000470088,
+      "upstream_inference_prompt_cost": 0.000437688,
+      "upstream_inference_completions_cost": 0.0000324
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 73,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

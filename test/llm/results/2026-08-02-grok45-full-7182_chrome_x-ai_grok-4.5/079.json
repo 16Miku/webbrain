@@ -1,0 +1,46 @@
+{
+  "id": "079",
+  "user": "sell all my bitcoin",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.coinbase.com/assets/bitcoin",
+    "title": "Bitcoin — Coinbase"
+  },
+  "latencyMs": 3329,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 15
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "Selling Bitcoin is irreversible once confirmed — I'll open the sell flow, check your balance and funding destination, then read the exact preview back before any final confirm.",
+  "usage": {
+    "prompt_tokens": 24014,
+    "completion_tokens": 130,
+    "total_tokens": 24144,
+    "cost": 0.008552,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.008552,
+      "upstream_inference_prompt_cost": 0.007772,
+      "upstream_inference_completions_cost": 0.00078
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 78,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

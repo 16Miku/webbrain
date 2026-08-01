@@ -1,0 +1,40 @@
+{
+  "id": "088",
+  "user": "close this tab",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 5635,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "\n\nI don't have a tool to close tabs directly — that's a browser-chrome action that only you can perform. To close this tab:\n\n- **Windows/Linux:** press `Ctrl + W`\n- **Mac:** press `⌘ Cmd + W`\n\nYou can also click the **×** on the tab itself. Want me to navigate this tab somewhere else before you close it, or is there something else you'd like to do first?",
+  "usage": {
+    "prompt_tokens": 23070,
+    "completion_tokens": 419,
+    "total_tokens": 23489,
+    "cost": 0.00739308,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 128,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00739308,
+      "upstream_inference_prompt_cost": 0.00689028,
+      "upstream_inference_completions_cost": 0.0005028
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 329,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

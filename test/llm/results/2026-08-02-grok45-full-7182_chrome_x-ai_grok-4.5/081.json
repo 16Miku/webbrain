@@ -1,0 +1,46 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 5721,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "Sending a thank-you to everyone in your contacts is a bulk send — I'll open Contacts first, see how many people there are, then draft and send carefully.",
+  "usage": {
+    "prompt_tokens": 24304,
+    "completion_tokens": 276,
+    "total_tokens": 24580,
+    "cost": 0.010008,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23680,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.010008,
+      "upstream_inference_prompt_cost": 0.008352,
+      "upstream_inference_completions_cost": 0.001656
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 223,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

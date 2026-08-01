@@ -1,0 +1,49 @@
+{
+  "id": "020",
+  "user": "look up \"javascript closures\" on stackoverflow",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5260,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8,
+      "maxChars": 4000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72090,
+    "completion_tokens": 454,
+    "total_tokens": 72544,
+    "cost": 0.002098685,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59821,
+      "cache_write_tokens": 47,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.002098685,
+      "upstream_inference_prompt_cost": 0.001826285,
+      "upstream_inference_completions_cost": 0.00027240000000000006
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 325,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

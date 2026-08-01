@@ -1,0 +1,45 @@
+{
+  "id": "012",
+  "user": "show my browser history",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6653,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "chrome://history"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'll open your browser history page for you.",
+  "usage": {
+    "prompt_tokens": 21652,
+    "completion_tokens": 306,
+    "total_tokens": 21958,
+    "cost": 0.069546,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.069546,
+      "upstream_inference_prompt_cost": 0.064956,
+      "upstream_inference_completions_cost": 0.00459
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 282,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}
