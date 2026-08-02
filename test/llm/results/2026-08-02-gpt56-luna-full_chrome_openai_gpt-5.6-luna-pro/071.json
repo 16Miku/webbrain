@@ -1,0 +1,40 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 6536,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "What would you like me to send, and to whom?",
+  "usage": {
+    "prompt_tokens": 72083,
+    "completion_tokens": 529,
+    "total_tokens": 72612,
+    "cost": 0.00214307,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59807,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00214307,
+      "upstream_inference_prompt_cost": 0.00182567,
+      "upstream_inference_completions_cost": 0.00031740000000000007
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 332,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

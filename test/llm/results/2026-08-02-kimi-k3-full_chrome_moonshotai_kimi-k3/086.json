@@ -1,0 +1,40 @@
+{
+  "id": "086",
+  "user": "what does CORS stand for",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 18479,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "**CORS** stands for **Cross-Origin Resource Sharing**.\n\nIt's a browser security mechanism that controls how a web page on one origin (e.g. `https://app.example.com`) can request resources — like API responses, fonts, or images — from a *different* origin.\n\nQuick breakdown:\n\n- **Same-Origin Policy**: By default, browsers block a page's JavaScript from reading responses from a different origin (different domain, scheme, or port). This prevents malicious sites from silently reading your data from other sites where you're logged in.\n- **CORS is the controlled exception**: The server opts in by sending HTTP headers, mainly `Access-Control-Allow-Origin`, telling the browser \"it's okay to share this response with that origin.\"\n- **Preflight requests**: For non-simple requests (e.g. `PUT`/`DELETE`, or custom headers), the browser first sends an `OPTIONS` request to ask permission before making the real request.\n\nKey headers:\n| Header | Purpose |\n|---|---|\n| `Access-Control-Allow-Origin` | Which origins may read the response (`*` or a specific origin) |\n| `Access-Control-Allow-Methods` | Which HTTP methods are allowed |\n| `Access-Control-Allow-Headers` | Which request headers are allowed |\n| `Access-Control-Allow-Credentials` | Whether cookies/auth can be included |\n\n**Common misconception**: CORS errors are enforced by the *browser*, not the server — which is why the same request works fine in `curl` or Postman but fails in browser JavaScript. The fix is on the server's response headers, not in your frontend code.\n\nFun fact: as mentioned in my environment notes, browser extensions with host permissions (like WebBrain) can bypass CORS — that's how I can read cross-origin iframes that page scripts normally can't touch.",
+  "usage": {
+    "prompt_tokens": 21694,
+    "completion_tokens": 575,
+    "total_tokens": 22269,
+    "cost": 0.018411,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.018411,
+      "upstream_inference_prompt_cost": 0.009786,
+      "upstream_inference_completions_cost": 0.008625
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 191,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

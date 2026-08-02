@@ -1,0 +1,46 @@
+{
+  "id": "025",
+  "user": "search youtube for \"never gonna give you up\"",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 2345,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\n",
+  "usage": {
+    "prompt_tokens": 22587,
+    "completion_tokens": 77,
+    "total_tokens": 22664,
+    "cost": 0.006712443,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22528,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006712443,
+      "upstream_inference_prompt_cost": 0.006527643,
+      "upstream_inference_completions_cost": 0.0001848
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 38,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

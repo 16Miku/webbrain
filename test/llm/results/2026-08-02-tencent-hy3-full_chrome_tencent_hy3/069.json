@@ -1,0 +1,40 @@
+{
+  "id": "069",
+  "user": "open it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5769,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have any context about what \"it\" refers to — this is a fresh New Tab page and there's no earlier message in our conversation specifying a link, file, or page to open.\n\nCould you tell me what you'd like me to open? For example:\n- A specific URL (paste it here)\n- A file on your computer\n- A tab/bookmark you had in mind\n\nOnce you point me at it, I'll open it right away.",
+  "usage": {
+    "prompt_tokens": 23533,
+    "completion_tokens": 202,
+    "total_tokens": 23735,
+    "cost": 0.003213012,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.003213012,
+      "upstream_inference_prompt_cost": 0.003106356,
+      "upstream_inference_completions_cost": 0.000106656
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 101,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

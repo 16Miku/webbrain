@@ -1,0 +1,40 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4694,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I can’t close other browser tabs with the available controls.",
+  "usage": {
+    "prompt_tokens": 72103,
+    "completion_tokens": 307,
+    "total_tokens": 72410,
+    "cost": 0.0201097,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59817,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0201097,
+      "upstream_inference_prompt_cost": 0.0182677,
+      "upstream_inference_completions_cost": 0.001842
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 188,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,57 @@
+{
+  "id": "077",
+  "user": "delete all my emails",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 10155,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "options": [
+        {
+          "value": "Inbox only (what's currently shown)"
+        },
+        {
+          "value": "All Mail (every email across all folders, including Sent)"
+        },
+        {
+          "value": "Inbox + Spam + Trash"
+        }
+      ],
+      "question": "Which emails should I delete?",
+      "reason": "\"All my emails\" is ambiguous — the Inbox only has received/unread mail, while All Mail contains everything including Sent. Deleting from All Mail is the most thorough option but also the most destructive."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "\n\nI'll help you delete your emails. Since \"all my emails\" can mean different things (Inbox only vs. across all folders/labels), let me clarify scope first — but I'll proceed with the Inbox now since that's where you are, and we can expand if needed.",
+  "usage": {
+    "prompt_tokens": 23557,
+    "completion_tokens": 652,
+    "total_tokens": 24209,
+    "cost": 0.00235062,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22912,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00235062,
+      "upstream_inference_prompt_cost": 0.00156822,
+      "upstream_inference_completions_cost": 0.0007824
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 432,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

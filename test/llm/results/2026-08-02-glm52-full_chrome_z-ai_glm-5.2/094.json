@@ -1,0 +1,40 @@
+{
+  "id": "094",
+  "user": "make text bigger",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 3940,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I don't have a tool available to change the browser's text size or zoom level — my keyboard tool can't send modifier combinations like Ctrl+Plus, and there's no zoom control in my toolkit.\n\nYou can do it yourself quickly:\n\n- **Windows/Linux:** Press **Ctrl + =** (or Ctrl + +) to zoom in\n- **Mac:** Press **Cmd + =** (or Cmd + +) to zoom in\n\nEach press increases the size one step. To reset later, press **Ctrl + 0** (or **Cmd + 0**).\n\nWould you like me to help with something else on this page instead?",
+  "usage": {
+    "prompt_tokens": 22670,
+    "completion_tokens": 398,
+    "total_tokens": 23068,
+    "cost": 0.00766136,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 22656,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00766136,
+      "upstream_inference_prompt_cost": 0.00591016,
+      "upstream_inference_completions_cost": 0.0017512
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 265,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

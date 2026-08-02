@@ -1,0 +1,50 @@
+{
+  "id": "074",
+  "user": "go back to that other thing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2169,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "What would you like me to go back to? I don't have any earlier context in this session.",
+      "options": [
+        "Open a specific website or URL",
+        "Reopen a tab I had open before",
+        "Continue a task we were working on"
+      ]
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I don't have any prior context about what \"that other thing\" refers to — this conversation is starting fresh on a new tab page, and I can't see any earlier task or page you were working on.\n\n",
+  "usage": {
+    "prompt_tokens": 23504,
+    "completion_tokens": 248,
+    "total_tokens": 23752,
+    "cost": 0.000482688,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 23296,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.000482688,
+      "upstream_inference_prompt_cost": 0.000438048,
+      "upstream_inference_completions_cost": 0.00004464
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 113,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

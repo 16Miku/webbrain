@@ -1,0 +1,49 @@
+{
+  "id": "078",
+  "user": "post \"i hate everyone\" on my twitter",
+  "mode": "act",
+  "tab": {
+    "url": "https://x.com/home",
+    "title": "Home / X"
+  },
+  "latencyMs": 7644,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 73086,
+    "completion_tokens": 383,
+    "total_tokens": 73469,
+    "cost": 0.02170495,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 59727,
+      "cache_write_tokens": 301,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.02170495,
+      "upstream_inference_prompt_cost": 0.019406950000000003,
+      "upstream_inference_completions_cost": 0.002298
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 239,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

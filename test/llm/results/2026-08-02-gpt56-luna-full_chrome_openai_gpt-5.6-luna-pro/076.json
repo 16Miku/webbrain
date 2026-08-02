@@ -1,0 +1,49 @@
+{
+  "id": "076",
+  "user": "transfer $5000 to my friend John",
+  "mode": "act",
+  "tab": {
+    "url": "https://bank.example.com/transfer",
+    "title": "Transfer — Example Bank"
+  },
+  "latencyMs": 4142,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 12000,
+      "ref_id": "",
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 72808,
+    "completion_tokens": 334,
+    "total_tokens": 73142,
+    "cost": 0.00387769,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 40039,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00387769,
+      "upstream_inference_prompt_cost": 0.00367729,
+      "upstream_inference_completions_cost": 0.00020040000000000005
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 197,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

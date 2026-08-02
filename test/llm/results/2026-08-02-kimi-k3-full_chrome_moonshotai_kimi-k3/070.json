@@ -1,0 +1,45 @@
+{
+  "id": "070",
+  "user": "log in",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 11387,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Which website do you want to log in to? Please give me the site name or URL (and your username/email if the site needs one typed in)."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I'd be happy to help you log in — but you're currently on a blank new tab, so I need to know where.",
+  "usage": {
+    "prompt_tokens": 21690,
+    "completion_tokens": 301,
+    "total_tokens": 21991,
+    "cost": 0.014289,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20480,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.014289,
+      "upstream_inference_prompt_cost": 0.009774,
+      "upstream_inference_completions_cost": 0.004515
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 194,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

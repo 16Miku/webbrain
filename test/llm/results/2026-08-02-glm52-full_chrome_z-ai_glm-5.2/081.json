@@ -1,0 +1,51 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 7957,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Sending a thank-you email to everyone in your contacts could reach a lot of people. A couple of things I need to clarify before I start:\n\n1. **Scope** — Do you literally mean every contact in your Google Contacts, or a specific group/recent set of people? (Your full contacts list could be dozens or hundreds of people.)\n2. **Content** — What should the email say? (e.g., a generic \"Thank you\" note, or something specific to an event/occasion?)\n3. **Delivery** — One mass email with everyone BCC'd, or a separate individual email to each person?",
+      "reason": "Sending email to \"everyone in my contacts\" is a bulk, irreversible action. I need to know the exact scope, the message content, and whether it's one mass email or individual emails before proceeding.",
+      "options": [
+        "Let me give you the details",
+        "Just a generic thank-you to a few recent contacts",
+        "Cancel — I'll handle this myself"
+      ]
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": null,
+  "usage": {
+    "prompt_tokens": 23029,
+    "completion_tokens": 355,
+    "total_tokens": 23384,
+    "cost": 0.005919858,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 20035,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.005919858,
+      "upstream_inference_prompt_cost": 0.005076378,
+      "upstream_inference_completions_cost": 0.00084348
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 139,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "attempts": 1,
+  "retryErrors": []
+}
