@@ -845,11 +845,31 @@ export class Agent extends LoopDetector {
     return this.conversationIds.get(tabId) || null;
   }
 
-  async ensureConversationId(tabId, mode = 'ask') {
+  async getConversationState(tabId, mode = null) {
     await this._hydrate(tabId);
-    this.getConversation(tabId, mode);
-    this._persist(tabId);
-    return this.conversationIds.get(tabId) || null;
+    if (mode) {
+      this.getConversation(tabId, mode);
+      this._persist(tabId);
+    }
+    const messages = this.conversations.get(tabId) || null;
+    const scope = this.selectionGroundingScopes.get(tabId) || null;
+    const selectionGrounded = !!(
+      messages
+      && scope
+      && this._selectionGroundingAnchorIndex(tabId, messages, scope) >= 0
+    );
+    if (scope && !selectionGrounded) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
+    return {
+      conversationId: this.conversationIds.get(tabId) || null,
+      sourceGrounding: selectionGrounded ? SELECTION_ONLY_SOURCE_GROUNDING : null,
+    };
+  }
+
+  async ensureConversationId(tabId, mode = 'ask') {
+    return (await this.getConversationState(tabId, mode)).conversationId;
   }
 
   /**

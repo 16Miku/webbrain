@@ -508,6 +508,8 @@ const appEl = document.getElementById('app');
 const newConversationConfirmEl = document.getElementById('new-conversation-confirm');
 const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
 const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
+const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
+const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 const historyBtn = document.getElementById('btn-history');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
@@ -979,6 +981,7 @@ const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
 const clearingConversationTabs = new Set();
+const selectionGroundedTabs = new Set();
 let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
@@ -1024,6 +1027,45 @@ function setConversationClearInProgress(tabId, clearing) {
 function isConversationClearInProgress(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) && clearingConversationTabs.has(numericTabId);
+}
+
+function isSelectionGroundedForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && selectionGroundedTabs.has(numericTabId);
+}
+
+function syncSelectionScopeUi() {
+  const scoped = isSelectionGroundedForTab(currentTabId);
+  selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  for (const button of [modeActBtn, modeDevBtn]) {
+    if (!button) continue;
+    button.classList.toggle('selection-scope-unavailable', scoped);
+    button.setAttribute('aria-disabled', scoped ? 'true' : 'false');
+    button.title = scoped
+      ? t('sp.selection_scope.description')
+      : t(button === modeActBtn ? 'sp.mode.act.title' : 'sp.mode.dev.title');
+  }
+  if (scoped && agentMode !== 'ask') setMode('ask');
+  else resetInputPlaceholderRotation();
+}
+
+function setSelectionGroundedForTab(tabId, grounded) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const changed = grounded
+    ? !selectionGroundedTabs.has(numericTabId)
+    : selectionGroundedTabs.has(numericTabId);
+  if (grounded) selectionGroundedTabs.add(numericTabId);
+  else selectionGroundedTabs.delete(numericTabId);
+  if (changed && sameTabId(currentTabId, numericTabId)) syncSelectionScopeUi();
+}
+
+function applyConversationScopeState(tabId, state) {
+  if (!state || !Object.prototype.hasOwnProperty.call(state, 'sourceGrounding')) return;
+  setSelectionGroundedForTab(
+    tabId,
+    state.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING,
+  );
 }
 
 function settleNewConversationConfirmation(confirmed, { restoreFocus = true } = {}) {
@@ -2106,6 +2148,7 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
+  setSelectionGroundedForTab(tabId, false);
   const clearResult = await clearCachedTabChat(tabId);
   if (!clearResult?.ok || clearResult?.skipped) {
     throw new Error(clearResult?.error || 'Unable to clear tab chat.');
@@ -2296,6 +2339,7 @@ async function hydrateChatHistoryIdentity(tabId, mode = agentMode, { allowFallba
   } else if (allowFallback && !chatHistoryRecordIdsByTab.has(numericTabId)) {
     fallbackHistoryRecordId(numericTabId);
   }
+  applyConversationScopeState(numericTabId, identity);
   if (tabInfo) chatHistoryTabInfoByTab.set(numericTabId, tabInfo);
   return chatHistoryConversationIdsByTab.get(numericTabId) || null;
 }
@@ -3776,6 +3820,7 @@ async function switchToTab(newTabId) {
     resetChatNavigation();
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
+    syncSelectionScopeUi();
 
     // Chrome gives each tab-specific side panel its own document. The
     // visibility refresh below coordinates ownership when the destination
@@ -3883,6 +3928,7 @@ async function restoreActiveRunState(tabId = currentTabId) {
   } catch {
     return;
   }
+  applyConversationScopeState(numericTabId, state);
   await applyActiveRunState(numericTabId, state);
   void adoptRestoredRunState(numericTabId, state);
 }
@@ -7298,6 +7344,8 @@ async function sendMessage(extraChatParams = {}) {
     return false;
   }
 
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
+
   let userEl = null;
   let assistantEl = null;
   // A selection-only shortcut must not inherit unrelated attachment chips
@@ -7368,6 +7416,7 @@ async function sendMessage(extraChatParams = {}) {
       ...(attachmentsForSend.length ? { attachments: attachmentsForSend } : {}),
       ...chatExtraParams,
     });
+    applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
@@ -7460,6 +7509,10 @@ async function sendMessage(extraChatParams = {}) {
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+      if (sourceGrounding) {
+        setSelectionGroundedForTab(tabId, false);
+        void restoreActiveRunState(tabId);
+      }
     } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
@@ -9404,6 +9457,7 @@ async function continueAgent(options = {}) {
       mode: modeForSend,
       foreground: foregroundForSend,
     });
+    applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
@@ -10024,6 +10078,9 @@ function autoResizeInput() {
 }
 
 function getInputPlaceholderKeys() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    return ['sp.input.selection_placeholder'];
+  }
   let keys;
   if (agentMode === 'ask') keys = ASK_PLACEHOLDER_KEYS;
   else if (agentMode === 'dev') keys = ['sp.input.dev_placeholder'];
@@ -10094,7 +10151,10 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
       requestId: probedRequestId || requestId,
     }),
     isConnectionError: isBackgroundConnectionError,
-    onState: state => applyActiveRunState(tabId, state),
+    onState: state => {
+      applyConversationScopeState(tabId, state);
+      return applyActiveRunState(tabId, state);
+    },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
     onStatus: ({ phase }) => {
@@ -10250,12 +10310,20 @@ function setMode(mode) {
 
 async function ensureActMode() {
   if (agentMode === 'act') return true;
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
+  }
   setMode('act');
   return true;
 }
 
 async function ensureDevMode() {
   if (agentMode === 'dev') return true;
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
+  }
   try {
     const tierInfo = await sendToBackground('get_active_prompt_tier');
     if (tierInfo?.tier === 'compact') {
@@ -10877,14 +10945,14 @@ inputEl.addEventListener('blur', () => setTimeout(hideSlashCommandAutocomplete, 
 document.addEventListener('wb-locale-changed', () => {
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
+  syncSelectionScopeUi();
   void loadProviders();
 });
 
-clearBtn.addEventListener('click', async () => {
-  const tabId = currentTabId;
-  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return;
-  if (!await requestNewConversationConfirmation(tabId)) return;
-  if (!sameTabId(currentTabId, tabId)) return;
+async function startNewConversationForTab(tabId) {
+  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
+  if (!await requestNewConversationConfirmation(tabId)) return false;
+  if (!sameTabId(currentTabId, tabId)) return false;
   setConversationClearInProgress(tabId, true);
   try {
     suppressRunUpdatesForClearedConversation(tabId);
@@ -10894,9 +10962,18 @@ clearBtn.addEventListener('click', async () => {
     if (isTabProcessing(tabId)) await abortRun(tabId);
     await sendToBackground('clear_conversation', { tabId });
     await renderClearedConversationForTab(tabId);
+    return true;
   } finally {
     setConversationClearInProgress(tabId, false);
   }
+}
+
+clearBtn.addEventListener('click', async () => {
+  await startNewConversationForTab(currentTabId);
+});
+
+selectionScopeNewConversationBtn?.addEventListener('click', async () => {
+  await startNewConversationForTab(currentTabId);
 });
 
 providerSelect.addEventListener('change', async () => {

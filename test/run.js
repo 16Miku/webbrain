@@ -15470,14 +15470,25 @@ test('all locales translate canonical scratchpad option help', () => {
   }
 });
 
-test('all locales translate the new-conversation warning', () => {
+test('all locales translate the new-conversation and selected-text scope UI', async () => {
   for (const [label, localeDir] of [
     ['chrome', 'src/chrome/src/ui/locales'],
     ['firefox', 'src/firefox/src/ui/locales'],
   ]) {
     for (const filename of fs.readdirSync(path.join(ROOT, localeDir)).filter((name) => name.endsWith('.js'))) {
-      const locale = fs.readFileSync(path.join(ROOT, localeDir, filename), 'utf8');
-      assert.match(locale, /['"]sp\.clear\.confirm['"]:\s*['"][^'"]+['"]/, `${label}/${filename}: missing translated new-conversation warning`);
+      const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
+      for (const key of [
+        'sp.btn.clear',
+        'sp.clear.title',
+        'sp.clear.description',
+        'sp.clear.action_warning',
+        'sp.selection_scope.title',
+        'sp.selection_scope.description',
+        'sp.input.selection_placeholder',
+      ]) {
+        assert.equal(typeof locale[key], 'string', `${label}/${filename}: missing ${key}`);
+        assert.ok(locale[key].trim().length > 0, `${label}/${filename}: empty ${key}`);
+      }
     }
   }
 });
@@ -16047,12 +16058,16 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearButton, /points="23 4 23 10 17 10"|M20\.49 15a9/, `${label}: legacy refresh icon should be removed`);
 
     assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, `${label}: custom New conversation confirmation should exist outside the inert app`);
-    assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"/, `${label}: custom confirmation should expose modal dialog semantics`);
-    assert.match(confirmation, /id="new-conversation-confirm-title" data-i18n="sp\.clear\.confirm"/, `${label}: custom confirmation warning should stay localized`);
+    assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"[\s\S]*?aria-describedby="new-conversation-confirm-description"/, `${label}: custom confirmation should expose labelled and described modal semantics`);
+    assert.match(confirmation, /id="new-conversation-confirm-title" data-i18n="sp\.clear\.title"/, `${label}: custom confirmation title should stay localized`);
+    assert.match(confirmation, /id="new-conversation-confirm-description" data-i18n="sp\.clear\.description"/, `${label}: custom confirmation consequence should stay localized`);
     assert.match(confirmation, /id="new-conversation-confirm-cancel"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.scheduled\.cancel"/, `${label}: custom confirmation should have a localized safe action`);
-    assert.match(confirmation, /id="new-conversation-confirm-accept"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: custom confirmation should have a localized explicit clear action`);
+    assert.match(confirmation, /id="new-conversation-confirm-accept"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?new-conversation-confirm-action-label" data-i18n="sp\.btn\.clear"[\s\S]*?new-conversation-confirm-action-warning[\s\S]*?data-i18n="sp\.clear\.action_warning"/, `${label}: destructive action should use localized two-line copy`);
+    assert.doesNotMatch(confirmation, /data-i18n-aria-label="sp\.btn\.clear"/, `${label}: the accessible button name should retain the visible clears-history warning`);
     assert.match(css, /\.new-conversation-confirm \{[\s\S]*?position: fixed;[\s\S]*?background: var\(--overlay-bg-strong\);/, `${label}: custom confirmation should stay visible inside narrow browser panels`);
-    assert.match(css, /\.new-conversation-confirm-actions \.new-conversation-confirm-accept \{[\s\S]*?background: var\(--error\);/, `${label}: destructive confirmation action should be visually distinct`);
+    assert.match(css, /\.new-conversation-confirm-card \{[\s\S]*?border: 1px solid var\(--border\);/, `${label}: dialog card should keep a quiet neutral boundary`);
+    assert.match(css, /--destructive-action: #c5363c;[\s\S]*?\.new-conversation-confirm-actions \.new-conversation-confirm-accept \{[\s\S]*?flex-direction: column;[\s\S]*?background: var\(--destructive-action\);/, `${label}: destructive confirmation action should use a contrast-safe red with an intentional two-line stack`);
+    assert.match(css, /\.new-conversation-confirm-action-warning \{[\s\S]*?font-size: 10px;[\s\S]*?line-height: 1\.1;\s*\}/, `${label}: destructive warning should remain full-opacity for legibility`);
     assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.new-conversation-confirm-actions \{[\s\S]*?grid-template-columns: 1fr;/, `${label}: confirmation actions should stack in narrow Vivaldi panels`);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.new-conversation-confirm \{[\s\S]*?animation: none;/, `${label}: confirmation should respect reduced motion`);
 
@@ -16062,19 +16077,82 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.match(panel, /newConversationConfirmEl\?\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === newConversationConfirmEl[\s\S]*?settleNewConversationConfirmation\(false\)/, `${label}: clicking the confirmation backdrop should cancel safely`);
     assert.match(panel, /async function switchToTab\(newTabId\) \{[\s\S]*?newConversationConfirmationState[\s\S]*?!sameTabId\(newConversationConfirmationState\.tabId, newTabId\)[\s\S]*?settleNewConversationConfirmation\(false, \{ restoreFocus: false \}\);/, `${label}: switching tabs should cancel a stale confirmation`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n}\n\nclearBtn.addEventListener", clearStart) + 2);
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
     );
+    assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
     assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
+  }
+});
+
+test('selected-text scope is a durable visible sidepanel state with a New conversation escape', async () => {
+  for (const [label, prefix, sourceGrounding] of [
+    ['chrome', 'src/chrome', SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', 'src/firefox', SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const banner = html.match(/<div id="selection-scope-banner"[\s\S]*?<\/div>\s*\n\s*<button id="selection-scope-new-conversation"[\s\S]*?<\/button>\s*\n\s*<\/div>/)?.[0] || '';
+
+    assert.match(banner, /role="region"[\s\S]*?aria-labelledby="selection-scope-title"/, `${label}: selected-text notice should be an accessible labelled region`);
+    assert.match(banner, /data-i18n="sp\.selection_scope\.title"[\s\S]*?data-i18n="sp\.selection_scope\.description"[\s\S]*?id="selection-scope-new-conversation"[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: selected-text notice and escape action should stay localized`);
+    assert.match(css, /\.selection-scope-banner \{[\s\S]*?var\(--warning\)[\s\S]*?var\(--bg-secondary\)/, `${label}: scope notice should use warning—not destructive—color semantics`);
+    assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.selection-scope-banner \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\);/, `${label}: selected-text notice should reflow in narrow browser panels`);
+
+    assert.match(panel, /const selectionGroundedTabs = new Set\(\);/, `${label}: selected-text state should be isolated per tab`);
+    assert.match(panel, /function applyConversationScopeState\(tabId, state\) \{[\s\S]*?hasOwnProperty\.call\(state, 'sourceGrounding'\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: sidepanel should consume structural source-grounding state`);
+    assert.match(panel, /async function hydrateChatHistoryIdentity[\s\S]*?applyConversationScopeState\(numericTabId, identity\);/, `${label}: scope state should restore with conversation identity`);
+    assert.match(panel, /async function restoreActiveRunState[\s\S]*?applyConversationScopeState\(numericTabId, state\);[\s\S]*?applyActiveRunState/, `${label}: scope state should refresh after remount and tab restoration`);
+    assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state\);/, `${label}: detached run probes should reconcile scope before returning journal-only results`);
+    assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true\);/, `${label}: context-menu selection should reveal the notice without waiting for model output`);
+    assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
+    assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
+    assert.match(panel, /async function ensureActMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Act should explain why it is unavailable in a selected-text conversation`);
+    assert.match(panel, /async function ensureDevMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Dev should explain why it is unavailable in a selected-text conversation`);
+    assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
+
+    const reconnectStart = panel.indexOf('async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}) {');
+    const reconnectEnd = panel.indexOf('\n\nfunction formatBackgroundSendError', reconnectStart);
+    assert.ok(reconnectStart >= 0 && reconnectEnd > reconnectStart, `${label}: detached reconnect helper missing`);
+    const appliedStates = [];
+    const sendRunWithReconnect = vm.runInNewContext(
+      `(() => { ${panel.slice(reconnectStart, reconnectEnd)}; return sendRunWithReconnect; })()`,
+      {
+        cancelledRunRecoveryRequestIds: { delete() {} },
+        runDetachedWithReconnect: async (options) => {
+          await options.onState({ sourceGrounding });
+          return { content: 'ok' };
+        },
+        sendToBackground: async () => ({}),
+        isBackgroundConnectionError: () => false,
+        applyConversationScopeState: (tabId, state) => appliedStates.push(['scope', tabId, state.sourceGrounding]),
+        applyActiveRunState: async (tabId, state) => appliedStates.push(['active', tabId, state.sourceGrounding]),
+        isTabAbortRequested: () => false,
+        localRunFollowers: new Map(),
+      },
+    );
+    const reconnectResult = await sendRunWithReconnect('chat_start', { tabId: 91, requestId: 'req-scope-review' });
+    assert.equal(reconnectResult.content, 'ok', `${label}: detached reconnect result should pass through`);
+    assert.deepEqual(appliedStates, [
+      ['scope', 91, sourceGrounding],
+      ['active', 91, sourceGrounding],
+    ], `${label}: detached state probes should apply scope before active run UI`);
+
+    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded \? SELECTION_ONLY_SOURCE_GROUNDING : null/, `${label}: agent should report only the structural selected-text scope marker`);
+    assert.match(background, /case 'ensure_conversation_id':[\s\S]*?agent\.getConversationState\(tabId, msg\.mode \|\| 'ask'\)/, `${label}: identity hydration should return scope state`);
+    assert.match(background, /case 'agent_run_state':[\s\S]*?agent\.getConversationState\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)/, `${label}: reconnect polling should return scope state`);
   }
 });
 
@@ -18845,9 +18923,9 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));
     assert.match(resetSlashBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: /reset should await durable history deletion`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: clear button should await durable history deletion`);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable history deletion`);
   }
 });
 
@@ -20976,10 +21054,10 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(resetBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: /reset should clear the originally requested tab only`);
     assert.doesNotMatch(resetBody, /sendToBackground\('clear_conversation', \{ tabId: currentTabId \}\)/, `${label}: /reset should not use currentTabId after async delay`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
-    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;/, `${label}: clear button should confirm in-panel and reject a stale tab before clearing`);
-    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: clear button should clear the originally requested tab only`);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
+    assert.match(clearBody, /if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;/, `${label}: shared new-conversation action should confirm in-panel and reject a stale tab before clearing`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab only`);
 
     const compactIdx = panel.indexOf("if (command.value === '/compact')");
     const compactBody = panel.slice(compactIdx, panel.indexOf("if (command.value === '/verbose')", compactIdx));
@@ -21824,6 +21902,7 @@ test('selection-only model requests exclude prior conversation context', async (
         : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
 
       assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
+      assert.equal((await agent.getConversationState(tabId)).sourceGrounding, sourceGrounding, `${label}: selected-text state should be reportable after the anchor turn`);
       assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
       assert.equal(requestOptions[0]?.tools, undefined, `${label}: selection-only request must not advertise browser tools`);
       assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
@@ -21848,6 +21927,7 @@ test('selection-only model requests exclude prior conversation context', async (
         ? await agent.processMessageStream(tabId, 'My quiz answer is B.', () => {}, 'ask')
         : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
       assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
+      assert.equal((await agent.getConversationState(tabId)).sourceGrounding, sourceGrounding, `${label}: selected-text state should remain reportable on follow-up`);
       assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
       assert.equal(requestOptions[1]?.tools, undefined, `${label}: grounded follow-up must remain tool-free`);
       const followUpSerialized = JSON.stringify(requests[1]);
@@ -21998,6 +22078,7 @@ test('ordinary attachments leave selection grounding and remain usable', async (
     assert.equal(providerCalls, 1, `${label}: ordinary attachment turn should call the model once`);
     assert.ok(manageContextCalls >= 1, `${label}: ordinary attachment turn should restore normal context management`);
     assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label}: ordinary attachment send should end selection scope`);
+    assert.equal((await agent.getConversationState(tabId)).sourceGrounding, null, `${label}: ordinary attachment transition should report normal conversation scope`);
   }
 });
 
@@ -34826,7 +34907,7 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
       assert.match(agentSource, new RegExp(`generationName: '${generationName}'`), `${label}: ${generationName} calls should be labeled`);
     }
     assert.match(backgroundSource, /generationName: 'memory'/, `${label}: memory extraction calls should be labeled`);
-    assert.match(backgroundSource, /conversationId: await agent\.getConversationId\(tabId\)/, `${label}: background memory jobs should retain the conversation id`);
+    assert.match(backgroundSource, /userMemoryPayload\.conversationId = await agent\.getConversationId\(tabId\);/, `${label}: background memory jobs should retain the conversation id`);
   }
 });
 
