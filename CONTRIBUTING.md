@@ -72,6 +72,27 @@ Each adapter needs four things:
 3. **`matches(url)`** — regex against the current tab URL. Match the broadest
    form of the domain (`.com`, `.co.uk`, `.com.tr` country variants if applicable),
    but don't match unrelated subdomains.
+
+   **Every surface your notes mention must be a surface the regex selects on.**
+   The most common defect in adapter PRs is a note describing a page the adapter
+   never activates on. Before submitting, walk your own bullets and check each
+   named page against the regex. In particular:
+
+   - **Store/seller pages** are usually a different host or host pattern than
+     product pages (`mall.jd.com`, `shop<id>.taobao.com`). If a bullet mentions
+     in-shop search, shop ratings, or seller pages, the regex needs them.
+   - **Mobile hosts** (`m.`, `h5.m.`) are separate origins on most sites, and
+     the agent lands on them from search results and shared links.
+   - **Sibling brands sharing one flow** — if a bullet tells the model to
+     distinguish two storefronts, both must match, or the guidance dead-ends on
+     the one that doesn't (Taobao/Tmall share a login, cart, and checkout across
+     two registrable domains).
+   - **Category and listing hosts** (`list.`, `search.`, `s.`) when the site
+     splits browsing away from the home page.
+
+   Enumerated host alternations are fine — preferred, even, since they keep
+   `corporate.`, `help.`, and `rule.` subdomains out — but enumerate
+   completely.
 4. **`notes`** — the body the agent will see prepended to its first message
    on this site. **This is the actual contribution.** See below.
 
