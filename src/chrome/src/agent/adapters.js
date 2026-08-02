@@ -16462,6 +16462,22 @@ const ADAPTERS = [
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
+  // ─── Regional — Flipkart (India) ─────────────────────────────────────
+  {
+    name: 'flipkart',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?flipkart\.com\//.test(url),
+    notes: `
+- As of 2026-08, use the visible "Search for Products, Brands and More" field. Results expose "Filters" and "Sort By" choices such as "Relevance", "Popularity", and "Price -- Low to High"; select the requested sort and filters instead of treating the default ranking as the best or cheapest result.
+- "Location not set" / "Select delivery location" means delivery availability and dates are not personalized. Set the user's pincode before promising stock, a delivery date, or Cash on Delivery, then verify the same details for the selected offer.
+- Product cards can combine color, storage, size, pack, and other variants. Open the product page and select the exact variant before comparing price, stock, exchange value, warranty, return policy, seller, or delivery.
+- Offer prices are conditional: "Buy at" can require applying a listed bank, UPI, EMI, or payment offer. "Upto ₹… Off on Exchange" is maximum conditional trade-in credit, not a discount to subtract from every order; quote the payable price separately from potential offers.
+- Flipkart is a marketplace. Read "Fulfilled by" and open "See other sellers" before choosing an offer; compare the selected seller rating, time on Flipkart, price, delivery, return terms, and assurance badges rather than transferring product-level reviews to every seller.
+- "Add to cart" preserves the review step, while "Buy now" skips the cart and enters checkout. Do not use "Buy now" for research or comparison, and re-read the exact item, variant, seller, quantity, and price after adding it to the cart.
+- Login uses an email or mobile number followed by an OTP. Ask the user to complete OTP authentication manually in the current tab; never request, read, repeat, or expose the code, and re-read the destination after login instead of restarting the task.
+- Before any final order or payment control, re-read the cart, address, items, variants, sellers, quantities, delivery, returns, applied offers, exchange terms, and final total, then require the user's explicit confirmation. Report success only from the confirmation or Orders page with an order ID; a cart row, login, checkout page, or payment prompt is incomplete.`,
+  },
+
   // ─── Regional — Coupang (Korea) ──────────────────────────────────────
   {
     name: 'coupang',

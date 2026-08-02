@@ -2792,6 +2792,45 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Flipkart shopping surfaces with India marketplace guidance', () => {
+  const trustedUrls = [
+    'https://flipkart.com/',
+    'https://www.flipkart.com/search?q=iphone%2016',
+    'https://www.flipkart.com/apple-iphone-16/p/example-item',
+    'https://www.flipkart.com/viewcart',
+    'https://m.flipkart.com/mobiles',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'flipkart');
+    assert.equal(getActiveAdapterFx(url)?.name, 'flipkart');
+  }
+
+  const rejectedUrls = [
+    'https://seller.flipkart.com/',
+    'https://stories.flipkart.com/',
+    'https://flipkart.com.phishing.example/search?q=phone',
+    'https://example.com/?next=https://www.flipkart.com/viewcart',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'flipkart');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'flipkart');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[2]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls[4]);
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Search for Products, Brands and More/);
+  assert.match(adapter?.notes || '', /Sort By.*Price -- Low to High/s);
+  assert.match(adapter?.notes || '', /Location not set.*Select delivery location/s);
+  assert.match(adapter?.notes || '', /Upto.*Off on Exchange.*not.*discount/s);
+  assert.match(adapter?.notes || '', /See other sellers.*seller rating/s);
+  assert.match(adapter?.notes || '', /Add to cart.*Buy now/s);
+  assert.match(adapter?.notes || '', /OTP.*manually/s);
+  assert.match(adapter?.notes || '', /explicit confirmation.*order ID/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Dianping city, shop, and verification surfaces with local-service guidance', () => {
   const trusted = ['https://dianping.com/','https://www.dianping.com/shanghai','https://www.dianping.com/search/keyword/1/10_food','https://www.dianping.com/shop/example','https://m.dianping.com/shanghai','https://h5.dianping.com/app/m-static-base-page/dpuserservice.html','https://verify.meituan.com/v2/app/general_page?requestCode=x'];
   for (const url of trusted) {
