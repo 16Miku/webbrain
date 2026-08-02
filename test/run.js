@@ -2668,6 +2668,67 @@ test('matches JD shopping surfaces and includes Chinese login and checkout guida
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Taobao shopping surfaces and includes Chinese marketplace guidance', () => {
+  const trustedUrls = [
+    'https://www.taobao.com/',
+    'https://s.taobao.com/search?q=%E6%89%8B%E6%9C%BA',
+    'https://item.taobao.com/item.htm?id=123456789',
+    'https://shop123456789.taobao.com/',
+    'https://cart.taobao.com/cart.htm',
+    'https://buy.taobao.com/auction/order/confirm_order.htm',
+    'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm',
+    'https://trade.taobao.com/trade/detail/tradeSnap.htm',
+    'https://login.taobao.com/member/login.jhtml',
+    'https://login.taobao.com/havanaone/login/login.htm',
+    'https://world.taobao.com/',
+    'https://m.taobao.com/',
+    'https://h5.m.taobao.com/awp/core/detail.htm?id=123456789',
+    'https://www.tmall.com/',
+    'https://list.tmall.com/search_product.htm?q=%E6%89%8B%E6%9C%BA',
+    'https://detail.tmall.com/item.htm?id=123456789',
+    'https://buy.tmall.com/order/confirm_order.htm',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'taobao');
+    assert.equal(getActiveAdapterFx(url)?.name, 'taobao');
+  }
+
+  const rejectedUrls = [
+    'https://rule.taobao.com/',
+    'https://rule.tmall.com/',
+    'https://job.alibaba.com/',
+    'https://shopabc.taobao.com/',
+    'https://item.taobao.com.phishing.example/item.htm?id=1',
+    'https://item.taobao.com@phishing.example/item.htm?id=1',
+    'https://detail.tmall.com.phishing.example/item.htm?id=1',
+    'https://example.com/?next=https://item.taobao.com/item.htm',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'taobao');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'taobao');
+  }
+
+  const adapter = getActiveAdapter('https://item.taobao.com/item.htm?id=123456789');
+  const firefoxAdapter = getActiveAdapterFx('https://cart.taobao.com/cart.htm');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /扫码登录.*密码登录/s);
+  assert.match(adapter?.notes || '', /滑动验证/);
+  assert.match(adapter?.notes || '', /detail\.tmall\.com/);
+  assert.match(adapter?.notes || '', /shop<id>\.taobao\.com/);
+  assert.match(adapter?.notes || '', /搜索.*店铺|搜索.*in-shop search/s);
+  assert.match(adapter?.notes || '', /广告|推广/);
+  assert.match(adapter?.notes || '', /规格.*收货地址/s);
+  assert.match(adapter?.notes || '', /阿里旺旺/);
+  assert.match(adapter?.notes || '', /加入购物车/);
+  assert.match(adapter?.notes || '', /立即购买/);
+  assert.match(adapter?.notes || '', /Treat "结算" as order review/);
+  assert.match(adapter?.notes || '', /提交订单/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /待付款/);
+  assert.match(adapter?.notes || '', /订单编号/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Allegro.pl shopping surfaces and includes Polish marketplace guidance', () => {
   const trustedUrls = [
     'https://allegro.pl/',
@@ -6680,7 +6741,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
   }
 });
 
-test('unresolved CAPTCHA gates hydrate after a background worker restart', async () => {
+test('pending and token-cleared CAPTCHA gates hydrate after a background worker restart', async () => {
   for (const [label, AgentClass, apiName] of [
     ['chrome', AgentCh, 'chrome'],
     ['firefox', AgentFx, 'browser'],
@@ -6688,6 +6749,9 @@ test('unresolved CAPTCHA gates hydrate after a background worker restart', async
     const tabId = label === 'chrome' ? 8825 : 8826;
     const agent = new AgentClass({});
     const key = agent._convKey(tabId);
+    const clearedTabId = tabId + 10;
+    const clearedAgent = new AgentClass({});
+    const clearedKey = clearedAgent._convKey(clearedTabId);
     const captchaGateState = {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
@@ -6696,6 +6760,22 @@ test('unresolved CAPTCHA gates hydrate after a background worker restart', async
         status: 'verification_pending',
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    };
+    const clearedCaptchaGateState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'cleared',
+      captchaCandidateIdentity: {
+        frameId: 0,
+        framePathIndexes: [],
+        type: 'recaptcha_v2',
+        websiteKey: 'PERSISTED_GATE_KEY',
+        responseFieldId: 'g-recaptcha-response-persisted',
+      },
+      publicGate: {
+        status: 'cleared',
+        responseTokenPresent: true,
+        clearedByResponseToken: true,
       },
     };
     const previousApi = globalThis[apiName];
@@ -6710,6 +6790,11 @@ test('unresolved CAPTCHA gates hydrate after a background worker restart', async
               mode: 'act',
               captchaGateState,
             },
+            [clearedKey]: {
+              messages: [{ role: 'system', content: 'test' }],
+              mode: 'act',
+              captchaGateState: clearedCaptchaGateState,
+            },
           }),
         },
       },
@@ -6717,6 +6802,12 @@ test('unresolved CAPTCHA gates hydrate after a background worker restart', async
     try {
       await agent._hydrate(tabId);
       assert.deepEqual(agent._captchaGateStates.get(tabId), captchaGateState, `${label}: worker restart lost the unresolved CAPTCHA gate`);
+      await clearedAgent._hydrate(clearedTabId);
+      assert.deepEqual(
+        clearedAgent._captchaGateStates.get(clearedTabId),
+        clearedCaptchaGateState,
+        `${label}: worker restart lost the token-clearance recheck marker`,
+      );
     } finally {
       globalThis[apiName] = previousApi;
     }
@@ -57251,6 +57342,228 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         observed.gate?.candidateNotCorrelated,
         true,
         `${build}: hidden active frame was correlated without effective visibility`,
+      );
+    });
+  }
+});
+
+test('post-solve CAPTCHA gates consume only the correlated response token and re-arm on rejection', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const responseField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-gated',
+      name: 'g-recaptcha-response',
+    });
+    const activeFrame = captchaEl('iframe', {
+      src: 'https://www.google.com/recaptcha/api2/bframe?k=TOKEN_GATE_KEY',
+    });
+    const nodes = [
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+        captchaEl('h2', { textContent: 'Security verification' }),
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'TOKEN_GATE_KEY' }, [
+          responseField,
+          activeFrame,
+        ]),
+      ]),
+    ];
+
+    await withCaptchaFakePage(build, nodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent._currentUrl = async () => 'https://example.test/signup';
+      const initial = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'visible' },
+      );
+      assert.equal(initial.gate?.status, 'solve_required', `${build}: active challenge did not arm`);
+      const armed = agent._captchaGateStates.get(1);
+      assert.equal(
+        armed?.captchaCandidateIdentity?.responseFieldId,
+        'g-recaptcha-response-gated',
+        `${build}: gate did not retain its exact response field`,
+      );
+      agent._captchaGateStates.set(1, {
+        ...armed,
+        status: 'verification_pending',
+        publicGate: {
+          ...armed.publicGate,
+          status: 'verification_pending',
+          solveAttempted: true,
+        },
+      });
+
+      responseField.value = 'token-produced-by-widget';
+      const stillActive = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'interactive' },
+      );
+      assert.equal(
+        stillActive.gate?.status,
+        'verification_pending',
+        `${build}: token cleared the gate while its active frame remained visible`,
+      );
+      assert.equal(
+        stillActive.gate?.clearedByResponseToken,
+        undefined,
+        `${build}: visible challenge was reported token-cleared`,
+      );
+
+      activeFrame.hidden = true;
+      const tokenCleared = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'interactive' },
+      );
+      assert.equal(tokenCleared.gate?.status, 'cleared', `${build}: correlated token did not clear gate`);
+      assert.equal(
+        tokenCleared.gate?.clearedByResponseToken,
+        true,
+        `${build}: token clearance reason missing`,
+      );
+      assert.equal(
+        agent._captchaGateStates.get(1)?.status,
+        'cleared',
+        `${build}: token clearance did not retain a preflight recheck marker`,
+      );
+      assert.equal(
+        agent._captchaGateBlockResult(1, 'click_ax'),
+        null,
+        `${build}: token-cleared recheck marker blocked continuation`,
+      );
+
+      const stillCleared = await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(
+        stillCleared,
+        null,
+        `${build}: stale dialog text interrupted a token-cleared continuation`,
+      );
+      assert.equal(
+        agent._captchaGateStates.get(1)?.status,
+        'cleared',
+        `${build}: preflight discarded the token-clearance recheck marker`,
+      );
+
+      activeFrame.hidden = false;
+      const rearmed = await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(
+        rearmed?.status,
+        'solve_required',
+        `${build}: reappearing challenge frame did not re-arm after token rejection`,
+      );
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: re-armed gate was not persisted`);
+    });
+
+    const firstField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-first',
+      name: 'g-recaptcha-response',
+    });
+    const secondField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-second',
+      name: 'g-recaptcha-response',
+      value: 'unrelated-widget-token',
+    });
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'SHARED_SITE_KEY' }, [firstField]),
+        captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'SHARED_SITE_KEY' }, [secondField]),
+      ]),
+    ], async () => {
+      const agent = new AgentClass({});
+      agent._currentUrl = async () => 'https://example.test/signup';
+      agent._captchaGateStates.set(2, {
+        key: 'https://example.test/signup\nsecurity verification',
+        status: 'verification_pending',
+        captchaCandidateIdentity: {
+          frameId: 0,
+          framePathIndexes: [],
+          type: 'recaptcha_v2',
+          websiteKey: 'SHARED_SITE_KEY',
+          isEnterprise: false,
+          responseFieldId: 'g-recaptcha-response-first',
+          responseFieldIndex: 0,
+          alsoResponseFieldId: null,
+          alsoResponseFieldIndex: null,
+        },
+        publicGate: {
+          status: 'verification_pending',
+          solveAttempted: true,
+          challengeDialog: { label: 'Security verification' },
+        },
+      });
+      const unrelatedToken = await agent._observeCaptchaChallenge(
+        2,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_2]' },
+        { filter: 'interactive' },
+      );
+      assert.equal(
+        unrelatedToken.gate?.status,
+        'verification_pending',
+        `${build}: a sibling widget token cleared the gated widget`,
+      );
+      firstField.value = 'gated-widget-token';
+      const exactToken = await agent._observeCaptchaChallenge(
+        2,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_2]' },
+        { filter: 'interactive' },
+      );
+      assert.equal(exactToken.gate?.clearedByResponseToken, true, `${build}: exact widget token did not clear`);
+    });
+
+    const hcaptchaField = captchaEl('textarea', {
+      id: 'h-captcha-response-gated',
+      name: 'h-captcha-response',
+    });
+    const hcaptchaCompatibilityField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-hcaptcha',
+      name: 'g-recaptcha-response',
+      value: 'hcaptcha-compatibility-token',
+    });
+    await withCaptchaFakePage(build, [
+      captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+        captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HCAPTCHA_GATE_KEY' }, [
+          hcaptchaField,
+          hcaptchaCompatibilityField,
+        ]),
+      ]),
+    ], async () => {
+      const agent = new AgentClass({});
+      agent._currentUrl = async () => 'https://example.test/signup';
+      agent._captchaGateStates.set(3, {
+        key: 'https://example.test/signup\nsecurity verification',
+        status: 'verification_pending',
+        captchaCandidateIdentity: {
+          frameId: 0,
+          framePathIndexes: [],
+          type: 'hcaptcha',
+          websiteKey: 'HCAPTCHA_GATE_KEY',
+          isEnterprise: false,
+          responseFieldId: 'h-captcha-response-gated',
+          responseFieldIndex: 0,
+          alsoResponseFieldId: 'g-recaptcha-response-hcaptcha',
+          alsoResponseFieldIndex: 0,
+        },
+        publicGate: {
+          status: 'verification_pending',
+          solveAttempted: true,
+          challengeDialog: { label: 'Security verification' },
+        },
+      });
+      const compatibilityToken = await agent._observeCaptchaChallenge(
+        3,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_3]' },
+        { filter: 'interactive' },
+      );
+      assert.equal(
+        compatibilityToken.gate?.clearedByResponseToken,
+        true,
+        `${build}: hCaptcha compatibility token did not clear its exact gate`,
       );
     });
   }
