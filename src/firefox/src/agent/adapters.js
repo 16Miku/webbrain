@@ -16292,6 +16292,21 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'dianping',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|h5|s)\.)?dianping\.com\//.test(url) || /^https?:\/\/verify\.meituan\.com\//.test(url),
+    notes: `
+- Observed 2026-08: use a city page such as www.dianping.com/shanghai when the bare www.dianping.com page is empty. Verify the visible city via "更换" before using the "搜索商户名、地址、菜名、外卖等" search; city, category, business district, and metro filters materially change results.
+- A shop page should be matched by exact name and branch, address/map location, phone, current 营业时间, category, and price basis. Similar branch names are not interchangeable; confirm the branch before directions, contact, booking, or purchase.
+- Read rating together with review count and recency, category scores such as 口味/环境/服务, 人均 price, and recent detailed reviews. Ratings summarize member feedback; low review counts and old reviews are weaker evidence, and merchant-provided or promoted content is not an independent review.
+- Separate public business facts from user claims. A visible 商户认证 badge confirms merchant identity/credentials submitted for that profile, not every review, price, service outcome, or current opening state; call out conflicting recent evidence instead of resolving it silently.
+- Opening a shop, reading reviews, or comparing offers is read-only. Collecting a coupon, writing a review, favoriting, calling, requesting directions, "预约订座", or contacting the merchant changes account or external state; perform only the action the user explicitly requested.
+- 团购, 优惠券, 买单, 预约, and 预订 are different products. Verify the exact branch, included items, party/date/time, validity and blackout dates, reservation requirement, refund/expiry rules, quantity, and final payable total before creating an order; require explicit confirmation before order submission or payment.
+- Anonymous desktop city pages can work while m.dianping.com redirects after HTTP 200 to verify.meituan.com with "身份核实" and "请向右拖动滑块". Stop for the user; do not drag, retry, bypass, or interpret the wall as no shops. Login, SMS, QR, and app-only prompts likewise require user handling.
+- Report a purchase/reservation complete only from the account order/coupon page with an order number or coupon and explicit paid/confirmed status. A shop page, selected time, submitted request, payment redirect, or "待支付" state is not a confirmed booking or consumed voucher.
+    `,
+  },
+  {
     name: 'google-maps',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/maps/.test(url) || /^https?:\/\/maps\.google\.[a-z.]+\//.test(url),
