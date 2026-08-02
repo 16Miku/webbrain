@@ -2284,6 +2284,37 @@ test('matches twitter.com and x.com', () => {
   }
 });
 
+test('matches Weibo desktop and mobile surfaces and includes login and posting guidance', () => {
+  const trustedUrls = [
+    'https://weibo.com/',
+    'https://www.weibo.com/u/123456',
+    'https://s.weibo.com/weibo?q=webbrain',
+    'https://passport.weibo.com/visitor/visitor?url=https%3A%2F%2Fweibo.com%2F',
+    'https://m.weibo.cn/',
+    'https://weibo.cn/pub/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'weibo');
+    assert.equal(getActiveAdapterFx(url)?.name, 'weibo');
+  }
+  for (const url of ['https://weibo.com.phishing.example/', 'https://example.com/?next=https://weibo.com/']) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'weibo');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'weibo');
+  }
+  const adapter = getActiveAdapter('https://s.weibo.com/weibo?q=webbrain');
+  const firefoxAdapter = getActiveAdapterFx('https://m.weibo.cn/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /passport\.weibo\.com.*url=/s);
+  assert.match(adapter?.notes || '', /综合.*实时.*热门.*视频/s);
+  assert.match(adapter?.notes || '', /转发微博.*原微博/s);
+  assert.match(adapter?.notes || '', /展开/);
+  assert.match(adapter?.notes || '', /关注.*转发.*评论.*赞/s);
+  assert.match(adapter?.notes || '', /发布/);
+  assert.match(adapter?.notes || '', /扫码|短信|验证码/);
+  assert.match(adapter?.notes || '', /status URL|动态链接/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches youtube video URLs and includes transcript guidance', () => {
   const a = getActiveAdapter('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   assert.equal(a?.name, 'youtube');
