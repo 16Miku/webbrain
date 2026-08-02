@@ -2506,7 +2506,8 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
     'https://flights.ctrip.com/international/search/oneway-sha-sin',
     'https://trains.ctrip.com/TrainBooking/SearchTrain.aspx',
     'https://vacations.ctrip.com/',
-    'https://tickets.ctrip.com/',
+    'https://huodong.ctrip.com/things-to-do/list',
+    'https://piao.ctrip.com/',
     'https://passport.ctrip.com/user/login',
     'https://my.ctrip.com/myinfo/orders',
     'https://secure.ctrip.com/booking',
@@ -2518,6 +2519,7 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
 
   const rejectedUrls = [
     'https://pages.ctrip.com/corporate/',
+    'https://tickets.ctrip.com/',
     'https://ctrip.com.phishing.example/hotels',
     'https://example.com/?next=https://hotels.ctrip.com/',
   ];
@@ -2528,17 +2530,20 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
 
   const adapter = getActiveAdapter('https://hotels.ctrip.com/hotels/437892.html');
   const firefoxAdapter = getActiveAdapterFx('https://flights.ctrip.com/');
-  assert.match(adapter?.notes || '', /2026-08/);
   assert.match(adapter?.notes || '', /酒店.*机票.*火车票/s);
   assert.match(adapter?.notes || '', /广告/);
   assert.match(adapter?.notes || '', /入住.*离店.*房型/s);
   assert.match(adapter?.notes || '', /退订|取消/);
   assert.match(adapter?.notes || '', /行李/);
   assert.match(adapter?.notes || '', /12306/);
+  assert.doesNotMatch(adapter?.notes || '', /12306 adapter/);
   assert.match(adapter?.notes || '', /扫码|短信/);
-  assert.match(adapter?.notes || '', /flights\.ctrip\.com.*HTTP 432/s);
+  assert.match(adapter?.notes || '', /HTTP 432/);
   assert.match(adapter?.notes || '', /提交订单/);
   assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /preserve beneficial coupons/i);
+  const noteBullets = (adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- '));
+  assert.equal(noteBullets.length, 8);
   assert.match(adapter?.notes || '', /订单号|出票成功|预订成功/);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });

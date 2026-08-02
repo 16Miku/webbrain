@@ -16200,18 +16200,16 @@ const ADAPTERS = [
   {
     name: 'ctrip',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:(?:www|hotels|flights|trains|vacations|tickets|passport|my|secure)\.)?ctrip\.com\//.test(url),
+    matches: (url) => /^https?:\/\/(?:(?:www|hotels|flights|trains|vacations|huodong|piao|passport|my|secure)\.)?ctrip\.com\//.test(url),
     notes: `
-- Treat www.ctrip.com, hotels.ctrip.com, flights.ctrip.com, trains.ctrip.com, vacations.ctrip.com, tickets.ctrip.com, passport.ctrip.com, my.ctrip.com, and secure.ctrip.com as Ctrip's desktop booking flow as of 2026-08. Choose the intended "酒店", "机票", "火车票", "旅游", or "门票·活动" product before filling search fields because each opens a different booking flow.
-- Treat cards marked "广告" as sponsored placements. Compare the exact product, supplier, dates, included services, and final payable total instead of ranking by homepage position, crossed-out price, member price, or a displayed "起" price.
-- For hotels, set the city/property, "入住" and "离店" dates, rooms, and guests before reading availability. Select the exact "房型", bed, breakfast, occupancy, payment timing, and "退订" / cancellation rule; different rows for the same hotel are not interchangeable.
-- For flights, verify airports, local departure and arrival dates, operating carrier, stops, transfer airports, cabin, baggage "行李" allowance, change/refund rules, and whether separate tickets are involved. Do not compare only the headline fare or assume an overnight arrival is the departure date.
-- For trains, distinguish Ctrip's booking layer from the official 12306 order. Verify train, stations, date, seat class, passenger, service/insurance add-ons, and final total; if the flow hands off to 12306, re-read that page under the 12306 adapter instead of assuming Ctrip completed the ticket.
-- Stop for the user when QR "扫码", password, SMS "短信", payment verification, or real-name passenger verification appears. Do not retry around authentication, enter identity details not explicitly provided for this booking, or expose document numbers in summaries.
-- Remove optional insurance, packages, coupons, memberships, or paid add-ons unless the user requested them, and re-read the cancellation/change terms and total after any selection. A lower price can carry materially stricter restrictions.
-- Treat the review page and "提交订单" as a consequential booking action. Re-read travelers/guests, contact details, itinerary, room/fare, cancellation terms, add-ons, currency, and total, and do not submit without the user's explicit confirmation.
-- Report success only when the product-specific result shows "订单号" plus "预订成功" or, for flights/trains, the applicable "出票成功" status. A form submission, pending confirmation, payment redirect, or itinerary held for payment is not a completed booking.
-- If flights.ctrip.com becomes blank or returns HTTP 432, treat it as an anti-automation response rather than "no flights". Do not retry rapidly; return through www.ctrip.com's "机票" entry after a pause, and ask the user to handle any verification that appears.`,
+- Choose "酒店", "机票", "火车票", "旅游", or "景点门票" before filling fields. Attraction tickets may hand off to piao.ctrip.com or huodong.ctrip.com; re-read after the host changes.
+- Treat "广告" cards as sponsored. Compare the exact product, supplier, dates, inclusions, restrictions, and final total; ignore homepage rank, crossed-out/member prices, and "起" prices.
+- Hotels: set city/property, "入住" / "离店", rooms, and guests; verify "房型", bed, breakfast, occupancy, payment timing, and "退订". Rows for one hotel are not interchangeable.
+- Flights: verify airports, local dates/times, carrier, stops/transfers, cabin, "行李", change/refund terms, and separate tickets. Do not compare headline fares alone.
+- Trains: verify train, stations, date, seat, passenger, chargeable extras, and total. After a 12306 handoff, re-read the destination page; do not assume Ctrip completed the ticket.
+- Treat QR "扫码", password, SMS "短信", payment/real-name verification, a blank flights page, and HTTP 432 as blocking challenges. Do not retry or enter unprovided identity details; ask the user. For HTTP 432, pause and return through www.ctrip.com's "机票" entry.
+- On the review page, remove only unrequested chargeable extras; preserve beneficial coupons and check their restrictions. Re-read travelers, contact, itinerary, terms, currency, and total; get explicit confirmation before "提交订单".
+- Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
     name: 'google-maps',
