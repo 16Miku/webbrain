@@ -3241,6 +3241,43 @@ test('matches Marktplaats.nl classifieds and distinguishes its transaction paths
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Leboncoin classifieds and distinguishes delivery from in-person handoff', () => {
+  const trustedUrls = [
+    'https://leboncoin.fr/',
+    'https://www.leboncoin.fr/recherche?text=velo',
+    'https://www.leboncoin.fr/ad/velos/1234567890',
+    'https://www.leboncoin.fr/compte/mes-achats',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'leboncoin');
+    assert.equal(getActiveAdapterFx(url)?.name, 'leboncoin');
+  }
+
+  const rejectedUrls = [
+    'https://pro.leboncoin.fr/',
+    'https://assistance.leboncoin.info/hc/fr',
+    'https://leboncoin.fr.phishing.example/ad/velos/1234567890',
+    'https://example.com/?next=https://www.leboncoin.fr/ad/velos/1234567890',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'leboncoin');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'leboncoin');
+  }
+
+  const adapter = getActiveAdapter('https://www.leboncoin.fr/ad/velos/1234567890');
+  const firefoxAdapter = getActiveAdapterFx('https://leboncoin.fr/recherche?text=velo');
+  assert.match(adapter?.notes || '', /2026-08.*HTTP 403.*blank response.*not.*no listings/s);
+  assert.match(adapter?.notes || '', /CLASSIFIEDS/);
+  assert.match(adapter?.notes || '', /Transaction sécurisée/);
+  assert.match(adapter?.notes || '', /Livraison possible.*Acheter.*Remise en main propre/s);
+  assert.match(adapter?.notes || '', /secure messaging.*triggers.*payment.*before handing over/s);
+  assert.match(adapter?.notes || '', /outside.*not protected/s);
+  assert.match(adapter?.notes || '', /wallet.*Adyen.*verification/s);
+  assert.match(adapter?.notes || '', /payment confirmation.*item received.*transaction record/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
