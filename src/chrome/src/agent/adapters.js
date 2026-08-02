@@ -16670,6 +16670,19 @@ const ADAPTERS = [
 
   // ─── Social (gaps) ────────────────────────────────────────────────────
   {
+    name: 'douyin', category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|live|v)\.)?douyin\.com\//.test(url),
+    notes: `
+- Observed 2026-08: www.douyin.com and /search/video can return HTTP 200 with title "验证码中间页" and no readable body, while live.douyin.com remains readable. Treat that as verification, not empty search results; do not retry or bypass it.
+- Use the visible "搜索你感兴趣的内容" field. Search tabs include 综合, 视频, 用户, and 直播; select the requested type and preserve the query rather than substituting the personalized 推荐 feed.
+- Verify a result by creator name/抖音号, caption, publish date, duration, and stable video/profile URL. Counts may be abbreviated and feeds personalized; do not infer authority, recency, or completeness from rank, likes, or an official-looking name alone.
+- Playback, search, and opening a profile are read-only. 关注, 点赞, 收藏, 评论, 私信, sharing, gifts/recharge, and entering a live interaction change external/account state; perform only the explicitly requested action.
+- "投稿" opens creation. Before publishing, review the exact media, caption, mentions/hashtags, location, cover, visibility, comment/download permissions, and scheduled time; require explicit confirmation for the final publish control.
+- Login or verification can require QR, SMS, captcha, or app handling. Pause for the user. Never send a comment/message, expose contacts, recharge, buy, or send a live gift merely to unlock content.
+- Report publication only when the new work appears on the user's profile with its stable URL and intended visibility; drafts, upload progress, processing/review, or a success toast alone are not public completion.
+    `,
+  },
+  {
     name: 'bilibili',
     category: 'general',
     matches: isBilibiliUrl,

@@ -2418,6 +2418,18 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Douyin video and live surfaces with verification and publication guidance', () => {
+  const urls=['https://douyin.com/','https://www.douyin.com/search/video','https://www.douyin.com/video/123','https://www.douyin.com/user/abc','https://live.douyin.com/123','https://v.douyin.com/abc/'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'douyin');assert.equal(getActiveAdapterFx(url)?.name,'douyin');}
+  for(const url of ['https://open.douyin.com/','https://douyin.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'douyin');
+  const a=getActiveAdapter(urls[1]); const f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*验证码中间页.*live\.douyin\.com/s);
+  assert.match(a?.notes||'',/搜索你感兴趣的内容.*综合.*视频.*用户.*直播/s);
+  assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
+  assert.match(a?.notes||'',/投稿.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
+  assert.equal(f?.notes,a?.notes);
+});
+
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
   const urls = [
     'https://www.bilibili.com/video/BV1FD4y147uH/?p=2',
