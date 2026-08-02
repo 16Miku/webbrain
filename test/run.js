@@ -317,6 +317,8 @@ const { renderSkillMarkdown } = await import(
 const {
   RunUiJournal: RunUiJournalCh,
   RunUiPersistenceScheduler: RunUiPersistenceSchedulerCh,
+  runUiDiscardedBeforeSeq: runUiDiscardedBeforeSeqCh,
+  runUiUnavailableBeforeSeq: runUiUnavailableBeforeSeqCh,
   runUiSnapshotForRequest: runUiSnapshotForRequestCh,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/run-ui-journal.js').replace(/\\/g, '/')
@@ -324,6 +326,8 @@ const {
 const {
   RunUiJournal: RunUiJournalFx,
   RunUiPersistenceScheduler: RunUiPersistenceSchedulerFx,
+  runUiDiscardedBeforeSeq: runUiDiscardedBeforeSeqFx,
+  runUiUnavailableBeforeSeq: runUiUnavailableBeforeSeqFx,
   runUiSnapshotForRequest: runUiSnapshotForRequestFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/run-ui-journal.js').replace(/\\/g, '/')
@@ -53801,6 +53805,7 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
     journal.record(1, 'request-a', 'thinking', { content: 'a4' }, 'run-a');
 
     assert.equal(journal.get(1).events.length, 3, `${label}: replay journal should remain bounded`);
+    assert.equal(journal.get(1).discardedBeforeSeq, 1, `${label}: eviction should expose the genuine replay-gap boundary`);
     assert.equal(journal.get(1).truncatedBeforeSeq, 1, `${label}: compaction should expose the missing sequence boundary`);
     assert.deepEqual(journal.get(2).events.map(event => event.data.content), ['b1'], `${label}: tab B events must remain independent`);
     assert.equal(journal.record(1, 'stale-request', 'plan_review', { planId: 'stale' }, 'run-stale'), null, `${label}: stale request events must be rejected`);
@@ -53814,6 +53819,7 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
     const terminalSeq = journal.get(1).seq;
     assert.ok(journal.acknowledge(1, 'request-a', terminalSeq), `${label}: the rendered tab should acknowledge replay`);
     assert.equal(journal.get(1).events.length, 0, `${label}: acknowledged replay events should be released`);
+    assert.equal(journal.get(1).discardedBeforeSeq, 2, `${label}: acknowledgement must not turn rendered events into replay loss`);
     assert.equal(journal.get(1).finalContent, 'A finished', `${label}: acknowledgement must retain the terminal snapshot`);
 
     const remounted = new Journal();
@@ -53842,7 +53848,8 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
     assert.equal(resumed.foreground, true, `${label}: restored continuations should retain foreground mode`);
     assert.equal(resumed.seq, 2, `${label}: resume must preserve the prior sequence`);
     assert.equal(resumed.ackedSeq, 1, `${label}: resume must preserve the acknowledged replay boundary`);
-    assert.equal(resumed.truncatedBeforeSeq, 1, `${label}: resume must preserve the compaction boundary`);
+    assert.equal(resumed.discardedBeforeSeq, 0, `${label}: acknowledged events must not become replay gaps`);
+    assert.equal(resumed.truncatedBeforeSeq, 0, `${label}: legacy truncation state should represent eviction only`);
     assert.equal(resumed.status, 'running', `${label}: resumed journal should return to running`);
     assert.equal(resumed.pendingPlanId, null, `${label}: stale pre-restart plan ownership should be cleared`);
     assert.deepEqual(
@@ -53862,6 +53869,58 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
       `${label}: resumed events should not collide with prior replay sequence numbers`,
     );
     assert.equal(restarted.resume(7, 'different-request'), null, `${label}: a manual continuation must not reuse another request journal`);
+  }
+});
+
+test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeated polls', () => {
+  for (const [label, Journal, discardedBeforeSeq, unavailableBeforeSeq] of [
+    ['chrome', RunUiJournalCh, runUiDiscardedBeforeSeqCh, runUiUnavailableBeforeSeqCh],
+    ['firefox', RunUiJournalFx, runUiDiscardedBeforeSeqFx, runUiUnavailableBeforeSeqFx],
+  ]) {
+    const acknowledged = new Journal();
+    acknowledged.begin(9, `${label}-ack-only`);
+    acknowledged.record(9, `${label}-ack-only`, 'thinking', { step: 1 });
+    acknowledged.acknowledge(9, `${label}-ack-only`, 1);
+    assert.equal(discardedBeforeSeq(acknowledged.get(9)), 0, `${label}: normal acknowledgement must not report replay loss`);
+    assert.equal(unavailableBeforeSeq(acknowledged.get(9)), 1, `${label}: another panel should still know acknowledged events are unavailable for replay`);
+
+    const evicted = new Journal({ eventLimit: 1 });
+    evicted.begin(10, `${label}-evicted`);
+    evicted.record(10, `${label}-evicted`, 'thinking', { step: 1 });
+    evicted.record(10, `${label}-evicted`, 'thinking', { step: 2 });
+    const snapshot = evicted.get(10);
+    let lastRenderedSeq = 0;
+    let notices = 0;
+    for (let poll = 0; poll < 6; poll++) {
+      const boundary = unavailableBeforeSeq(snapshot);
+      if (boundary > lastRenderedSeq) {
+        notices += 1;
+        lastRenderedSeq = boundary;
+      }
+    }
+    assert.equal(notices, 1, `${label}: repeated state polls should render one replay-gap notice`);
+
+    assert.equal(
+      discardedBeforeSeq({ ackedSeq: 4, truncatedBeforeSeq: 4 }),
+      0,
+      `${label}: legacy ack-only snapshots should migrate without a false replay gap`,
+    );
+    assert.equal(
+      discardedBeforeSeq({ ackedSeq: 1, truncatedBeforeSeq: 3 }),
+      3,
+      `${label}: legacy snapshots should preserve a genuine unacknowledged eviction boundary`,
+    );
+
+    lastRenderedSeq = 0;
+    notices = 0;
+    for (let poll = 0; poll < 6; poll++) {
+      const boundary = unavailableBeforeSeq(acknowledged.get(9));
+      if (boundary > lastRenderedSeq) {
+        notices += 1;
+        lastRenderedSeq = boundary;
+      }
+    }
+    assert.equal(notices, 1, `${label}: acknowledged events from another panel should produce one replay-gap notice, not one per poll`);
   }
 });
 
@@ -54806,6 +54865,9 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(panel, /sendPlanReviewDecisionWithReconnect\(/, `${label}: plan decisions should survive a lost response channel`);
     assert.match(panel, /showActivity\('Reconnecting…'\)/, `${label}: reconnect attempts should be visible`);
     assert.match(panel, /onState: state => applyActiveRunState\(tabId, state\)/, `${label}: reconnect probes should replay missed UI journal events`);
+    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?lastRenderedSeq = unavailableBeforeSeq;[\s\S]*?dataset\.lastRenderedSeq = String\(lastRenderedSeq\)/, `${label}: replay gaps should render once and advance the local replay cursor`);
+    assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?Some earlier run progress could not be replayed/, `${label}: replay loss needs distinct non-context-compaction copy`);
+    assert.doesNotMatch(panel, /addContextCompactedNote\(\{ message: 'Some hidden-tab progress was compacted\.' \}\)/, `${label}: replay loss must not masquerade as model-context compaction`);
     assert.match(panel, /void adoptRestoredRunState\(numericTabId, state\)/, `${label}: remounted sidepanels should adopt orphaned run monitors`);
     assert.match(panel, /probeFirst: true,[\s\S]*?requireDurableSubmittedTurn:/, `${label}: remount adoption should probe before any safe continuation`);
     assert.match(panel, /if \(state\?\.running \|\| state\?\.starting\)/, `${label}: a reserved detached start should keep the composer and Stop UI in their active state`);

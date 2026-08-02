@@ -16,6 +16,7 @@ import {
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
+import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
@@ -3827,7 +3828,7 @@ async function applyActiveRunState(numericTabId, state) {
     runAssistantEl.dataset.runRequestId = String(runUi.requestId);
     runAssistantEl.dataset.retryForeground = runUi.foreground === true ? 'true' : 'false';
     if (runUi.runId) runAssistantEl.dataset.runId = String(runUi.runId);
-    const lastRenderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
+    let lastRenderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     const replayEvents = Array.isArray(runUi.events) ? runUi.events : [];
     const snapshotStreamedText = runUi.streamedTextTruncated === true
       ? ''
@@ -3857,8 +3858,14 @@ async function applyActiveRunState(numericTabId, state) {
       restoredSnapshotStream = true;
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
-    if (runUi.truncatedBeforeSeq > lastRenderedSeq) {
-      addContextCompactedNote({ message: 'Some hidden-tab progress was compacted.' });
+    const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
+    if (unavailableBeforeSeq > lastRenderedSeq) {
+      addRunProgressReplayGapNote();
+      // The discarded range has now been represented by the one gap marker.
+      // Advance the local cursor so the 1.2s run-state poll cannot append the
+      // same notice again when there are no replayable events after the gap.
+      lastRenderedSeq = unavailableBeforeSeq;
+      runAssistantEl.dataset.lastRenderedSeq = String(lastRenderedSeq);
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
@@ -8976,6 +8983,23 @@ function addContextCompactedNote(data) {
   // at the actual compaction point, interleaved with the tool steps. Appending
   // to messagesEl would drop it *after* the still-open bubble — i.e. before the
   // text/tool output that the same bubble keeps receiving post-compaction.
+  const stepsContainer = getOrCreateStepsContainer();
+  if (stepsContainer) {
+    stepsContainer.appendChild(note);
+  } else {
+    messagesEl.appendChild(note);
+  }
+  scrollToBottom();
+}
+
+/**
+ * Run-journal replay loss is UI history loss, not model-context compaction.
+ * Keep the styling subtle but use a distinct class and unambiguous copy.
+ */
+function addRunProgressReplayGapNote() {
+  const note = document.createElement('div');
+  note.className = 'context-compacted-note run-progress-replay-gap-note';
+  note.textContent = 'Some earlier run progress could not be replayed';
   const stepsContainer = getOrCreateStepsContainer();
   if (stepsContainer) {
     stepsContainer.appendChild(note);
