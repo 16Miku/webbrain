@@ -1615,6 +1615,11 @@ export class ScheduledJobManager {
       this._waitingForInput.delete(job.id);
       if (runStatus === 'clarification_required') {
         await this._markClarificationRequired(running, result);
+      } else if (runStatus === 'delivery_recovery_failed') {
+        await this._markFailed(
+          running,
+          result || 'Scheduled run reached the browser observation limit without a valid terminal result.',
+        );
       } else {
         await this._complete(running, result, runOutcome, { watchAlert });
       }
