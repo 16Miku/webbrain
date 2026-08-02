@@ -16843,6 +16843,22 @@ const ADAPTERS = [
 
   // ─── Job Portals ──────────────────────────────────────────────────────
   {
+    name: 'boss-zhipin',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?zhipin\.com\//.test(url),
+    notes: `
+- Observed 2026-08 on the BOSS直聘 desktop site; the same guidance covers public m.zhipin.com job listings. The main search field is labeled "搜索职位、公司".
+- Search results use /web/geek/jobs?query=...&city=...&industry=&position=. Verify the visible 城市 before comparing results: the numeric city= value may come from a default or geolocation and can silently be wrong.
+- Read each card's job title, K-denominated salary range, suffix such as "·15薪", district, experience, education, company, financing, and company size. "·15薪" means 15 salary months, not the monthly amount; do not rank on the headline salary alone.
+- Open the job detail and verify the full description, location, company, and recruiter/BOSS identity and active-time indicators. Check for duplicate or agency listings and any mismatch with the result card before recommending it.
+- "立即沟通" / "开聊" starts a direct conversation; it is not an application or an offer. Treat starting the chat and sending its first message as an external social action, and require the user's explicit request and reviewed message.
+- Sending or attaching a resume, choosing "交换联系方式", and accepting an 面试邀请 are separate consequential actions that can expose the registered phone number or 微信. Ask for explicit confirmation immediately before each action; permission to find jobs does not authorize any of them.
+- Resume visibility controls are under "通知与隐私设置" and include "对BOSS隐藏简历" and "屏蔽公司". Report these options when relevant, but never change privacy or blocking settings without the user's request.
+- Login may require SMS, QR-code scanning, CAPTCHA, or the "安全验证" route at /web/passport/zp/verify.html. If any code, slider, image, CAPTCHA, or safety-verification challenge appears, stop and ask the user to complete it manually; do not enter codes, solve the challenge, or continue until the user has completed it. A search route can also end at about:blank or show no content after an initial HTTP 200; treat that as an access/anti-automation restriction, not "no jobs", avoid rapid retries, and use a public /zhaopin/... listing or request user verification.
+- Verify completion from the resulting state: a sent chat must be visible in the message thread, a resume must show a sent/delivered status if one was requested, a contact exchange must show an accepted/exchanged state or the requested contact details, and an interview invitation must show its explicit status. Opening a card, requesting contact exchange, or clicking into a conversation is not proof of application, delivery, exchange, or an offer.
+    `,
+  },
+  {
     name: 'greenhouse',
     category: 'general',
     // Greenhouse hosts ATS for many employers under boards.greenhouse.io
