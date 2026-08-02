@@ -2633,6 +2633,9 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
     'https://s.taobao.com/search?q=%E6%89%8B%E6%9C%BA',
     'https://item.taobao.com/item.htm?id=123456789',
     'https://shop123456789.taobao.com/',
+    'https://store.taobao.com/shop/noshop.htm',
+    'https://shopsearch.taobao.com/search?app=shopsearch&q=%E6%89%8B%E6%9C%BA%E5%A3%B3',
+    'https://passport.taobao.com/',
     'https://cart.taobao.com/cart.htm',
     'https://buy.taobao.com/auction/order/confirm_order.htm',
     'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm',
@@ -2646,6 +2649,8 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
     'https://list.tmall.com/search_product.htm?q=%E6%89%8B%E6%9C%BA',
     'https://detail.tmall.com/item.htm?id=123456789',
     'https://buy.tmall.com/order/confirm_order.htm',
+    'https://cart.tmall.com/cart.htm',
+    'https://my.tmall.com/',
   ];
   for (const url of trustedUrls) {
     assert.equal(getActiveAdapter(url)?.name, 'taobao');
@@ -2660,6 +2665,7 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
     'https://item.taobao.com.phishing.example/item.htm?id=1',
     'https://item.taobao.com@phishing.example/item.htm?id=1',
     'https://detail.tmall.com.phishing.example/item.htm?id=1',
+    'https://store.taobao.com.phishing.example/shop/noshop.htm',
     'https://example.com/?next=https://item.taobao.com/item.htm',
   ];
   for (const url of rejectedUrls) {
@@ -2674,7 +2680,8 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
   assert.match(adapter?.notes || '', /滑动验证/);
   assert.match(adapter?.notes || '', /detail\.tmall\.com/);
   assert.match(adapter?.notes || '', /shop<id>\.taobao\.com/);
-  assert.match(adapter?.notes || '', /搜索.*店铺|搜索.*in-shop search/s);
+  assert.match(adapter?.notes || '', /store\.taobao\.com/);
+  assert.match(adapter?.notes || '', /"搜本店" \/ "搜全站"/);
   assert.match(adapter?.notes || '', /广告|推广/);
   assert.match(adapter?.notes || '', /规格.*收货地址/s);
   assert.match(adapter?.notes || '', /阿里旺旺/);
