@@ -2579,7 +2579,11 @@ test('matches JD shopping surfaces and includes Chinese login and checkout guida
   const trustedUrls = [
     'https://www.jd.com/',
     'https://search.jd.com/Search?keyword=%E6%89%8B%E6%9C%BA',
+    'https://list.jd.com/list.html?cat=9987%2C653%2C655',
     'https://item.jd.com/100134399065.html',
+    'https://mall.jd.com/index-1000004123.html',
+    'https://m.jd.com/',
+    'https://item.m.jd.com/product/100134399065.html',
     'https://cart.jd.com/cart_index',
     'https://trade.jd.com/shopping/order/getOrderInfo.action',
     'https://order.jd.com/center/list.action',
@@ -2594,6 +2598,7 @@ test('matches JD shopping surfaces and includes Chinese login and checkout guida
     'https://corporate.jd.com/home',
     'https://help.jd.com/user/guide.html',
     'https://item.jd.com.phishing.example/100134399065.html',
+    'https://item.jd.com@phishing.example/100134399065.html',
     'https://example.com/?next=https://item.jd.com/100134399065.html',
   ];
   for (const url of rejectedUrls) {
@@ -2607,9 +2612,12 @@ test('matches JD shopping surfaces and includes Chinese login and checkout guida
   assert.match(adapter?.notes || '', /passport\.jd\.com.*czLogin=1/s);
   assert.match(adapter?.notes || '', /QR code.*password.*SMS/i);
   assert.match(adapter?.notes || '', /ReturnUrl/);
+  assert.match(adapter?.notes || '', /list\.jd\.com/);
+  assert.match(adapter?.notes || '', /mall\.jd\.com/);
   assert.match(adapter?.notes || '', /搜全站.*搜本店/s);
   assert.match(adapter?.notes || '', /自营/);
   assert.match(adapter?.notes || '', /配送至/);
+  assert.match(adapter?.notes || '', /APP专享价/);
   assert.match(adapter?.notes || '', /加入购物车/);
   assert.match(adapter?.notes || '', /立即购买/);
   assert.match(adapter?.notes || '', /去结算/);
