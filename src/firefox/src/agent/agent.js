@@ -1626,9 +1626,23 @@ export class Agent extends LoopDetector {
       && result?.inconclusive !== true;
   }
 
+  _deliveryCheckpointVerifiedPendingAction(beforeState, afterState) {
+    if (beforeState?.verificationDebt !== true || afterState?.verificationDebt !== false) return false;
+    const actionSequence = Number(afterState?.lastAction?.sequence || 0);
+    const observationSequence = Number(afterState?.lastObservation?.sequence || 0);
+    return actionSequence > 0 && observationSequence > actionSequence;
+  }
+
   _checkDeliveryObservationStreak(tabId, name, args = {}, result = null, options = {}) {
     const observation = this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
       && !isNetworkMutation(name, args);
+    if (observation && options.verifiedPendingAction === true) {
+      // A successful observation that clears the completion invariant's
+      // post-action verification debt is meaningful progress. Start the next
+      // research streak from zero instead of charging this verification read.
+      this.deliveryObservationStreaks.delete(tabId);
+      return { kind: 'none' };
+    }
     if (!observation) {
       // Meta calls (scratchpad, load_skill, failed actions, etc.) must not let
       // the model erase an outstanding delivery obligation. Reset only after
@@ -3630,7 +3644,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           consequential: executionMutationEvidence,
         });
       }
-      this._recordCompletionToolResult(tabId, fnName, fnArgs, toolResult);
+      const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
+      const completionStateAfterTool = this._recordCompletionToolResult(tabId, fnName, fnArgs, toolResult);
       // Keep binary attachments out of updates, traces, and persisted tool
       // result text. They are delivered through dedicated message channels.
       let attachedImage = null;
@@ -3927,6 +3942,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         toolResult,
         {
           consequential: executionMutationEvidence,
+          verifiedPendingAction: this._deliveryCheckpointVerifiedPendingAction(
+            completionStateBeforeTool,
+            completionStateAfterTool,
+          ),
           // Ask research can lose a useful deliverable to the same observation
           // drift as Act/Dev. Any interactive mode that advertises `done`
           // gets the second-checkpoint terminal recovery.
@@ -6948,7 +6967,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const tool = JSON.parse(JSON.stringify(base));
     const secretRule = this.strictSecretMode
       ? ' Never include passwords, API keys, tokens, OTPs, recovery codes, or other literal credentials in the summary.'
-      : ' Prefer generic credential references unless the user explicitly asked to see that exact value.';
+      : ' Do not needlessly repeat user-provided or page-discovered credentials. If WebBrain generated a new credential for this task and the user needs it to use the result, include it once; also include an exact credential when the user explicitly asked to see it.';
     tool.function.description = `Required terminal delivery after the browser observation limit. Call exactly once. Use partial for useful incomplete results or failed for a hard blocker; success is not allowed. The summary is displayed verbatim, so include the actual result and limitations.${secretRule}`;
     tool.function.parameters.properties.outcome = {
       type: 'string',

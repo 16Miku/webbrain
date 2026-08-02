@@ -67,6 +67,15 @@ export class AnthropicProvider extends BaseLLMProvider {
     });
   }
 
+  _convertToolChoice(toolChoice) {
+    if (!toolChoice || toolChoice === 'auto') return undefined;
+    if (toolChoice === 'required') return { type: 'any' };
+    const name = toolChoice?.function?.name || toolChoice?.name;
+    if (name) return { type: 'tool', name };
+    if (toolChoice?.type === 'required' || toolChoice?.type === 'any') return { type: 'any' };
+    return undefined;
+  }
+
   /**
    * Convert OpenAI-style messages to Anthropic format.
    * Extracts system message, converts tool_calls/tool results.
@@ -204,6 +213,8 @@ export class AnthropicProvider extends BaseLLMProvider {
     this._addTemperature(body, options);
     if (options.tools && options.tools.length > 0) {
       body.tools = this._convertTools(options.tools);
+      const toolChoice = this._convertToolChoice(options.toolChoice);
+      if (toolChoice) body.tool_choice = toolChoice;
     }
     body = this._prepareRequestBody(body, options, false);
 
@@ -266,6 +277,8 @@ export class AnthropicProvider extends BaseLLMProvider {
     this._addTemperature(body, options);
     if (options.tools && options.tools.length > 0) {
       body.tools = this._convertTools(options.tools);
+      const toolChoice = this._convertToolChoice(options.toolChoice);
+      if (toolChoice) body.tool_choice = toolChoice;
     }
     body = this._prepareRequestBody(body, options, true);
 

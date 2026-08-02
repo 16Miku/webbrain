@@ -52,6 +52,15 @@ export class AwsBedrockProvider extends BaseLLMProvider {
     if (!this.region) throw new Error('AWS region is required.');
   }
 
+  _convertToolChoice(toolChoice) {
+    if (!toolChoice || toolChoice === 'auto') return { auto: {} };
+    if (toolChoice === 'required') return { any: {} };
+    const name = toolChoice?.function?.name || toolChoice?.name;
+    if (name) return { tool: { name } };
+    if (toolChoice?.type === 'required' || toolChoice?.type === 'any') return { any: {} };
+    return { auto: {} };
+  }
+
   _endpoint() {
     const host = `bedrock-runtime.${this.region}.amazonaws.com`;
     const path = `/model/${encodeURIComponent(this.modelId)}/converse`;
@@ -148,7 +157,7 @@ export class AwsBedrockProvider extends BaseLLMProvider {
                 inputSchema: { json: fn.parameters || { type: 'object', properties: {} } },
               },
             })),
-          toolChoice: { auto: {} },
+          toolChoice: this._convertToolChoice(options.toolChoice),
         }
       : undefined;
 
