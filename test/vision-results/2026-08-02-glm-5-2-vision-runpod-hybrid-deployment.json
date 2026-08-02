@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "provider": "RunPod Secure Cloud",
+  "checkpoint": "0xSero/GLM-5.2-MXFP8-NVFP4-NF3-Hybrid-Vision",
+  "checkpointRevision": "6395e588e0f22dc9c9988907d6281ce675ec7e20",
+  "sourceVisionCheckpoint": "baseten/GLM-5.2-Vision-NVFP4",
+  "hardware": {
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpuCount": 4,
+    "vramGiBPerGpu": 96
+  },
+  "runtime": {
+    "baseImage": "madeby561/vllm-glm52-nvfp4-nf3-hybrid:v3",
+    "engine": "vLLM with the checkpoint's glm52_vision plugin",
+    "tensorParallelSize": 4,
+    "decodeContextParallelSize": 4,
+    "maxModelLength": 250000,
+    "kvCacheDtype": "fp8",
+    "gpuMemoryUtilization": 0.974,
+    "weightsGiBPerGpu": 84.93,
+    "reportedKvCacheTokens": 508955
+  },
+  "quantizationDisclosure": {
+    "textBackbone": "hybrid MXFP8 + NVFP4 + NF3; full 753B model with all 256 experts",
+    "vision": "MoonViT vision tower and trained PatchMerger inherited from the Baseten GLM-5.2-Vision release",
+    "officialBasetenNvfp4Checkpoint": false
+  },
+  "run": {
+    "fixture": "test/fixtures/google-signin-password-error.jpg",
+    "result": "2026-08-02-glm-5-2-vision-runpod-hybrid.json",
+    "podUptimeAtStopSeconds": 957,
+    "cleanup": "The benchmark Pod was stopped and deleted after the result was saved; its 500 GB volume was also removed."
+  },
+  "notes": [
+    "The publisher's prebuilt GHCR vision image rejected anonymous pulls during this run.",
+    "The public base runtime was used and the small vision plugin was installed from the checkpoint repository before serving.",
+    "This is not a result for Baseten's official pure-NVFP4 deployment and must be labeled as the community hybrid checkpoint."
+  ]
+}
