@@ -2919,6 +2919,72 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches 58.com city and service surfaces with safe classifieds guidance', () => {
+  const trustedUrls = [
+    'https://58.com/',
+    'https://www.58.com/',
+    'https://m.58.com/',
+    'https://wap.58.com/wap.html',
+    'https://sh.58.com/',
+    'https://szkunshan.58.com/zufang/',
+    'https://sh.58.com/job.shtml',
+    'https://sh.58.com/zufang/',
+    'https://sh.58.com/ershoufang/',
+    'https://sh.58.com/ershouche/',
+    'https://sh.58.com/sale.shtml',
+    'https://sh.58.com/huangye/',
+    'https://passport.58.com/login/',
+    'https://my.58.com/index',
+    'https://vip.58.com/vcenter/myinfo/',
+    'https://employer.58.com/',
+    'https://post.58.com/2/',
+    'https://help.58.com/maoyonginfo/index/',
+    'https://helps.58.com/base/home',
+    'https://fanqizha.58.com/',
+    'https://weiquan.58.com/home',
+    'https://callback.58.com/antibot/verifycode?url=https%3A%2F%2Fsh.58.com%2Fjob.shtml',
+    'https://info5.58.com/sh/ershouche/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, '58-com');
+    assert.equal(getActiveAdapterFx(url)?.name, '58-com');
+  }
+
+  const rejectedUrls = [
+    'https://about.58.com/',
+    'https://static.58.com/ui7/help/',
+    'https://down.58.com/',
+    'https://biz.58.com/',
+    'https://e.58.com/',
+    'https://wbactivity.58.com/pc/adIndex',
+    'https://58.com.phishing.example/zufang/',
+    'https://sh.58.com@phishing.example/zufang/',
+    'https://example.com/?next=https://sh.58.com/zufang/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, '58-com');
+    assert.notEqual(getActiveAdapterFx(url)?.name, '58-com');
+  }
+
+  const adapter = getActiveAdapter('https://sh.58.com/zufang/');
+  const firefoxAdapter = getActiveAdapterFx('https://post.58.com/2/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /CLASSIFIEDS/);
+  assert.match(adapter?.notes || '', /www\.58\.com.*m\.58\.com.*sh\.58\.com.*切换城市/s);
+  assert.match(adapter?.notes || '', /招聘.*房产.*二手车.*二手市场.*本地服务/s);
+  assert.match(adapter?.notes || '', /\/zufang\/.*区域.*地铁线路.*租金.*厅室.*方式.*只看有图/s);
+  assert.match(adapter?.notes || '', /来自经纪人.*安选.*实拍真房.*7日内实拍验真.*广告/s);
+  assert.match(adapter?.notes || '', /revealing a phone number.*sending a resume.*explicit request/s);
+  assert.match(adapter?.notes || '', /deposits.*recruitment fees.*verification codes.*ID scans.*external links/s);
+  assert.match(adapter?.notes || '', /免费发布信息.*post\.58\.com\/2\//s);
+  assert.match(adapter?.notes || '', /publishing.*editing.*deleting.*promoting.*refreshing.*explicit authorization/s);
+  assert.match(adapter?.notes || '', /我的发布.*actual status or public URL/s);
+  assert.match(adapter?.notes || '', /修改\/删除信息.*help\.58\.com.*手机短信删除/s);
+  assert.match(adapter?.notes || '', /HTTP 200.*callback\.58\.com\/antibot\/verifycode.*访问过于频繁.*请在五分钟内完成验证.*点击按钮进行验证/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Allegro.pl shopping surfaces and includes Polish marketplace guidance', () => {
   const trustedUrls = [
     'https://allegro.pl/',
