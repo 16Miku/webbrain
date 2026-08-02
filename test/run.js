@@ -2418,6 +2418,22 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Kuaishou video and live surfaces with access and publication guidance', () => {
+  const urls=['https://kuaishou.com/','https://www.kuaishou.com/search/video?searchKey=x','https://www.kuaishou.com/short-video/abc','https://www.kuaishou.com/profile/abc','https://live.kuaishou.com/123','https://v.kuaishou.com/abc'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'kuaishou');assert.equal(getActiveAdapterFx(url)?.name,'kuaishou');}
+  for(const url of ['https://ir.kuaishou.com/','https://kuaishou.com.phishing.example/']) {
+    assert.notEqual(getActiveAdapter(url)?.name,'kuaishou');
+    assert.notEqual(getActiveAdapterFx(url)?.name,'kuaishou');
+  }
+  const a=getActiveAdapter(urls[0]),f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*"result":2.*live\.kuaishou\.com/s);
+  assert.match(a?.notes||'',/请输入内容进行搜索.*关注.*推荐.*热门.*赛事.*分类/s);
+  assert.match(a?.notes||'',/关注.*点赞.*评论.*私信/s);
+  assert.match(a?.notes||'',/explicit confirmation.*final publish/s);
+  assert.match(a?.notes||'',/profile.*stable URL.*intended visibility/s);
+  assert.equal(f?.notes,a?.notes);
+});
+
 test('matches Douyin video and live surfaces with verification and publication guidance', () => {
   const urls=['https://douyin.com/','https://www.douyin.com/search/video','https://www.douyin.com/video/123','https://www.douyin.com/user/abc','https://live.douyin.com/123','https://v.douyin.com/abc/','https://creator.douyin.com/creator-micro/content/upload'];
   for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'douyin');assert.equal(getActiveAdapterFx(url)?.name,'douyin');}
