@@ -73,13 +73,13 @@ Those conclusions are deployment-specific. A text-only planner, a multimodal clo
 | [Poolside Laguna XS 2.1](https://huggingface.co/poolside/Laguna-XS-2.1) | Poolside, US, open-weight | Mixed-attention MoE | 33B / 3B | **Text only** |
 | [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) | Z.ai, China, open-weight | MoE + MLA + DSA | 744B / 40B | **Text only on the tested route** |
 | [DeepSeek V4 Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) | DeepSeek, China, open-weight | MoE | 284B / 13B | **Text only** |
-| [Inkling Small](https://thinkingmachines.ai/news/introducing-inkling/) | Thinking Machines, US, open-weight | MoE | Not disclosed / 12B | Text, image, audio |
+| [Inkling Small](https://thinkingmachines.ai/news/introducing-inkling/) | Thinking Machines, US, hosted preview; weights pending | MoE | 276B / 12B | Text, image, audio |
 | [Qwen 3.6 27B](https://huggingface.co/Qwen/Qwen3.6-27B) | Alibaba Qwen, China, open-weight | **Dense** | 27B / 27B | Text, image, video |
 | [Kimi K3](https://huggingface.co/moonshotai/Kimi-K3) | Moonshot AI, China, open-weight | MoE | 2.8T / 104B | Text and image on this route; official checkpoint is multimodal |
 | [GPT-5.6 Terra Pro](https://developers.openai.com/api/docs/guides/latest-model) | OpenAI, US, closed | Undisclosed | — / — | Text, image, file |
 | [Tencent HY3](https://huggingface.co/tencent/Hy3) | Tencent, China, open-weight | MoE | 295B + 3.8B MTP / 21B | **Text only** |
 
-The parameter table explains why “small” can be misleading. Laguna XS activates only 3B parameters from a 33B checkpoint. Inkling Small activates 12B parameters but its total size is not officially disclosed. DeepSeek activates 13B of 284B, HY3 activates 21B of 295B, and MiniMax M3 activates roughly 23B of 428B. Kimi K3 is in a different infrastructure class at 2.8 trillion total and 104B active. Qwen is the outlier in the other direction: all 27B dense parameters participate, but the full model is compact enough to make one-box local inference practical after quantization.
+The parameter table explains why “small” can be misleading. Laguna XS activates only 3B parameters from a 33B checkpoint. Inkling Small is a 276B-total MoE despite activating only 12B parameters. DeepSeek activates 13B of 284B, HY3 activates 21B of 295B, and MiniMax M3 activates roughly 23B of 428B. Kimi K3 is in a different infrastructure class at 2.8 trillion total and 104B active. Qwen is the outlier in the other direction: all 27B dense parameters participate, but the full model is compact enough to make one-box local inference practical after quantization.
 
 It also shows why DeepSeek and HY3 cannot simply be declared the two best browser models. Their tested routes received textual page state and tool schemas but cannot inspect a screenshot. Laguna XS is also text-only. GLM-5.2's tested OpenRouter route is text-only, although a released Vision NVFP4 checkpoint changes its broader deployment story. Gemini, Grok, MiniMax, Sonnet, Inkling, Qwen, Kimi, and the GPT-5.6 routes have a wider input surface. **This benchmark did not send images, video, audio, or files to any model**, so multimodality is product context rather than a scored advantage.
 
@@ -292,7 +292,7 @@ Laguna XS 2.1 makes the American open-weight claim much more concrete. [Poolside
 
 That is a remarkably efficient row. It is only a text-to-text coding specialist, chooses the ideal tool 31 times, and reaches just five exact ideal actions. One `press_keys` argument is schema-invalid. So Laguna XS is not a universal browser model or an argument-precision champion. It is, however, the first compact American open-weight model in this cohort that is simultaneously competitive, fast, locally plausible, and almost free to host.
 
-Inkling Small ranks eleventh in exact consensus, emits 84 tool calls, and is not a score champion. Its significance is a different capability surface: a 12B-active downloadable model with text, image, and audio input, 1.05-second median latency on the tested hosted route, and a $0.243 replay cost.
+Inkling Small ranks eleventh in exact consensus, emits 84 tool calls, and is not a score champion. Its significance is a different capability surface: a 276B-total/12B-active open-weight preview with text, image, and audio input, 1.05-second median latency on the tested hosted route, and a $0.243 replay cost. Thinking Machines says it will release the full weights after testing is complete.
 
 It also does not stand alone. Our earlier [full-size Inkling test](/blog/thinking-machines-inkling-openrouter-planner-benchmark/) verified image and audio input and found a highly parseable, broad model. Poolside's [Laguna S 2.1 test](/blog/poolside-laguna-s-openrouter-planner-benchmark/) showed an extraordinarily inexpensive 118B-A8B American coding model, while [Laguna M.1](/blog/poolside-laguna-m1-openrouter-planner-benchmark/) fixed much of S's no-tool problem at 225B-A23B.
 
@@ -324,7 +324,7 @@ Still, “Chinese models are cheaper but clearly a tier behind” is no longer a
 | Best-balanced Claude-like value generalist | **MiniMax M3** | Image/video, 1M context, 23B active, good latency and observed cost |
 | Compact US open-weight text/coding planner | **Poolside Laguna XS 2.1** | 33B/3B active, 1.15s median, $0.073 replay, local quantizations |
 | Open-weight vision at infrastructure scale | **GLM-5.2 Vision NVFP4** | Real released vision graft, but requires 4–8 B200 GPUs and was not scored here |
-| Audio-capable open-weight route | **Inkling Small** | Text, image, and audio with a 12B-active footprint |
+| Audio-capable preview route | **Inkling Small** | Text, image, and audio with a 276B-total/12B-active MoE footprint; weights pending |
 | High-volume route to retest in two turns | **GPT-5.6 Luna** | Very low list price; direct actions were often sensible after cautious observation was excluded |
 | One RTX 5090, private and offline | **Qwen 3.6 27B quantized** | Dense 27B, multimodal, practical 32GB-class local deployment |
 
