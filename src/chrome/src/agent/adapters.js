@@ -16294,6 +16294,21 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'qunar',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?!(?:source|yun|adqunar|security)\.)(?:[a-z0-9-]+\.)*qunar\.com\//.test(url),
+    notes: `
+- Observed 2026-08: the desktop business surfaces span flight.qunar.com, hotel.qunar.com, train.qunar.com, piao.qunar.com, dujia.qunar.com, and other nested qunar.com hosts. www.qunar.com may render only its footer while a business page remains usable; use the requested product entry instead of treating that shell as an empty inventory.
+- Start by selecting 机票, 酒店, 火车票, 门票, or 度假. The flight form distinguishes 单程, 往返, and 多程 and labels origin/destination as "从" / "到"; verify cities or airports, local dates, travelers, and every leg before searching.
+- Qunar is a comparison/booking platform with products supplied by airlines, agents, hotels, or other third parties. Read the supplier, information update time, exact itinerary or room/product, taxes and fees, baggage/inclusions, and refund/change/cancellation terms; a headline or "起" price is not the final payable total.
+- A flight result can expose several supplier offers for one itinerary. "预订" may hand off to a supplier site or a Qunar-supported order page; re-read the host, supplier, selected offer, currency, and terms after the transition, and preserve the supplier name and order number for after-sales support.
+- For hotels verify 入住/离店, guests, room and bed type, meals, cancellation deadline, prepayment/deposit, and taxes. For train, ticket, and holiday products verify the exact date, traveler eligibility, inventory, inclusions, exclusions, and fulfillment provider rather than transferring flight assumptions to them.
+- Searching and opening an offer are read-only. Creating an order, submitting traveler/contact identity, accepting terms, and paying are separate consequential actions; ask for explicit confirmation immediately before the control that creates/submits the order and again before payment when it is a distinct step.
+- Login routes through user.qunar.com and may require the user's password, SMS, QR code, or another verification step. Pause for the user and never invent traveler identity, document, phone, or membership details.
+- A search result, supplier redirect, payment page, or unpaid order is not a completed booking. Report success only from the relevant 查看订单 / order page with an order number and the explicit product status; for flights distinguish pending payment, paid, issuing, 出票成功, cancelled, and refund/change states.
+    `,
+  },
+  {
     name: 'google-maps',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/maps/.test(url) || /^https?:\/\/maps\.google\.[a-z.]+\//.test(url),
@@ -16304,6 +16319,20 @@ const ADAPTERS = [
 - Place details panel has multiple tabs (Overview, Reviews, Photos, About) — switch by clicking the tab label. Reviews lazy-load.
 - "Send directions to your phone" requires Google sign-in.
 - Sharing a place produces a /maps/place/... URL with a CID — that's the stable link. The current viewport URL with @lat,lng,zoom is not a place link.`,
+  },
+  {
+    name: 'amap',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|uri)\.)?amap\.com\//.test(url),
+    notes: `
+- Treat amap.com, www.amap.com, m.amap.com, and uri.amap.com as Amap / 高德地图 consumer surfaces as of 2026-08. Exclude lbs.amap.com because it is the developer platform, not the map task UI.
+- Enter places in "搜索位置、公交站、地铁站" and read results from the side panel. The map itself is canvas / 画布 rendered, so do not infer names, coordinates, routes, or traffic from pixels when the selected result and sidebar text are available.
+- Confirm the current city and the exact POI name, category, district, and street address before selecting a result. A /search URL can carry its city= "城市" value from geolocation or a previous search; same-named places in different cities are not interchangeable.
+- For directions, set and re-read both start and destination, then choose deliberately among "驾车", "公交", "步行", and "骑行". If the start is blank, the site may use current location; do not assume that location is correct or grant location permission without the user's intent.
+- Compare route duration, distance, transfers, walking, tolls, and arrival estimates from the route side panel. Traffic-sensitive times and "推荐" ranking can change; report the observation time and do not promise an arrival from a single estimate.
+- Treat "卫星", "路况", "测距", and "地铁" as map layers/tools, not search results. Toggling them changes presentation and can obscure the active side panel; re-read the selected POI or route after changing a layer.
+- Public place search and route planning do not require sign-in. If "短信登录" or "二维码登录" appears, close or defer it for read-only work; ask the user to authenticate only for an explicitly requested account feature such as favorites or synchronized history.
+- Follow actual share/navigation links on m.amap.com or uri.amap.com and preserve their provided coordinates, POI IDs, names, and route mode. Do not synthesize a destination from rounded visible coordinates, and record the final place/route after the handoff.`,
   },
   {
     name: 'google-flights',
@@ -16670,6 +16699,20 @@ const ADAPTERS = [
 
   // ─── Social (gaps) ────────────────────────────────────────────────────
   {
+    name: 'xianyu', category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|h5)\.)?goofish\.com\//.test(url),
+    notes: `
+- Observed 2026-08: www.goofish.com can return HTTP 200 with "非法访问" and "为了保障您的体验，请使用正常浏览器访问闲鱼". Stop and ask the user to use the normal browser/app; do not retry, disguise automation, bypass the block, or claim there are no items.
+- For readable search/listing pages verify the exact category, title, price, location, delivery/pickup method, publish/update time, and stable item URL. Search cards are leads, not proof that an item remains available.
+- Xianyu is a user-to-user second-hand marketplace. Read every photo and description, selected variant/quantity, condition and defects, authenticity/provenance claims, seller identity/profile and transaction history; distinguish seller claims from platform-backed inspection or protection explicitly shown for that item.
+- Separate the displayed asking price from a negotiated price, shipping, inspection, service fees, and the final order total. Very low prices, deposits, installment/down-payment wording, and "到手价" conditions require clarification rather than optimistic ranking.
+- "想要" / "聊一聊" opens seller chat; sending a message, offer, address, or contact information is an external action. Require the user's exact intent, verify the item/seller, and review the message before sending; never move to an external messenger or payment link supplied in chat.
+- Keep order and payment in the platform-supported transaction flow. Never send verification codes, account credentials, ID scans, deposits, or direct transfers. Before creating/paying an order, re-read item, negotiated terms, condition, quantity, seller, delivery, address, protection/refund terms, and final total, then require explicit confirmation.
+- "确认收货" can release funds and must never be used merely because tracking says delivered; require the user's explicit confirmation that the exact item was received and inspected. Preserve listing, chat, unboxing, tracking, and payment evidence for disputes.
+- Publishing a listing is separate from research: review title, category, description/defects, photos, price, shipping/pickup, location, quantity, and visibility before final confirmation. Report sale/purchase/publication only from the corresponding order or profile page with a stable ID and explicit status; draft, chat agreement, pending payment, or upload success is incomplete.
+    `,
+  },
+  {
     name: 'bilibili',
     category: 'general',
     matches: isBilibiliUrl,
@@ -16779,8 +16822,8 @@ const ADAPTERS = [
 - "立即沟通" / "开聊" starts a direct conversation; it is not an application or an offer. Treat starting the chat and sending its first message as an external social action, and require the user's explicit request and reviewed message.
 - Sending or attaching a resume, choosing "交换联系方式", and accepting an 面试邀请 are separate consequential actions that can expose the registered phone number or 微信. Ask for explicit confirmation immediately before each action; permission to find jobs does not authorize any of them.
 - Resume visibility controls are under "通知与隐私设置" and include "对BOSS隐藏简历" and "屏蔽公司". Report these options when relevant, but never change privacy or blocking settings without the user's request.
-- Login may require SMS, QR-code scanning, or the "安全验证" route at /web/passport/zp/verify.html. Pause for the user. A search route can also end at about:blank or show no content after an initial HTTP 200; treat that as an access/anti-automation restriction, not "no jobs", avoid rapid retries, and use a public /zhaopin/... listing or request user verification.
-- Verify completion from the resulting state: a sent chat must be visible in the message thread, a resume must show a sent/delivered status if one was requested, and an interview invitation must show its explicit status. Opening a card or clicking into a conversation is not proof of application, delivery, or an offer.
+- Login may require SMS, QR-code scanning, CAPTCHA, or the "安全验证" route at /web/passport/zp/verify.html. If any code, slider, image, CAPTCHA, or safety-verification challenge appears, stop and ask the user to complete it manually; do not enter codes, solve the challenge, or continue until the user has completed it. A search route can also end at about:blank or show no content after an initial HTTP 200; treat that as an access/anti-automation restriction, not "no jobs", avoid rapid retries, and use a public /zhaopin/... listing or request user verification.
+- Verify completion from the resulting state: a sent chat must be visible in the message thread, a resume must show a sent/delivered status if one was requested, a contact exchange must show an accepted/exchanged state or the requested contact details, and an interview invitation must show its explicit status. Opening a card, requesting contact exchange, or clicking into a conversation is not proof of application, delivery, exchange, or an offer.
     `,
   },
   {
