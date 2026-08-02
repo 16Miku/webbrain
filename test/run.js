@@ -2754,6 +2754,42 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Qunar travel surfaces and distinguishes search, supplier, order, and ticket states', () => {
+  const trustedUrls = [
+    'https://qunar.com/', 'https://www.qunar.com/', 'https://flight.qunar.com/',
+    'https://hotel.qunar.com/', 'https://train.qunar.com/', 'https://piao.qunar.com/',
+    'https://dujia.qunar.com/', 'https://fh.dujia.qunar.com/', 'https://diy.dujia.qunar.com/',
+    'https://user.qunar.com/passport/login.jsp', 'https://order.qunar.com/flight/',
+    'https://help.qunar.com/', 'https://m.qunar.com/', 'https://app.qunar.com/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'qunar');
+    assert.equal(getActiveAdapterFx(url)?.name, 'qunar');
+  }
+  for (const url of [
+    'https://source.qunar.com/file.pdf', 'https://yun.qunar.com/uploads/file.pdf',
+    'https://adqunar.qunar.com/travelnews/', 'https://security.qunar.com/',
+    'https://qunar.com.phishing.example/', 'https://example.com/?next=https://flight.qunar.com/',
+  ]) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'qunar');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'qunar');
+  }
+  const adapter = getActiveAdapter('https://flight.qunar.com/');
+  const firefoxAdapter = getActiveAdapterFx('https://fh.dujia.qunar.com/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /www\.qunar\.com.*footer.*business page/s);
+  assert.match(adapter?.notes || '', /机票.*酒店.*火车票.*门票.*度假/s);
+  assert.match(adapter?.notes || '', /单程.*往返.*多程.*"从".*"到"/s);
+  assert.match(adapter?.notes || '', /supplier.*taxes and fees.*baggage.*refund\/change\/cancellation/s);
+  assert.match(adapter?.notes || '', /预订.*supplier site.*order page/s);
+  assert.match(adapter?.notes || '', /入住\/离店.*cancellation deadline.*prepayment\/deposit/s);
+  assert.match(adapter?.notes || '', /explicit confirmation.*before payment/s);
+  assert.match(adapter?.notes || '', /user\.qunar\.com.*password.*SMS.*QR code/s);
+  assert.match(adapter?.notes || '', /查看订单.*order number.*出票成功/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Coupang shopping surfaces and includes Korean marketplace guidance', () => {
   const trustedUrls = [
     'https://coupang.com/',
