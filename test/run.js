@@ -3058,6 +3058,7 @@ test('matches 58.com city and service surfaces with safe classifieds guidance', 
   assert.match(adapter?.notes || '', /publishing.*editing.*deleting.*promoting.*refreshing.*explicit authorization/s);
   assert.match(adapter?.notes || '', /我的发布.*actual status or public URL/s);
   assert.match(adapter?.notes || '', /修改\/删除信息.*help\.58\.com.*手机短信删除/s);
+  assert.match(adapter?.notes || '', /SMS or CAPTCHA.*stop.*user.*complete it manually.*do not request, enter, or relay an SMS code.*do not solve or bypass a CAPTCHA/s);
   assert.match(adapter?.notes || '', /HTTP 200.*callback\.58\.com\/antibot\/verifycode.*访问过于频繁.*请在五分钟内完成验证.*点击按钮进行验证/s);
   assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);

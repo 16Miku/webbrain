@@ -16518,7 +16518,7 @@ const ADAPTERS = [
 - The platform's own agreement says listing information is user-published and transactions require independent judgment. Preserve the listing URL, screenshots, chat, receipts, and other evidence; do not send deposits, recruitment fees, verification codes, ID scans, or payment through seller-supplied external links. Use an on-platform protected-payment path only when the exact listing visibly offers it and review the full payable total.
 - "免费发布信息" opens post.58.com/2/ and first asks for a precise category. Before the final publish action, review city, category, title, facts, price, contact visibility, images, and any fees with the user; publishing, editing, deleting, promoting, or refreshing a listing each requires explicit authorization.
 - Report a post as complete only after "我的发布" shows the new listing and its actual status or public URL. "修改/删除信息" can route to help.58.com and offer account login or "手机短信删除"; do not claim deletion from opening that help page or submitting a verification request.
-- Login can require SMS/captcha. Rapid list access may redirect an initial HTTP 200 response to callback.58.com/antibot/verifycode with "访问过于频繁", "请在五分钟内完成验证", and "点击按钮进行验证". Stop for the user and do not retry or bypass it; the wall is not evidence that no listings exist.
+- Login can require SMS or CAPTCHA. If either challenge appears, stop and require the user to complete it manually before continuing; do not request, enter, or relay an SMS code, and do not solve or bypass a CAPTCHA. Rapid list access may redirect an initial HTTP 200 response to callback.58.com/antibot/verifycode with "访问过于频繁", "请在五分钟内完成验证", and "点击按钮进行验证". The wall is not evidence that no listings exist, so do not retry or bypass it.
     `,
   },
 
