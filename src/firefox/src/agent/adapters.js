@@ -16234,16 +16234,17 @@ const ADAPTERS = [
   {
     name: 'railway-12306',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:(?:www|kyfw|passport)\.)?12306\.cn\//.test(url),
+    matches: (url) => /^https?:\/\/(?:(?:www|kyfw|passport|epay|mobile|cx|dynamic|travel)\.)?12306\.cn\//.test(url),
     notes: `
-- Treat 12306.cn, www.12306.cn, kyfw.12306.cn, and passport.12306.cn as China Railway's official desktop flow as of 2026-08. Start from the ticket form's "出发地", "到达地", and "出发日期" controls; choose the exact station when a city has multiple stations and re-read both endpoints after using the swap control.
+- Treat 12306.cn and its www, kyfw, passport, epay, mobile, cx, dynamic, and travel hosts as China Railway's official flow as of 2026-08. A step can hand off between them (for example kyfw to epay); that is still official, while any host outside 12306.cn is not. Start from the ticket form's "出发地", "到达地", and "出发日期" controls; choose the exact station when a city has multiple stations and re-read both endpoints after using the swap control.
 - Read each result row by train number and seat class. "有" means seats are currently available, a number is the remaining count, "无" means sold out, and "候补" is a waitlist action; do not treat a displayed row or estimated availability as a reservation.
+- If a verification or anti-bot interstitial is served instead of the requested page, STOP and ask the user to complete it manually; do not retry the URL, attempt to solve it, or report data you did not read.
 - Stop for the user when "账号登录", "扫码登录", "人证核验", or "手机验证" appears. Do not retry around QR, app, SMS, or identity checks, and do not add or edit a passenger's real-name identity data unless the user explicitly asks.
 - Use "预订" only for an available train and confirm the exact date, train, departure/arrival stations and times, seat class, passenger, and ticket type on the passenger-confirmation page. Similar station names and overnight arrival dates are not interchangeable.
 - Treat "候补" as a paid waitlist, not a booked ticket. Read every requested train/seat combination, whether "接受新增列车" or "接受无座" is enabled, and the "截止兑现时间" before continuing; the "预付款" can use the highest requested fare and successful fulfillment can create a paid order automatically.
 - Do not click "提交订单", the subsequent confirmation control, or any payment control without the user's explicit confirmation. These actions can enter the queue, reserve inventory, create a pending order, or fund a waitlist even though travel is not yet confirmed.
 - Report success only from "我的12306" / "订单" and the final "订单状态": a normal ticket must show a successful paid booking, while a waitlist must distinguish "待兑现", "已兑现", "已退单", and "兑现失败". A queue dialog, payment redirect, or submitted form is not proof of a ticket.
-- Keep payment and order management on the official 12306 domains. Do not follow unsolicited third-party ticket, refund, or payment links, and never expose passenger document numbers in summaries.`,
+- Keep payment and order management on 12306.cn hosts. Do not follow unsolicited third-party ticket, refund, or payment links, and never expose passenger document numbers in summaries.`,
   },
   {
     name: 'opentable',
