@@ -15862,6 +15862,20 @@ const ADAPTERS = [
 - Quote tweets vs reposts: the retweet icon opens a menu with both options.`,
   },
   {
+    name: 'weibo',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|s|passport|m)\.)?weibo\.(?:com|cn)\//.test(url),
+    notes: `
+- Treat weibo.com, www.weibo.com, s.weibo.com, passport.weibo.com, m.weibo.cn, and weibo.cn as Weibo surfaces as of 2026-08. Anonymous desktop navigation may redirect to passport.weibo.com/visitor/visitor or /sso/signin; preserve the encoded url= destination and resume it after authentication instead of looping on the original page.
+- Search on s.weibo.com and choose deliberately among "综合", "实时", "热门", and "视频". Re-read results after changing the tab or time filter, and capture each post's actual dynamic link before paging because ranking and card positions change.
+- Distinguish a "转发微博" card's added commentary from the embedded "原微博" author and text. Expand every relevant "展开" / long-post control and follow the original post link before attributing a claim or counting engagement.
+- Treat feeds, profiles, comments, and m.weibo.cn lists as incrementally loaded. Record author, timestamp, text, and permalink for visible posts before scrolling; pinned, recommended, and hot-comment sections are not chronological evidence.
+- Treat "关注", "转发", "评论", "赞", favorites, and private messages as state-changing actions. Do not activate them during read-only tasks, and verify the resulting state after an explicit user request rather than trusting a click result.
+- Stop for the user when QR "扫码", SMS "短信", image "验证码", device confirmation, or account-risk verification appears. Do not bypass, repeatedly reload, or claim public content is unavailable merely because the current session requires verification.
+- Before "发布" or confirming a repost/comment, re-read the target account, complete text, mentions, hashtags, media, audience, and any location setting. These actions are externally visible; perform them only for the user's explicit request.
+- Report publication success only after the new post appears on the intended profile/feed with matching text and a stable status URL / "动态链接". A closed composer, cleared textbox, or successful click is not proof of publication.`,
+  },
+  {
     name: 'linkedin',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?linkedin\.com\//.test(url),
