@@ -9549,6 +9549,17 @@ test('recommended actions match issue scenarios', () => {
   }
 });
 
+for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+  test(`recommended actions recognize Shopee Cambodia's distinct hostname in ${label}`, () => {
+    const actions = buildRecommendedActions({
+      url: 'https://www.shopeekh.com/kh-en/detail/123',
+      title: 'Wireless headphones',
+      description: 'US$20.00',
+    });
+    assert.ok(actions.some((action) => action.id === 'compare-price'));
+  });
+}
+
 test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go plans', () => {
   const exactPost = 'Introducing WebBrain — an open-source AI browser agent that lives in your browser. Chat with any page, automate multi-step workflows, and bring your own LLM. Extensible by design. Try it: https://webbrain.one';
   const expectedTweetSteps = [
