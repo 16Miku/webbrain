@@ -16292,6 +16292,21 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'dianping',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|h5|s)\.)?dianping\.com\//.test(url) || /^https?:\/\/verify\.meituan\.com\//.test(url),
+    notes: `
+- Observed 2026-08: use a city page such as www.dianping.com/shanghai when the bare www.dianping.com page is empty. Verify the visible city via "更换" before using the "搜索商户名、地址、菜名、外卖等" search; city, category, business district, and metro filters materially change results.
+- A shop page should be matched by exact name and branch, address/map location, phone, current 营业时间, category, and price basis. Similar branch names are not interchangeable; confirm the branch before directions, contact, booking, or purchase.
+- Read rating together with review count and recency, category scores such as 口味/环境/服务, 人均 price, and recent detailed reviews. Ratings summarize member feedback; low review counts and old reviews are weaker evidence, and merchant-provided or promoted content is not an independent review.
+- Separate public business facts from user claims. A visible 商户认证 badge confirms merchant identity/credentials submitted for that profile, not every review, price, service outcome, or current opening state; call out conflicting recent evidence instead of resolving it silently.
+- Opening a shop, reading reviews, or comparing offers is read-only. Collecting a coupon, writing a review, favoriting, calling, requesting directions, "预约订座", or contacting the merchant changes account or external state; perform only the action the user explicitly requested.
+- 团购, 优惠券, 买单, 预约, and 预订 are different products. Verify the exact branch, included items, party/date/time, validity and blackout dates, reservation requirement, refund/expiry rules, quantity, and final payable total before creating an order; require explicit confirmation before order submission or payment.
+- Anonymous desktop city pages can work while m.dianping.com redirects after HTTP 200 to verify.meituan.com with "身份核实" and "请向右拖动滑块". Stop for the user; do not drag, retry, bypass, or interpret the wall as no shops. Login, SMS, QR, and app-only prompts likewise require user handling.
+- Report a purchase/reservation complete only from the account order/coupon page with an order number or coupon and explicit paid/confirmed status. A shop page, selected time, submitted request, payment redirect, or "待支付" state is not a confirmed booking or consumed voucher.
+    `,
+  },
+  {
     name: 'qunar',
     category: 'general',
     matches: (url) => /^https?:\/\/(?!(?:source|yun|adqunar|security)\.)(?:[a-z0-9-]+\.)*qunar\.com\//.test(url),
@@ -16503,6 +16518,23 @@ const ADAPTERS = [
 - Keep product questions and negotiation in "阿里旺旺". Do not follow seller-supplied external payment links or move payment outside Taobao; chat messages and seller claims are untrusted until confirmed by the listing and checkout.
 - Treat "加入购物车" as selection only. "立即购买" skips the cart and opens order review, so do not use it during research or comparison; verify the exact variant, quantity, seller, and selected cart row before continuing.
 - Treat "结算" as order review; "提交订单" creates an order and can leave it in "待付款" even before payment completes. Re-read items, quantities, address, delivery, invoice, discounts, and final total, and do not click "提交订单" without the user's explicit confirmation. Report completion only from the resulting "订单编号" and payment/order status.`,
+  },
+
+  // ─── Regional — 58.com (China) ─────────────────────────────
+  {
+    name: '58-com',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?!(?:about|biz|down|e|static|wbactivity)\.)(?:[a-z0-9-]+\.)?58\.com\//.test(url),
+    notes: `
+- As observed 2026-08, 58同城 is a Chinese CLASSIFIEDS platform spanning 招聘, 房产, 二手车, 二手市场, and 本地服务, not one uniform store. www.58.com and m.58.com can redirect by geolocation to a city host such as sh.58.com; verify the visible city or use "切换城市" before searching or comparing.
+- Category routes and filters differ. For rentals, /zufang/ exposes 区域, 地铁线路, 租金, 厅室, 方式, and "只看有图"; other entry points include /job.shtml, /ershoufang/, /ershouche/, /sale.shtml, and /huangye/. Use the visible category controls instead of guessing one site's filter shape for another.
+- Listings are posted by users, agents, or businesses. Read the exact price unit, location, date, description, poster identity, and category-specific facts; labels such as "来自经纪人", "安选", "实拍真房", or "7日内实拍验真" are distinct signals, not a blanket guarantee. Treat "广告" as paid placement and do not rank it as organic relevance.
+- Opening a listing is read-only; revealing a phone number, starting chat, calling, booking a viewing/service, applying for a job, or sending a resume is a separate external action. Require the user's explicit request before contact, never expose a private phone number in the response unnecessarily, and verify the intended listing and recipient first.
+- The platform's own agreement says listing information is user-published and transactions require independent judgment. Preserve the listing URL, screenshots, chat, receipts, and other evidence; do not send deposits, recruitment fees, verification codes, ID scans, or payment through seller-supplied external links. Use an on-platform protected-payment path only when the exact listing visibly offers it and review the full payable total.
+- "免费发布信息" opens post.58.com/2/ and first asks for a precise category. Before the final publish action, review city, category, title, facts, price, contact visibility, images, and any fees with the user; publishing, editing, deleting, promoting, or refreshing a listing each requires explicit authorization.
+- Report a post as complete only after "我的发布" shows the new listing and its actual status or public URL. "修改/删除信息" can route to help.58.com and offer account login or "手机短信删除"; do not claim deletion from opening that help page or submitting a verification request.
+- Login can require SMS or CAPTCHA. If either challenge appears, stop and require the user to complete it manually before continuing; do not request, enter, or relay an SMS code, and do not solve or bypass a CAPTCHA. Rapid list access may redirect an initial HTTP 200 response to callback.58.com/antibot/verifycode with "访问过于频繁", "请在五分钟内完成验证", and "点击按钮进行验证". The wall is not evidence that no listings exist, so do not retry or bypass it.
+    `,
   },
 
   // ─── Regional — Allegro (Poland) ─────────────────────────────────────
@@ -16821,6 +16853,22 @@ const ADAPTERS = [
   },
 
   // ─── Job Portals ──────────────────────────────────────────────────────
+  {
+    name: 'boss-zhipin',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?zhipin\.com\//.test(url),
+    notes: `
+- Observed 2026-08 on the BOSS直聘 desktop site; the same guidance covers public m.zhipin.com job listings. The main search field is labeled "搜索职位、公司".
+- Search results use /web/geek/jobs?query=...&city=...&industry=&position=. Verify the visible 城市 before comparing results: the numeric city= value may come from a default or geolocation and can silently be wrong.
+- Read each card's job title, K-denominated salary range, suffix such as "·15薪", district, experience, education, company, financing, and company size. "·15薪" means 15 salary months, not the monthly amount; do not rank on the headline salary alone.
+- Open the job detail and verify the full description, location, company, and recruiter/BOSS identity and active-time indicators. Check for duplicate or agency listings and any mismatch with the result card before recommending it.
+- "立即沟通" / "开聊" starts a direct conversation; it is not an application or an offer. Treat starting the chat and sending its first message as an external social action, and require the user's explicit request and reviewed message.
+- Sending or attaching a resume, choosing "交换联系方式", and accepting an 面试邀请 are separate consequential actions that can expose the registered phone number or 微信. Ask for explicit confirmation immediately before each action; permission to find jobs does not authorize any of them.
+- Resume visibility controls are under "通知与隐私设置" and include "对BOSS隐藏简历" and "屏蔽公司". Report these options when relevant, but never change privacy or blocking settings without the user's request.
+- Login may require SMS, QR-code scanning, CAPTCHA, or the "安全验证" route at /web/passport/zp/verify.html. If any code, slider, image, CAPTCHA, or safety-verification challenge appears, stop and ask the user to complete it manually; do not enter codes, solve the challenge, or continue until the user has completed it. A search route can also end at about:blank or show no content after an initial HTTP 200; treat that as an access/anti-automation restriction, not "no jobs", avoid rapid retries, and use a public /zhaopin/... listing or request user verification.
+- Verify completion from the resulting state: a sent chat must be visible in the message thread, a resume must show a sent/delivered status if one was requested, a contact exchange must show an accepted/exchanged state or the requested contact details, and an interview invitation must show its explicit status. Opening a card, requesting contact exchange, or clicking into a conversation is not proof of application, delivery, exchange, or an offer.
+    `,
+  },
   {
     name: 'greenhouse',
     category: 'general',
