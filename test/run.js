@@ -2418,6 +2418,52 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
+  const trustedUrls = [
+    'https://zhipin.com/',
+    'https://www.zhipin.com/',
+    'https://www.zhipin.com/web/geek/jobs?query=webbrain&city=101020100',
+    'https://www.zhipin.com/job_detail/example.html',
+    'https://www.zhipin.com/web/geek/chat',
+    'https://www.zhipin.com/web/passport/zp/verify.html?callbackUrl=https%3A%2F%2Fwww.zhipin.com%2F',
+    'https://www.zhipin.com/zhaopin/example/',
+    'https://m.zhipin.com/zhaopin/example/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'boss-zhipin');
+    assert.equal(getActiveAdapterFx(url)?.name, 'boss-zhipin');
+  }
+
+  const rejectedUrls = [
+    'https://ir.zhipin.com/',
+    'https://static.zhipin.com/',
+    'https://zhipin.com.phishing.example/web/geek/jobs',
+    'https://www.zhipin.com@phishing.example/web/geek/jobs',
+    'https://example.com/?next=https://www.zhipin.com/web/geek/jobs',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'boss-zhipin');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'boss-zhipin');
+  }
+
+  const adapter = getActiveAdapter('https://www.zhipin.com/web/geek/jobs?query=webbrain&city=101020100');
+  const firefoxAdapter = getActiveAdapterFx('https://m.zhipin.com/zhaopin/example/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /搜索职位、公司/);
+  assert.match(adapter?.notes || '', /city=.*城市/s);
+  assert.match(adapter?.notes || '', /K-denominated.*·15薪/s);
+  assert.match(adapter?.notes || '', /experience.*education.*company.*financing.*company size/s);
+  assert.match(adapter?.notes || '', /立即沟通.*开聊.*not an application or an offer/s);
+  assert.match(adapter?.notes || '', /交换联系方式.*面试邀请.*phone number.*微信/s);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /通知与隐私设置.*对BOSS隐藏简历.*屏蔽公司/s);
+  assert.match(adapter?.notes || '', /安全验证.*\/web\/passport\/zp\/verify\.html/s);
+  assert.match(adapter?.notes || '', /about:blank.*HTTP 200.*access\/anti-automation restriction/s);
+  assert.match(adapter?.notes || '', /sent\/delivered status.*explicit status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
   const urls = [
     'https://www.bilibili.com/video/BV1FD4y147uH/?p=2',
