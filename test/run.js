@@ -2627,6 +2627,49 @@ test('matches JD shopping surfaces and includes Chinese login and checkout guida
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Taobao shopping surfaces and includes Chinese marketplace guidance', () => {
+  const trustedUrls = [
+    'https://www.taobao.com/',
+    'https://s.taobao.com/search?q=%E6%89%8B%E6%9C%BA',
+    'https://item.taobao.com/item.htm?id=123456789',
+    'https://cart.taobao.com/cart.htm',
+    'https://buy.taobao.com/auction/order/confirm_order.htm',
+    'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm',
+    'https://login.taobao.com/member/login.jhtml',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'taobao');
+    assert.equal(getActiveAdapterFx(url)?.name, 'taobao');
+  }
+
+  const rejectedUrls = [
+    'https://rule.taobao.com/',
+    'https://job.alibaba.com/',
+    'https://item.taobao.com.phishing.example/item.htm?id=1',
+    'https://example.com/?next=https://item.taobao.com/item.htm',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'taobao');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'taobao');
+  }
+
+  const adapter = getActiveAdapter('https://item.taobao.com/item.htm?id=123456789');
+  const firefoxAdapter = getActiveAdapterFx('https://cart.taobao.com/cart.htm');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /扫码登录.*密码登录/s);
+  assert.match(adapter?.notes || '', /搜索.*店铺/s);
+  assert.match(adapter?.notes || '', /广告|推广/);
+  assert.match(adapter?.notes || '', /规格.*收货地址/s);
+  assert.match(adapter?.notes || '', /阿里旺旺/);
+  assert.match(adapter?.notes || '', /加入购物车/);
+  assert.match(adapter?.notes || '', /立即购买/);
+  assert.match(adapter?.notes || '', /结算/);
+  assert.match(adapter?.notes || '', /提交订单/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /订单编号|待付款/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Allegro.pl shopping surfaces and includes Polish marketplace guidance', () => {
   const trustedUrls = [
     'https://allegro.pl/',
