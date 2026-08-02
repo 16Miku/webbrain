@@ -5155,29 +5155,88 @@ test('no-progress scroll enforcement is wired into both agent loops', () => {
   }
 });
 
-test('delivery checkpoints nudge long observation streaks and reset after action or cleanup', () => {
+test('delivery checkpoints escalate at eight and reset only after meaningful progress or cleanup', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
     const tab = label === 'chrome' ? 87 : 88;
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'read_page').kind, 'none');
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'scroll').kind, 'none');
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'get_accessibility_tree').kind, 'none');
-    const firstCheckpoint = agent._checkDeliveryObservationStreak(tab, 'wait_for_stable');
+    const enforced = { enforceTerminal: true };
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'read_page', {}, { success: true }, enforced).kind, 'none');
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'scroll', {}, { success: true }, enforced).kind, 'none');
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'get_accessibility_tree', {}, { success: true }, enforced).kind, 'none');
+    const firstCheckpoint = agent._checkDeliveryObservationStreak(tab, 'wait_for_stable', {}, { success: true }, enforced);
     assert.equal(firstCheckpoint.kind, 'nudge', `${label}: fourth observation should warn`);
     assert.match(firstCheckpoint.warning, /deliver useful partial results/i);
     assert.doesNotMatch(firstCheckpoint.warning, /outcome:/i, `${label}: checkpoint must stay valid for Ask and compact done schemas`);
 
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'click_ax').kind, 'none');
-    assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: a state-changing action should reset the streak`);
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'scratchpad_write', {}, { success: true }, enforced).kind, 'none');
+    assert.equal(agent.deliveryObservationStreaks.get(tab), 4, `${label}: meta calls must not erase the delivery obligation`);
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'click_ax', {}, { success: false, error: 'missed' }, { ...enforced, consequential: true }).kind, 'none');
+    assert.equal(agent.deliveryObservationStreaks.get(tab), 4, `${label}: failed actions must not erase the delivery obligation`);
     for (let i = 0; i < 3; i++) {
-      assert.equal(agent._checkDeliveryObservationStreak(tab, 'research_url').kind, 'none');
+      assert.equal(agent._checkDeliveryObservationStreak(tab, 'research_url', {}, { success: true }, enforced).kind, 'none');
     }
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'fetch_url', { method: 'POST' }).kind, 'none', `${label}: mutating fetches must not trigger a delivery checkpoint`);
-    assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: a mutating fetch should reset the observation streak`);
+    const forcedDelivery = agent._checkDeliveryObservationStreak(tab, 'fetch_url', { method: 'GET' }, { success: true }, enforced);
+    assert.equal(forcedDelivery.kind, 'deliver', `${label}: eighth observation should force terminal delivery`);
+    assert.equal(forcedDelivery.count, 8, `${label}: escalation count mismatch`);
+    assert.match(forcedDelivery.warning, /call done exactly once/i, `${label}: terminal instruction missing`);
+    assert.match(forcedDelivery.warning, /partial or failed/i, `${label}: recovery outcomes must exclude success`);
+
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'click_ax', {}, { success: true, verified: true }, { ...enforced, consequential: true }).kind, 'none');
+    assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: verified consequential progress should reset the streak`);
+
+    const verificationTab = `${tab}-verification`;
+    agent._beginCompletionInvariant(verificationTab);
+    for (let i = 0; i < 4; i++) {
+      agent._checkDeliveryObservationStreak(verificationTab, 'read_page', {}, { success: true }, enforced);
+    }
+    const unverifiedAction = { success: true, dispatched: true, verified: false };
+    const beforeAction = agent.completionInvariants.get(verificationTab);
+    const afterAction = agent._recordCompletionToolResult(verificationTab, 'upload_file', {}, unverifiedAction);
+    assert.equal(agent._deliveryCheckpointVerifiedPendingAction(beforeAction, afterAction), false, `${label}: an action is not its own verification`);
+    agent._checkDeliveryObservationStreak(
+      verificationTab,
+      'upload_file',
+      {},
+      unverifiedAction,
+      { ...enforced, consequential: true },
+    );
+    assert.equal(agent.deliveryObservationStreaks.get(verificationTab), 4, `${label}: an unverified action must preserve the prior observation streak`);
+    const beforeVerification = agent.completionInvariants.get(verificationTab);
+    const afterVerification = agent._recordCompletionToolResult(
+      verificationTab,
+      'get_accessibility_tree',
+      {},
+      { success: true },
+    );
+    const verifiedPendingAction = agent._deliveryCheckpointVerifiedPendingAction(beforeVerification, afterVerification);
+    assert.equal(verifiedPendingAction, true, `${label}: successful follow-up observation must verify the pending action`);
+    assert.equal(agent._checkDeliveryObservationStreak(
+      verificationTab,
+      'get_accessibility_tree',
+      {},
+      { success: true },
+      { ...enforced, verifiedPendingAction },
+    ).kind, 'none');
+    assert.equal(agent.deliveryObservationStreaks.has(verificationTab), false, `${label}: action-verifying observation should reset instead of incrementing the streak`);
+    agent._clearCompletionInvariant(verificationTab);
+
+    agent._checkDeliveryObservationStreak(tab, 'read_page', {}, { success: true }, enforced);
+    agent._checkDeliveryObservationStreak(tab, 'read_page', {}, { success: true }, enforced);
+    agent._checkDeliveryObservationStreak(tab, 'progress_update', {}, { success: true, updated: [{ id: 'row-1', status: 'processed' }] }, enforced);
+    assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: a changed progress row should reset the streak`);
+
     for (let i = 0; i < 3; i++) {
-      assert.equal(agent._checkDeliveryObservationStreak(tab, 'research_url').kind, 'none');
+      assert.equal(agent._checkDeliveryObservationStreak(tab, 'research_url', {}, { success: true }, enforced).kind, 'none');
     }
-    assert.equal(agent._checkDeliveryObservationStreak(tab, 'fetch_url', { method: 'GET' }).kind, 'nudge', `${label}: a new four-observation streak should warn`);
+    assert.equal(agent._checkDeliveryObservationStreak(tab, 'fetch_url', { method: 'POST' }, { success: true }, { ...enforced, consequential: true }).kind, 'none', `${label}: mutating fetches must not trigger a delivery checkpoint`);
+    assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: a successful consequential fetch should reset the observation streak`);
+
+    const unenforcedTab = `${tab}-unenforced`;
+    for (let i = 1; i <= 8; i++) {
+      const result = agent._checkDeliveryObservationStreak(unenforcedTab, 'research_url', {}, { success: true });
+      if (i === 4 || i === 8) assert.equal(result.kind, 'nudge', `${label}: an explicitly unenforced checkpoint ${i} should stay advisory`);
+      else assert.equal(result.kind, 'none');
+    }
     agent._clearLoopState(tab);
     assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: run cleanup should reset the streak`);
   }
@@ -5186,9 +5245,62 @@ test('delivery checkpoints nudge long observation streaks and reset after action
 test('delivery checkpoint enforcement is wired into both agent loops', () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
-    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\(tabId, fnName, fnArgs\)/, `${browserName}: evaluate every tool result with its arguments`);
+    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\([\s\S]{0,180}?toolResult,[\s\S]{0,700}?enforceTerminal: runOptions\?\.cloudRun !== true[\s\S]{0,120}?allowedToolNames\.has\('done'\)/, `${browserName}: every interactive mode with done must enforce the second checkpoint`);
+    assert.doesNotMatch(source, /enforceTerminal:[\s\S]{0,160}?_isActionMode/, `${browserName}: Ask research must not be excluded from terminal delivery`);
     assert.match(source, /deliveryCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
+    assert.match(source, /deliveryCheck\.kind === 'deliver'[\s\S]{0,900}?action: 'deliver'/, `${browserName}: second checkpoint must leave the browser loop`);
+    assert.match(source, /batchResult\.action === 'deliver'[\s\S]{0,300}?_recoverDeliveryCheckpointTurn/, `${browserName}: caller must enter done-only recovery`);
     assert.match(source, /this\.deliveryObservationStreaks\.delete\(tabId\)/, `${browserName}: run cleanup must clear state`);
+  }
+});
+
+test('eighth Ask or Act observation stops the tool batch for done-only delivery', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const mode of ['ask', 'act']) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = `${label}-${mode}-delivery`;
+      const messages = [];
+      const executed = [];
+      agent.conversationModes.set(tabId, mode);
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._currentUrl = async () => 'https://example.com/research';
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      agent.executeTool = async (_tabId, name, args) => {
+        executed.push(args.url);
+        return { success: true, content: `Evidence from ${args.url}` };
+      };
+      const toolCalls = Array.from({ length: 9 }, (_, index) => ({
+        id: `${mode}_research_${index + 1}`,
+        function: {
+          name: 'research_url',
+          arguments: JSON.stringify({ url: `https://example.com/source-${index + 1}` }),
+        },
+      }));
+
+      const result = await agent._executeToolBatch(
+        tabId,
+        toolCalls,
+        messages,
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['research_url', 'done']),
+        8,
+      );
+
+      assert.equal(result.action, 'deliver', `${label}/${mode}: eighth observation did not leave the browser loop`);
+      assert.equal(result.status, 'delivery_required', `${label}/${mode}: delivery status missing`);
+      assert.equal(executed.length, 8, `${label}/${mode}: calls after the second checkpoint should not execute`);
+      const eighthResult = messages.find(message => message.tool_call_id === `${mode}_research_8`);
+      assert.match(eighthResult?.content || '', /DELIVERY REQUIRED/, `${label}/${mode}: terminal delivery instruction missing from the eighth result`);
+      const skipped = JSON.parse(messages.find(message => message.tool_call_id === `${mode}_research_9`)?.content || '{}');
+      assert.equal(skipped.skipped, true, `${label}/${mode}: sibling call after escalation was not closed`);
+      assert.match(skipped.error || '', /terminal done turn/i, `${label}/${mode}: sibling skip reason mismatch`);
+    }
   }
 });
 
@@ -5286,6 +5398,102 @@ test('loop-stop recovery surfaces a checkpointed draft in chat without claiming 
     assert.equal(updates.some(update => update.type === 'text' && update.data?.content === recovery.content), true, `${label}: recovered draft was not rendered`);
     assert.equal(updates.some(update => update.type === 'error'), true, `${label}: stopped run must remain visibly failed`);
     assert.equal(messages.at(-1)?.content, recovery.content, `${label}: recovered draft was not persisted in conversation`);
+  }
+});
+
+test('delivery recovery exposes only done and persists a partial terminal result', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const messages = [
+      { role: 'system', content: 'ordinary agent prompt' },
+      { role: 'user', content: 'Find remote jobs and give me the links.' },
+      { role: 'tool', tool_call_id: 'read_1', content: JSON.stringify({ titles: ['Engineer', 'Designer'] }) },
+    ];
+    const updates = [];
+    let request = null;
+    agent._persist = () => {};
+    agent._chatWithCostAllowance = async (_provider, sentMessages, options) => {
+      request = { sentMessages, options };
+      return {
+        content: '',
+        toolCalls: [{
+          id: `forced_done_${label}`,
+          function: {
+            name: 'done',
+            arguments: JSON.stringify({
+              summary: 'Partial results: Engineer and Designer roles were found. The remaining pages were not checked.',
+              outcome: 'partial',
+            }),
+          },
+        }],
+      };
+    };
+
+    const recovery = await agent._recoverDeliveryCheckpointTurn(
+      913,
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { model: 'test-model' },
+      {},
+      null,
+      8,
+      'fallback should not be used',
+    );
+
+    assert.equal(recovery.status, 'partial', `${label}: useful forced delivery should be partial`);
+    assert.match(recovery.content, /Engineer and Designer/, `${label}: gathered evidence missing from final`);
+    assert.equal(request?.options?.tools?.length, 1, `${label}: recovery must expose exactly one tool`);
+    assert.equal(request?.options?.tools?.[0]?.function?.name, 'done', `${label}: recovery exposed a non-done tool`);
+    assert.deepEqual(request?.options?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum, ['partial', 'failed'], `${label}: forced done must forbid success`);
+    assert.deepEqual(request?.options?.toolChoice, { type: 'function', function: { name: 'done' } }, `${label}: done should be explicitly requested`);
+    assert.match(request?.sentMessages?.[0]?.content || '', /Call the done tool exactly once/i, `${label}: forced terminal system prompt missing`);
+    assert.equal(updates.some(update => update.type === 'tool_call' && update.data?.name === 'done'), true, `${label}: forced done call was not surfaced`);
+    assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true, `${label}: partial run status missing`);
+    const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
+    assert.equal(messages.at(-1)?.role, 'tool', `${label}: forced done tool result was not persisted structurally`);
+    assert.equal(persistedResult.done, true, `${label}: persisted forced done result missing`);
+    assert.equal(persistedResult.outcome, 'partial', `${label}: persisted forced done outcome mismatch`);
+  }
+});
+
+test('delivery recovery rejects plain text or success and shows a runtime blocker', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const response of [
+      { content: 'I will keep researching.', toolCalls: [] },
+      {
+        content: '',
+        toolCalls: [{
+          id: `bad_success_${label}`,
+          function: { name: 'done', arguments: JSON.stringify({ summary: 'Everything is complete.', outcome: 'success' }) },
+        }],
+      },
+    ]) {
+      const agent = new AgentClass({});
+      const messages = [
+        { role: 'system', content: 'ordinary agent prompt' },
+        { role: 'user', content: 'Research the current page.' },
+      ];
+      const updates = [];
+      agent._persist = () => {};
+      agent._chatWithCostAllowance = async () => response;
+      const fallback = 'Browser observation limit reached before a valid partial result could be produced.';
+
+      const recovery = await agent._recoverDeliveryCheckpointTurn(
+        914,
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { model: 'test-model' },
+        {},
+        null,
+        8,
+        fallback,
+      );
+
+      assert.deepEqual(recovery, { content: fallback, status: 'delivery_recovery_failed' }, `${label}: invalid terminal output should fail visibly`);
+      assert.equal(messages.at(-1)?.content, fallback, `${label}: runtime blocker was not persisted`);
+      assert.equal(updates.some(update => update.type === 'text' && update.data?.content === fallback), true, `${label}: runtime blocker was not rendered`);
+      assert.equal(updates.some(update => /keep researching|Everything is complete/.test(update.data?.content || '')), false, `${label}: invalid model output leaked to the user`);
+    }
   }
 });
 
@@ -11040,12 +11248,26 @@ test('getToolsForMode: strictSecretMode swaps in the strict `done` description',
     const looseDone = loose.find(t => t.function.name === 'done');
     const strictDone = strict.find(t => t.function.name === 'done');
     assert.notEqual(looseDone.function.description, strictDone.function.description);
+    assert.match(looseDone.function.description, /generated a new credential for this task[\s\S]*include it once/i);
+    assert.doesNotMatch(strictDone.function.description, /generated a new credential for this task/i);
     assert.match(strictDone.function.description, /strict mode|never include passwords|Must NOT/i);
     assert.match(strictDone.function.parameters.properties.summary.description, /Must NOT contain/);
     // Other tools must be untouched.
     const looseNames = loose.map(t => t.function.name).sort();
     const strictNames = strict.map(t => t.function.name).sort();
     assert.deepEqual(looseNames, strictNames);
+  }
+});
+
+test('delivery recovery keeps generated credential delivery in loose mode only', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const looseDone = agent._deliveryRecoveryDoneTool();
+    assert.match(looseDone?.function?.description || '', /generated a new credential for this task[\s\S]*include it once/i);
+    agent.strictSecretMode = true;
+    const strictDone = agent._deliveryRecoveryDoneTool();
+    assert.match(strictDone?.function?.description || '', /Never include passwords/i);
+    assert.doesNotMatch(strictDone?.function?.description || '', /generated a new credential for this task/i);
   }
 });
 
@@ -24264,6 +24486,42 @@ test('ScheduledJobManager preserves clarification-required terminal runs as need
   }
 });
 
+test('ScheduledJobManager marks invalid delivery recovery as failed', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    const blocker = 'Browser observation limit reached before a valid partial result could be produced.';
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('run_status', { status: 'delivery_recovery_failed', message: blocker });
+        return blocker;
+      },
+    });
+    const created = await h.manager.createResumeJob({
+      tabId: 77,
+      conversationId: 'conv-1',
+      args: { after_seconds: 60, reason: 'continue research', resume_instruction: 'finish the report' },
+    });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+
+    const job = h.jobs()[0];
+    assert.equal(job.status, 'failed', `${label}: invalid terminal recovery must not complete the scheduled job`);
+    assert.equal(job.lastError, blocker, `${label}: runtime blocker should be preserved as the scheduled error`);
+    assert.equal(job.lastOutcome, null, `${label}: invalid recovery must not invent a done outcome`);
+    assert.equal(
+      h.updates.some(update => update.type === 'scheduled_job' && update.data?.event === 'completed'),
+      false,
+      `${label}: invalid terminal recovery emitted a completion event`,
+    );
+    assert.equal(
+      h.updates.some(update => update.type === 'scheduled_job' && update.data?.event === 'failed'),
+      true,
+      `${label}: invalid terminal recovery did not emit a failed event`,
+    );
+  }
+});
+
 test('sidepanel settles terminal scheduled clarification events and renders their result', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
@@ -34116,6 +34374,58 @@ test('Azure OpenAI streams request usage metadata', () => {
     const noUsageBody = { stream: true };
     disabled._addStreamUsageOptions(noUsageBody);
     assert.equal(noUsageBody.stream_options, undefined);
+  }
+});
+
+test('Anthropic and AWS Bedrock forward a required named tool choice', async () => {
+  const tool = {
+    type: 'function',
+    function: {
+      name: 'done',
+      description: 'Finish the run.',
+      parameters: { type: 'object', properties: {} },
+    },
+  };
+  const toolChoice = { type: 'function', function: { name: 'done' } };
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const Provider of [AnthropicProviderCh, AnthropicProviderFx]) {
+      let requestBody = null;
+      globalThis.fetch = async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          content: [{ type: 'tool_use', id: 'forced_done', name: 'done', input: {} }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const provider = new Provider({
+        baseUrl: 'https://api.anthropic.com',
+        model: 'claude-sonnet-4-6',
+        apiKey: 'test-key',
+      });
+      const result = await provider.chat(
+        [{ role: 'user', content: 'Deliver the partial result.' }],
+        { tools: [tool], toolChoice },
+      );
+      assert.deepEqual(requestBody?.tool_choice, { type: 'tool', name: 'done' }, `${Provider.name}: required choice did not reach Anthropic request`);
+      assert.equal(result.toolCalls?.[0]?.function?.name, 'done');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  for (const Provider of [AwsBedrockProviderCh, AwsBedrockProviderFx]) {
+    const provider = new Provider({
+      region: 'us-east-1',
+      accessKeyId: 'AKIA123',
+      secretAccessKey: 'secret',
+      model: 'anthropic.claude-3-sonnet-20240229-v1:0',
+    });
+    const payload = provider._toBedrockPayload(
+      [{ role: 'user', content: 'Deliver the partial result.' }],
+      { tools: [tool], toolChoice },
+    );
+    assert.deepEqual(payload.toolConfig?.toolChoice, { tool: { name: 'done' } }, `${Provider.name}: required choice did not reach Bedrock request`);
   }
 });
 
