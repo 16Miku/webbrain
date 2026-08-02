@@ -16294,6 +16294,21 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'qunar',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?!(?:source|yun|adqunar|security)\.)(?:[a-z0-9-]+\.)*qunar\.com\//.test(url),
+    notes: `
+- Observed 2026-08: the desktop business surfaces span flight.qunar.com, hotel.qunar.com, train.qunar.com, piao.qunar.com, dujia.qunar.com, and other nested qunar.com hosts. www.qunar.com may render only its footer while a business page remains usable; use the requested product entry instead of treating that shell as an empty inventory.
+- Start by selecting 机票, 酒店, 火车票, 门票, or 度假. The flight form distinguishes 单程, 往返, and 多程 and labels origin/destination as "从" / "到"; verify cities or airports, local dates, travelers, and every leg before searching.
+- Qunar is a comparison/booking platform with products supplied by airlines, agents, hotels, or other third parties. Read the supplier, information update time, exact itinerary or room/product, taxes and fees, baggage/inclusions, and refund/change/cancellation terms; a headline or "起" price is not the final payable total.
+- A flight result can expose several supplier offers for one itinerary. "预订" may hand off to a supplier site or a Qunar-supported order page; re-read the host, supplier, selected offer, currency, and terms after the transition, and preserve the supplier name and order number for after-sales support.
+- For hotels verify 入住/离店, guests, room and bed type, meals, cancellation deadline, prepayment/deposit, and taxes. For train, ticket, and holiday products verify the exact date, traveler eligibility, inventory, inclusions, exclusions, and fulfillment provider rather than transferring flight assumptions to them.
+- Searching and opening an offer are read-only. Creating an order, submitting traveler/contact identity, accepting terms, and paying are separate consequential actions; ask for explicit confirmation immediately before the control that creates/submits the order and again before payment when it is a distinct step.
+- Login routes through user.qunar.com and may require the user's password, SMS, QR code, or another verification step. Pause for the user and never invent traveler identity, document, phone, or membership details.
+- A search result, supplier redirect, payment page, or unpaid order is not a completed booking. Report success only from the relevant 查看订单 / order page with an order number and the explicit product status; for flights distinguish pending payment, paid, issuing, 出票成功, cancelled, and refund/change states.
+    `,
+  },
+  {
     name: 'google-maps',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/maps/.test(url) || /^https?:\/\/maps\.google\.[a-z.]+\//.test(url),
