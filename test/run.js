@@ -2280,7 +2280,8 @@ test('matches Baidu search surfaces without hijacking other Baidu products', () 
     'https://m.baidu.com/s?word=webbrain',
     'https://image.baidu.com/search/index?tn=baiduimage&word=webbrain',
     'https://video.baidu.com/v?word=webbrain',
-    'https://passport.baidu.com/v2/?login',
+    'https://news.baidu.com/ns?word=webbrain&tn=news',
+    'https://passport.baidu.com/v2/?login&u=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain',
     'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain',
   ];
   for (const url of trustedUrls) {
@@ -2293,6 +2294,14 @@ test('matches Baidu search surfaces without hijacking other Baidu products', () 
     'https://tieba.baidu.com/',
     'https://pan.baidu.com/',
     'https://baike.baidu.com/',
+    'https://news.baidu.com/',
+    'https://news.baidu.com/guonei',
+    'https://passport.baidu.com/v2/?login',
+    'https://passport.baidu.com/v2/?login&tpl=mn&u=https%3A%2F%2Fmap.baidu.com%2F',
+    'https://wappass.baidu.com/passport/?login&tpl=tb&u=https%3A%2F%2Ftieba.baidu.com%2F',
+    'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fmap.baidu.com%2F',
+    'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain&u=https%3A%2F%2Ftieba.baidu.com%2F',
+    'https://passport.baidu.com/v2/?login&u=https%3A%2F%2Fwww.baidu.com.phishing.example%2Fs%3Fwd%3Dwebbrain',
     'https://www.baidu.com.phishing.example/s?wd=webbrain',
     'https://example.com/?next=https://www.baidu.com/s?wd=webbrain',
   ];

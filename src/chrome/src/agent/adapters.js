@@ -15702,6 +15702,43 @@ function isMastodonUrl(url) {
     || hasMastodonInteractionSignal(u, path);
 }
 
+function isDirectBaiduSearchUrl(url) {
+  let parts;
+  try {
+    parts = adapterUrlParts(url);
+  } catch (e) {
+    return false;
+  }
+  if (!parts) return false;
+  const host = parts.parsed.hostname.toLowerCase();
+  const { path } = parts;
+  if (host === 'baidu.com' || host === 'www.baidu.com') {
+    return path === '/' || /^\/(?:s|link)(?:\/|$)/.test(path);
+  }
+  if (host === 'm.baidu.com') return path === '/' || /^\/s(?:\/|$)/.test(path);
+  if (host === 'image.baidu.com') return path === '/' || /^\/search(?:\/|$)/.test(path);
+  if (host === 'video.baidu.com') return path === '/' || /^\/v(?:\/|$)/.test(path);
+  return host === 'news.baidu.com' && /^\/ns(?:\/|$)/.test(path);
+}
+
+function isBaiduSearchUrl(url) {
+  if (isDirectBaiduSearchUrl(url)) return true;
+  let parts;
+  try {
+    parts = adapterUrlParts(url);
+  } catch (e) {
+    return false;
+  }
+  if (!parts) return false;
+  const host = parts.parsed.hostname.toLowerCase();
+  if (host !== 'passport.baidu.com' && host !== 'wappass.baidu.com') return false;
+  const targets = [];
+  for (const param of ['backurl', 'u']) {
+    targets.push(...parts.parsed.searchParams.getAll(param));
+  }
+  return targets.length > 0 && targets.every(isDirectBaiduSearchUrl);
+}
+
 const ADAPTERS = [
   // ─── Code & Dev Tools ─────────────────────────────────────────────────
   {
@@ -15819,9 +15856,9 @@ const ADAPTERS = [
   {
     name: 'baidu-search',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:(?:www|m|image|video|passport|wappass)\.)?baidu\.com\//.test(url),
+    matches: isBaiduSearchUrl,
     notes: `
-- Treat baidu.com, www.baidu.com, m.baidu.com, image.baidu.com, video.baidu.com, passport.baidu.com, and wappass.baidu.com as Baidu search surfaces as of 2026-08. Enter the query in the main field and activate "百度一下"; preserve the exact query when a login or interstitial interrupts navigation.
+- Treat baidu.com, www.baidu.com, m.baidu.com, image.baidu.com, video.baidu.com, and news.baidu.com/ns as Baidu search surfaces as of 2026-08. Match passport.baidu.com or wappass.baidu.com only when its encoded return target is one of those search surfaces. Enter the query in the main field and activate "百度一下"; preserve the exact query when a login or interstitial interrupts navigation.
 - Switch deliberately among "网页", "资讯", "视频", and "图片" because each tab changes the result type and may move to another matched host. Re-read the result list after switching instead of reusing card positions or labels.
 - Treat results marked "广告" or "商业推广" as paid placements. Do not report the first visible card as the top organic result, and do not treat a claimed "官方" label as proof without checking the destination domain.
 - Treat "文心助手" and other AI-generated answer blocks as synthesized content, not independent search results or primary evidence. Follow and verify their cited source links before using factual claims, especially for medical, legal, financial, or safety-sensitive questions.
