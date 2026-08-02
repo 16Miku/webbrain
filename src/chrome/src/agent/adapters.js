@@ -1,3 +1,8 @@
+import {
+  ADAPTER_WORKFLOW_SCHEMA,
+  validateAdapterWorkflowProfile,
+} from './adapter-workflow.js';
+
 /**
  * Site Adapters — per-site notes the agent receives when operating on a
  * known high-traffic site. The goal is NOT to encode every selector (those
@@ -10,6 +15,9 @@
  *   - category: 'general' | 'finance' — finance gets an extra safety warning
  *   - notes: short bulleted guidance, injected into the first user message
  *   - fullPageCapture?.infiniteScroll(url): optional machine-readable capture policy
+ *   - regions?: stable region identifiers for structured adapter discovery
+ *   - jobs?: stable job identifiers covered by the optional workflow profile
+ *   - workflow?: versioned state, evidence, confirmation, and terminal metadata
  *
  * Keep notes SHORT (4–8 bullets max). They cost tokens on every first turn.
  * Only encode things the model can't trivially figure out from reading the page.
@@ -16374,6 +16382,46 @@ const ADAPTERS = [
   {
     name: 'railway-12306',
     category: 'general',
+    regions: ['CN'],
+    jobs: ['rail-booking'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      states: {
+        access_gate: {
+          readOnly: true,
+          evidence: ['A QR, SMS, identity, or anti-bot challenge is visible.'],
+        },
+        search: {
+          readOnly: true,
+          evidence: ['The departure station, arrival station, and travel date are visible.'],
+        },
+        selection: {
+          readOnly: true,
+          evidence: ['The selected train number, stations, date, and seat class are visible.'],
+        },
+        review: {
+          readOnly: true,
+          evidence: ['The passenger, ticket type, itinerary, seat class, and total are visible.'],
+        },
+        commit: {
+          requiresConfirmation: true,
+          evidence: ['An order number, queue result, or pending-order status is visible.'],
+        },
+        payment: {
+          requiresConfirmation: true,
+          evidence: ['The official payment page or payment status is visible.'],
+        },
+        fulfillment: {
+          readOnly: true,
+          evidence: ['An order number and successful paid or ticket-issued status are visible.'],
+          terminalFor: ['rail-booking'],
+        },
+        after_sales: {
+          requiresConfirmation: true,
+          evidence: ['The change or refund review and its terms are visible.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/(?:(?:www|kyfw|passport|epay|mobile|cx|dynamic|travel)\.)?12306\.cn\//.test(url),
     notes: `
 - Treat 12306.cn and its www, kyfw, passport, epay, mobile, cx, dynamic, and travel hosts as China Railway's official flow as of 2026-08. A step can hand off between them (for example kyfw to epay); that is still official, while any host outside 12306.cn is not. Start from the ticket form's "出发地", "到达地", and "出发日期" controls; choose the exact station when a city has multiple stations and re-read both endpoints after using the swap control.
@@ -17018,4 +17066,24 @@ export function getFullPageCapturePolicy(url) {
  */
 export function listAdapters() {
   return ADAPTERS.map(a => ({ name: a.name, category: a.category }));
+}
+
+/**
+ * List adapters that have migrated to the optional structured workflow schema.
+ * Invalid static metadata is a developer error and fails loudly here; ordinary
+ * adapter matching and notes injection remain unaffected.
+ */
+export function listAdapterWorkflowProfiles() {
+  return ADAPTERS.filter(a => a.workflow).map((adapter) => {
+    const validation = validateAdapterWorkflowProfile(adapter);
+    if (!validation.ok) {
+      throw new Error(`Invalid workflow profile for adapter \`${adapter.name}\`: ${validation.error}`);
+    }
+    return {
+      name: adapter.name,
+      regions: [...adapter.regions],
+      jobs: [...adapter.jobs],
+      workflow: adapter.workflow,
+    };
+  });
 }
