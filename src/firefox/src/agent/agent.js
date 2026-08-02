@@ -2769,7 +2769,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && activeGate.status !== 'cleared'
       && !this._shouldRetryCaptchaManualGate(activeGate)
     ) return null;
-    const challenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    const challenge = detectedChallenge?.label
+      ? detectedChallenge
+      : activeGate?.status === 'cleared'
+        ? activeGate.publicGate?.challengeDialog
+        : null;
     if (!challenge?.label) return null;
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
