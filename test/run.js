@@ -2866,6 +2866,48 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Traveloka consumer pages and distinguishes booking and fulfillment states', () => {
+  const trustedUrls = [
+    'https://traveloka.com/en-id/',
+    'https://www.traveloka.com/en-id/flight',
+    'https://www.traveloka.com/en-id/hotel',
+    'https://www.traveloka.com/en-id/help',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'traveloka');
+    assert.equal(getActiveAdapterFx(url)?.name, 'traveloka');
+  }
+
+  const rejectedUrls = [
+    'https://partner.traveloka.com/',
+    'https://careers.traveloka.com/',
+    'https://affiliate.traveloka.com/',
+    'https://traveloka.com.phishing.example/en-id/flight',
+    'https://example.com/?next=https://www.traveloka.com/en-id/hotel',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'traveloka');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'traveloka');
+  }
+
+  const adapter = getActiveAdapter('https://www.traveloka.com/en-id/flight');
+  const firefoxAdapter = getActiveAdapterFx('https://traveloka.com/en-id/hotel');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Human Verification.*Let's confirm you are human.*Begin/s);
+  assert.match(adapter?.notes || '', /Flights.*Hotels/s);
+  assert.match(adapter?.notes || '', /code-share.*separate bookings.*separate payments/s);
+  assert.match(adapter?.notes || '', /baggage.*taxes.*fees/s);
+  assert.match(adapter?.notes || '', /Pay Now.*Pay at Hotel/s);
+  assert.match(adapter?.notes || '', /cancellation.*no-show/s);
+  assert.match(adapter?.notes || '', /ancillaries/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /voucher.*e-ticket.*booking confirmation/s);
+  assert.match(adapter?.notes || '', /refund.*reschedule/s);
+  assert.match(adapter?.notes || '', /Bookings.*booking ID.*status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Qunar travel surfaces and distinguishes search, supplier, order, and ticket states', () => {
   const trustedUrls = [
     'https://qunar.com/', 'https://www.qunar.com/', 'https://flight.qunar.com/',
