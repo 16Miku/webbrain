@@ -16280,6 +16280,20 @@ const ADAPTERS = [
 - Trip dashboard at /trips after a booking shows itinerary, change/cancel options. Cancellation rules vary per supplier.`,
   },
   {
+    name: 'ctrip',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|hotels|flights|trains|vacations|huodong|piao|passport|my|secure)\.)?ctrip\.com\//.test(url),
+    notes: `
+- Choose "酒店", "机票", "火车票", "旅游", or "景点门票" before filling fields. Attraction tickets may hand off to piao.ctrip.com or huodong.ctrip.com; re-read after the host changes.
+- Treat "广告" cards as sponsored. Compare the exact product, supplier, dates, inclusions, restrictions, and final total; ignore homepage rank, crossed-out/member prices, and "起" prices.
+- Hotels: set city/property, "入住" / "离店", rooms, and guests; verify "房型", bed, breakfast, occupancy, payment timing, and "退订". Rows for one hotel are not interchangeable.
+- Flights: verify airports, local dates/times, carrier, stops/transfers, cabin, "行李", change/refund terms, and separate tickets. Do not compare headline fares alone.
+- Trains: verify train, stations, date, seat, passenger, chargeable extras, and total. After a 12306 handoff, re-read the destination page; do not assume Ctrip completed the ticket.
+- Treat QR "扫码", password, SMS "短信", payment/real-name verification, a blank flights page, and HTTP 432 as blocking challenges. Do not retry or enter unprovided identity details; ask the user. For HTTP 432, pause and return through www.ctrip.com's "机票" entry.
+- On the review page, remove only unrequested chargeable extras; preserve beneficial coupons and check their restrictions. Re-read travelers, contact, itinerary, terms, currency, and total; get explicit confirmation before "提交订单".
+- Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
+  },
+  {
     name: 'google-maps',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/maps/.test(url) || /^https?:\/\/maps\.google\.[a-z.]+\//.test(url),

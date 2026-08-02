@@ -2620,6 +2620,55 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Ctrip travel surfaces and includes Chinese booking guidance', () => {
+  const trustedUrls = [
+    'https://www.ctrip.com/',
+    'https://hotels.ctrip.com/hotels/437892.html',
+    'https://flights.ctrip.com/international/search/oneway-sha-sin',
+    'https://trains.ctrip.com/TrainBooking/SearchTrain.aspx',
+    'https://vacations.ctrip.com/',
+    'https://huodong.ctrip.com/things-to-do/list',
+    'https://piao.ctrip.com/',
+    'https://passport.ctrip.com/user/login',
+    'https://my.ctrip.com/myinfo/orders',
+    'https://secure.ctrip.com/booking',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'ctrip');
+    assert.equal(getActiveAdapterFx(url)?.name, 'ctrip');
+  }
+
+  const rejectedUrls = [
+    'https://pages.ctrip.com/corporate/',
+    'https://tickets.ctrip.com/',
+    'https://ctrip.com.phishing.example/hotels',
+    'https://example.com/?next=https://hotels.ctrip.com/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'ctrip');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'ctrip');
+  }
+
+  const adapter = getActiveAdapter('https://hotels.ctrip.com/hotels/437892.html');
+  const firefoxAdapter = getActiveAdapterFx('https://flights.ctrip.com/');
+  assert.match(adapter?.notes || '', /酒店.*机票.*火车票/s);
+  assert.match(adapter?.notes || '', /广告/);
+  assert.match(adapter?.notes || '', /入住.*离店.*房型/s);
+  assert.match(adapter?.notes || '', /退订|取消/);
+  assert.match(adapter?.notes || '', /行李/);
+  assert.match(adapter?.notes || '', /12306/);
+  assert.doesNotMatch(adapter?.notes || '', /12306 adapter/);
+  assert.match(adapter?.notes || '', /扫码|短信/);
+  assert.match(adapter?.notes || '', /HTTP 432/);
+  assert.match(adapter?.notes || '', /提交订单/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /preserve beneficial coupons/i);
+  const noteBullets = (adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- '));
+  assert.equal(noteBullets.length, 8);
+  assert.match(adapter?.notes || '', /订单号|出票成功|预订成功/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Coupang shopping surfaces and includes Korean marketplace guidance', () => {
   const trustedUrls = [
     'https://coupang.com/',
