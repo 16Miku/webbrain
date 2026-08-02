@@ -15816,6 +15816,21 @@ const ADAPTERS = [
 - Results are personalized and localized (location, sign-in, history); you can't fully neutralize that from the URL, so flag it when the user needs unbiased results.`,
   },
   {
+    name: 'baidu-search',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|image|video|passport|wappass)\.)?baidu\.com\//.test(url),
+    notes: `
+- Treat baidu.com, www.baidu.com, m.baidu.com, image.baidu.com, video.baidu.com, passport.baidu.com, and wappass.baidu.com as Baidu search surfaces as of 2026-08. Enter the query in the main field and activate "百度一下"; preserve the exact query when a login or interstitial interrupts navigation.
+- Switch deliberately among "网页", "资讯", "视频", and "图片" because each tab changes the result type and may move to another matched host. Re-read the result list after switching instead of reusing card positions or labels.
+- Treat results marked "广告" or "商业推广" as paid placements. Do not report the first visible card as the top organic result, and do not treat a claimed "官方" label as proof without checking the destination domain.
+- Treat "文心助手" and other AI-generated answer blocks as synthesized content, not independent search results or primary evidence. Follow and verify their cited source links before using factual claims, especially for medical, legal, financial, or safety-sensitive questions.
+- Follow the page's actual href when a result uses www.baidu.com/link?url=... and record the final destination after the redirect. Do not infer the target domain from the title, snippet, favicon, or displayed URL alone.
+- Collect each result's title, snippet, and final link before selecting "下一页". Result positions can change with location, history, experiments, and time; use query operators such as site:, filetype:, quoted phrases, and exclusions when the user needs reproducible constraints.
+- Use image or video cards only after opening the source page or detail view; thumbnails, captions, and neighboring card text can be mismatched or truncated, and lazy-loaded card indices are not stable after scrolling.
+- Read-only web search and result opening do not require sign-in. If "登录" or "扫码登录" appears, ask the user to authenticate only for an explicitly requested account feature; do not block ordinary search, loop on the dialog, or claim that login is required for public results.
+- If wappass.baidu.com/static/captcha shows "百度安全验证", stop and ask the user to complete it manually. After completion, continue the encoded backurl and re-read the results; do not bypass the challenge, discard the query, or loop on the search URL.`,
+  },
+  {
     name: 'slack',
     category: 'general',
     matches: (url) => /^https?:\/\/app\.slack\.com\//.test(url) || /\.slack\.com\//.test(url),
