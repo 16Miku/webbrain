@@ -2382,6 +2382,42 @@ test('matches youtube video URLs and includes transcript guidance', () => {
   assert.match(a?.notes || '', /Do NOT invent transcript URLs/i);
 });
 
+test('matches Zhihu reading and creation surfaces with login and publication guidance', () => {
+  const trustedUrls = [
+    'https://zhihu.com/', 'https://www.zhihu.com/signin?next=%2F',
+    'https://www.zhihu.com/search?q=webbrain', 'https://www.zhihu.com/question/123456',
+    'https://zhuanlan.zhihu.com/p/123456', 'https://www.zhihu.com/people/example',
+    'https://link.zhihu.com/?target=https%3A%2F%2Fexample.com',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'zhihu');
+    assert.equal(getActiveAdapterFx(url)?.name, 'zhihu');
+  }
+  for (const url of [
+    'https://people.zhihu.com/example',
+    'https://zhihu.com.phishing.example/',
+    'https://example.com/?next=https://www.zhihu.com/',
+  ]) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'zhihu');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'zhihu');
+  }
+  const adapter = getActiveAdapter('https://www.zhihu.com/question/123456');
+  const firefoxAdapter = getActiveAdapterFx('https://zhuanlan.zhihu.com/p/123456');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /signin\?next=/);
+  assert.match(adapter?.notes || '', /综合.*用户.*内容/s);
+  assert.match(adapter?.notes || '', /默认排序|按时间排序/);
+  assert.match(adapter?.notes || '', /展开阅读全文|查看全部回答/);
+  assert.match(adapter?.notes || '', /赞同.*反对.*关注.*收藏.*评论/s);
+  assert.match(adapter?.notes || '', /写回答/);
+  assert.match(adapter?.notes || '', /保存草稿.*发布/s);
+  assert.match(adapter?.notes || '', /扫码|短信验证码/);
+  assert.match(adapter?.notes || '', /HTTP 403.*问题不存在/s);
+  assert.match(adapter?.notes || '', /answer URL|回答链接/);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
   const urls = [
     'https://www.bilibili.com/video/BV1FD4y147uH/?p=2',

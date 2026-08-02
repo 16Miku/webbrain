@@ -15970,6 +15970,20 @@ const ADAPTERS = [
 - The subscribe button has a bell icon next to it for notification preferences; they're separate clicks.`,
   },
   {
+    name: 'zhihu',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|zhuanlan|link)\.)?zhihu\.com\//.test(url),
+    notes: `
+- Treat zhihu.com, www.zhihu.com, zhuanlan.zhihu.com, and link.zhihu.com as Zhihu surfaces as of 2026-08. Profiles use www.zhihu.com/people/<slug>. Anonymous entry can redirect to /signin?next=...; preserve next= and resume the destination after login.
+- On search, choose deliberately among "综合", "用户", and "内容" type tabs, then re-read the results. Capture the actual question, answer, article, or profile link before scrolling because recommendation cards and rankings can reflow.
+- On question pages, distinguish the question from answers, comments, related questions, and recommendations. Check "默认排序" versus "按时间排序", author, time, and votes; activate relevant "展开阅读全文", "查看全部回答", and comment expansion controls before summarizing.
+- Treat "赞同", "反对", "关注", "收藏", "评论", invitations, and private messages as state-changing. Do not activate them for read-only tasks, and verify the resulting state after an explicit request.
+- Stop for the user when /signin, QR "扫码", "短信验证码", device confirmation, or account-risk verification appears. Public reading may still be available on the destination; do not loop on login or claim every Zhihu page requires an account.
+- For "写回答" and article creation, scope typing to the active title/body editor and re-read the draft. "保存草稿" is not "发布"; after an explicit publish request, report success only when matching text is visible at a stable answer URL / "回答链接" or zhuanlan.zhihu.com/p/... URL.
+- When link.zhihu.com redirects externally, follow its encoded target and record the final domain. Treat external pages as separate sources and never attribute their text to Zhihu merely because the redirect started there.
+- If a direct question page is blank or returns HTTP 403 while /explore remains readable, treat it as an access or anti-automation restriction, not proof that the "问题不存在". Do not retry rapidly; use the visible search/explore route or ask the user to complete login/verification.`,
+  },
+  {
     name: 'medium',
     category: 'general',
     matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)*medium\.com\//i.test(url),
