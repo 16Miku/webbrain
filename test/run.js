@@ -2332,14 +2332,18 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   const trustedUrls = [
     'https://zhihu.com/', 'https://www.zhihu.com/signin?next=%2F',
     'https://www.zhihu.com/search?q=webbrain', 'https://www.zhihu.com/question/123456',
-    'https://zhuanlan.zhihu.com/p/123456', 'https://people.zhihu.com/example',
+    'https://zhuanlan.zhihu.com/p/123456', 'https://www.zhihu.com/people/example',
     'https://link.zhihu.com/?target=https%3A%2F%2Fexample.com',
   ];
   for (const url of trustedUrls) {
     assert.equal(getActiveAdapter(url)?.name, 'zhihu');
     assert.equal(getActiveAdapterFx(url)?.name, 'zhihu');
   }
-  for (const url of ['https://zhihu.com.phishing.example/', 'https://example.com/?next=https://www.zhihu.com/']) {
+  for (const url of [
+    'https://people.zhihu.com/example',
+    'https://zhihu.com.phishing.example/',
+    'https://example.com/?next=https://www.zhihu.com/',
+  ]) {
     assert.notEqual(getActiveAdapter(url)?.name, 'zhihu');
     assert.notEqual(getActiveAdapterFx(url)?.name, 'zhihu');
   }
@@ -2356,6 +2360,7 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.match(adapter?.notes || '', /扫码|短信验证码/);
   assert.match(adapter?.notes || '', /HTTP 403.*问题不存在/s);
   assert.match(adapter?.notes || '', /answer URL|回答链接/);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
