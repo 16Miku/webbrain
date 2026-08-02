@@ -2271,6 +2271,60 @@ test('matches google search across TLDs and includes udm=14, without hijacking o
   assert.match(a?.notes || '', /udm=14/);
 });
 
+test('matches Baidu search surfaces without hijacking other Baidu products', () => {
+  const trustedUrls = [
+    'https://baidu.com/',
+    'https://www.baidu.com/',
+    'https://www.baidu.com/s?wd=webbrain',
+    'https://www.baidu.com/link?url=opaque-result',
+    'https://m.baidu.com/s?word=webbrain',
+    'https://image.baidu.com/search/index?tn=baiduimage&word=webbrain',
+    'https://video.baidu.com/v?word=webbrain',
+    'https://news.baidu.com/ns?word=webbrain&tn=news',
+    'https://passport.baidu.com/v2/?login&u=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain',
+    'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'baidu-search');
+    assert.equal(getActiveAdapterFx(url)?.name, 'baidu-search');
+  }
+
+  const rejectedUrls = [
+    'https://map.baidu.com/',
+    'https://tieba.baidu.com/',
+    'https://pan.baidu.com/',
+    'https://baike.baidu.com/',
+    'https://news.baidu.com/',
+    'https://news.baidu.com/guonei',
+    'https://passport.baidu.com/v2/?login',
+    'https://passport.baidu.com/v2/?login&tpl=mn&u=https%3A%2F%2Fmap.baidu.com%2F',
+    'https://wappass.baidu.com/passport/?login&tpl=tb&u=https%3A%2F%2Ftieba.baidu.com%2F',
+    'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fmap.baidu.com%2F',
+    'https://wappass.baidu.com/static/captcha/tuxing_v2.html?backurl=https%3A%2F%2Fwww.baidu.com%2Fs%3Fwd%3Dwebbrain&u=https%3A%2F%2Ftieba.baidu.com%2F',
+    'https://passport.baidu.com/v2/?login&u=https%3A%2F%2Fwww.baidu.com.phishing.example%2Fs%3Fwd%3Dwebbrain',
+    'https://www.baidu.com.phishing.example/s?wd=webbrain',
+    'https://example.com/?next=https://www.baidu.com/s?wd=webbrain',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'baidu-search');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'baidu-search');
+  }
+
+  const adapter = getActiveAdapter('https://www.baidu.com/s?wd=webbrain');
+  const firefoxAdapter = getActiveAdapterFx('https://image.baidu.com/search/index?word=webbrain');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /百度一下/);
+  assert.match(adapter?.notes || '', /网页.*资讯.*视频.*图片/s);
+  assert.match(adapter?.notes || '', /广告|商业推广/);
+  assert.match(adapter?.notes || '', /文心助手|AI/);
+  assert.match(adapter?.notes || '', /www\.baidu\.com\/link\?url=/);
+  assert.match(adapter?.notes || '', /下一页/);
+  assert.match(adapter?.notes || '', /登录.*扫码|扫码.*登录/s);
+  assert.match(adapter?.notes || '', /wappass\.baidu\.com.*百度安全验证.*backurl/s);
+  assert.match(adapter?.notes || '', /do not require sign-in/i);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches twitter.com and x.com', () => {
   assert.equal(getActiveAdapter('https://twitter.com/elonmusk')?.name, 'twitter');
   assert.equal(getActiveAdapter('https://x.com/elonmusk')?.name, 'twitter');
