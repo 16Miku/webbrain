@@ -16304,6 +16304,20 @@ const ADAPTERS = [
 - Sharing a place produces a /maps/place/... URL with a CID — that's the stable link. The current viewport URL with @lat,lng,zoom is not a place link.`,
   },
   {
+    name: 'amap',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|uri)\.)?amap\.com\//.test(url),
+    notes: `
+- Treat amap.com, www.amap.com, m.amap.com, and uri.amap.com as Amap / 高德地图 consumer surfaces as of 2026-08. Exclude lbs.amap.com because it is the developer platform, not the map task UI.
+- Enter places in "搜索位置、公交站、地铁站" and read results from the side panel. The map itself is canvas / 画布 rendered, so do not infer names, coordinates, routes, or traffic from pixels when the selected result and sidebar text are available.
+- Confirm the current city and the exact POI name, category, district, and street address before selecting a result. A /search URL can carry its city= "城市" value from geolocation or a previous search; same-named places in different cities are not interchangeable.
+- For directions, set and re-read both start and destination, then choose deliberately among "驾车", "公交", "步行", and "骑行". If the start is blank, the site may use current location; do not assume that location is correct or grant location permission without the user's intent.
+- Compare route duration, distance, transfers, walking, tolls, and arrival estimates from the route side panel. Traffic-sensitive times and "推荐" ranking can change; report the observation time and do not promise an arrival from a single estimate.
+- Treat "卫星", "路况", "测距", and "地铁" as map layers/tools, not search results. Toggling them changes presentation and can obscure the active side panel; re-read the selected POI or route after changing a layer.
+- Public place search and route planning do not require sign-in. If "短信登录" or "二维码登录" appears, close or defer it for read-only work; ask the user to authenticate only for an explicitly requested account feature such as favorites or synchronized history.
+- Follow actual share/navigation links on m.amap.com or uri.amap.com and preserve their provided coordinates, POI IDs, names, and route mode. Do not synthesize a destination from rounded visible coordinates, and record the final place/route after the handoff.`,
+  },
+  {
     name: 'google-flights',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/(travel\/)?flights/.test(url),

@@ -2576,6 +2576,37 @@ test('matches apple store pages', () => {
   assert.equal(getActiveAdapter('https://secure.store.apple.com/shop/checkout')?.name, 'apple');
 });
 
+test('matches Amap consumer map surfaces without hijacking the developer platform', () => {
+  const trustedUrls = [
+    'https://amap.com/',
+    'https://www.amap.com/',
+    'https://www.amap.com/search?query=%E8%99%B9%E6%A1%A5%E7%81%AB%E8%BD%A6%E7%AB%99&city=310000',
+    'https://www.amap.com/dir?from%5Bname%5D=%E4%BA%BA%E6%B0%91%E5%B9%BF%E5%9C%BA',
+    'https://m.amap.com/navi/?dest=121.3,31.2',
+    'https://uri.amap.com/marker?position=121.3,31.2',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'amap');
+    assert.equal(getActiveAdapterFx(url)?.name, 'amap');
+  }
+  for (const url of ['https://lbs.amap.com/', 'https://amap.com.phishing.example/', 'https://example.com/?next=https://www.amap.com/']) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'amap');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'amap');
+  }
+  const adapter = getActiveAdapter('https://www.amap.com/search?query=x');
+  const firefoxAdapter = getActiveAdapterFx('https://m.amap.com/navi/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /搜索位置、公交站、地铁站/);
+  assert.match(adapter?.notes || '', /canvas|画布/i);
+  assert.match(adapter?.notes || '', /city=.*城市/s);
+  assert.match(adapter?.notes || '', /驾车.*公交.*步行.*骑行/s);
+  assert.match(adapter?.notes || '', /卫星.*路况.*测距.*地铁/s);
+  assert.match(adapter?.notes || '', /短信登录.*二维码登录/s);
+  assert.match(adapter?.notes || '', /do not require sign-in/i);
+  assert.match(adapter?.notes || '', /m\.amap\.com.*uri\.amap\.com/s);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches China Railway 12306 surfaces and includes ticket and waitlist guidance', () => {
   const trustedUrls = [
     'https://12306.cn/',
