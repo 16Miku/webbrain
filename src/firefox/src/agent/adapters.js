@@ -16505,6 +16505,23 @@ const ADAPTERS = [
 - Treat "结算" as order review; "提交订单" creates an order and can leave it in "待付款" even before payment completes. Re-read items, quantities, address, delivery, invoice, discounts, and final total, and do not click "提交订单" without the user's explicit confirmation. Report completion only from the resulting "订单编号" and payment/order status.`,
   },
 
+  // ─── Regional — 58.com (China) ─────────────────────────────
+  {
+    name: '58-com',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?!(?:about|biz|down|e|static|wbactivity)\.)(?:[a-z0-9-]+\.)?58\.com\//.test(url),
+    notes: `
+- As observed 2026-08, 58同城 is a Chinese CLASSIFIEDS platform spanning 招聘, 房产, 二手车, 二手市场, and 本地服务, not one uniform store. www.58.com and m.58.com can redirect by geolocation to a city host such as sh.58.com; verify the visible city or use "切换城市" before searching or comparing.
+- Category routes and filters differ. For rentals, /zufang/ exposes 区域, 地铁线路, 租金, 厅室, 方式, and "只看有图"; other entry points include /job.shtml, /ershoufang/, /ershouche/, /sale.shtml, and /huangye/. Use the visible category controls instead of guessing one site's filter shape for another.
+- Listings are posted by users, agents, or businesses. Read the exact price unit, location, date, description, poster identity, and category-specific facts; labels such as "来自经纪人", "安选", "实拍真房", or "7日内实拍验真" are distinct signals, not a blanket guarantee. Treat "广告" as paid placement and do not rank it as organic relevance.
+- Opening a listing is read-only; revealing a phone number, starting chat, calling, booking a viewing/service, applying for a job, or sending a resume is a separate external action. Require the user's explicit request before contact, never expose a private phone number in the response unnecessarily, and verify the intended listing and recipient first.
+- The platform's own agreement says listing information is user-published and transactions require independent judgment. Preserve the listing URL, screenshots, chat, receipts, and other evidence; do not send deposits, recruitment fees, verification codes, ID scans, or payment through seller-supplied external links. Use an on-platform protected-payment path only when the exact listing visibly offers it and review the full payable total.
+- "免费发布信息" opens post.58.com/2/ and first asks for a precise category. Before the final publish action, review city, category, title, facts, price, contact visibility, images, and any fees with the user; publishing, editing, deleting, promoting, or refreshing a listing each requires explicit authorization.
+- Report a post as complete only after "我的发布" shows the new listing and its actual status or public URL. "修改/删除信息" can route to help.58.com and offer account login or "手机短信删除"; do not claim deletion from opening that help page or submitting a verification request.
+- Login can require SMS or CAPTCHA. If either challenge appears, stop and require the user to complete it manually before continuing; do not request, enter, or relay an SMS code, and do not solve or bypass a CAPTCHA. Rapid list access may redirect an initial HTTP 200 response to callback.58.com/antibot/verifycode with "访问过于频繁", "请在五分钟内完成验证", and "点击按钮进行验证". The wall is not evidence that no listings exist, so do not retry or bypass it.
+    `,
+  },
+
   // ─── Regional — Allegro (Poland) ─────────────────────────────────────
   {
     name: 'allegro',
