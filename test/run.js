@@ -2419,15 +2419,26 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
 });
 
 test('matches Douyin video and live surfaces with verification and publication guidance', () => {
-  const urls=['https://douyin.com/','https://www.douyin.com/search/video','https://www.douyin.com/video/123','https://www.douyin.com/user/abc','https://live.douyin.com/123','https://v.douyin.com/abc/'];
+  const urls=['https://douyin.com/','https://www.douyin.com/search/video','https://www.douyin.com/video/123','https://www.douyin.com/user/abc','https://live.douyin.com/123','https://v.douyin.com/abc/','https://creator.douyin.com/creator-micro/content/upload'];
   for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'douyin');assert.equal(getActiveAdapterFx(url)?.name,'douyin');}
   for(const url of ['https://open.douyin.com/','https://douyin.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'douyin');
   const a=getActiveAdapter(urls[1]); const f=getActiveAdapterFx(urls[4]);
   assert.match(a?.notes||'',/2026-08.*HTTP 200.*验证码中间页.*live\.douyin\.com/s);
   assert.match(a?.notes||'',/搜索你感兴趣的内容.*综合.*视频.*用户.*直播/s);
   assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
-  assert.match(a?.notes||'',/投稿.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
+  assert.match(a?.notes||'',/投稿.*creator\.douyin\.com.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
   assert.equal(f?.notes,a?.notes);
+});
+
+test('matches Xianyu Goofish surfaces with safe second-hand transaction guidance', () => {
+  const urls=['https://goofish.com/','https://www.goofish.com/','https://www.goofish.com/search?q=x','https://www.goofish.com/item?id=123','https://m.goofish.com/item?id=123','https://h5.goofish.com/'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'xianyu');assert.equal(getActiveAdapterFx(url)?.name,'xianyu');}
+  for(const url of ['https://terms.alicdn.com/','https://goofish.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'xianyu');
+  const a=getActiveAdapter(urls[1]),f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*非法访问.*请使用正常浏览器访问闲鱼/s);
+  assert.match(a?.notes||'',/user-to-user second-hand marketplace/);assert.match(a?.notes||'',/想要.*聊一聊.*external action/s);
+  assert.match(a?.notes||'',/verification codes.*ID scans.*deposits.*direct transfers/s);assert.match(a?.notes||'',/确认收货.*release funds.*explicit confirmation/s);
+  assert.match(a?.notes||'',/draft.*pending payment.*incomplete/s);assert.equal(f?.notes,a?.notes);
 });
 
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
@@ -2588,6 +2599,37 @@ test('matches apple store pages', () => {
   assert.equal(getActiveAdapter('https://secure.store.apple.com/shop/checkout')?.name, 'apple');
 });
 
+test('matches Amap consumer map surfaces without hijacking the developer platform', () => {
+  const trustedUrls = [
+    'https://amap.com/',
+    'https://www.amap.com/',
+    'https://www.amap.com/search?query=%E8%99%B9%E6%A1%A5%E7%81%AB%E8%BD%A6%E7%AB%99&city=310000',
+    'https://www.amap.com/dir?from%5Bname%5D=%E4%BA%BA%E6%B0%91%E5%B9%BF%E5%9C%BA',
+    'https://m.amap.com/navi/?dest=121.3,31.2',
+    'https://uri.amap.com/marker?position=121.3,31.2',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'amap');
+    assert.equal(getActiveAdapterFx(url)?.name, 'amap');
+  }
+  for (const url of ['https://lbs.amap.com/', 'https://amap.com.phishing.example/', 'https://example.com/?next=https://www.amap.com/']) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'amap');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'amap');
+  }
+  const adapter = getActiveAdapter('https://www.amap.com/search?query=x');
+  const firefoxAdapter = getActiveAdapterFx('https://m.amap.com/navi/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /搜索位置、公交站、地铁站/);
+  assert.match(adapter?.notes || '', /canvas|画布/i);
+  assert.match(adapter?.notes || '', /city=.*城市/s);
+  assert.match(adapter?.notes || '', /驾车.*公交.*步行.*骑行/s);
+  assert.match(adapter?.notes || '', /卫星.*路况.*测距.*地铁/s);
+  assert.match(adapter?.notes || '', /短信登录.*二维码登录/s);
+  assert.match(adapter?.notes || '', /do not require sign-in/i);
+  assert.match(adapter?.notes || '', /m\.amap\.com.*uri\.amap\.com/s);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches China Railway 12306 surfaces and includes ticket and waitlist guidance', () => {
   const trustedUrls = [
     'https://12306.cn/',
@@ -2732,6 +2774,42 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
   const noteBullets = (adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- '));
   assert.equal(noteBullets.length, 8);
   assert.match(adapter?.notes || '', /订单号|出票成功|预订成功/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
+test('matches Qunar travel surfaces and distinguishes search, supplier, order, and ticket states', () => {
+  const trustedUrls = [
+    'https://qunar.com/', 'https://www.qunar.com/', 'https://flight.qunar.com/',
+    'https://hotel.qunar.com/', 'https://train.qunar.com/', 'https://piao.qunar.com/',
+    'https://dujia.qunar.com/', 'https://fh.dujia.qunar.com/', 'https://diy.dujia.qunar.com/',
+    'https://user.qunar.com/passport/login.jsp', 'https://order.qunar.com/flight/',
+    'https://help.qunar.com/', 'https://m.qunar.com/', 'https://app.qunar.com/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'qunar');
+    assert.equal(getActiveAdapterFx(url)?.name, 'qunar');
+  }
+  for (const url of [
+    'https://source.qunar.com/file.pdf', 'https://yun.qunar.com/uploads/file.pdf',
+    'https://adqunar.qunar.com/travelnews/', 'https://security.qunar.com/',
+    'https://qunar.com.phishing.example/', 'https://example.com/?next=https://flight.qunar.com/',
+  ]) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'qunar');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'qunar');
+  }
+  const adapter = getActiveAdapter('https://flight.qunar.com/');
+  const firefoxAdapter = getActiveAdapterFx('https://fh.dujia.qunar.com/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /www\.qunar\.com.*footer.*business page/s);
+  assert.match(adapter?.notes || '', /机票.*酒店.*火车票.*门票.*度假/s);
+  assert.match(adapter?.notes || '', /单程.*往返.*多程.*"从".*"到"/s);
+  assert.match(adapter?.notes || '', /supplier.*taxes and fees.*baggage.*refund\/change\/cancellation/s);
+  assert.match(adapter?.notes || '', /预订.*supplier site.*order page/s);
+  assert.match(adapter?.notes || '', /入住\/离店.*cancellation deadline.*prepayment\/deposit/s);
+  assert.match(adapter?.notes || '', /explicit confirmation.*before payment/s);
+  assert.match(adapter?.notes || '', /user\.qunar\.com.*password.*SMS.*QR code/s);
+  assert.match(adapter?.notes || '', /查看订单.*order number.*出票成功/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
