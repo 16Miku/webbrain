@@ -2575,6 +2575,58 @@ test('matches Rakuten Ichiba shopping surfaces and includes marketplace guidance
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches JD shopping surfaces and includes Chinese login and checkout guidance', () => {
+  const trustedUrls = [
+    'https://www.jd.com/',
+    'https://search.jd.com/Search?keyword=%E6%89%8B%E6%9C%BA',
+    'https://list.jd.com/list.html?cat=9987%2C653%2C655',
+    'https://item.jd.com/100134399065.html',
+    'https://mall.jd.com/index-1000004123.html',
+    'https://m.jd.com/',
+    'https://item.m.jd.com/product/100134399065.html',
+    'https://cart.jd.com/cart_index',
+    'https://trade.jd.com/shopping/order/getOrderInfo.action',
+    'https://order.jd.com/center/list.action',
+    'https://passport.jd.com/new/login.aspx?ReturnUrl=https%3A%2F%2Fitem.jd.com%2F100134399065.html&czLogin=1',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'jd');
+    assert.equal(getActiveAdapterFx(url)?.name, 'jd');
+  }
+
+  const rejectedUrls = [
+    'https://corporate.jd.com/home',
+    'https://help.jd.com/user/guide.html',
+    'https://item.jd.com.phishing.example/100134399065.html',
+    'https://item.jd.com@phishing.example/100134399065.html',
+    'https://example.com/?next=https://item.jd.com/100134399065.html',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'jd');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'jd');
+  }
+
+  const adapter = getActiveAdapter('https://item.jd.com/100134399065.html');
+  const firefoxAdapter = getActiveAdapterFx('https://cart.jd.com/cart_index');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /passport\.jd\.com.*czLogin=1/s);
+  assert.match(adapter?.notes || '', /QR code.*password.*SMS/i);
+  assert.match(adapter?.notes || '', /ReturnUrl/);
+  assert.match(adapter?.notes || '', /list\.jd\.com/);
+  assert.match(adapter?.notes || '', /mall\.jd\.com/);
+  assert.match(adapter?.notes || '', /搜全站.*搜本店/s);
+  assert.match(adapter?.notes || '', /自营/);
+  assert.match(adapter?.notes || '', /配送至/);
+  assert.match(adapter?.notes || '', /APP专享价/);
+  assert.match(adapter?.notes || '', /加入购物车/);
+  assert.match(adapter?.notes || '', /立即购买/);
+  assert.match(adapter?.notes || '', /去结算/);
+  assert.match(adapter?.notes || '', /提交订单/);
+  assert.match(adapter?.notes || '', /Do not click "提交订单" without the user's explicit confirmation/);
+  assert.match(adapter?.notes || '', /订单编号/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Allegro.pl shopping surfaces and includes Polish marketplace guidance', () => {
   const trustedUrls = [
     'https://allegro.pl/',

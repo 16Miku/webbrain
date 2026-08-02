@@ -16335,6 +16335,21 @@ const ADAPTERS = [
 - "ポイント", SPU, and スーパーDEAL are conditional rewards, not an immediate cash-price reduction; campaigns may require entry, membership, payment methods, or have caps, and shipping/tax do not earn ordinary points. Report the payable total separately from expected points.`,
   },
 
+  // ─── Regional — JD.com (China) ───────────────────────────────────────
+  {
+    name: 'jd',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|search|so|list|item|mall|cart|trade|order|passport)\.)?(?:m\.)?jd\.com\//.test(url),
+    notes: `
+- Treat www.jd.com, search.jd.com, list.jd.com, item.jd.com, mall.jd.com, cart.jd.com, trade.jd.com, order.jd.com, passport.jd.com, and their m.jd.com mobile equivalents as JD's shopping flow as of 2026-08. Anonymous visits to search or product pages may redirect to passport.jd.com/new/login.aspx with czLogin=1.
+- When that login redirect appears, STOP and ask the user to complete QR code, password, or SMS login manually. Do not loop back to the product/search URL or claim it is unavailable. JD returns to the encoded ReturnUrl after login, so re-read the destination page instead of re-navigating.
+- search.jd.com and list.jd.com are keyword and category browsing; mall.jd.com is one store. On product and store pages "搜全站" searches all of JD while "搜本店" restricts results to the current store. Use "搜全站" unless the user explicitly wants more products from that store.
+- Read the store/seller name and the "自营" badge for the selected offer because JD includes both self-operated and third-party marketplace offers; do not infer that JD is the seller merely from the jd.com URL.
+- Select the exact color, capacity, edition, bundle, or service option and set "配送至" before quoting price, stock, or arrival. "京东价", "APP专享价", promotions, national subsidies, coupons, and 京豆 are conditional and may not apply on this surface; treat the selected cart/checkout total as authoritative.
+- "加入购物车" does not place an order. "立即购买" skips the cart, so do not use it for research or comparison tasks; add the exact variant to the cart and verify the selected row and quantity instead.
+- Treat "去结算" as order review; only "提交订单" creates the order. Before submitting, re-read the items, quantities, seller, address, delivery, invoice, discounts, and final total. Do not click "提交订单" without the user's explicit confirmation. Report success only after the confirmation shows an "订单编号" (also visible in "我的订单").`,
+  },
+
   // ─── Regional — Allegro (Poland) ─────────────────────────────────────
   {
     name: 'allegro',
