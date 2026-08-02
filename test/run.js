@@ -2418,6 +2418,17 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Xianyu Goofish surfaces with safe second-hand transaction guidance', () => {
+  const urls=['https://goofish.com/','https://www.goofish.com/','https://www.goofish.com/search?q=x','https://www.goofish.com/item?id=123','https://m.goofish.com/item?id=123','https://h5.goofish.com/'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'xianyu');assert.equal(getActiveAdapterFx(url)?.name,'xianyu');}
+  for(const url of ['https://terms.alicdn.com/','https://goofish.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'xianyu');
+  const a=getActiveAdapter(urls[1]),f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*非法访问.*请使用正常浏览器访问闲鱼/s);
+  assert.match(a?.notes||'',/user-to-user second-hand marketplace/);assert.match(a?.notes||'',/想要.*聊一聊.*external action/s);
+  assert.match(a?.notes||'',/verification codes.*ID scans.*deposits.*direct transfers/s);assert.match(a?.notes||'',/确认收货.*release funds.*explicit confirmation/s);
+  assert.match(a?.notes||'',/draft.*pending payment.*incomplete/s);assert.equal(f?.notes,a?.notes);
+});
+
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
   const urls = [
     'https://www.bilibili.com/video/BV1FD4y147uH/?p=2',

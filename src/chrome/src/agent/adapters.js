@@ -16670,6 +16670,20 @@ const ADAPTERS = [
 
   // ─── Social (gaps) ────────────────────────────────────────────────────
   {
+    name: 'xianyu', category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|h5)\.)?goofish\.com\//.test(url),
+    notes: `
+- Observed 2026-08: www.goofish.com can return HTTP 200 with "非法访问" and "为了保障您的体验，请使用正常浏览器访问闲鱼". Stop and ask the user to use the normal browser/app; do not retry, disguise automation, bypass the block, or claim there are no items.
+- For readable search/listing pages verify the exact category, title, price, location, delivery/pickup method, publish/update time, and stable item URL. Search cards are leads, not proof that an item remains available.
+- Xianyu is a user-to-user second-hand marketplace. Read every photo and description, selected variant/quantity, condition and defects, authenticity/provenance claims, seller identity/profile and transaction history; distinguish seller claims from platform-backed inspection or protection explicitly shown for that item.
+- Separate the displayed asking price from a negotiated price, shipping, inspection, service fees, and the final order total. Very low prices, deposits, installment/down-payment wording, and "到手价" conditions require clarification rather than optimistic ranking.
+- "想要" / "聊一聊" opens seller chat; sending a message, offer, address, or contact information is an external action. Require the user's exact intent, verify the item/seller, and review the message before sending; never move to an external messenger or payment link supplied in chat.
+- Keep order and payment in the platform-supported transaction flow. Never send verification codes, account credentials, ID scans, deposits, or direct transfers. Before creating/paying an order, re-read item, negotiated terms, condition, quantity, seller, delivery, address, protection/refund terms, and final total, then require explicit confirmation.
+- "确认收货" can release funds and must never be used merely because tracking says delivered; require the user's explicit confirmation that the exact item was received and inspected. Preserve listing, chat, unboxing, tracking, and payment evidence for disputes.
+- Publishing a listing is separate from research: review title, category, description/defects, photos, price, shipping/pickup, location, quantity, and visibility before final confirmation. Report sale/purchase/publication only from the corresponding order or profile page with a stable ID and explicit status; draft, chat agreement, pending payment, or upload success is incomplete.
+    `,
+  },
+  {
     name: 'bilibili',
     category: 'general',
     matches: isBilibiliUrl,
