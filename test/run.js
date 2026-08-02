@@ -2716,6 +2716,31 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Dianping city, shop, and verification surfaces with local-service guidance', () => {
+  const trusted = ['https://dianping.com/','https://www.dianping.com/shanghai','https://www.dianping.com/search/keyword/1/10_food','https://www.dianping.com/shop/example','https://m.dianping.com/shanghai','https://h5.dianping.com/app/m-static-base-page/dpuserservice.html','https://verify.meituan.com/v2/app/general_page?requestCode=x'];
+  for (const url of trusted) {
+    assert.equal(getActiveAdapter(url)?.name, 'dianping');
+    assert.equal(getActiveAdapterFx(url)?.name, 'dianping');
+  }
+  for (const url of ['https://events.dianping.com/help/11.htm','https://www.dpfile.com/file.pdf','https://dianping.com.phishing.example/shop/x','https://verify.meituan.com.phishing.example/']) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'dianping');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'dianping');
+  }
+  const adapter = getActiveAdapter('https://www.dianping.com/shanghai');
+  const firefoxAdapter = getActiveAdapterFx('https://verify.meituan.com/v2/app/general_page');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /bare www\.dianping\.com page is empty.*更换.*搜索商户名、地址、菜名、外卖等/s);
+  assert.match(adapter?.notes || '', /exact name and branch.*营业时间/s);
+  assert.match(adapter?.notes || '', /口味\/环境\/服务.*人均/s);
+  assert.match(adapter?.notes || '', /商户认证.*not every review/s);
+  assert.match(adapter?.notes || '', /预约订座.*explicitly requested/s);
+  assert.match(adapter?.notes || '', /团购.*优惠券.*买单.*预约.*预订/s);
+  assert.match(adapter?.notes || '', /HTTP 200.*verify\.meituan\.com.*身份核实.*请向右拖动滑块/s);
+  assert.match(adapter?.notes || '', /待支付.*not a confirmed booking/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter(line => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Ctrip travel surfaces and includes Chinese booking guidance', () => {
   const trustedUrls = [
     'https://www.ctrip.com/',
