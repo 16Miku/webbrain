@@ -2576,6 +2576,60 @@ test('matches apple store pages', () => {
   assert.equal(getActiveAdapter('https://secure.store.apple.com/shop/checkout')?.name, 'apple');
 });
 
+test('matches China Railway 12306 surfaces and includes ticket and waitlist guidance', () => {
+  const trustedUrls = [
+    'https://12306.cn/',
+    'https://www.12306.cn/index/',
+    'https://kyfw.12306.cn/otn/leftTicket/init',
+    'https://kyfw.12306.cn/otn/confirmPassenger/initDc',
+    'https://kyfw.12306.cn/otn/queryOrder/initNoComplete',
+    'https://kyfw.12306.cn/otn/view/lineUp_toPay.html',
+    'https://passport.12306.cn/passport/web/login',
+    'https://epay.12306.cn/',
+    'https://mobile.12306.cn/',
+    'https://cx.12306.cn/',
+    'https://dynamic.12306.cn/',
+    'https://travel.12306.cn/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'railway-12306');
+    assert.equal(getActiveAdapterFx(url)?.name, 'railway-12306');
+  }
+
+  const rejectedUrls = [
+    'https://www.95306.cn/',
+    'https://12306.cn.phishing.example/otn/leftTicket/init',
+    'https://kyfw.12306.cn@phishing.example/otn/leftTicket/init',
+    'https://epay.12306.cn.phishing.example/',
+    'https://x12306.cn/',
+    'https://example.com/?next=https://kyfw.12306.cn/otn/leftTicket/init',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'railway-12306');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'railway-12306');
+  }
+
+  const adapter = getActiveAdapter('https://kyfw.12306.cn/otn/leftTicket/init');
+  const firefoxAdapter = getActiveAdapterFx('https://www.12306.cn/index/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /出发地.*到达地.*出发日期/s);
+  assert.match(adapter?.notes || '', /"有" means seats are currently available/);
+  assert.match(adapter?.notes || '', /"无" means sold out/);
+  assert.match(adapter?.notes || '', /账号登录.*扫码登录/s);
+  assert.match(adapter?.notes || '', /人证核验|手机验证/);
+  assert.match(adapter?.notes || '', /verification or anti-bot interstitial/);
+  assert.match(adapter?.notes || '', /epay/);
+  assert.match(adapter?.notes || '', /Use "预订" only for an available train/);
+  assert.match(adapter?.notes || '', /Treat "候补" as a paid waitlist, not a booked ticket/);
+  assert.match(adapter?.notes || '', /"预付款" can use the highest requested fare/);
+  assert.match(adapter?.notes || '', /Do not click "提交订单"/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /"订单状态"/);
+  assert.match(adapter?.notes || '', /待兑现.*已兑现.*已退单.*兑现失败/s);
+  assert.match(adapter?.notes || '', /never expose passenger document numbers/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Mercado Libre LATAM storefronts and includes marketplace guidance', () => {
   const trustedUrls = [
     'https://mercadolibre.com.ar/',
