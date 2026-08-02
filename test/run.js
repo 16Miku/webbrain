@@ -2792,6 +2792,53 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches current Shopee regional storefronts with marketplace guidance', () => {
+  const trustedUrls = [
+    'https://shopee.com/',
+    'https://shopee.sg/search?keyword=phone',
+    'https://www.shopee.vn/example-shop/example-item',
+    'https://shopee.tw/',
+    'https://shopee.co.th/',
+    'https://shopee.com.mx/',
+    'https://shopee.com.my/',
+    'https://shopee.com.br/',
+    'https://shopee.com.la/',
+    'https://shopee.com.ar/',
+    'https://shopee.co.id/',
+    'https://shopee.ph/',
+    'https://www.shopeekh.com/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'shopee');
+    assert.equal(getActiveAdapterFx(url)?.name, 'shopee');
+  }
+
+  const rejectedUrls = [
+    'https://seller.shopee.sg/',
+    'https://help.shopee.sg/portal/4',
+    'https://account.seller.shopee.com/signin',
+    'https://shopee.com.phishing.example/search?keyword=phone',
+    'https://example.com/?next=https://shopee.sg/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'shopee');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'shopee');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[1]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls.at(-1));
+  assert.match(adapter?.notes || '', /2026-08.*Choose a country or region/s);
+  assert.match(adapter?.notes || '', /verify\/traffic.*complete.*manually/s);
+  assert.match(adapter?.notes || '', /preferred variation.*Masukkan Keranjang.*Thêm Vào Giỏ Hàng.*加入購物車/s);
+  assert.match(adapter?.notes || '', /Shopee Mall.*seller.*ratings/s);
+  assert.match(adapter?.notes || '', /seller voucher.*free shipping voucher.*platform voucher.*minimum spend/s);
+  assert.match(adapter?.notes || '', /Add to Cart.*Buy Now.*Place Order/s);
+  assert.match(adapter?.notes || '', /OTP.*manually/s);
+  assert.match(adapter?.notes || '', /Order Received.*release.*funds.*order ID/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Dianping city, shop, and verification surfaces with local-service guidance', () => {
   const trusted = ['https://dianping.com/','https://www.dianping.com/shanghai','https://www.dianping.com/search/keyword/1/10_food','https://www.dianping.com/shop/example','https://m.dianping.com/shanghai','https://h5.dianping.com/app/m-static-base-page/dpuserservice.html','https://verify.meituan.com/v2/app/general_page?requestCode=x'];
   for (const url of trusted) {
