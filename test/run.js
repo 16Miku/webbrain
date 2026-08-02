@@ -2434,6 +2434,66 @@ test('matches Kuaishou video and live surfaces with access and publication guida
   assert.equal(f?.notes,a?.notes);
 });
 
+test('matches Douyin video and live surfaces with verification and publication guidance', () => {
+  const urls=['https://douyin.com/','https://www.douyin.com/search/video','https://www.douyin.com/video/123','https://www.douyin.com/user/abc','https://live.douyin.com/123','https://v.douyin.com/abc/','https://creator.douyin.com/creator-micro/content/upload'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'douyin');assert.equal(getActiveAdapterFx(url)?.name,'douyin');}
+  for(const url of ['https://open.douyin.com/','https://douyin.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'douyin');
+  const a=getActiveAdapter(urls[1]); const f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*验证码中间页.*live\.douyin\.com/s);
+  assert.match(a?.notes||'',/搜索你感兴趣的内容.*综合.*视频.*用户.*直播/s);
+  assert.match(a?.notes||'',/关注.*点赞.*收藏.*评论.*私信/s);
+  assert.match(a?.notes||'',/投稿.*creator\.douyin\.com.*explicit confirmation/s); assert.match(a?.notes||'',/stable URL.*intended visibility/s);
+  assert.equal(f?.notes,a?.notes);
+});
+
+test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
+  const trustedUrls = [
+    'https://zhipin.com/',
+    'https://www.zhipin.com/',
+    'https://www.zhipin.com/web/geek/jobs?query=webbrain&city=101020100',
+    'https://www.zhipin.com/job_detail/example.html',
+    'https://www.zhipin.com/web/geek/chat',
+    'https://www.zhipin.com/web/passport/zp/verify.html?callbackUrl=https%3A%2F%2Fwww.zhipin.com%2F',
+    'https://www.zhipin.com/zhaopin/example/',
+    'https://m.zhipin.com/zhaopin/example/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'boss-zhipin');
+    assert.equal(getActiveAdapterFx(url)?.name, 'boss-zhipin');
+  }
+
+  const rejectedUrls = [
+    'https://ir.zhipin.com/',
+    'https://static.zhipin.com/',
+    'https://zhipin.com.phishing.example/web/geek/jobs',
+    'https://www.zhipin.com@phishing.example/web/geek/jobs',
+    'https://example.com/?next=https://www.zhipin.com/web/geek/jobs',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'boss-zhipin');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'boss-zhipin');
+  }
+
+  const adapter = getActiveAdapter('https://www.zhipin.com/web/geek/jobs?query=webbrain&city=101020100');
+  const firefoxAdapter = getActiveAdapterFx('https://m.zhipin.com/zhaopin/example/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /搜索职位、公司/);
+  assert.match(adapter?.notes || '', /city=.*城市/s);
+  assert.match(adapter?.notes || '', /K-denominated.*·15薪/s);
+  assert.match(adapter?.notes || '', /experience.*education.*company.*financing.*company size/s);
+  assert.match(adapter?.notes || '', /立即沟通.*开聊.*not an application or an offer/s);
+  assert.match(adapter?.notes || '', /交换联系方式.*面试邀请.*phone number.*微信/s);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /通知与隐私设置.*对BOSS隐藏简历.*屏蔽公司/s);
+  assert.match(adapter?.notes || '', /安全验证.*\/web\/passport\/zp\/verify\.html/s);
+  assert.match(adapter?.notes || '', /CAPTCHA.*stop.*user.*complete it manually/s);
+  assert.match(adapter?.notes || '', /about:blank.*HTTP 200.*access\/anti-automation restriction/s);
+  assert.match(adapter?.notes || '', /contact exchange.*accepted\/exchanged state.*contact details/s);
+  assert.match(adapter?.notes || '', /sent\/delivered status.*explicit status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 9);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Xianyu Goofish surfaces with safe second-hand transaction guidance', () => {
   const urls=['https://goofish.com/','https://www.goofish.com/','https://www.goofish.com/search?q=x','https://www.goofish.com/item?id=123','https://m.goofish.com/item?id=123','https://h5.goofish.com/'];
   for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'xianyu');assert.equal(getActiveAdapterFx(url)?.name,'xianyu');}
@@ -2732,6 +2792,31 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Dianping city, shop, and verification surfaces with local-service guidance', () => {
+  const trusted = ['https://dianping.com/','https://www.dianping.com/shanghai','https://www.dianping.com/search/keyword/1/10_food','https://www.dianping.com/shop/example','https://m.dianping.com/shanghai','https://h5.dianping.com/app/m-static-base-page/dpuserservice.html','https://verify.meituan.com/v2/app/general_page?requestCode=x'];
+  for (const url of trusted) {
+    assert.equal(getActiveAdapter(url)?.name, 'dianping');
+    assert.equal(getActiveAdapterFx(url)?.name, 'dianping');
+  }
+  for (const url of ['https://events.dianping.com/help/11.htm','https://www.dpfile.com/file.pdf','https://dianping.com.phishing.example/shop/x','https://verify.meituan.com.phishing.example/']) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'dianping');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'dianping');
+  }
+  const adapter = getActiveAdapter('https://www.dianping.com/shanghai');
+  const firefoxAdapter = getActiveAdapterFx('https://verify.meituan.com/v2/app/general_page');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /bare www\.dianping\.com page is empty.*更换.*搜索商户名、地址、菜名、外卖等/s);
+  assert.match(adapter?.notes || '', /exact name and branch.*营业时间/s);
+  assert.match(adapter?.notes || '', /口味\/环境\/服务.*人均/s);
+  assert.match(adapter?.notes || '', /商户认证.*not every review/s);
+  assert.match(adapter?.notes || '', /预约订座.*explicitly requested/s);
+  assert.match(adapter?.notes || '', /团购.*优惠券.*买单.*预约.*预订/s);
+  assert.match(adapter?.notes || '', /HTTP 200.*verify\.meituan\.com.*身份核实.*请向右拖动滑块/s);
+  assert.match(adapter?.notes || '', /待支付.*not a confirmed booking/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter(line => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Ctrip travel surfaces and includes Chinese booking guidance', () => {
   const trustedUrls = [
     'https://www.ctrip.com/',
@@ -3010,6 +3095,73 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
   assert.match(adapter?.notes || '', /explicit confirmation/);
   assert.match(adapter?.notes || '', /待付款/);
   assert.match(adapter?.notes || '', /订单编号/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
+test('matches 58.com city and service surfaces with safe classifieds guidance', () => {
+  const trustedUrls = [
+    'https://58.com/',
+    'https://www.58.com/',
+    'https://m.58.com/',
+    'https://wap.58.com/wap.html',
+    'https://sh.58.com/',
+    'https://szkunshan.58.com/zufang/',
+    'https://sh.58.com/job.shtml',
+    'https://sh.58.com/zufang/',
+    'https://sh.58.com/ershoufang/',
+    'https://sh.58.com/ershouche/',
+    'https://sh.58.com/sale.shtml',
+    'https://sh.58.com/huangye/',
+    'https://passport.58.com/login/',
+    'https://my.58.com/index',
+    'https://vip.58.com/vcenter/myinfo/',
+    'https://employer.58.com/',
+    'https://post.58.com/2/',
+    'https://help.58.com/maoyonginfo/index/',
+    'https://helps.58.com/base/home',
+    'https://fanqizha.58.com/',
+    'https://weiquan.58.com/home',
+    'https://callback.58.com/antibot/verifycode?url=https%3A%2F%2Fsh.58.com%2Fjob.shtml',
+    'https://info5.58.com/sh/ershouche/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, '58-com');
+    assert.equal(getActiveAdapterFx(url)?.name, '58-com');
+  }
+
+  const rejectedUrls = [
+    'https://about.58.com/',
+    'https://static.58.com/ui7/help/',
+    'https://down.58.com/',
+    'https://biz.58.com/',
+    'https://e.58.com/',
+    'https://wbactivity.58.com/pc/adIndex',
+    'https://58.com.phishing.example/zufang/',
+    'https://sh.58.com@phishing.example/zufang/',
+    'https://example.com/?next=https://sh.58.com/zufang/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, '58-com');
+    assert.notEqual(getActiveAdapterFx(url)?.name, '58-com');
+  }
+
+  const adapter = getActiveAdapter('https://sh.58.com/zufang/');
+  const firefoxAdapter = getActiveAdapterFx('https://post.58.com/2/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /CLASSIFIEDS/);
+  assert.match(adapter?.notes || '', /www\.58\.com.*m\.58\.com.*sh\.58\.com.*切换城市/s);
+  assert.match(adapter?.notes || '', /招聘.*房产.*二手车.*二手市场.*本地服务/s);
+  assert.match(adapter?.notes || '', /\/zufang\/.*区域.*地铁线路.*租金.*厅室.*方式.*只看有图/s);
+  assert.match(adapter?.notes || '', /来自经纪人.*安选.*实拍真房.*7日内实拍验真.*广告/s);
+  assert.match(adapter?.notes || '', /revealing a phone number.*sending a resume.*explicit request/s);
+  assert.match(adapter?.notes || '', /deposits.*recruitment fees.*verification codes.*ID scans.*external links/s);
+  assert.match(adapter?.notes || '', /免费发布信息.*post\.58\.com\/2\//s);
+  assert.match(adapter?.notes || '', /publishing.*editing.*deleting.*promoting.*refreshing.*explicit authorization/s);
+  assert.match(adapter?.notes || '', /我的发布.*actual status or public URL/s);
+  assert.match(adapter?.notes || '', /修改\/删除信息.*help\.58\.com.*手机短信删除/s);
+  assert.match(adapter?.notes || '', /SMS or CAPTCHA.*stop.*user.*complete it manually.*do not request, enter, or relay an SMS code.*do not solve or bypass a CAPTCHA/s);
+  assert.match(adapter?.notes || '', /HTTP 200.*callback\.58\.com\/antibot\/verifycode.*访问过于频繁.*请在五分钟内完成验证.*点击按钮进行验证/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
