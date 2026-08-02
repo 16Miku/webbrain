@@ -2823,7 +2823,8 @@ test('matches Flipkart shopping surfaces with India marketplace guidance', () =>
   assert.match(adapter?.notes || '', /Sort By.*Price -- Low to High/s);
   assert.match(adapter?.notes || '', /Location not set.*Select delivery location/s);
   assert.match(adapter?.notes || '', /Upto.*Off on Exchange.*not.*discount/s);
-  assert.match(adapter?.notes || '', /See other sellers.*seller rating/s);
+  assert.match(adapter?.notes || '', /Always read.*selected.*seller.*If "See other sellers" is present/s);
+  assert.match(adapter?.notes || '', /assurance badges only when shown/);
   assert.match(adapter?.notes || '', /Add to cart.*Buy now/s);
   assert.match(adapter?.notes || '', /OTP.*manually/s);
   assert.match(adapter?.notes || '', /explicit confirmation.*order ID/s);
