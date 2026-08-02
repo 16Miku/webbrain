@@ -16670,6 +16670,19 @@ const ADAPTERS = [
 
   // ─── Social (gaps) ────────────────────────────────────────────────────
   {
+    name: 'kuaishou', category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|live|v)\.)?kuaishou\.com\//.test(url),
+    notes: `
+- Observed 2026-08: www.kuaishou.com can return HTTP 200 with a JSON body such as {"result":2,"error_msg":null,...} and no page UI, while live.kuaishou.com remains readable. Treat the JSON as an access failure, not content or empty results; do not retry rapidly.
+- On the live site use "请输入内容进行搜索" and the visible 关注, 推荐, 热门, 赛事, and 分类 routes. Verify streamer/profile identity, title, category/game, live status, viewer count, and stable room/profile URL.
+- Search/feed ordering is personalized and counts can be abbreviated. Verify creator name/快手号, caption, publish time, and permalink; do not treat rank, popularity, "蓝光/超清" quality, or an official-looking name as authority.
+- Watching/searching is read-only. 关注, 点赞, 评论, 私信, sharing, joining interactions, recharge, purchases, and live gifts change external/account state; perform only the explicitly requested action.
+- For publishing, review the exact media, caption, mentions/topics, cover, location, visibility, comment/download permissions, and schedule, then require explicit confirmation at the final publish control.
+- Login/verification may require QR, SMS, captcha, or app handling. Stop for the user; never interact, recharge, buy, or gift merely to unlock content.
+- Report publication only after the work appears on the user's profile with its stable URL and intended visibility; upload/progress/review or a toast is not public completion.
+    `,
+  },
+  {
     name: 'bilibili',
     category: 'general',
     matches: isBilibiliUrl,

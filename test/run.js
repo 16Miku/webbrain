@@ -2418,6 +2418,16 @@ test('matches Zhihu reading and creation surfaces with login and publication gui
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Kuaishou video and live surfaces with access and publication guidance', () => {
+  const urls=['https://kuaishou.com/','https://www.kuaishou.com/search/video?searchKey=x','https://www.kuaishou.com/short-video/abc','https://www.kuaishou.com/profile/abc','https://live.kuaishou.com/123','https://v.kuaishou.com/abc'];
+  for(const url of urls){assert.equal(getActiveAdapter(url)?.name,'kuaishou');assert.equal(getActiveAdapterFx(url)?.name,'kuaishou');}
+  for(const url of ['https://ir.kuaishou.com/','https://kuaishou.com.phishing.example/']) assert.notEqual(getActiveAdapter(url)?.name,'kuaishou');
+  const a=getActiveAdapter(urls[0]),f=getActiveAdapterFx(urls[4]);
+  assert.match(a?.notes||'',/2026-08.*HTTP 200.*"result":2.*live\.kuaishou\.com/s);
+  assert.match(a?.notes||'',/请输入内容进行搜索.*关注.*推荐.*热门.*赛事.*分类/s);
+  assert.match(a?.notes||'',/关注.*点赞.*评论.*私信/s);assert.match(a?.notes||'',/explicit confirmation.*final publish/s);assert.equal(f?.notes,a?.notes);
+});
+
 test('matches Bilibili surfaces with mirrored regional guidance', () => {
   const urls = [
     'https://www.bilibili.com/video/BV1FD4y147uH/?p=2',
