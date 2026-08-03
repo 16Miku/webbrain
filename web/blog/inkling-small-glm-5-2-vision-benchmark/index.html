@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inkling Small vs GLM-5.2 Vision UI benchmark - WebBrain Blog</title>
+  <meta name="description" content="We ran the same frozen WebBrain UI-vision probe against Thinking Machines Inkling Small on OpenRouter and a full GLM-5.2 Vision hybrid on four RTX PRO 6000 Blackwell GPUs at RunPod.">
+  <meta name="keywords" content="WebBrain, Inkling Small, Thinking Machines, GLM-5.2 Vision, Baseten, RunPod, OpenRouter, multimodal model, vision-language model, open-weight AI, browser agent, UI understanding">
+  <meta property="og:title" content="Inkling Small vs GLM-5.2 Vision: the same frozen UI test">
+  <meta property="og:description" content="Native multimodality meets an open vision graft: one screenshot, one frozen prompt, OpenRouter vs four RTX PRO 6000 Blackwell GPUs.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/inkling-small-glm-5-2-vision-benchmark">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Inkling Small vs GLM-5.2 Vision on the same UI screenshot">
+  <meta name="twitter:description" content="Both went 12/12 on visible strings. Inkling won the visual-state details; GLM&#39;s third-party vision graft still passed the core browser-agent test.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/inkling-small-glm-5-2-vision-benchmark">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .page-label {
+      display: inline-block;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: var(--accent2);
+      padding: 4px 10px;
+      border: 1px solid color-mix(in srgb, var(--accent2) 28%, transparent);
+      border-radius: 999px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .page-sub,
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .page-sub {
+      font-size: 17px;
+      max-width: 580px;
+      margin-bottom: 48px;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      .page-sub { font-size: 15px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision",
+  "description": "We ran the same frozen WebBrain UI-vision probe against Thinking Machines Inkling Small on OpenRouter and a full GLM-5.2 Vision hybrid on four RTX PRO 6000 Blackwell GPUs at RunPod.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-02",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/inkling-small-glm-5-2-vision-benchmark"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 2, 2026 &middot; 10 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision</h1>
+    <p class="lede"><strong>This is a comparison between two very different routes to multimodality.</strong> Thinking Machines trained Inkling Small as a native text-image-audio model: a 276B-parameter MoE with 12B active. The original GLM-5.2 release is text-only, but open weights let Baseten attach Kimi K2.6&#39;s MoonViT vision tower through a small trained projector; a community checkpoint then compressed the full model enough to serve on four 96 GB RTX PRO 6000 Blackwell GPUs. We sent both the exact same Google sign-in screenshot, system prompt, user message, temperature, and output limit. Both read the page. Inkling Small produced the better browser-state description, while GLM-5.2 Vision delivered the more consequential ecosystem result: the open graft actually works.</p>
+<h2 id="the-short-version">The short version</h2>
+<p>The screenshot contains a Google password challenge with twelve target strings, an account chip, an empty password field, a red validation border, a red warning icon, an enabled-looking <code>Next</code> button, and a small chevron that makes the account chip actionable.</p>
+<p>Both models:</p>
+<ul><li>read all <strong>12/12 target strings</strong>, including the email address;</li><li>identified the page purpose;</li><li>read the exact <code>Enter a password</code> validation message;</li><li>recognized the warning icon;</li><li>inferred that the empty password was the real blocker;</li><li>produced no fabricated visible text;</li><li>missed the account chip&#39;s dropdown affordance; and</li><li>answered <code>Unknowns: None</code>, despite each having missed at least one meaningful detail.</li></ul>
+<p>Inkling Small did better on the remaining visual state. It reported the red input border and correctly treated the password field as focused. GLM omitted the border and marked the field as not focused. Inkling also returned much sooner on the tested hosted route.</p>
+<div class="table-wrap"><table><thead><tr><th>Frozen screenshot metric</th><th>Inkling Small</th><th>GLM-5.2 Vision hybrid</th></tr></thead><tbody><tr><td>Visible strings</td><td><strong>12 / 12</strong></td><td><strong>12 / 12</strong></td></tr><tr><td>Email OCR</td><td>Correct</td><td>Correct</td></tr><tr><td>Account chip recognized as dropdown</td><td>Missed</td><td>Missed; called it an email field</td></tr><tr><td>Password value</td><td>Correctly empty</td><td>Correctly empty</td></tr><tr><td>Password focus state</td><td><strong>Correct</strong></td><td>Incorrect</td></tr><tr><td>Red error state</td><td><strong>Border + icon + exact text</strong></td><td>Icon + exact text; border missed</td></tr><tr><td>Real blocker</td><td>Correct</td><td>Correct</td></tr><tr><td>Fabricated visible text</td><td>0</td><td>0</td></tr><tr><td>Honest uncertainty</td><td>Failed: <code>None</code></td><td>Failed: <code>None</code></td></tr><tr><td>Time to first token</td><td><strong>3.60s</strong></td><td>15.64s</td></tr><tr><td>Total response time</td><td><strong>5.13s</strong></td><td>21.63s</td></tr></tbody></table></div>
+<p>That is an Inkling Small win on this fixture. It is not a universal vision leaderboard, and the latency column is particularly non-comparable: Inkling ran through a provider-managed OpenRouter route, while GLM ran on our one-off dedicated RunPod deployment. The useful result is the capability shape, not a synthetic hosted-versus-self-hosted speed crown.</p>
+<h2 id="what-we-actually-tested">What we actually tested</h2>
+<h3 id="inkling-small-native-multimodality">Inkling Small: native multimodality</h3>
+<p><a href="https://thinkingmachines.ai/news/introducing-inkling/#inkling-small" target="_blank" rel="noopener">Thinking Machines describes Inkling Small</a> as a <strong>276B-total, 12B-active MoE</strong> trained with a similar recipe and the same scalable post-training stack as the 975B Inkling. The official preview reports results for text, vision, and audio tasks. The broader Inkling architecture is encoder-free in the usual specialist-tower sense: image patches and audio representations enter a shared autoregressive model rather than being bolted onto an already-finished text model.</p>
+<p>We tested the exact OpenRouter model id:</p>
+<pre><code class="language-text">thinkingmachines/inkling-small</code></pre>
+<p><a href="https://openrouter.ai/thinkingmachines/inkling-small" target="_blank" rel="noopener">OpenRouter listed the route</a> with 276B total / 12B active parameters and a 524K context window. This was a hosted route test; it was not a self-hosted weight deployment.</p>
+<h3 id="glm5-2-vision-open-components-composed-after-training">GLM-5.2 Vision: open components composed after training</h3>
+<p>GLM&#39;s route is almost the architectural opposite.</p>
+<p><a href="https://huggingface.co/baseten/GLM-5.2-Vision-NVFP4" target="_blank" rel="noopener">Baseten&#39;s GLM-5.2-Vision release</a> starts with the <strong>744B-total / 40B-active GLM-5.2 text backbone</strong>, freezes it, freezes the 27-layer MoonViT vision tower from Kimi K2.6, and trains only a <strong>49.5M-parameter PatchMerger projector</strong> between them. The result accepts images even though the upstream Z.ai GLM-5.2 checkpoint is text-only.</p>
+<p>We first tried to use that pure NVFP4 release. Its validated 256K deployment requires four B200 GPUs, and the full FP8 build requires eight B200s or eight H200s. That topology was not available to us when we ran the test.</p>
+<p>Instead, we used the published community checkpoint:</p>
+<pre><code class="language-text">0xSero/GLM-5.2-MXFP8-NVFP4-NF3-Hybrid-Vision
+revision 6395e588e0f22dc9c9988907d6281ce675ec7e20</code></pre>
+<p><a href="https://huggingface.co/0xSero/GLM-5.2-MXFP8-NVFP4-NF3-Hybrid-Vision" target="_blank" rel="noopener">Its model card</a> describes the full 753B assembly with all 256 experts intact. It stores the 64 highest-priority experts per layer in NVFP4, the remaining 192 experts in a custom NF3 format, and non-expert layers in BF16 served as MXFP8. The checkpoint is approximately 342 GB and has a validated four-card recipe for 96 GB SM120 GPUs.</p>
+<p>That distinction matters enough to state plainly:</p>
+<blockquote><p>Our result is for the <strong>community MXFP8 + NVFP4 + NF3 hybrid</strong>, not Baseten&#39;s official pure-NVFP4 checkpoint.</p></blockquote>
+<p>The vision tower and projector come from the Baseten release, but text-weight numerics and the serving runtime differ. A later pure-NVFP4 B200 run may produce different latency and, potentially, different answers.</p>
+<h2 id="the-frozen-probe">The frozen probe</h2>
+<p>We reused <code>test/vision-probe.mjs</code> and the exact fixture from our earlier vision rounds:</p>
+<pre><code class="language-text">test/fixtures/google-signin-password-error.jpg
+SHA-256: 15f287f319edae5fc0d97dd44201a0493a0864deb4bec556b236169a3f1b4e4a</code></pre>
+<p>The prompt forces six short sections:</p>
+<ol><li>page purpose;</li><li>exact visible strings;</li><li>inputs and their value/focus/disabled state;</li><li>state signals such as errors and overlays;</li><li>blockers; and</li><li>honest unknowns.</li></ol>
+<p>Both requests used:</p>
+<pre><code class="language-text">temperature: 0
+max tokens: 800
+thinking flags: disabled
+system prompt: identical
+user message: identical
+image bytes: identical</code></pre>
+<p>This is narrower than MMMU, CharXiv, or a full computer-use benchmark. It asks a product question those suites do not: <strong>can the model turn one browser screenshot into the terse, literal state description a planning agent needs?</strong></p>
+<h2 id="the-two-answers">The two answers</h2>
+<p>Inkling Small&#39;s critical lines were:</p>
+<pre><code class="language-text">Password field ... empty, focused, red border
+Validation error &quot;Enter a password&quot; with red warning icon
+Password field empty with active validation error</code></pre>
+<p>That is the important visual-state chain: empty value, focus, red border, warning icon, exact message, blocker.</p>
+<p>GLM-5.2 Vision wrote:</p>
+<pre><code class="language-text">Password field ... value: empty, focused: no
+Red error message &quot;Enter a password&quot; with an exclamation mark icon
+Empty password field prevents proceeding; &quot;Next&quot; button is enabled</code></pre>
+<p>GLM got the semantic state but lost two visual details. The input is shown with the active floating label and red focus/error outline, so <code>focused: no</code> is the wrong call. The response also omitted the red border entirely. Its <code>Next</code> observation was useful, though: the button is visually enabled, but clicking it cannot advance while the password is empty.</p>
+<p>Neither model understood the account identifier as a dropdown. Inkling called it an account pill; GLM called it an email field. Both read <code>esokullu@gmail.com</code> perfectly, but neither converted the small downward chevron into an actionable affordance. For a browser agent, OCR and affordance recognition are separate capabilities. Reading the label does not tell the planner that clicking it opens account selection.</p>
+<h2 id="why-glm-s-partial-miss-is-still-a-real-win">Why GLM&#39;s partial miss is still a real win</h2>
+<p>It would be easy to reduce this to “Inkling won 5.1 seconds versus 21.6 seconds.” That misses the interesting part.</p>
+<p>Inkling Small was trained to understand images. GLM-5.2 was not. Its vision capability exists because several independently released components could be combined:</p>
+<ol><li>Z.ai released the GLM-5.2 text weights.</li><li>Moonshot released a strong MoonViT vision tower with Kimi K2.6.</li><li>Baseten trained and released a small projector connecting the two frozen models.</li><li>A community maintainer repackaged the full model into a four-GPU hybrid checkpoint and supplied the custom runtime.</li></ol>
+<p>The final system read every string, interpreted the validation error, and identified the correct blocker on its first frozen WebBrain probe. It did this without jointly retraining the enormous language backbone and vision encoder.</p>
+<p>That is a strong argument for open weights as an ecosystem property, not merely a download checkbox. The original GLM-5.2 OpenRouter route remains text-only, but the model family is no longer practically limited to text for operators willing to deploy the derivative. The same general route could eventually give text-only releases from DeepSeek or Tencent useful vision, although “attach a tower and train a projector” is not a guarantee of quality. Alignment, tokenization, data, projector training, inference kernels, and evaluation still matter.</p>
+<h2 id="what-inkling-small-demonstrates">What Inkling Small demonstrates</h2>
+<p>Inkling Small is the cleaner product result.</p>
+<p>It is less than half GLM&#39;s active parameter count and roughly one-third the total parameter count, yet it retained the stronger visual-state read on this page. That does not prove small beats large; it shows why parameter count is a poor proxy when the multimodal training path is different. Native image training gave Inkling a better read of focus and color-coded validation cues than this particular post-hoc GLM graft.</p>
+<p>This also strengthens the American open-weight story. Poolside&#39;s recent Laguna releases made US open models much more credible in inexpensive text planning. Thinking Machines is now adding native image and audio capability at a much broader generalist level. Inkling Small is still enormous by consumer-hardware standards, but 12B active is a meaningful serving target, and the official benchmark table places it surprisingly close to full Inkling on several reasoning and multimodal evaluations.</p>
+<p>There are still caveats. We tested the hosted preview route, not local weights. One screenshot cannot establish OCR robustness, chart reasoning, multilingual UI performance, or behavior under image crops. The model also missed the account chevron and failed the prompt&#39;s uncertainty instruction.</p>
+<h2 id="deployment-notes-from-the-glm-run">Deployment notes from the GLM run</h2>
+<p>The self-hosted side was not a one-command managed endpoint. We deployed on <strong>RunPod Secure Cloud</strong> using four NVIDIA RTX PRO 6000 Blackwell Server Edition GPUs with 96 GB each.</p>
+<p>The first boot included:</p>
+<ul><li>downloading 213 checkpoint files, approximately 342 GB;</li><li>installing the small <code>glm52_vision</code> plugin from the checkpoint repository;</li><li>loading approximately 84.93 GiB of weights per GPU;</li><li>creating a 508,955-token FP8 KV pool at a 250K maximum model length; and</li><li>compiling and warming the custom NF3, MXFP8, sparse-attention, and collective kernels.</li></ul>
+<p>The publisher&#39;s prebuilt GHCR vision image rejected anonymous pulls during our run. We therefore used the public <code>madeby561/vllm-glm52-nvfp4-nf3-hybrid:v3</code> base runtime and installed the repository&#39;s vision plugin inside the Pod. Once the endpoint was healthy, it exposed a standard OpenAI-compatible <code>/v1/chat/completions</code> API.</p>
+<p>We saved the result locally, stopped the GPU workload, and deleted the benchmark Pod and its 500 GB volume. This was a dedicated one-off deployment, so we are intentionally not presenting its setup bill as if it were a comparable per-request model price.</p>
+<h2 id="the-recurring-failure-confident-completeness">The recurring failure: confident completeness</h2>
+<p>Both answers ended with:</p>
+<pre><code class="language-text">6) Unknowns: None.</code></pre>
+<p>But neither answer was complete. Both missed the email-chip chevron, and GLM also missed the red border and focus state. This is exactly why WebBrain&#39;s vision prompt asks for unknowns: a planning agent should know when a visual interpretation is uncertain.</p>
+<p>The models instead treated <code>Unknowns</code> as a box to close. That behavior is more dangerous than a simple OCR miss because it gives the downstream planner no reason to cross-check the DOM or accessibility tree. A production agent should therefore continue to merge vision with structured page reads rather than treating a confident screenshot caption as ground truth.</p>
+<h2 id="verdict">Verdict</h2>
+<p><strong>Inkling Small wins this frozen screenshot.</strong> It matched GLM&#39;s perfect visible-text recall, captured more of the error treatment, got the focus state right, and returned much faster on the route we tested.</p>
+<p><strong>GLM-5.2 Vision still passes the consequential test.</strong> A third-party open derivative gave a text-first 744B-class backbone working screenshot understanding. The community hybrid was not as visually precise as Inkling Small here, but it was accurate enough to help a browser planner: exact text, correct page purpose, correct error, correct blocker, no invented labels.</p>
+<p>The broader conclusion is encouraging for both sides of the open-model ecosystem. American releases are becoming genuinely competitive and natively multimodal. Chinese open backbones are increasingly strong enough—and open enough—to become platforms for capabilities their original API routes do not expose. The gap is narrowing, but the route matters: native multimodal training produced the better answer today; open composition made the surprising answer possible at all.</p>
+<p>Raw artifacts:</p>
+<ul><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/vision-results/2026-08-02-inkling-small-openrouter.json" target="_blank" rel="noopener">Inkling Small result</a></li><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/vision-results/2026-08-02-inkling-small-openrouter-evaluation.json" target="_blank" rel="noopener">Inkling Small evaluation</a></li><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/vision-results/2026-08-02-glm-5-2-vision-runpod-hybrid.json" target="_blank" rel="noopener">GLM-5.2 Vision result</a></li><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/vision-results/2026-08-02-glm-5-2-vision-runpod-hybrid-evaluation.json" target="_blank" rel="noopener">GLM-5.2 Vision evaluation</a></li><li><a href="https://github.com/webbrain-one/webbrain/blob/main/test/vision-results/2026-08-02-glm-5-2-vision-runpod-hybrid-deployment.json" target="_blank" rel="noopener">GLM-5.2 Vision deployment record</a></li></ul>
+<p>&lt;div class=&quot;callout&quot;&gt; &lt;strong&gt;Methodology limit.&lt;/strong&gt; One screenshot is a probe, not a general vision benchmark. It is useful because the fixture simultaneously tests exact OCR, form state, color-coded validation, semantic blockers, and a small actionable chevron. A different page can reverse a narrow ranking. The result supports routing and follow-up tests; it does not establish a universal multimodal hierarchy. &lt;/div&gt;</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

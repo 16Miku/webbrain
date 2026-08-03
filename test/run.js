@@ -317,6 +317,8 @@ const { renderSkillMarkdown } = await import(
 const {
   RunUiJournal: RunUiJournalCh,
   RunUiPersistenceScheduler: RunUiPersistenceSchedulerCh,
+  runUiDiscardedBeforeSeq: runUiDiscardedBeforeSeqCh,
+  runUiUnavailableBeforeSeq: runUiUnavailableBeforeSeqCh,
   runUiSnapshotForRequest: runUiSnapshotForRequestCh,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/run-ui-journal.js').replace(/\\/g, '/')
@@ -324,6 +326,8 @@ const {
 const {
   RunUiJournal: RunUiJournalFx,
   RunUiPersistenceScheduler: RunUiPersistenceSchedulerFx,
+  runUiDiscardedBeforeSeq: runUiDiscardedBeforeSeqFx,
+  runUiUnavailableBeforeSeq: runUiUnavailableBeforeSeqFx,
   runUiSnapshotForRequest: runUiSnapshotForRequestFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/run-ui-journal.js').replace(/\\/g, '/')
@@ -2184,7 +2188,7 @@ test('chrome target blank redirect ignores browser new-tab placeholders', async 
 
 console.log('\nadapters');
 
-test('matches github.com and documents username restrictions', () => {
+test('matches github.com and documents account and generated-content guidance', () => {
   const adapters = [
     getActiveAdapter('https://github.com/esokullu/webbrain'),
     getActiveAdapterFx('https://github.com/esokullu/webbrain'),
@@ -2195,6 +2199,15 @@ test('matches github.com and documents username restrictions', () => {
       adapter?.notes || '',
       /Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen\./,
     );
+    assert.match(adapter?.notes || '', /verify the "Previous tag" range/i);
+    assert.match(adapter?.notes || '', /prefer "Generate release notes" and review its output/i);
+    assert.match(adapter?.notes || '', /otherwise preserve their text/i);
+    assert.match(adapter?.notes || '', /title field's Copilot button/i);
+    assert.match(adapter?.notes || '', /blank description, prefer Copilot > "Summary"/i);
+    assert.match(adapter?.notes || '', /Summary ignores existing description text/i);
+    assert.match(adapter?.notes || '', /preserve repository templates and user content/i);
+    const bulletCount = (adapter?.notes || '').split('\n').filter(line => line.startsWith('- ')).length;
+    assert.equal(bulletCount, 8, 'GitHub adapter must stay within its documented eight-bullet prompt budget');
   }
 });
 
@@ -2253,10 +2266,73 @@ test('matches gmail.com under mail.google.com', () => {
   assert.match(a?.notes || '', /do not use click-by-text or coordinates/i);
   assert.match(a?.notes || '', /Re-read the body afterward to verify the replacement/i);
   assert.match(a?.notes || '', /If the user says not to send, never click Send/i);
+  assert.match(a?.notes || '', /top-level "Expand all" control/i);
+  assert.match(a?.notes || '', /read it from oldest to newest/i);
+  assert.match(a?.notes || '', /Show trimmed content.*not a substitute for expanding the conversation/is);
   assert.doesNotMatch(a?.notes || '', /Click into it before typing/i);
   const firefox = getActiveAdapterFx('https://mail.google.com/mail/u/0/#inbox');
   assert.equal(firefox?.name, 'gmail');
   assert.equal(firefox?.notes, a?.notes);
+});
+
+test('email adapters require complete thread context with Chrome/Firefox parity', () => {
+  const cases = [
+    {
+      url: 'https://mail.yahoo.com/d/folders/1/messages/abc',
+      name: 'yahoo-mail',
+      guidance: /inspect every message in the conversation/i,
+    },
+    {
+      url: 'https://mail.proton.me/u/0/inbox/thread-id',
+      name: 'proton-mail',
+      guidance: /inspect every message card/i,
+    },
+    {
+      url: 'https://app.fastmail.com/mail/Inbox/thread-id',
+      name: 'fastmail',
+      guidance: /use Shift\+E to expand all collapsed messages/i,
+    },
+    {
+      url: 'https://mail.zoho.eu/zm/#mail/folder/inbox/p/123',
+      name: 'zoho-mail',
+      guidance: /open the whole conversation/i,
+    },
+    {
+      url: 'https://mail.yandex.com/?uid=1#message/123',
+      name: 'yandex-mail',
+      guidance: /click the subject to expand its message list/i,
+    },
+    {
+      url: 'https://outlook.live.com/mail/0/inbox/id/abc',
+      name: 'outlook',
+      guidance: /Hotmail accounts use this same Outlook web interface/i,
+    },
+  ];
+
+  for (const { url, name, guidance } of cases) {
+    const chrome = getActiveAdapter(url);
+    const firefox = getActiveAdapterFx(url);
+    assert.equal(chrome?.name, name, `${name}: Chrome matcher`);
+    assert.equal(firefox?.name, name, `${name}: Firefox matcher`);
+    assert.match(chrome?.notes || '', guidance, `${name}: complete-thread guidance`);
+    assert.match(chrome?.notes || '', /oldest to newest/i, `${name}: chronological reading guidance`);
+    if (name === 'outlook') {
+      assert.match(chrome?.notes || '', /check whether messages are grouped/i);
+      assert.match(chrome?.notes || '', /shown individually.*nonexistent expand control/i);
+    }
+    assert.equal(firefox?.notes, chrome?.notes, `${name}: Chrome/Firefox notes parity`);
+  }
+
+  for (const url of [
+    'https://mail.yahoo.com.evil.example/',
+    'https://mail.proton.me.evil.example/',
+    'https://app.fastmail.com.evil.example/',
+    'https://mail.zoho.com.evil.example/',
+    'https://mail.yandex.com.evil.example/',
+  ]) {
+    assert.equal(getActiveAdapter(url), null, `must reject lookalike email host: ${url}`);
+    assert.equal(getActiveAdapterFx(url), null, `Firefox must reject lookalike email host: ${url}`);
+  }
 });
 
 test('matches google search across TLDs and includes udm=14, without hijacking other google apps', () => {
@@ -2839,6 +2915,46 @@ test('matches current Shopee regional storefronts with marketplace guidance', ()
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Flipkart shopping surfaces with India marketplace guidance', () => {
+  const trustedUrls = [
+    'https://flipkart.com/',
+    'https://www.flipkart.com/search?q=iphone%2016',
+    'https://www.flipkart.com/apple-iphone-16/p/example-item',
+    'https://www.flipkart.com/viewcart',
+    'https://m.flipkart.com/mobiles',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'flipkart');
+    assert.equal(getActiveAdapterFx(url)?.name, 'flipkart');
+  }
+
+  const rejectedUrls = [
+    'https://seller.flipkart.com/',
+    'https://stories.flipkart.com/',
+    'https://flipkart.com.phishing.example/search?q=phone',
+    'https://example.com/?next=https://www.flipkart.com/viewcart',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'flipkart');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'flipkart');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[2]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls[4]);
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Search for Products, Brands and More/);
+  assert.match(adapter?.notes || '', /Sort By.*Price -- Low to High/s);
+  assert.match(adapter?.notes || '', /Location not set.*Select delivery location/s);
+  assert.match(adapter?.notes || '', /Upto.*Off on Exchange.*not.*discount/s);
+  assert.match(adapter?.notes || '', /Always read.*selected.*seller.*If "See other sellers" is present/s);
+  assert.match(adapter?.notes || '', /assurance badges only when shown/);
+  assert.match(adapter?.notes || '', /Add to cart.*Buy now/s);
+  assert.match(adapter?.notes || '', /OTP.*manually/s);
+  assert.match(adapter?.notes || '', /explicit confirmation.*order ID/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Dianping city, shop, and verification surfaces with local-service guidance', () => {
   const trusted = ['https://dianping.com/','https://www.dianping.com/shanghai','https://www.dianping.com/search/keyword/1/10_food','https://www.dianping.com/shop/example','https://m.dianping.com/shanghai','https://h5.dianping.com/app/m-static-base-page/dpuserservice.html','https://verify.meituan.com/v2/app/general_page?requestCode=x'];
   for (const url of trusted) {
@@ -2910,6 +3026,48 @@ test('matches Ctrip travel surfaces and includes Chinese booking guidance', () =
   const noteBullets = (adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- '));
   assert.equal(noteBullets.length, 8);
   assert.match(adapter?.notes || '', /订单号|出票成功|预订成功/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
+test('matches Traveloka consumer pages and distinguishes booking and fulfillment states', () => {
+  const trustedUrls = [
+    'https://traveloka.com/en-id/',
+    'https://www.traveloka.com/en-id/flight',
+    'https://www.traveloka.com/en-id/hotel',
+    'https://www.traveloka.com/en-id/help',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'traveloka');
+    assert.equal(getActiveAdapterFx(url)?.name, 'traveloka');
+  }
+
+  const rejectedUrls = [
+    'https://partner.traveloka.com/',
+    'https://careers.traveloka.com/',
+    'https://affiliate.traveloka.com/',
+    'https://traveloka.com.phishing.example/en-id/flight',
+    'https://example.com/?next=https://www.traveloka.com/en-id/hotel',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'traveloka');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'traveloka');
+  }
+
+  const adapter = getActiveAdapter('https://www.traveloka.com/en-id/flight');
+  const firefoxAdapter = getActiveAdapterFx('https://traveloka.com/en-id/hotel');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Human Verification.*Let's confirm you are human.*Begin/s);
+  assert.match(adapter?.notes || '', /Flights.*Hotels/s);
+  assert.match(adapter?.notes || '', /code-share.*separate bookings.*separate payments/s);
+  assert.match(adapter?.notes || '', /baggage.*taxes.*fees/s);
+  assert.match(adapter?.notes || '', /Pay Now.*Pay at Hotel/s);
+  assert.match(adapter?.notes || '', /cancellation.*no-show/s);
+  assert.match(adapter?.notes || '', /ancillaries/);
+  assert.match(adapter?.notes || '', /explicit confirmation/);
+  assert.match(adapter?.notes || '', /voucher.*e-ticket.*booking confirmation/s);
+  assert.match(adapter?.notes || '', /refund.*reschedule/s);
+  assert.match(adapter?.notes || '', /Bookings.*booking ID.*status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
@@ -3288,6 +3446,43 @@ test('matches Marktplaats.nl classifieds and distinguishes its transaction paths
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Leboncoin classifieds and distinguishes delivery from in-person handoff', () => {
+  const trustedUrls = [
+    'https://leboncoin.fr/',
+    'https://www.leboncoin.fr/recherche?text=velo',
+    'https://www.leboncoin.fr/ad/velos/1234567890',
+    'https://www.leboncoin.fr/compte/mes-achats',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'leboncoin');
+    assert.equal(getActiveAdapterFx(url)?.name, 'leboncoin');
+  }
+
+  const rejectedUrls = [
+    'https://pro.leboncoin.fr/',
+    'https://assistance.leboncoin.info/hc/fr',
+    'https://leboncoin.fr.phishing.example/ad/velos/1234567890',
+    'https://example.com/?next=https://www.leboncoin.fr/ad/velos/1234567890',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'leboncoin');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'leboncoin');
+  }
+
+  const adapter = getActiveAdapter('https://www.leboncoin.fr/ad/velos/1234567890');
+  const firefoxAdapter = getActiveAdapterFx('https://leboncoin.fr/recherche?text=velo');
+  assert.match(adapter?.notes || '', /2026-08.*HTTP 403.*blank response.*not.*no listings/s);
+  assert.match(adapter?.notes || '', /CLASSIFIEDS/);
+  assert.match(adapter?.notes || '', /Transaction sécurisée/);
+  assert.match(adapter?.notes || '', /Livraison possible.*Acheter.*Remise en main propre/s);
+  assert.match(adapter?.notes || '', /secure messaging.*triggers.*payment.*before handing over/s);
+  assert.match(adapter?.notes || '', /outside.*not protected/s);
+  assert.match(adapter?.notes || '', /wallet.*Adyen.*verification/s);
+  assert.match(adapter?.notes || '', /payment confirmation.*item received.*transaction record/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches sahibinden.com and includes anti-bot guidance', () => {
   assert.equal(getActiveAdapter('https://www.sahibinden.com/')?.name, 'sahibinden');
   assert.equal(getActiveAdapter('https://sahibinden.com/kategori/vasita')?.name, 'sahibinden');
@@ -3346,6 +3541,46 @@ test('matches yemeksepeti.com and includes food-delivery guidance', () => {
   const a = getActiveAdapter('https://www.yemeksepeti.com/');
   assert.match(a?.notes || '', /food-delivery/i);
   assert.match(a?.notes || '', /Restoran/);
+});
+
+test('matches Zomato consumer pages and distinguishes restaurant delivery states', () => {
+  const trustedUrls = [
+    'https://zomato.com/',
+    'https://www.zomato.com/bangalore/delivery?page=1',
+    'https://www.zomato.com/bangalore/example-restaurant/order',
+    'https://www.zomato.com/policies/terms-of-service/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'zomato');
+    assert.equal(getActiveAdapterFx(url)?.name, 'zomato');
+  }
+
+  const rejectedUrls = [
+    'https://business.zomato.com/',
+    'https://blog.zomato.com/',
+    'https://zomato.com.phishing.example/bangalore/delivery',
+    'https://example.com/?next=https://www.zomato.com/bangalore/delivery',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'zomato');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'zomato');
+  }
+
+  const adapter = getActiveAdapter('https://www.zomato.com/bangalore/example-restaurant/order');
+  const firefoxAdapter = getActiveAdapterFx('https://zomato.com/bangalore/delivery');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Delivery.*Dining Out.*Nightlife/s);
+  assert.match(adapter?.notes || '', /Detect current location.*address/s);
+  assert.match(adapter?.notes || '', /Promoted/);
+  assert.match(adapter?.notes || '', /Dining Ratings.*Delivery Ratings/s);
+  assert.match(adapter?.notes || '', /Online ordering is only supported on the mobile app.*Currently closed for online ordering/s);
+  assert.match(adapter?.notes || '', /restaurant, cuisine or a dish/);
+  assert.match(adapter?.notes || '', /delivery fee.*surge.*packaging.*handling/s);
+  assert.match(adapter?.notes || '', /approximate delivery time/i);
+  assert.match(adapter?.notes || '', /cancellation.*refund.*proof/s);
+  assert.match(adapter?.notes || '', /Orders.*order ID.*status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
 test('matches foodpanda.pk and includes food-delivery guidance', () => {
@@ -15528,14 +15763,25 @@ test('all locales translate canonical scratchpad option help', () => {
   }
 });
 
-test('all locales translate the new-conversation warning', () => {
+test('all locales translate the new-conversation and selected-text scope UI', async () => {
   for (const [label, localeDir] of [
     ['chrome', 'src/chrome/src/ui/locales'],
     ['firefox', 'src/firefox/src/ui/locales'],
   ]) {
     for (const filename of fs.readdirSync(path.join(ROOT, localeDir)).filter((name) => name.endsWith('.js'))) {
-      const locale = fs.readFileSync(path.join(ROOT, localeDir, filename), 'utf8');
-      assert.match(locale, /['"]sp\.clear\.confirm['"]:\s*['"][^'"]+['"]/, `${label}/${filename}: missing translated new-conversation warning`);
+      const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
+      for (const key of [
+        'sp.btn.clear',
+        'sp.clear.title',
+        'sp.clear.description',
+        'sp.clear.action_warning',
+        'sp.selection_scope.title',
+        'sp.selection_scope.description',
+        'sp.input.selection_placeholder',
+      ]) {
+        assert.equal(typeof locale[key], 'string', `${label}/${filename}: missing ${key}`);
+        assert.ok(locale[key].trim().length > 0, `${label}/${filename}: empty ${key}`);
+      }
     }
   }
 });
@@ -16105,12 +16351,16 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.doesNotMatch(clearButton, /points="23 4 23 10 17 10"|M20\.49 15a9/, `${label}: legacy refresh icon should be removed`);
 
     assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, `${label}: custom New conversation confirmation should exist outside the inert app`);
-    assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"/, `${label}: custom confirmation should expose modal dialog semantics`);
-    assert.match(confirmation, /id="new-conversation-confirm-title" data-i18n="sp\.clear\.confirm"/, `${label}: custom confirmation warning should stay localized`);
+    assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"[\s\S]*?aria-describedby="new-conversation-confirm-description"/, `${label}: custom confirmation should expose labelled and described modal semantics`);
+    assert.match(confirmation, /id="new-conversation-confirm-title" data-i18n="sp\.clear\.title"/, `${label}: custom confirmation title should stay localized`);
+    assert.match(confirmation, /id="new-conversation-confirm-description" data-i18n="sp\.clear\.description"/, `${label}: custom confirmation consequence should stay localized`);
     assert.match(confirmation, /id="new-conversation-confirm-cancel"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.scheduled\.cancel"/, `${label}: custom confirmation should have a localized safe action`);
-    assert.match(confirmation, /id="new-conversation-confirm-accept"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: custom confirmation should have a localized explicit clear action`);
+    assert.match(confirmation, /id="new-conversation-confirm-accept"[\s\S]*?data-new-conversation-confirm-action[\s\S]*?new-conversation-confirm-action-label" data-i18n="sp\.btn\.clear"[\s\S]*?new-conversation-confirm-action-warning[\s\S]*?data-i18n="sp\.clear\.action_warning"/, `${label}: destructive action should use localized two-line copy`);
+    assert.doesNotMatch(confirmation, /data-i18n-aria-label="sp\.btn\.clear"/, `${label}: the accessible button name should retain the visible clears-history warning`);
     assert.match(css, /\.new-conversation-confirm \{[\s\S]*?position: fixed;[\s\S]*?background: var\(--overlay-bg-strong\);/, `${label}: custom confirmation should stay visible inside narrow browser panels`);
-    assert.match(css, /\.new-conversation-confirm-actions \.new-conversation-confirm-accept \{[\s\S]*?background: var\(--error\);/, `${label}: destructive confirmation action should be visually distinct`);
+    assert.match(css, /\.new-conversation-confirm-card \{[\s\S]*?border: 1px solid var\(--border\);/, `${label}: dialog card should keep a quiet neutral boundary`);
+    assert.match(css, /--destructive-action: #c5363c;[\s\S]*?\.new-conversation-confirm-actions \.new-conversation-confirm-accept \{[\s\S]*?flex-direction: column;[\s\S]*?background: var\(--destructive-action\);/, `${label}: destructive confirmation action should use a contrast-safe red with an intentional two-line stack`);
+    assert.match(css, /\.new-conversation-confirm-action-warning \{[\s\S]*?font-size: 10px;[\s\S]*?line-height: 1\.1;\s*\}/, `${label}: destructive warning should remain full-opacity for legibility`);
     assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.new-conversation-confirm-actions \{[\s\S]*?grid-template-columns: 1fr;/, `${label}: confirmation actions should stack in narrow Vivaldi panels`);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.new-conversation-confirm \{[\s\S]*?animation: none;/, `${label}: confirmation should respect reduced motion`);
 
@@ -16120,19 +16370,188 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     assert.match(panel, /newConversationConfirmEl\?\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === newConversationConfirmEl[\s\S]*?settleNewConversationConfirmation\(false\)/, `${label}: clicking the confirmation backdrop should cancel safely`);
     assert.match(panel, /async function switchToTab\(newTabId\) \{[\s\S]*?newConversationConfirmationState[\s\S]*?!sameTabId\(newConversationConfirmationState\.tabId, newTabId\)[\s\S]*?settleNewConversationConfirmation\(false, \{ restoreFocus: false \}\);/, `${label}: switching tabs should cancel a stale confirmation`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n}\n\nclearBtn.addEventListener", clearStart) + 2);
     assert.doesNotMatch(clearBody, /window\.confirm/, `${label}: New conversation should not use a native dialog that Vivaldi suppresses`);
     assert.match(
       clearBody,
-      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
+      /if \(isConversationClearInProgress\(tabId\) \|\| newConversationConfirmationState\) return false;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;[\s\S]*?setConversationClearInProgress\(tabId, true\);[\s\S]*?suppressRunUpdatesForClearedConversation\(tabId\);[\s\S]*?clearQueuedComposerMessagesForTab\(tabId\);[\s\S]*?clearQueuedForTab\(tabId\);[\s\S]*?await sendToBackground\('clear_context_menu_prompt', \{ tabId \}\)\.catch\(\(\) => \{\}\);[\s\S]*?if \(isTabProcessing\(tabId\)\) await abortRun\(tabId\);[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);[\s\S]*?finally \{[\s\S]*?setConversationClearInProgress\(tabId, false\);/,
       `${label}: confirmed New conversation should discard queued prompts before stopping and clearing`,
     );
+    assert.match(panel, /clearBtn\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)[\s\S]*?selectionScopeNewConversationBtn\?\.addEventListener\('click',[\s\S]*?startNewConversationForTab\(currentTabId\)/, `${label}: header and selected-text escape actions should share the same clear transaction`);
     assert.match(panel, /function syncSendButtonState\(\) \{[\s\S]*?isConversationClearInProgress\(\)[\s\S]*?sendBtn\.disabled = true;/, `${label}: the composer should stay disabled for the full clear transaction`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{[\s\S]*?const tabId = currentTabId;[\s\S]*?if \(isConversationClearInProgress\(tabId\)\) \{[\s\S]*?releaseOwnedContextMenuClaim\(\{ reason: 'conversation-clear', retryAfterMs: 1_000 \}\);[\s\S]*?return false;/, `${label}: Enter and programmatic sends should not bypass the pending-clear interlock`);
     assert.match(panel, /function suppressRunUpdatesForClearedConversation\(tabId\) \{[\s\S]*?localRunRequestIds\.get\(Number\(tabId\)\)[\s\S]*?clearedConversationRunRequestIds\.add\(requestId\)[\s\S]*?clearedConversationRunRequestIds\.size > 100/, `${label}: conversation clear should retain a bounded set of invalidated run requests`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{[\s\S]*?if \(msg\.requestId && clearedConversationRunRequestIds\.has\(String\(msg\.requestId\)\)\) return;[\s\S]*?const eventAssistantEl = ensureCurrentRunAssistant\(msg\);/, `${label}: cleared-run updates should be rejected before they can recreate an assistant bubble`);
     assert.match(panel, /async function abortRun\(tabId = currentTabId\) \{[\s\S]*?sendToBackground\('abort', \{ tabId \}\)[\s\S]*?stopBtn\.addEventListener\('click', \(\) => abortRun\(\)\);/, `${label}: Stop should support a captured tab target without treating click events as tab ids`);
+  }
+});
+
+test('selected-text scope is a durable visible sidepanel state with a New conversation escape', async () => {
+  for (const [label, prefix, sourceGrounding] of [
+    ['chrome', 'src/chrome', SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', 'src/firefox', SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const banner = html.match(/<div id="selection-scope-banner"[\s\S]*?<\/div>\s*\n\s*<button id="selection-scope-new-conversation"[\s\S]*?<\/button>\s*\n\s*<\/div>/)?.[0] || '';
+
+    assert.match(banner, /role="region"[\s\S]*?aria-labelledby="selection-scope-title"/, `${label}: selected-text notice should be an accessible labelled region`);
+    assert.match(banner, /data-i18n="sp\.selection_scope\.title"[\s\S]*?data-i18n="sp\.selection_scope\.description"[\s\S]*?id="selection-scope-new-conversation"[\s\S]*?data-i18n="sp\.btn\.clear"/, `${label}: selected-text notice and escape action should stay localized`);
+    assert.match(css, /\.selection-scope-banner \{[\s\S]*?var\(--warning\)[\s\S]*?var\(--bg-secondary\)/, `${label}: scope notice should use warning—not destructive—color semantics`);
+    assert.match(css, /@media \(max-width: 340px\) \{[\s\S]*?\.selection-scope-banner \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\);/, `${label}: selected-text notice should reflow in narrow browser panels`);
+    const baseBannerRuleIndex = css.indexOf('.selection-scope-banner {');
+    const narrowBannerRuleIndex = css.indexOf('.selection-scope-banner {', baseBannerRuleIndex + 1);
+    assert.ok(baseBannerRuleIndex >= 0 && narrowBannerRuleIndex > baseBannerRuleIndex, `${label}: narrow selected-text layout should follow and override the base banner grid`);
+
+    assert.match(panel, /const selectionGroundedTabs = new Set\(\);/, `${label}: selected-text state should be isolated per tab`);
+    assert.match(panel, /function applyConversationScopeState\(tabId, state\) \{[\s\S]*?hasOwnProperty\.call\(state, 'sourceGrounding'\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: sidepanel should consume structural source-grounding state`);
+    assert.match(panel, /async function hydrateChatHistoryIdentity[\s\S]*?applyConversationScopeState\(numericTabId, identity\);/, `${label}: scope state should restore with conversation identity`);
+    assert.match(panel, /async function refreshConversationScopeState[\s\S]*?sendToBackground\('agent_run_state'[\s\S]*?applyConversationScopeState\(numericTabId, state\);[\s\S]*?return state;/, `${label}: scope refresh should apply only authoritative background state`);
+    assert.match(panel, /async function restoreActiveRunState[\s\S]*?refreshConversationScopeState\(numericTabId\);[\s\S]*?applyActiveRunState/, `${label}: active-run restoration should reuse the authoritative scope refresh`);
+    assert.match(panel, /function handleScheduledJobEvent\(data, tabId\) \{[\s\S]*?scopeChangingScheduledEvent = event === 'running'[\s\S]*?terminalScheduledEvent[\s\S]*?watchPollEvent[\s\S]*?event === 'needs_user_input'[\s\S]*?refreshConversationScopeState\(runTabId\);/, `${label}: independent scheduled-run lifecycle events should refresh selection scope`);
+    assert.match(agent, /setConversationScopeChangeListener\(listener\) \{[\s\S]*?_conversationScopeChangeListener = typeof listener === 'function'/, `${label}: agent should expose a bounded scope-change listener`);
+    assert.match(agent, /_clearSelectionGroundingForIndependentRun\(tabId, runOptions = \{\}\)[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?_conversationScopeChangeListener\?\.\(tabId, \{ sourceGrounding: null \}\)/, `${label}: independent runs should broadcast the cleared scope after persisting it`);
+    assert.match(background, /setConversationScopeChangeListener\(\(tabId, state\) => \{[\s\S]*?action: 'agent_update'[\s\S]*?type: 'conversation_scope'[\s\S]*?data: state/, `${label}: background should forward independent scope changes to open sidepanels`);
+    assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{\s*if \(msg\.type === 'conversation_scope'\) \{\s*applyConversationScopeState\(msg\.tabId, msg\.data\);\s*return;/, `${label}: sidepanel should apply scope broadcasts before run rendering guards`);
+    assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state\);/, `${label}: detached run probes should reconcile scope before returning journal-only results`);
+    assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true\);/, `${label}: context-menu selection should reveal the notice without waiting for model output`);
+    assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
+    assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
+    assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /function rejectSelectionScopedMode\(mode,[\s\S]*?mode !== 'act' && mode !== 'dev'[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return true;/, `${label}: restored controls should share one selected-scope mode guard`);
+    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?if \(rejectSelectionScopedMode\(mode\)\) return;[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(/, `${label}: subscription resume should reject restored Act or Dev mode before continuing`);
+    assert.match(panel, /function bindErrorRetryButton\(btn\) \{[\s\S]*?rejectSelectionScopedMode\(payload\.mode, currentTabId, payload\.sourceGrounding\)[\s\S]*?setMode\(payload\.mode\);[\s\S]*?sendMessage\(/, `${label}: error retry should reject restored Act or Dev mode before resubmitting`);
+    assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
+    assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
+    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page-capture slash commands should stop before dispatch in selected-text conversations`);
+    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page-capture commands before slash dispatch`);
+    assert.match(panel, /runCaptureDirective = parseTrailingRunCaptureDirective\(text\);[\s\S]*?if \(runCaptureDirective[\s\S]*?sourceGrounding \|\| isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?text = runCaptureDirective\.prompt;/, `${label}: trailing page-capture directives should stop before prompt dispatch in selected-text conversations`);
+    assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
+    assert.doesNotMatch(panel.slice(
+      panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {'),
+      panel.indexOf('\n\nfunction settleNewConversationConfirmation', panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {')),
+    ), /setSelectionGroundedForTab/, `${label}: uncertain failed starts should not clear the fail-closed local scope before reconciliation`);
+    assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: all chat-start failures should reconcile both explicit and inherited selected-text state`);
+    assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
+
+    const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
+    const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
+    assert.ok(workflowStart >= 0 && workflowEnd > workflowStart, `${label}: saved workflow launcher missing`);
+    let workflowSends = 0;
+    const workflowInput = { value: 'keep this draft' };
+    const startSavedWorkflowRun = vm.runInNewContext(
+      `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
+      {
+        currentTabId: 92,
+        ensureActMode: async () => false,
+        inputEl: workflowInput,
+        t: () => 'workflow prompt',
+        autoResizeInput: () => {},
+        sendMessage: async () => { workflowSends += 1; return true; },
+      },
+    );
+    assert.equal(
+      await startSavedWorkflowRun({ id: 'workflow_scope_guard', name: 'Blocked workflow' }, {}, 92),
+      false,
+      `${label}: rejected Act transition should reject saved workflow launch`,
+    );
+    assert.equal(workflowSends, 0, `${label}: rejected saved workflow should not reach sendMessage`);
+    assert.equal(workflowInput.value, 'keep this draft', `${label}: rejected saved workflow should preserve the composer draft`);
+
+    for (const mode of ['act', 'dev']) {
+      const functionName = mode === 'act' ? 'ensureActMode' : 'ensureDevMode';
+      const modeStart = panel.indexOf(`async function ${functionName}() {`);
+      const modeEnd = panel.indexOf('\n}', modeStart) + 2;
+      assert.ok(modeStart >= 0 && modeEnd > modeStart, `${label}: ${functionName} helper missing`);
+      const scopeToasts = [];
+      const ensureMode = vm.runInNewContext(
+        `(() => { ${panel.slice(modeStart, modeEnd)}; return ${functionName}; })()`,
+        {
+          agentMode: mode,
+          currentTabId: 92,
+          isSelectionGroundedForTab: () => true,
+          showComposerToast: (message) => scopeToasts.push(message),
+          t: () => 'selected-text scope warning',
+          setMode: () => { throw new Error(`${label}: scoped ${mode} guard must not reapply the active mode`); },
+          sendToBackground: async () => ({ devModeAvailable: true }),
+        },
+      );
+      assert.equal(await ensureMode(), false, `${label}: stale active ${mode} mode should remain blocked by selected-text scope`);
+      assert.deepEqual(scopeToasts, ['selected-text scope warning'], `${label}: blocked ${mode} mode should explain the selected-text scope`);
+    }
+
+    const restoredModeGuardStart = panel.indexOf('function rejectSelectionScopedMode(mode,');
+    const restoredModeGuardEnd = panel.indexOf('\n}', restoredModeGuardStart) + 2;
+    assert.ok(restoredModeGuardStart >= 0 && restoredModeGuardEnd > restoredModeGuardStart, `${label}: restored-mode scope guard missing`);
+    const restoredModeToasts = [];
+    const rejectSelectionScopedMode = vm.runInNewContext(
+      `(() => { ${panel.slice(restoredModeGuardStart, restoredModeGuardEnd)}; return rejectSelectionScopedMode; })()`,
+      {
+        currentTabId: 92,
+        SELECTION_ONLY_SOURCE_GROUNDING: sourceGrounding,
+        isSelectionGroundedForTab: () => true,
+        showComposerToast: (message) => restoredModeToasts.push(message),
+        t: () => 'selected-text scope warning',
+      },
+    );
+    assert.equal(rejectSelectionScopedMode('ask'), false, `${label}: restored Ask controls should remain available`);
+    assert.equal(rejectSelectionScopedMode('act'), true, `${label}: restored Act controls should be rejected while scoped`);
+    assert.equal(rejectSelectionScopedMode('dev'), true, `${label}: restored Dev controls should be rejected while scoped`);
+    assert.deepEqual(restoredModeToasts, ['selected-text scope warning', 'selected-text scope warning'], `${label}: restored mode rejections should explain the scope boundary`);
+
+    const reconciliationStart = panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {');
+    const reconciliationEnd = panel.indexOf('\n\nfunction settleNewConversationConfirmation', reconciliationStart);
+    assert.ok(reconciliationStart >= 0 && reconciliationEnd > reconciliationStart, `${label}: failed-start reconciliation helper missing`);
+    const restoredScopes = [];
+    const reconcileFailedSelectionGroundedStart = vm.runInNewContext(
+      `(() => { ${panel.slice(reconciliationStart, reconciliationEnd)}; return reconcileFailedSelectionGroundedStart; })()`,
+      {
+        restoreActiveRunState: (tabId) => { restoredScopes.push(tabId); },
+      },
+    );
+    reconcileFailedSelectionGroundedStart(93, { sourceGrounding, selectionGroundedBeforeSend: false, accepted: false });
+    reconcileFailedSelectionGroundedStart(94, { sourceGrounding, selectionGroundedBeforeSend: true, accepted: false });
+    reconcileFailedSelectionGroundedStart(95, { sourceGrounding: null, selectionGroundedBeforeSend: true, accepted: false });
+    reconcileFailedSelectionGroundedStart(96, { sourceGrounding, selectionGroundedBeforeSend: false, accepted: true });
+    reconcileFailedSelectionGroundedStart(97, { sourceGrounding: null, selectionGroundedBeforeSend: false, accepted: false });
+    assert.deepEqual(restoredScopes, [93, 94, 95], `${label}: failed explicit and inherited scopes should reconcile while keeping scope fail-closed until the probe succeeds`);
+
+    const reconnectStart = panel.indexOf('async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}) {');
+    const reconnectEnd = panel.indexOf('\n\nfunction formatBackgroundSendError', reconnectStart);
+    assert.ok(reconnectStart >= 0 && reconnectEnd > reconnectStart, `${label}: detached reconnect helper missing`);
+    const appliedStates = [];
+    const sendRunWithReconnect = vm.runInNewContext(
+      `(() => { ${panel.slice(reconnectStart, reconnectEnd)}; return sendRunWithReconnect; })()`,
+      {
+        cancelledRunRecoveryRequestIds: { delete() {} },
+        runDetachedWithReconnect: async (options) => {
+          await options.onState({ sourceGrounding });
+          return { content: 'ok' };
+        },
+        sendToBackground: async () => ({}),
+        isBackgroundConnectionError: () => false,
+        applyConversationScopeState: (tabId, state) => appliedStates.push(['scope', tabId, state.sourceGrounding]),
+        applyActiveRunState: async (tabId, state) => appliedStates.push(['active', tabId, state.sourceGrounding]),
+        isTabAbortRequested: () => false,
+        localRunFollowers: new Map(),
+      },
+    );
+    const reconnectResult = await sendRunWithReconnect('chat_start', { tabId: 91, requestId: 'req-scope-review' });
+    assert.equal(reconnectResult.content, 'ok', `${label}: detached reconnect result should pass through`);
+    assert.deepEqual(appliedStates, [
+      ['scope', 91, sourceGrounding],
+      ['active', 91, sourceGrounding],
+    ], `${label}: detached state probes should apply scope before active run UI`);
+
+    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded \? SELECTION_ONLY_SOURCE_GROUNDING : null/, `${label}: agent should report only the structural selected-text scope marker`);
+    assert.match(background, /case 'ensure_conversation_id':[\s\S]*?agent\.getConversationState\(tabId, msg\.mode \|\| 'ask'\)/, `${label}: identity hydration should return scope state`);
+    assert.match(background, /case 'agent_run_state':[\s\S]*?agent\.getConversationState\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)/, `${label}: reconnect polling should return scope state`);
   }
 });
 
@@ -18903,9 +19322,9 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));
     assert.match(resetSlashBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: /reset should await durable history deletion`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
-    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: clear button should await durable history deletion`);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?await renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should await durable history deletion`);
   }
 });
 
@@ -21034,10 +21453,10 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(resetBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: /reset should clear the originally requested tab only`);
     assert.doesNotMatch(resetBody, /sendToBackground\('clear_conversation', \{ tabId: currentTabId \}\)/, `${label}: /reset should not use currentTabId after async delay`);
 
-    const clearStart = panel.indexOf("clearBtn.addEventListener('click', async () => {");
-    const clearBody = panel.slice(clearStart, panel.indexOf('\n});', clearStart) + 4);
-    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?if \(!await requestNewConversationConfirmation\(tabId\)\) return;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return;/, `${label}: clear button should confirm in-panel and reject a stale tab before clearing`);
-    assert.match(clearBody, /const tabId = currentTabId;[\s\S]*?await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: clear button should clear the originally requested tab only`);
+    const clearStart = panel.indexOf('async function startNewConversationForTab(tabId) {');
+    const clearBody = panel.slice(clearStart, panel.indexOf("\n\nclearBtn.addEventListener", clearStart));
+    assert.match(clearBody, /if \(!await requestNewConversationConfirmation\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\)\) return false;/, `${label}: shared new-conversation action should confirm in-panel and reject a stale tab before clearing`);
+    assert.match(clearBody, /await sendToBackground\('clear_conversation', \{ tabId \}\);[\s\S]*?renderClearedConversationForTab\(tabId\);/, `${label}: shared new-conversation action should clear the originally requested tab only`);
 
     const compactIdx = panel.indexOf("if (command.value === '/compact')");
     const compactBody = panel.slice(compactIdx, panel.indexOf("if (command.value === '/verbose')", compactIdx));
@@ -21882,6 +22301,7 @@ test('selection-only model requests exclude prior conversation context', async (
         : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
 
       assert.equal(final, 'Grounded answer.', `${label} ${streaming ? 'streaming' : 'non-streaming'}: final mismatch`);
+      assert.equal((await agent.getConversationState(tabId)).sourceGrounding, sourceGrounding, `${label}: selected-text state should be reportable after the anchor turn`);
       assert.equal(requests.length, 1, `${label} ${streaming ? 'streaming' : 'non-streaming'}: expected one model request`);
       assert.equal(requestOptions[0]?.tools, undefined, `${label}: selection-only request must not advertise browser tools`);
       assert.equal(enrichmentHistoryLengths[0], 0, `${label} ${streaming ? 'streaming' : 'non-streaming'}: enrichment must not inspect prior turns`);
@@ -21906,6 +22326,7 @@ test('selection-only model requests exclude prior conversation context', async (
         ? await agent.processMessageStream(tabId, 'My quiz answer is B.', () => {}, 'ask')
         : await agent.processMessage(tabId, 'My quiz answer is B.', () => {}, 'ask');
       assert.equal(followUp, 'Grounded answer.', `${label}: grounded follow-up final mismatch`);
+      assert.equal((await agent.getConversationState(tabId)).sourceGrounding, sourceGrounding, `${label}: selected-text state should remain reportable on follow-up`);
       assert.equal(requests.length, 2, `${label}: follow-up should make one additional model request`);
       assert.equal(requestOptions[1]?.tools, undefined, `${label}: grounded follow-up must remain tool-free`);
       const followUpSerialized = JSON.stringify(requests[1]);
@@ -22056,6 +22477,7 @@ test('ordinary attachments leave selection grounding and remain usable', async (
     assert.equal(providerCalls, 1, `${label}: ordinary attachment turn should call the model once`);
     assert.ok(manageContextCalls >= 1, `${label}: ordinary attachment turn should restore normal context management`);
     assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label}: ordinary attachment send should end selection scope`);
+    assert.equal((await agent.getConversationState(tabId)).sourceGrounding, null, `${label}: ordinary attachment transition should report normal conversation scope`);
   }
 });
 
@@ -22109,6 +22531,10 @@ test('independent cloud, scheduled, and workflow runs clear inherited selection 
       agent._hydrate = async () => {};
       let persistCalls = 0;
       agent._persist = () => { persistCalls += 1; };
+      const scopeChanges = [];
+      agent.setConversationScopeChangeListener((changedTabId, state) => {
+        scopeChanges.push({ tabId: changedTabId, sourceGrounding: state.sourceGrounding });
+      });
       let manageContextCalls = 0;
       agent._manageContext = async () => { manageContextCalls += 1; };
       agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
@@ -22142,6 +22568,7 @@ test('independent cloud, scheduled, and workflow runs clear inherited selection 
       assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
       assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
       assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
+      assert.deepEqual(scopeChanges, [{ tabId, sourceGrounding: null }], `${label} ${runLabel}: open sidepanels were not told that independent scope cleared`);
     }
   }
 });
@@ -34884,7 +35311,7 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
       assert.match(agentSource, new RegExp(`generationName: '${generationName}'`), `${label}: ${generationName} calls should be labeled`);
     }
     assert.match(backgroundSource, /generationName: 'memory'/, `${label}: memory extraction calls should be labeled`);
-    assert.match(backgroundSource, /conversationId: await agent\.getConversationId\(tabId\)/, `${label}: background memory jobs should retain the conversation id`);
+    assert.match(backgroundSource, /userMemoryPayload\.conversationId = await agent\.getConversationId\(tabId\);/, `${label}: background memory jobs should retain the conversation id`);
   }
 });
 
@@ -53859,6 +54286,7 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
     journal.record(1, 'request-a', 'thinking', { content: 'a4' }, 'run-a');
 
     assert.equal(journal.get(1).events.length, 3, `${label}: replay journal should remain bounded`);
+    assert.equal(journal.get(1).discardedBeforeSeq, 1, `${label}: eviction should expose the genuine replay-gap boundary`);
     assert.equal(journal.get(1).truncatedBeforeSeq, 1, `${label}: compaction should expose the missing sequence boundary`);
     assert.deepEqual(journal.get(2).events.map(event => event.data.content), ['b1'], `${label}: tab B events must remain independent`);
     assert.equal(journal.record(1, 'stale-request', 'plan_review', { planId: 'stale' }, 'run-stale'), null, `${label}: stale request events must be rejected`);
@@ -53872,6 +54300,7 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
     const terminalSeq = journal.get(1).seq;
     assert.ok(journal.acknowledge(1, 'request-a', terminalSeq), `${label}: the rendered tab should acknowledge replay`);
     assert.equal(journal.get(1).events.length, 0, `${label}: acknowledged replay events should be released`);
+    assert.equal(journal.get(1).discardedBeforeSeq, 2, `${label}: acknowledgement must not turn rendered events into replay loss`);
     assert.equal(journal.get(1).finalContent, 'A finished', `${label}: acknowledgement must retain the terminal snapshot`);
 
     const remounted = new Journal();
@@ -53900,7 +54329,8 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
     assert.equal(resumed.foreground, true, `${label}: restored continuations should retain foreground mode`);
     assert.equal(resumed.seq, 2, `${label}: resume must preserve the prior sequence`);
     assert.equal(resumed.ackedSeq, 1, `${label}: resume must preserve the acknowledged replay boundary`);
-    assert.equal(resumed.truncatedBeforeSeq, 1, `${label}: resume must preserve the compaction boundary`);
+    assert.equal(resumed.discardedBeforeSeq, 0, `${label}: acknowledged events must not become replay gaps`);
+    assert.equal(resumed.truncatedBeforeSeq, 0, `${label}: legacy truncation state should represent eviction only`);
     assert.equal(resumed.status, 'running', `${label}: resumed journal should return to running`);
     assert.equal(resumed.pendingPlanId, null, `${label}: stale pre-restart plan ownership should be cleared`);
     assert.deepEqual(
@@ -53920,6 +54350,117 @@ test('run UI journal: resumed requests preserve sequence and replay boundaries',
       `${label}: resumed events should not collide with prior replay sequence numbers`,
     );
     assert.equal(restarted.resume(7, 'different-request'), null, `${label}: a manual continuation must not reuse another request journal`);
+  }
+});
+
+test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeated polls', () => {
+  for (const [label, Journal, discardedBeforeSeq, unavailableBeforeSeq] of [
+    ['chrome', RunUiJournalCh, runUiDiscardedBeforeSeqCh, runUiUnavailableBeforeSeqCh],
+    ['firefox', RunUiJournalFx, runUiDiscardedBeforeSeqFx, runUiUnavailableBeforeSeqFx],
+  ]) {
+    const acknowledged = new Journal();
+    acknowledged.begin(9, `${label}-ack-only`);
+    acknowledged.record(9, `${label}-ack-only`, 'thinking', { step: 1 });
+    acknowledged.acknowledge(9, `${label}-ack-only`, 1);
+    assert.equal(discardedBeforeSeq(acknowledged.get(9)), 0, `${label}: normal acknowledgement must not report replay loss`);
+    assert.equal(unavailableBeforeSeq(acknowledged.get(9)), 1, `${label}: another panel should still know acknowledged events are unavailable for replay`);
+
+    const evicted = new Journal({ eventLimit: 1 });
+    evicted.begin(10, `${label}-evicted`);
+    evicted.record(10, `${label}-evicted`, 'thinking', { step: 1 });
+    evicted.record(10, `${label}-evicted`, 'thinking', { step: 2 });
+    const snapshot = evicted.get(10);
+    let lastRenderedSeq = 0;
+    let replayGapBeforeSeq = 0;
+    let notices = 0;
+    for (let poll = 0; poll < 6; poll++) {
+      const boundary = unavailableBeforeSeq(snapshot);
+      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+        notices += 1;
+        replayGapBeforeSeq = boundary;
+      }
+    }
+    assert.equal(notices, 1, `${label}: repeated state polls should render one replay-gap notice`);
+    assert.equal(lastRenderedSeq, 0, `${label}: a replay-gap notice must not claim that unavailable events were rendered`);
+
+    assert.equal(
+      discardedBeforeSeq({ ackedSeq: 4, truncatedBeforeSeq: 4 }),
+      0,
+      `${label}: legacy ack-only snapshots should migrate without a false replay gap`,
+    );
+    assert.equal(
+      discardedBeforeSeq({ ackedSeq: 1, truncatedBeforeSeq: 3 }),
+      3,
+      `${label}: legacy snapshots should preserve a genuine unacknowledged eviction boundary`,
+    );
+
+    lastRenderedSeq = 0;
+    replayGapBeforeSeq = 0;
+    notices = 0;
+    for (let poll = 0; poll < 6; poll++) {
+      const boundary = unavailableBeforeSeq(acknowledged.get(9));
+      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+        notices += 1;
+        replayGapBeforeSeq = boundary;
+      }
+    }
+    assert.equal(notices, 1, `${label}: acknowledged events from another panel should produce one replay-gap notice, not one per poll`);
+
+    const completed = new Journal();
+    completed.begin(11, `${label}-acknowledged-terminal`);
+    completed.record(11, `${label}-acknowledged-terminal`, 'thinking', { step: 1 });
+    const terminal = completed.finish(
+      11,
+      `${label}-acknowledged-terminal`,
+      'completed',
+      'Recovered terminal answer',
+    );
+    completed.acknowledge(11, `${label}-acknowledged-terminal`, terminal.seq);
+    const terminalSnapshot = completed.get(11);
+    lastRenderedSeq = 0;
+    replayGapBeforeSeq = 0;
+    notices = 0;
+    let terminalRenders = 0;
+    let renderedTerminalContent = '';
+    for (let poll = 0; poll < 6; poll++) {
+      const boundary = unavailableBeforeSeq(terminalSnapshot);
+      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+        notices += 1;
+        replayGapBeforeSeq = boundary;
+      }
+      if (lastRenderedSeq < terminalSnapshot.seq) {
+        terminalRenders += 1;
+        renderedTerminalContent = terminalSnapshot.finalContent;
+        lastRenderedSeq = terminalSnapshot.seq;
+      }
+    }
+    assert.equal(notices, 1, `${label}: acknowledged terminal replay loss should still render one gap notice`);
+    assert.equal(terminalRenders, 1, `${label}: gap deduplication must leave the acknowledged terminal snapshot renderable`);
+    assert.equal(renderedTerminalContent, 'Recovered terminal answer', `${label}: terminal fallback content should survive acknowledgement`);
+  }
+});
+
+test('all locales translate the run-progress replay-gap notice', async () => {
+  for (const [label, panelRel, localeDir] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    assert.match(
+      panel,
+      /function addRunProgressReplayGapNote\(\) \{[\s\S]*?note\.textContent = t\('sp\.run_progress_replay_gap'\)/,
+      `${label}: replay-gap notice should render through the locale layer`,
+    );
+    for (const filename of fs.readdirSync(path.join(ROOT, localeDir)).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
+      const message = locale['sp.run_progress_replay_gap'];
+      assert.equal(typeof message, 'string', `${label}/${filename}: missing translated run-progress replay-gap notice`);
+      assert.ok(message.trim().length > 0, `${label}/${filename}: replay-gap notice must not be empty`);
+      // The whole point of the separate notice: replay loss is UI history loss,
+      // so no locale may reuse its context-compaction copy for it.
+      assert.notEqual(message, locale['sp.context_compacted'], `${label}/${filename}: replay loss needs copy distinct from context compaction`);
+      assert.notEqual(message, locale['sp.context_compacted_manual'], `${label}/${filename}: replay loss needs copy distinct from manual context compaction`);
+    }
   }
 });
 
@@ -54864,6 +55405,9 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(panel, /sendPlanReviewDecisionWithReconnect\(/, `${label}: plan decisions should survive a lost response channel`);
     assert.match(panel, /showActivity\('Reconnecting…'\)/, `${label}: reconnect attempts should be visible`);
     assert.match(panel, /onState: state => applyActiveRunState\(tabId, state\)/, `${label}: reconnect probes should replay missed UI journal events`);
+    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?const replayGapBeforeSeq = Number\(runAssistantEl\.dataset\.replayGapBeforeSeq \|\| 0\);[\s\S]*?unavailableBeforeSeq > lastRenderedSeq[\s\S]*?unavailableBeforeSeq > replayGapBeforeSeq[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?dataset\.replayGapBeforeSeq = String\(unavailableBeforeSeq\)/, `${label}: replay-gap notices should dedupe without advancing the rendered-event cursor`);
+    assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\('sp\.run_progress_replay_gap'\)/, `${label}: replay loss needs distinct non-context-compaction copy`);
+    assert.doesNotMatch(panel, /addContextCompactedNote\(\{ message: 'Some hidden-tab progress was compacted\.' \}\)/, `${label}: replay loss must not masquerade as model-context compaction`);
     assert.match(panel, /void adoptRestoredRunState\(numericTabId, state\)/, `${label}: remounted sidepanels should adopt orphaned run monitors`);
     assert.match(panel, /probeFirst: true,[\s\S]*?requireDurableSubmittedTurn:/, `${label}: remount adoption should probe before any safe continuation`);
     assert.match(panel, /if \(state\?\.running \|\| state\?\.starting\)/, `${label}: a reserved detached start should keep the composer and Stop UI in their active state`);

@@ -1037,6 +1037,200 @@ function blogStyle() {
   </style>`;
 }
 
+function blogIndexStyle() {
+  return `<style>
+    [hidden] { display: none !important; }
+    .blog-index .page-sub { margin-bottom: 30px; }
+    .blog-tools {
+      position: relative;
+      margin: 0 0 26px;
+      padding-left: 18px;
+      scroll-margin-top: 88px;
+    }
+    .blog-tools::before {
+      content: '';
+      position: absolute;
+      inset: 2px auto 2px 0;
+      width: 2px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--accent2), color-mix(in srgb, var(--accent) 12%, transparent));
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+    .archive-search-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .search-shell {
+      display: flex;
+      align-items: center;
+      min-height: 50px;
+      background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 14px 50px color-mix(in srgb, var(--shadow-strong) 58%, transparent);
+      transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+    }
+    .search-shell:focus-within {
+      background: var(--bg-card);
+      border-color: color-mix(in srgb, var(--accent2) 64%, var(--border));
+      box-shadow: 0 0 0 3px var(--accent-glow), 0 18px 56px color-mix(in srgb, var(--shadow-strong) 64%, transparent);
+    }
+    .search-icon {
+      width: 18px;
+      height: 18px;
+      margin-left: 16px;
+      flex: 0 0 auto;
+      color: var(--text-dim);
+    }
+    .blog-search {
+      width: 100%;
+      min-width: 0;
+      padding: 12px 10px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+    }
+    .blog-search::-webkit-search-cancel-button { display: none; }
+    .blog-search::placeholder { color: color-mix(in srgb, var(--text-dim) 78%, transparent); }
+    .search-key {
+      margin-right: 12px;
+      padding: 2px 7px;
+      flex: 0 0 auto;
+      border: 1px solid var(--border);
+      border-bottom-color: color-mix(in srgb, var(--border) 60%, var(--text-dim));
+      border-radius: 5px;
+      background: var(--tint-soft-2);
+      color: var(--text-dim);
+      font: 11px/1.5 'SF Mono', 'Menlo', 'Consolas', monospace;
+    }
+    .search-clear {
+      margin-right: 8px;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .search-clear:hover { background: var(--tint-medium); color: var(--text); }
+    .search-clear:focus-visible,
+    .page-button:focus-visible,
+    .empty-clear:focus-visible,
+    .post-card:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 3px;
+    }
+    .archive-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 24px;
+      margin-top: 9px;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+    .archive-status-rule {
+      width: 24px;
+      height: 1px;
+      background: var(--border);
+    }
+    .empty-state {
+      padding: 38px 24px;
+      border: 1px dashed color-mix(in srgb, var(--accent2) 36%, var(--border));
+      border-radius: var(--radius-lg);
+      text-align: center;
+      color: var(--text-dim);
+      background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+    }
+    .empty-state strong { display: block; margin-bottom: 5px; color: var(--text); }
+    .empty-clear {
+      margin-top: 14px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--tint-soft);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .empty-clear:hover { border-color: var(--accent2); background: var(--tint-medium); }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+    .page-numbers { display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .page-ellipsis {
+      min-width: 24px;
+      color: var(--text-dim);
+      text-align: center;
+      font-size: 13px;
+    }
+    .page-button {
+      min-width: 36px;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--tint-soft-2);
+      color: var(--text-dim);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      transition: color 0.16s, background 0.16s, border-color 0.16s, transform 0.16s;
+    }
+    .page-button:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--tint-medium);
+      border-color: color-mix(in srgb, var(--accent2) 50%, var(--border));
+      transform: translateY(-1px);
+    }
+    .page-button[aria-current="page"] {
+      color: #fff;
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow: 0 7px 22px var(--accent-glow);
+    }
+    .page-button:disabled { opacity: 0.38; cursor: not-allowed; }
+    .page-direction { min-width: 86px; }
+    @media (max-width: 700px) {
+      .pagination { gap: 8px; }
+      .page-button { min-width: 32px; height: 34px; padding: 0 8px; }
+      .page-direction { min-width: 72px; }
+    }
+    @media (max-width: 420px) {
+      .blog-tools { padding-left: 13px; }
+      .search-key { display: none; }
+      .pagination { flex-wrap: wrap; justify-content: center; }
+      .page-numbers { order: -1; width: 100%; }
+      .page-direction { flex: 1 1 40%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .post-card, .page-button { transition: none; }
+    }
+  </style>`;
+}
+
 function themeBootstrapScript() {
   return `<script>
     (function () {
@@ -1102,6 +1296,164 @@ function languageScript() {
   </script>`;
 }
 
+function blogIndexScript(pageSize = 8) {
+  return `<script>
+    (function () {
+      const PAGE_SIZE = ${pageSize};
+      const searchInput = document.getElementById('blog-search');
+      const clearButton = document.getElementById('search-clear');
+      const emptyClearButton = document.getElementById('empty-clear');
+      const resultsCount = document.getElementById('results-count');
+      const pageStatus = document.getElementById('page-status');
+      const emptyState = document.getElementById('empty-state');
+      const emptyQuery = document.getElementById('empty-query');
+      const pagination = document.getElementById('pagination');
+      const pageNumbers = document.getElementById('page-numbers');
+      const previousButton = document.getElementById('page-previous');
+      const nextButton = document.getElementById('page-next');
+      const tools = document.getElementById('blog-tools');
+      const cards = Array.from(document.querySelectorAll('.post-card'));
+      if (!searchInput || !cards.length) return;
+
+      let query = '';
+      let currentPage = 1;
+
+      function normalize(value) {
+        return String(value || '')
+          .normalize('NFD')
+          .replace(/[\\u0300-\\u036f]/g, '')
+          .toLocaleLowerCase();
+      }
+
+      function readUrl() {
+        const params = new URLSearchParams(window.location.search);
+        query = (params.get('q') || '').trim();
+        const requestedPage = Number.parseInt(params.get('page') || '1', 10);
+        currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+        searchInput.value = query;
+      }
+
+      function writeUrl(mode) {
+        if (!mode) return;
+        const url = new URL(window.location.href);
+        if (query) url.searchParams.set('q', query);
+        else url.searchParams.delete('q');
+        if (currentPage > 1) url.searchParams.set('page', String(currentPage));
+        else url.searchParams.delete('page');
+        const target = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash;
+        window.history[mode + 'State']({}, '', target);
+      }
+
+      function pageSequence(total, active) {
+        if (total <= 7) return Array.from({ length: total }, function (_, index) { return index + 1; });
+        const candidates = [1, total, active - 2, active - 1, active, active + 1, active + 2]
+          .filter(function (value) { return value >= 1 && value <= total; });
+        const pages = Array.from(new Set(candidates)).sort(function (a, b) { return a - b; });
+        const sequence = [];
+        pages.forEach(function (value, index) {
+          if (index && value - pages[index - 1] > 1) sequence.push('ellipsis-' + value);
+          sequence.push(value);
+        });
+        return sequence;
+      }
+
+      function goToPage(page) {
+        currentPage = page;
+        render('push');
+        tools.scrollIntoView({ block: 'start' });
+        window.requestAnimationFrame(function () {
+          const active = pageNumbers.querySelector('[aria-current="page"]');
+          if (active) active.focus({ preventScroll: true });
+        });
+      }
+
+      function renderPageButtons(totalPages) {
+        pageNumbers.replaceChildren();
+        pageSequence(totalPages, currentPage).forEach(function (entry) {
+          if (typeof entry === 'string') {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'page-ellipsis';
+            ellipsis.textContent = '\u2026';
+            ellipsis.setAttribute('aria-hidden', 'true');
+            pageNumbers.appendChild(ellipsis);
+            return;
+          }
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'page-button';
+          button.textContent = String(entry);
+          button.setAttribute('aria-label', 'Go to page ' + entry);
+          if (entry === currentPage) button.setAttribute('aria-current', 'page');
+          button.addEventListener('click', function () { goToPage(entry); });
+          pageNumbers.appendChild(button);
+        });
+      }
+
+      function render(historyMode) {
+        const terms = normalize(query).split(/\\s+/).filter(Boolean);
+        const matches = cards.filter(function (card) {
+          const haystack = normalize(card.dataset.search);
+          return terms.every(function (term) { return haystack.includes(term); });
+        });
+        const totalPages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
+        currentPage = Math.min(currentPage, totalPages);
+        const visible = new Set(matches.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE));
+
+        cards.forEach(function (card) { card.hidden = !visible.has(card); });
+        clearButton.hidden = !query;
+        emptyState.hidden = matches.length !== 0;
+        emptyQuery.textContent = query;
+        pagination.hidden = matches.length === 0 || totalPages <= 1;
+        previousButton.disabled = currentPage === 1;
+        nextButton.disabled = currentPage === totalPages;
+        resultsCount.textContent = query
+          ? matches.length + (matches.length === 1 ? ' note found' : ' notes found')
+          : matches.length + (matches.length === 1 ? ' note' : ' notes');
+        pageStatus.textContent = matches.length ? 'Page ' + currentPage + ' of ' + totalPages : '';
+        renderPageButtons(totalPages);
+        writeUrl(historyMode);
+      }
+
+      function clearSearch() {
+        query = '';
+        currentPage = 1;
+        searchInput.value = '';
+        render('push');
+        searchInput.focus();
+      }
+
+      searchInput.addEventListener('input', function () {
+        query = searchInput.value.trim();
+        currentPage = 1;
+        render('replace');
+      });
+      clearButton.addEventListener('click', clearSearch);
+      emptyClearButton.addEventListener('click', clearSearch);
+      previousButton.addEventListener('click', function () { if (currentPage > 1) goToPage(currentPage - 1); });
+      nextButton.addEventListener('click', function () { goToPage(currentPage + 1); });
+      window.addEventListener('popstate', function () { readUrl(); render(); });
+      document.addEventListener('keydown', function (event) {
+        const target = event.target;
+        const isEditable = target instanceof HTMLElement && (
+          target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+        );
+        if (event.key === '/' && !isEditable && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          searchInput.focus();
+          searchInput.select();
+        }
+        if (event.key === 'Escape' && document.activeElement === searchInput) {
+          if (searchInput.value) clearSearch();
+          else searchInput.blur();
+        }
+      });
+
+      readUrl();
+      render('replace');
+    })();
+  </script>`;
+}
+
 function navHtml() {
   const options = LOCALES.map((locale) => (
     `<option value="${escAttr(locale.code)}">${escHtml(locale.label)}</option>`
@@ -1138,7 +1490,7 @@ function hreflangLinks(site) {
   return links.join('\n');
 }
 
-function sharedHead({ title, description, canonical, ogType = 'website', ogTitle, ogDescription, twitterTitle, twitterDescription, keywords, jsonLd }, site) {
+function sharedHead({ title, description, canonical, ogType = 'website', ogTitle, ogDescription, twitterTitle, twitterDescription, keywords, jsonLd, extraHead = '' }, site) {
   const keywordsTag = keywords && keywords.length
     ? `\n  <meta name="keywords" content="${escAttr(keywords.join(', '))}">`
     : '';
@@ -1169,7 +1521,7 @@ function sharedHead({ title, description, canonical, ogType = 'website', ogTitle
   <link rel="canonical" href="${escAttr(canonical)}">
   <!-- Blog is English-only; alternates point to locale homepages. -->
 ${hreflangLinks(site)}
-  ${blogStyle()}
+  ${blogStyle()}${extraHead ? `\n  ${extraHead}` : ''}
   ${themeBootstrapScript()}
 ${PLAUSIBLE_ANALYTICS}
   <script type="application/ld+json">
@@ -1248,13 +1600,22 @@ function renderIndexPage(posts, args) {
   const canonical = `${args.site}/blog`;
   const socialImageUrl = `${args.site}${SOCIAL_IMAGE_PATH}`;
   const description = 'Engineering notes from WebBrain - the open-source AI browser agent.';
-  const cards = posts.map((post) => (
-    `<a href="${escAttr(post.urlPath)}" class="post-card">
+  const cards = posts.map((post) => {
+    const searchText = [
+      post.title,
+      post.cardTitle,
+      post.excerpt,
+      post.description,
+      post.displayDate,
+      post.date,
+      ...post.keywords,
+    ].join(' ');
+    return `<a href="${escAttr(post.urlPath)}" class="post-card" data-search="${escAttr(searchText)}">
         <div class="post-meta">${escHtml(post.displayDate)} &middot; ${escHtml(post.readTime)}</div>
         <div class="post-title">${escHtml(post.cardTitle || post.title)}</div>
         <div class="post-excerpt">${escHtml(post.excerpt)}</div>
-      </a>`
-  )).join('\n');
+      </a>`;
+  }).join('\n');
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -1284,8 +1645,9 @@ ${sharedHead({
     twitterTitle: 'WebBrain Blog',
     twitterDescription: 'Engineering notes from WebBrain.',
     jsonLd,
+    extraHead: blogIndexStyle(),
   }, args.site)}
-<body>
+<body class="blog-index">
   <div class="glow-bg"></div>
   ${navHtml()}
 
@@ -1294,14 +1656,45 @@ ${sharedHead({
     <h1>Engineering notes</h1>
     <p class="page-sub">Short write-ups on design decisions, failure modes, and benchmarks from building an open-source AI browser agent.</p>
 
-    <div class="post-list">
+    <section class="blog-tools" id="blog-tools" aria-label="Search the blog archive">
+      <label class="archive-search-label" for="blog-search">Search the archive</label>
+      <div class="search-shell">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m20 20-4-4"></path>
+        </svg>
+        <input class="blog-search" id="blog-search" type="search" placeholder="Models, benchmarks, tools…" autocomplete="off" spellcheck="false" aria-controls="post-list">
+        <button class="search-clear" id="search-clear" type="button" hidden>Clear</button>
+        <kbd class="search-key" aria-hidden="true">/</kbd>
+      </div>
+      <div class="archive-status" role="status" aria-live="polite" aria-atomic="true">
+        <span id="results-count">${posts.length} notes</span>
+        <span class="archive-status-rule" aria-hidden="true"></span>
+        <span id="page-status"></span>
+      </div>
+    </section>
+
+    <div class="post-list" id="post-list">
       ${cards}
+    </div>
+
+    <div class="empty-state" id="empty-state" hidden>
+      <strong>No notes match “<span id="empty-query"></span>”</strong>
+      Try a model name, benchmark, or tool instead.
+      <div><button class="empty-clear" id="empty-clear" type="button">Clear search</button></div>
+    </div>
+
+    <div class="pagination" id="pagination" role="navigation" aria-label="Blog pages" hidden>
+      <button class="page-button page-direction" id="page-previous" type="button">Previous</button>
+      <div class="page-numbers" id="page-numbers"></div>
+      <button class="page-button page-direction" id="page-next" type="button">Next</button>
     </div>
   </main>
 
   ${footerHtml()}
   ${themeToggleScript()}
   ${languageScript()}
+  ${blogIndexScript()}
 </body>
 </html>
 `;

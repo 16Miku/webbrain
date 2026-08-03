@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'Alihkan log alat terperinci',
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Pengaturan',
-  'sp.btn.clear': 'Percakapan baru (hapus riwayat)',
+  "sp.btn.clear": "Percakapan baru",
   'sp.btn.send': 'Kirim',
   'sp.chat.follow_response': 'Ikuti jawaban',
   'sp.chat.jump_latest': 'Ke bagian terbaru',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Ada yang bisa saya bantu di halaman ini?',
   'sp.cleared_message': 'Percakapan dihapus. Ada yang bisa saya bantu?',
   'sp.clear.confirm': 'Percakapan ini akan hilang. Mulai percakapan baru?',
+  "sp.clear.title": "Mulai percakapan baru?",
+  "sp.clear.description": "Tindakan ini akan menghapus riwayat percakapan ini.",
+  "sp.clear.action_warning": "Menghapus riwayat",
+  "sp.selection_scope.title": "Hanya teks yang dipilih",
+  "sp.selection_scope.description": "Mulai percakapan baru untuk mengakses halaman atau layar.",
+  "sp.input.selection_placeholder": "Tanyakan tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',
   'sp.mode.ask.title': 'Bertanya tentang halaman — tanpa perubahan',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Perkiraan biaya baca cache ($ / 1 juta token)",
   'st.provider.field.cache_write_cost_per_million': "Perkiraan biaya tulis cache 5 menit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Perkiraan biaya tulis cache 1 jam ($ / 1 juta token)",
+  'sp.run_progress_replay_gap': 'Sebagian kemajuan proses sebelumnya tidak dapat ditampilkan ulang',
 };

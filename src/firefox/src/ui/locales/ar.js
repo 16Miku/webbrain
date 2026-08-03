@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'تبديل سجل الأدوات المفصّل',
   'sp.btn.language': 'اللغة',
   'sp.btn.settings': 'الإعدادات',
-  'sp.btn.clear': 'محادثة جديدة (مسح السجل)',
+  "sp.btn.clear": "محادثة جديدة",
   'sp.btn.send': 'إرسال',
   'sp.chat.follow_response': 'متابعة الإجابة',
   'sp.chat.jump_latest': 'الانتقال إلى الأحدث',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'كيف أساعدك في هذه الصفحة؟',
   'sp.cleared_message': 'تم مسح المحادثة. كيف أساعدك؟',
   'sp.clear.confirm': 'ستفقد هذه المحادثة. هل تريد بدء محادثة جديدة؟',
+  "sp.clear.title": "هل تريد بدء محادثة جديدة؟",
+  "sp.clear.description": "سيؤدي هذا إلى مسح سجل هذه المحادثة.",
+  "sp.clear.action_warning": "يمسح السجل",
+  "sp.selection_scope.title": "النص المحدد فقط",
+  "sp.selection_scope.description": "ابدأ محادثة جديدة للوصول إلى الصفحة أو الشاشة.",
+  "sp.input.selection_placeholder": "اسأل عن النص المحدد...",
 
   'sp.mode.ask': 'سؤال',
   'sp.mode.ask.title': 'اطرح أسئلة عن الصفحة — دون إجراء أي تغييرات',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "تكلفة قراءة ذاكرة التخزين المؤقت المقدّرة ($ / مليون رمز)",
   'st.provider.field.cache_write_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة 5 دقائق ($ / مليون رمز)",
   'st.provider.field.cache_write_1h_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة ساعة واحدة ($ / مليون رمز)",
+  'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
 };

@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': '詳細ツールログを切り替え',
   'sp.btn.language': '言語',
   'sp.btn.settings': '設定',
-  'sp.btn.clear': '新しい会話（履歴をクリア）',
+  "sp.btn.clear": "新しい会話",
   'sp.btn.send': '送信',
   'sp.chat.follow_response': '回答を追う',
   'sp.chat.jump_latest': '最新へ移動',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'このページで何をお手伝いしましょうか？',
   'sp.cleared_message': '会話をクリアしました。何かお手伝いできますか？',
   'sp.clear.confirm': 'この会話は失われます。新しい会話を開始しますか？',
+  "sp.clear.title": "新しい会話を開始しますか？",
+  "sp.clear.description": "この会話の履歴が消去されます。",
+  "sp.clear.action_warning": "履歴を消去",
+  "sp.selection_scope.title": "選択したテキストのみ",
+  "sp.selection_scope.description": "ページや画面にアクセスするには、新しい会話を開始してください。",
+  "sp.input.selection_placeholder": "選択したテキストについて質問...",
 
   'sp.mode.ask': '質問',
   'sp.mode.ask.title': 'ページについて質問する — 変更は行いません',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '選択したリリース ZIP がローカルストレージから削除されました。',
   'st.skills.cws.package_zip_only': '.zip リリースパッケージを選択してください。',
   'st.skills.cws.package_too_large': 'ZIP は 1 バイトから 100 MB の間でなければなりません。',
+  'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
 };

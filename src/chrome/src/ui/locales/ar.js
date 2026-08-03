@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'تبديل سجل الأدوات المفصّل',
   'sp.btn.language': 'اللغة',
   'sp.btn.settings': 'الإعدادات',
-  'sp.btn.clear': 'محادثة جديدة (مسح السجل)',
+  "sp.btn.clear": "محادثة جديدة",
   'sp.btn.send': 'إرسال',
   'sp.chat.follow_response': 'متابعة الإجابة',
   'sp.chat.jump_latest': 'الانتقال إلى الأحدث',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'كيف أساعدك في هذه الصفحة؟',
   'sp.cleared_message': 'تم مسح المحادثة. كيف أساعدك؟',
   'sp.clear.confirm': 'ستفقد هذه المحادثة. هل تريد بدء محادثة جديدة؟',
+  "sp.clear.title": "هل تريد بدء محادثة جديدة؟",
+  "sp.clear.description": "سيؤدي هذا إلى مسح سجل هذه المحادثة.",
+  "sp.clear.action_warning": "يمسح السجل",
+  "sp.selection_scope.title": "النص المحدد فقط",
+  "sp.selection_scope.description": "ابدأ محادثة جديدة للوصول إلى الصفحة أو الشاشة.",
+  "sp.input.selection_placeholder": "اسأل عن النص المحدد...",
 
   'sp.mode.ask': 'سؤال',
   'sp.mode.ask.title': 'اطرح أسئلة عن الصفحة — دون إجراء أي تغييرات',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': 'تمت إزالة ملف ZIP للإصدار من التخزين المحلي.',
   'st.skills.cws.package_zip_only': 'اختر ملف إصدار بصيغة .zip.',
   'st.skills.cws.package_too_large': 'يجب أن يكون حجم الملف بين 1 بايت و100 ميجابايت.',
+  'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
 };

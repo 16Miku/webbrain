@@ -61,7 +61,7 @@ export default {
   'sp.btn.language': "Ngôn ngữ",
   'sp.btn.history': "Lịch sử trò chuyện",
   'sp.btn.settings': "Cài đặt",
-  'sp.btn.clear': "Cuộc trò chuyện mới (xóa lịch sử)",
+  "sp.btn.clear": "Cuộc trò chuyện mới",
   'sp.btn.send': "Gửi",
   'sp.chat.follow_response': 'Theo dõi câu trả lời',
   'sp.chat.jump_latest': 'Đi đến nội dung mới nhất',
@@ -92,6 +92,12 @@ export default {
   'sp.help_message': "Tôi có thể giúp gì với trang này?",
   'sp.cleared_message': "Đã xóa cuộc trò chuyện. Tôi có thể giúp gì?",
   'sp.clear.confirm': "Cuộc trò chuyện này sẽ bị mất. Bắt đầu một cuộc trò chuyện mới?",
+  "sp.clear.title": "Bắt đầu cuộc trò chuyện mới?",
+  "sp.clear.description": "Thao tác này sẽ xóa lịch sử của cuộc trò chuyện này.",
+  "sp.clear.action_warning": "Xóa lịch sử",
+  "sp.selection_scope.title": "Chỉ văn bản đã chọn",
+  "sp.selection_scope.description": "Bắt đầu cuộc trò chuyện mới để truy cập trang hoặc màn hình.",
+  "sp.input.selection_placeholder": "Hỏi về văn bản đã chọn...",
 
   'sp.mode.ask': "Hỏi",
   'sp.mode.ask.title': "Đặt câu hỏi về trang — không thực hiện thay đổi nào",
@@ -925,4 +931,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Chi phí đọc bộ nhớ đệm ước tính ($ / 1 triệu token)",
   'st.provider.field.cache_write_cost_per_million': "Ước tính chi phí ghi vào bộ nhớ đệm trong 5 phút ($ / 1 triệu token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Chi phí ghi bộ nhớ đệm trong 1 giờ ước tính ($ / 1 triệu token)",
+  'sp.run_progress_replay_gap': 'Không thể hiển thị lại một phần tiến trình chạy trước đó',
 };

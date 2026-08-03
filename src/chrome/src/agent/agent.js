@@ -264,6 +264,7 @@ export class Agent extends LoopDetector {
     // inherit this scope without exposing conversation history from before the
     // selection. Cleared with the conversation or replaced by a new selection.
     this.selectionGroundingScopes = new Map();
+    this._conversationScopeChangeListener = null;
     this.progressLedgers = new Map(); // tabId -> structured progress rows, projected into a pinned note
     this.progressPageScopes = new Map(); // tabId -> normalized page identity for scoped progress task keys
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
@@ -815,6 +816,10 @@ export class Agent extends LoopDetector {
     this.scheduler = scheduler;
   }
 
+  setConversationScopeChangeListener(listener) {
+    this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
+  }
+
   isRunning(tabId) {
     return this._runningTabs.has(tabId);
   }
@@ -845,11 +850,31 @@ export class Agent extends LoopDetector {
     return this.conversationIds.get(tabId) || null;
   }
 
-  async ensureConversationId(tabId, mode = 'ask') {
+  async getConversationState(tabId, mode = null) {
     await this._hydrate(tabId);
-    this.getConversation(tabId, mode);
-    this._persist(tabId);
-    return this.conversationIds.get(tabId) || null;
+    if (mode) {
+      this.getConversation(tabId, mode);
+      this._persist(tabId);
+    }
+    const messages = this.conversations.get(tabId) || null;
+    const scope = this.selectionGroundingScopes.get(tabId) || null;
+    const selectionGrounded = !!(
+      messages
+      && scope
+      && this._selectionGroundingAnchorIndex(tabId, messages, scope) >= 0
+    );
+    if (scope && !selectionGrounded) {
+      this.selectionGroundingScopes.delete(tabId);
+      this._persist(tabId);
+    }
+    return {
+      conversationId: this.conversationIds.get(tabId) || null,
+      sourceGrounding: selectionGrounded ? SELECTION_ONLY_SOURCE_GROUNDING : null,
+    };
+  }
+
+  async ensureConversationId(tabId, mode = 'ask') {
+    return (await this.getConversationState(tabId, mode)).conversationId;
   }
 
   /**
@@ -13200,9 +13225,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || runOptions?.cloudRun === true
       || runOptions?.scheduledRun === true;
     if (!independentRun) return false;
-    if (this.selectionGroundingScopes.has(tabId)) {
-      this.selectionGroundingScopes.delete(tabId);
+    if (this.selectionGroundingScopes.delete(tabId)) {
       this._persist(tabId);
+      try {
+        this._conversationScopeChangeListener?.(tabId, { sourceGrounding: null });
+      } catch {
+        // Scope persistence is authoritative; UI notification is best-effort.
+      }
     }
     return true;
   }

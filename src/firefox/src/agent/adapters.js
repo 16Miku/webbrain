@@ -15755,13 +15755,11 @@ const ADAPTERS = [
     matches: (url) => /^https?:\/\/(www\.)?github\.com\//.test(url),
     notes: `
 - Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen.
-- Creating a release: navigate to /<owner>/<repo>/releases/new (not /releases). The tag selector is a combobox labeled "Choose a tag" — click({text: "Choose a tag"}) to open it, then type the tag name into the focused popup, then click({text: "Create new tag"}) to confirm.
-- DO NOT use index-based clicks on the release page. GitHub's global header pollutes the index space and the release form is deep in the DOM. Always use click({text:"..."}) for buttons. Specifically: never click element #38 from memory — that's a learned anti-pattern from training data, and on the live site #38 is the "Pull requests" header link that navigates away from the release form.
-- Release body is a CodeMirror editor, not a textarea. Click the editor surface (click({text:"Describe this release"}) on the placeholder works) then type with no selector.
-- The green "Publish release" button is at the bottom of the form. Click it with click({text: "Publish release"}). The gray "Save draft" is right next to it — don't confuse them.
+- Creating a release: navigate to /<owner>/<repo>/releases/new, choose/create the tag with the "Choose a tag" combobox, and verify the "Previous tag" range. If the user supplied no exact notes, prefer "Generate release notes" and review its output; otherwise preserve their text. Finish with "Publish release" or the adjacent "Save draft" as requested.
+- On the release form, use named controls rather than unstable indexes (never reuse remembered element #38). The release body is a CodeMirror editor: click its "Describe this release" surface before typing.
 - EDITING an existing release (URL pattern /<owner>/<repo>/releases/edit/<tag>): the file upload input is \`input#releases-upload\` (NOT a generic input[type="file"] — there are several on the page). Prefer \`upload_file({selector: "input#releases-upload", downloadId: N})\` when the binary is already in Downloads; otherwise \`upload_file({selector: "input#releases-upload"})\` opens a user file picker. After each upload, GitHub renders a small chip listing the filename in the "Attach binaries" area — verify the chip appears with the correct filename before moving on. The commit button is green and says "Update release"; navigating away without clicking it discards the uploads.
 - Files in a /tree/.../<folder> view (e.g. /tree/main/dist) can be downloaded via raw URLs of the form https://github.com/<owner>/<repo>/raw/<branch>/<path>. Once downloaded, the file is on local disk; do not re-download to "verify".
-- Issue/PR comments use the same CodeMirror editor; markdown preview is on a separate tab.
+- Creating a pull request: when no exact title was supplied, prefer the title field's Copilot button; for a blank description, prefer Copilot > "Summary". Review both suggestions and add missing rationale/testing context. Summary ignores existing description text, so preserve repository templates and user content; if Copilot is unavailable, draft normally. PR descriptions/comments use CodeMirror with a separate Markdown preview.
 - File browser: pressing "t" opens the fuzzy file finder (faster than navigating folders).
 - Settings/admin actions often require re-entering the repo name as a confirmation — read the modal carefully.`,
   },
@@ -15819,8 +15817,49 @@ const ADAPTERS = [
 - The body is a contenteditable div (rich text), not a textarea. When the user asks to revise or replace the whole draft body and the accessibility tree exposes textbox "Message Body" [ref_N], use exactly one set_field({ref_id:"ref_N", text:"<complete revised body>", clear:true, submit:false}) call. Do not click the body first, do not use press_keys to clear it, and do not use click-by-text or coordinates. Re-read the body afterward to verify the replacement. If the user says not to send, never click Send.
 - Sending: the "Send" button is bottom-left of the compose window; "Send + Schedule" arrow is next to it for scheduled send.
 - Search uses operators: from:, to:, subject:, has:attachment, before:YYYY/MM/DD.
-- Threads collapse old messages — click "Show trimmed content" or the message header to expand.
+- Before drafting a reply or forward, make the whole conversation visible and read it from oldest to newest. Prefer Gmail's top-level "Expand all" control; if it is not exposed and Gmail keyboard shortcuts are available, press ; to expand the entire conversation. Expand any still-collapsed message header individually. "Show trimmed content" reveals quoted text inside one message and is not a substitute for expanding the conversation; open it only when that quoted material is needed.
 - Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one; continue with the returned nextPage when truncated.`,
+  },
+  {
+    name: 'yahoo-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.yahoo\.com(?:\/|$)/.test(url),
+    notes: `
+- Yahoo Mail groups related messages into conversations by default, but users can disable that setting. Determine whether the opened item is a conversation before replying.
+- Yahoo does not expose a documented Gmail-style expand-all action. Before drafting a reply or forward, inspect every message in the conversation, opening collapsed message headers individually when needed, and read from oldest to newest. Do not infer the earlier discussion from only the newest message or list preview.`,
+  },
+  {
+    name: 'proton-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.(?:proton\.me|protonmail\.com)(?:\/|$)/.test(url),
+    notes: `
+- Proton Mail's Conversation grouping setting is optional, so first determine whether the opened item contains one message or a grouped conversation.
+- Before drafting a reply or forward to a grouped conversation, inspect every message card, expanding collapsed cards individually when needed, and read from oldest to newest. Do not assume there is a single expand-all control or that the newest visible card contains the full context.`,
+  },
+  {
+    name: 'fastmail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:app|mail)\.fastmail\.com(?:\/|$)/.test(url),
+    notes: `
+- Fastmail groups replies into conversations when conversation grouping is enabled.
+- Before drafting a reply or forward, use Shift+E to expand all collapsed messages in the conversation, then read them from oldest to newest. If a particular message still hides quoted material needed for context, focus that message and use its quote toggle; do not infer the thread from only the last message.
+- A reply targets everyone in the conversation by default unless the user's settings differ. Use the individual message's Actions > Reply to sender when the user intends to answer only that sender.`,
+  },
+  {
+    name: 'zoho-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.zoho\.(?:com|eu|in|com\.au|jp|ca|com\.cn|sa)(?:\/|$)/.test(url),
+    notes: `
+- Zoho Mail can group messages as conversations globally or per folder. The conversation summary stacks the thread in the preview, but normally only the unread or selected message is fully open.
+- Before drafting a reply or forward, open the whole conversation from its summary/conversation control, expand and read every message from oldest to newest, and do not treat the one automatically opened message as the complete thread. In Sent or non-conversation views, use the "Preview whole conversation"/conversation control when available.`,
+  },
+  {
+    name: 'yandex-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.yandex\.(?:com|ru)(?:\/|$)/.test(url),
+    notes: `
+- Yandex Mail groups messages into threads only when "Group messages by threads" is enabled.
+- Before drafting a reply or forward to a grouped thread, click the subject to expand its message list, open every message row, and read the messages from oldest to newest. Do not answer from only the currently selected message.`,
   },
   {
     name: 'google-docs',
@@ -16292,6 +16331,20 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'traveloka',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?traveloka\.com\//.test(url),
+    notes: `
+- Observed 2026-08: an automated visit can return HTTP 405 with "Human Verification", "Let's confirm you are human", and a "Begin" control instead of inventory. Stop and ask the user to complete it manually; do not retry, bypass it, or report that no trips or rooms exist.
+- Choose the requested product before entering details: "Flights" and "Hotels" have different search, traveler/guest, payment, and fulfillment rules. Re-read locale, language, and currency, then set exact cities or properties, local dates, rooms or travelers, and one-way/round-trip intent.
+- For a flight, verify airports, local departure/arrival dates and times, operating and marketing carrier for a code-share, stops, connection requirements, cabin, and fare rules. A round trip built from two one-way tickets can create separate bookings and separate payments with independent change, cancellation, and disruption handling.
+- Compare the selected offer's supplier and final payable amount, not a headline or crossed-out fare. Read included baggage, taxes, fees, currency, refund/change conditions, and all ancillaries such as seats, meals, insurance, or extra baggage; keep unrequested paid additions out of the order.
+- For a hotel, verify the exact property and room, occupancy, bed, meals, inclusions, taxes, supplier charges, check-in/out, and policy. "Pay Now" and "Pay at Hotel" differ in payment timing and possible hotel-side charges; read the cancellation deadline, refundability, and no-show consequence for the selected room.
+- On order review, re-read every traveler/guest name, required document data, contact, itinerary or stay, supplier, add-ons, policy, payment timing, currency, and total. Never invent identity details, and require explicit confirmation before creating the booking or making payment.
+- After payment, obtain the voucher, e-ticket, or booking confirmation and verify the supplier's confirmation state. Use that booking's own policy and Help flow for a refund or reschedule; eligibility, fees, method, timing, and any Traveloka balance depend on the fare/room and supplier.
+- Report success only from "Bookings" with a booking ID and explicit confirmed/ticketed status for every product or leg. Search results, a selected offer, payment redirect, pending supplier confirmation, or an unconfirmed itinerary are incomplete.`,
+  },
+  {
     name: 'dianping',
     category: 'general',
     matches: (url) => /^https?:\/\/(?:(?:www|m|h5|s)\.)?dianping\.com\//.test(url) || /^https?:\/\/verify\.meituan\.com\//.test(url),
@@ -16476,6 +16529,22 @@ const ADAPTERS = [
 - "Order Received" can release held purchase funds to the seller and affect guarantee or return timing. Never select it from tracking status alone; require the user's explicit confirmation that the exact goods arrived and were inspected. Report a placed order only from the confirmation or My Purchases page with an order ID; a cart, checkout, payment prompt, or submitted request is incomplete.`,
   },
 
+  // ─── Regional — Flipkart (India) ─────────────────────────────────────
+  {
+    name: 'flipkart',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?flipkart\.com\//.test(url),
+    notes: `
+- As of 2026-08, use the visible "Search for Products, Brands and More" field. Results expose "Filters" and "Sort By" choices such as "Relevance", "Popularity", and "Price -- Low to High"; select the requested sort and filters instead of treating the default ranking as the best or cheapest result.
+- "Location not set" / "Select delivery location" means delivery availability and dates are not personalized. Set the user's pincode before promising stock, a delivery date, or Cash on Delivery, then verify the same details for the selected offer.
+- Product cards can combine color, storage, size, pack, and other variants. Open the product page and select the exact variant before comparing price, stock, exchange value, warranty, return policy, seller, or delivery.
+- Offer prices are conditional: "Buy at" can require applying a listed bank, UPI, EMI, or payment offer. "Upto ₹… Off on Exchange" is maximum conditional trade-in credit, not a discount to subtract from every order; quote the payable price separately from potential offers.
+- Flipkart is a marketplace. Always read the selected "Fulfilled by" seller. If "See other sellers" is present, open it before choosing an offer; compare seller rating, time on Flipkart, price, delivery, return terms, and assurance badges only when shown rather than transferring product-level reviews or badges to every seller.
+- "Add to cart" preserves the review step, while "Buy now" skips the cart and enters checkout. Do not use "Buy now" for research or comparison, and re-read the exact item, variant, seller, quantity, and price after adding it to the cart.
+- Login uses an email or mobile number followed by an OTP. Ask the user to complete OTP authentication manually in the current tab; never request, read, repeat, or expose the code, and re-read the destination after login instead of restarting the task.
+- Before any final order or payment control, re-read the cart, address, items, variants, sellers, quantities, delivery, returns, applied offers, exchange terms, and final total, then require the user's explicit confirmation. Report success only from the confirmation or Orders page with an order ID; a cart row, login, checkout page, or payment prompt is incomplete.`,
+  },
+
   // ─── Regional — Coupang (Korea) ──────────────────────────────────────
   {
     name: 'coupang',
@@ -16581,6 +16650,22 @@ const ADAPTERS = [
 - Shipping choices and costs depend on parcel size and carrier. Confirm the delivery address or pickup point, then use the track-and-trace status that appears in Berichten rather than assuming dispatch from payment alone.`,
   },
 
+  // ─── Regional — Leboncoin (France) ───────────────────────────────────
+  {
+    name: 'leboncoin',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?leboncoin\.fr\//.test(url),
+    notes: `
+- Observed 2026-08: an automated visit to the consumer home page can return HTTP 403 with a blank response. Treat that as blocked access, not evidence that there are no listings: stop retries, ask the user to open or refresh Leboncoin manually, and continue only from a readable page.
+- Leboncoin is a French CLASSIFIEDS platform, not a conventional cart retailer. Confirm the exact category, item and photos, condition/defects, price, location, pickup or delivery availability, seller identity/profile, and whether the seller is a particulier or professionnel; listing and seller claims are not platform guarantees.
+- Browsing and opening a listing are read-only. "Envoyer un message", making an offer, revealing contact details, "Acheter", arranging an appointment, or publishing an ad changes external/account state; perform only the requested action and let the user handle login or identity checks.
+- Use "Transaction sécurisée" only when the exact listing offers it. A "Livraison possible" badge can expose "Acheter" and a delivery option; eligible listings can instead offer "Remise en main propre". Select the path agreed with the seller and review item, price, buyer-protection/service cost, delivery cost or meeting terms, and total.
+- For "Remise en main propre", the buyer inspects the exact item at the appointment, then uses secure messaging and triggers the payment while both parties are present. The seller must see the platform's payment confirmation before handing over the item; an appointment, chat promise, or buyer screenshot is not confirmation.
+- For delivery, keep acceptance, address or pickup point, parcel/carrier choice, tracking, receipt, and any problem report inside the transaction. Payment does not prove dispatch, and delivery tracking does not prove the buyer accepted the item's condition; follow the displayed deadlines and preserve photos/messages as evidence.
+- Payment requested outside Leboncoin is not protected by its secure transaction. Do not follow seller-supplied payment links, scan payment QR codes, send deposits or verification codes, or move the negotiation to an external messenger; a legitimate bank/payment handoff must originate from Leboncoin's own transaction control and return to its record.
+- For completion, require the transaction's explicit payment confirmation, item received/accepted state, and transaction record. Seller settlement can first appear in the Leboncoin wallet and may be delayed until Adyen verification is complete; wallet availability is not proof of bank settlement, so report the exact displayed status.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,
@@ -16655,6 +16740,20 @@ const ADAPTERS = [
 - "Yemeksepeti Mahalle" (grocery/market quick delivery) is a separate flow from restaurant food ordering — don't expect restaurant menus there.`,
   },
   {
+    name: 'zomato',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?zomato\.com\//.test(url),
+    notes: `
+- As of 2026-08, choose "Delivery" for food ordering rather than "Dining Out" or "Nightlife". Set the exact delivery location first with the location field or "Detect current location", then re-read the address; restaurants, availability, distance, fees, and ETA depend on it, and an inaccurate or unreachable address can cause cancellation charges.
+- Search with "Search for restaurant, cuisine or a dish" and use the visible filters for rating, cuisine, cost, and delivery time. Results marked "Promoted" are paid placements; do not treat their position as independent evidence of quality, speed, or best value.
+- Confirm the exact restaurant and branch, location, hours, current delivery availability, menu, and review count. "Dining Ratings" and "Delivery Ratings" measure different experiences, so use the delivery rating for an order and do not silently substitute one for the other.
+- A visible restaurant or menu is not proof that web ordering is available. Stop when the page says "Online ordering is only supported on the mobile app"; when it says "Currently closed for online ordering", do not try to add items or promise that the restaurant will accept the order now.
+- Open each item and select every required size, quantity, variant, add-on, preparation choice, and dietary option before adding it. Preserve explicit allergy or exclusion requests, but do not infer ingredient safety from category labels alone; surface unresolved questions instead of submitting them as order notes without review.
+- The menu subtotal is not the final price. Read delivery fee, surge charges, taxes, packaging and handling charges, discounts, and tip on the review page; treat the displayed approximate delivery time as an estimate that can change with demand, weather, restaurant preparation, and courier assignment.
+- Adding items is not ordering. Re-read restaurant, delivery address, items, customizations, quantities, contact details, charges, tip, payment method, and total before submit. Cancellation and refund eligibility is limited by the displayed state and terms, and a problem report may require proof such as photos; do not promise either outcome.
+- Require the user's explicit confirmation immediately before placing or paying for the order. Report success only from "Orders" with an order ID and explicit accepted/preparing/out-for-delivery/delivered status; a restaurant page, cart, payment redirect, or approximate ETA alone is incomplete.`,
+  },
+  {
     name: 'foodpanda',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?foodpanda\.pk\//.test(url),
@@ -16716,6 +16815,7 @@ const ADAPTERS = [
 - "Focused" vs "Other" inbox tabs split incoming mail. The user's expected message may be in "Other" if it's from a new sender.
 - Folder tree on the left collapses; expand the relevant folder before clicking conversations inside.
 - Calendar integration: New > Calendar event (not Email) opens the event composer.
+- Hotmail accounts use this same Outlook web interface. Before drafting a reply or forward, check whether messages are grouped. If grouped, expand the selected conversation and read every message from oldest to newest; if shown individually, inspect the related messages one by one instead of hunting for a nonexistent expand control. The reply composer's "Show message history" control is not a substitute for reading the conversation first.
 - Reply / Reply all / Forward buttons live at the top of the reading pane AND inline at the bottom of the most recent message; either works.`,
   },
   {

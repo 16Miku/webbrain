@@ -442,6 +442,197 @@
       .theme-toggle { width: 28px; height: 28px; }
     }
   </style>
+  <style>
+    [hidden] { display: none !important; }
+    .blog-index .page-sub { margin-bottom: 30px; }
+    .blog-tools {
+      position: relative;
+      margin: 0 0 26px;
+      padding-left: 18px;
+      scroll-margin-top: 88px;
+    }
+    .blog-tools::before {
+      content: '';
+      position: absolute;
+      inset: 2px auto 2px 0;
+      width: 2px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--accent2), color-mix(in srgb, var(--accent) 12%, transparent));
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+    .archive-search-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .search-shell {
+      display: flex;
+      align-items: center;
+      min-height: 50px;
+      background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 14px 50px color-mix(in srgb, var(--shadow-strong) 58%, transparent);
+      transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+    }
+    .search-shell:focus-within {
+      background: var(--bg-card);
+      border-color: color-mix(in srgb, var(--accent2) 64%, var(--border));
+      box-shadow: 0 0 0 3px var(--accent-glow), 0 18px 56px color-mix(in srgb, var(--shadow-strong) 64%, transparent);
+    }
+    .search-icon {
+      width: 18px;
+      height: 18px;
+      margin-left: 16px;
+      flex: 0 0 auto;
+      color: var(--text-dim);
+    }
+    .blog-search {
+      width: 100%;
+      min-width: 0;
+      padding: 12px 10px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+    }
+    .blog-search::-webkit-search-cancel-button { display: none; }
+    .blog-search::placeholder { color: color-mix(in srgb, var(--text-dim) 78%, transparent); }
+    .search-key {
+      margin-right: 12px;
+      padding: 2px 7px;
+      flex: 0 0 auto;
+      border: 1px solid var(--border);
+      border-bottom-color: color-mix(in srgb, var(--border) 60%, var(--text-dim));
+      border-radius: 5px;
+      background: var(--tint-soft-2);
+      color: var(--text-dim);
+      font: 11px/1.5 'SF Mono', 'Menlo', 'Consolas', monospace;
+    }
+    .search-clear {
+      margin-right: 8px;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .search-clear:hover { background: var(--tint-medium); color: var(--text); }
+    .search-clear:focus-visible,
+    .page-button:focus-visible,
+    .empty-clear:focus-visible,
+    .post-card:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 3px;
+    }
+    .archive-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 24px;
+      margin-top: 9px;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+    .archive-status-rule {
+      width: 24px;
+      height: 1px;
+      background: var(--border);
+    }
+    .empty-state {
+      padding: 38px 24px;
+      border: 1px dashed color-mix(in srgb, var(--accent2) 36%, var(--border));
+      border-radius: var(--radius-lg);
+      text-align: center;
+      color: var(--text-dim);
+      background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+    }
+    .empty-state strong { display: block; margin-bottom: 5px; color: var(--text); }
+    .empty-clear {
+      margin-top: 14px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--tint-soft);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .empty-clear:hover { border-color: var(--accent2); background: var(--tint-medium); }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+    .page-numbers { display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .page-ellipsis {
+      min-width: 24px;
+      color: var(--text-dim);
+      text-align: center;
+      font-size: 13px;
+    }
+    .page-button {
+      min-width: 36px;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--tint-soft-2);
+      color: var(--text-dim);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      transition: color 0.16s, background 0.16s, border-color 0.16s, transform 0.16s;
+    }
+    .page-button:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--tint-medium);
+      border-color: color-mix(in srgb, var(--accent2) 50%, var(--border));
+      transform: translateY(-1px);
+    }
+    .page-button[aria-current="page"] {
+      color: #fff;
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow: 0 7px 22px var(--accent-glow);
+    }
+    .page-button:disabled { opacity: 0.38; cursor: not-allowed; }
+    .page-direction { min-width: 86px; }
+    @media (max-width: 700px) {
+      .pagination { gap: 8px; }
+      .page-button { min-width: 32px; height: 34px; padding: 0 8px; }
+      .page-direction { min-width: 72px; }
+    }
+    @media (max-width: 420px) {
+      .blog-tools { padding-left: 13px; }
+      .search-key { display: none; }
+      .pagination { flex-wrap: wrap; justify-content: center; }
+      .page-numbers { order: -1; width: 100%; }
+      .page-direction { flex: 1 1 40%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .post-card, .page-button { transition: none; }
+    }
+  </style>
   <script>
     (function () {
       try {
@@ -472,6 +663,18 @@
   "url": "https://webbrain.one/blog",
   "image": "https://webbrain.one/og-image.png",
   "blogPost": [
+    {
+      "@type": "BlogPosting",
+      "headline": "Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision",
+      "url": "https://webbrain.one/blog/inkling-small-glm-5-2-vision-benchmark",
+      "datePublished": "2026-08-02",
+      "description": "We ran the same frozen WebBrain UI-vision probe against Thinking Machines Inkling Small on OpenRouter and a full GLM-5.2 Vision hybrid on four RTX PRO 6000 Blackwell GPUs at RunPod.",
+      "author": {
+        "@type": "Person",
+        "name": "Emre Sokullu",
+        "url": "https://emresokullu.com"
+      }
+    },
     {
       "@type": "BlogPosting",
       "headline": "Two AI gaps are narrowing: American open weights and Chinese frontier models",
@@ -884,7 +1087,7 @@
 }
   </script>
 </head>
-<body>
+<body class="blog-index">
   <div class="glow-bg"></div>
   <nav>
     <div class="nav-inner">
@@ -913,177 +1116,212 @@
     <h1>Engineering notes</h1>
     <p class="page-sub">Short write-ups on design decisions, failure modes, and benchmarks from building an open-source AI browser agent.</p>
 
-    <div class="post-list">
-      <a href="/blog/american-chinese-open-model-frontier-gap-benchmark" class="post-card">
+    <section class="blog-tools" id="blog-tools" aria-label="Search the blog archive">
+      <label class="archive-search-label" for="blog-search">Search the archive</label>
+      <div class="search-shell">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m20 20-4-4"></path>
+        </svg>
+        <input class="blog-search" id="blog-search" type="search" placeholder="Models, benchmarks, tools…" autocomplete="off" spellcheck="false" aria-controls="post-list">
+        <button class="search-clear" id="search-clear" type="button" hidden>Clear</button>
+        <kbd class="search-key" aria-hidden="true">/</kbd>
+      </div>
+      <div class="archive-status" role="status" aria-live="polite" aria-atomic="true">
+        <span id="results-count">35 notes</span>
+        <span class="archive-status-rule" aria-hidden="true"></span>
+        <span id="page-status"></span>
+      </div>
+    </section>
+
+    <div class="post-list" id="post-list">
+      <a href="/blog/inkling-small-glm-5-2-vision-benchmark" class="post-card" data-search="Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision Both models read all 12 target strings and found the real sign-in blocker. Inkling Small was faster and more accurate on focus and error-state cues; the self-hosted GLM-5.2 derivative proved that a third-party vision graft can make a text-first 744B-class backbone genuinely useful on screenshots. We ran the same frozen WebBrain UI-vision probe against Thinking Machines Inkling Small on OpenRouter and a full GLM-5.2 Vision hybrid on four RTX PRO 6000 Blackwell GPUs at RunPod. August 2, 2026 2026-08-02 WebBrain Inkling Small Thinking Machines GLM-5.2 Vision Baseten RunPod OpenRouter multimodal model vision-language model open-weight AI browser agent UI understanding">
+        <div class="post-meta">August 2, 2026 &middot; 10 min read</div>
+        <div class="post-title">Two ways to give an open model eyes: Inkling Small vs GLM-5.2 Vision</div>
+        <div class="post-excerpt">Both models read all 12 target strings and found the real sign-in blocker. Inkling Small was faster and more accurate on focus and error-state cues; the self-hosted GLM-5.2 derivative proved that a third-party vision graft can make a text-first 744B-class backbone genuinely useful on screenshots.</div>
+      </a>
+<a href="/blog/american-chinese-open-model-frontier-gap-benchmark" class="post-card" data-search="Two AI gaps are narrowing: American open weights and Chinese frontier models Two AI gaps are narrowing: American open weights and Chinese frontier models DeepSeek V4 Flash and Tencent HY3 lead our reference-free first-action consensus, while Gemini 3.6 Flash goes 100-for-100 on valid calls and Poolside Laguna XS becomes a remarkably cheap American open-weight contender. GLM-5.2&#39;s released Vision NVFP4 graft changes its modality story, and Qwen 3.6 27B remains our practical RTX 5090 pick. A consensus-ranked, cost-aware WebBrain planner test of thirteen OpenRouter models from OpenAI, Anthropic, Google, xAI, Poolside, MiniMax, Z.ai, DeepSeek, Thinking Machines, Qwen, Moonshot, and Tencent. August 2, 2026 2026-08-02 WebBrain OpenRouter open-weight AI American AI Chinese AI DeepSeek V4 Tencent HY3 GLM-5.2 Kimi K3 MiniMax M3 Claude Sonnet 5 GPT-5.6 Qwen 3.6 27B Gemini 3.6 Flash Grok 4.5 Poolside Laguna XS browser agent tool calling">
         <div class="post-meta">August 2, 2026 &middot; 22 min read</div>
         <div class="post-title">Two AI gaps are narrowing: American open weights and Chinese frontier models</div>
         <div class="post-excerpt">DeepSeek V4 Flash and Tencent HY3 lead our reference-free first-action consensus, while Gemini 3.6 Flash goes 100-for-100 on valid calls and Poolside Laguna XS becomes a remarkably cheap American open-weight contender. GLM-5.2&#39;s released Vision NVFP4 graft changes its modality story, and Qwen 3.6 27B remains our practical RTX 5090 pick.</div>
       </a>
-<a href="/blog/thinking-machines-inkling-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/thinking-machines-inkling-openrouter-planner-benchmark" class="post-card" data-search="Inkling makes the American open-weight comeback genuinely multimodal Inkling makes the American open-weight comeback genuinely multimodal Inkling produced 96 valid calls and chose the ideal tool 45 times, while reaching 73% Sonnet alignment. Maximum reasoning did not help—but working image and audio input make this 975B American open-weight release unusually complete. We tested Thinking Machines Inkling through OpenRouter on WebBrain&#39;s frozen 100-case browser-planner benchmark, then checked its image and audio understanding. July 23, 2026 2026-07-23 WebBrain Thinking Machines Inkling OpenRouter open-weight model American AI multimodal AI audio model browser agent tool calling Poolside Laguna">
         <div class="post-meta">July 23, 2026 &middot; 10 min read</div>
         <div class="post-title">Inkling makes the American open-weight comeback genuinely multimodal</div>
         <div class="post-excerpt">Inkling produced 96 valid calls and chose the ideal tool 45 times, while reaching 73% Sonnet alignment. Maximum reasoning did not help—but working image and audio input make this 975B American open-weight release unusually complete.</div>
       </a>
-<a href="/blog/nanbeige-42-3b-bf16-planner-benchmark" class="post-card">
+<a href="/blog/nanbeige-42-3b-bf16-planner-benchmark" class="post-card" data-search="Nanbeige 4.2 3B punches above its size, but Qwen 3.5 9B still wins our frozen planner test Nanbeige 4.2 3B punches above its size, but Qwen 3.5 9B still wins our frozen planner test Nanbeige 4.2 3B produced 90 parsed calls, reached 67% Sonnet alignment, and delivered a 1.49s single-request median. That is impressive for 4B total parameters, but below Qwen 3.5 9B and Gemma 4 E4B in our first-action test. We tested Nanbeige4.2-3B in BF16 on an RTX 5090. Its official agent benchmarks beat Qwen 3.5 9B and Gemma 4 12B, but WebBrain&#39;s frozen browser-planner replay did not reproduce that lead. July 22, 2026 2026-07-22 WebBrain Nanbeige Nanbeige 4.2 3B Qwen 3.5 9B Gemma 4 12B Gemma 4 E4B vLLM BF16 local LLM browser agent tool calling">
         <div class="post-meta">July 22, 2026 &middot; 8 min read</div>
         <div class="post-title">Nanbeige 4.2 3B punches above its size, but Qwen 3.5 9B still wins our frozen planner test</div>
         <div class="post-excerpt">Nanbeige 4.2 3B produced 90 parsed calls, reached 67% Sonnet alignment, and delivered a 1.49s single-request median. That is impressive for 4B total parameters, but below Qwen 3.5 9B and Gemma 4 E4B in our first-action test.</div>
       </a>
-<a href="/blog/poolside-laguna-m1-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/poolside-laguna-m1-openrouter-planner-benchmark" class="post-card" data-search="Poolside Laguna M.1 reaches 73% in WebBrain, but 225B does not win Poolside Laguna M.1 reaches 73% in WebBrain, but 225B does not win Laguna M.1 returned 92 valid tool calls and reached 73% Sonnet alignment with a high-reasoning request. The larger model is much more dispatchable than Laguna S, but exact and ideal tool selection barely improve. Poolside Laguna M.1 is almost twice the size of Laguna S 2.1 and fixes much of its no-tool problem. It reached 73% Sonnet alignment in WebBrain, tying Hy3&#39;s headline score but still trailing MiniMax M3 and the strongest 27–31B local planners. July 21, 2026 2026-07-21 WebBrain Poolside Laguna M.1 OpenRouter Laguna S 2.1 Tencent Hy3 MiniMax M3 Gemma 4 ThinkingCap open-weight model browser agent planner benchmark tool calling">
         <div class="post-meta">July 21, 2026 &middot; 9 min read</div>
         <div class="post-title">Poolside Laguna M.1 reaches 73% in WebBrain, but 225B does not win</div>
         <div class="post-excerpt">Laguna M.1 returned 92 valid tool calls and reached 73% Sonnet alignment with a high-reasoning request. The larger model is much more dispatchable than Laguna S, but exact and ideal tool selection barely improve.</div>
       </a>
-<a href="/blog/poolside-laguna-s-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/poolside-laguna-s-openrouter-planner-benchmark" class="post-card" data-search="Poolside Laguna S 2.1 reaches 71% with a high-reasoning request, but still trails Hy3 Poolside Laguna S 2.1 reaches 71% with a high-reasoning request, but still trails Hy3 Laguna S 2.1 is much cleaner than Laguna XS and extraordinarily cheap on OpenRouter. A high-reasoning request lifted Sonnet alignment from 65% to 71%, but reduced parsed tool calls from 86 to 78 and still did not catch Hy3 or MiniMax M3. Poolside&#39;s Laguna S 2.1 beats Hy3 on two published SWE benchmarks and MiniMax M3 on Terminal-Bench 2.1. It scored 65% in WebBrain&#39;s default frozen planner run and 71% with an OpenRouter high-reasoning request, still below Hy3 and M3. July 21, 2026 2026-07-21 WebBrain Poolside Laguna S 2.1 OpenRouter Tencent Hy3 MiniMax M3 Inkling open-weight model browser agent planner benchmark tool calling">
         <div class="post-meta">July 21, 2026 &middot; 9 min read</div>
         <div class="post-title">Poolside Laguna S 2.1 reaches 71% with a high-reasoning request, but still trails Hy3</div>
         <div class="post-excerpt">Laguna S 2.1 is much cleaner than Laguna XS and extraordinarily cheap on OpenRouter. A high-reasoning request lifted Sonnet alignment from 65% to 71%, but reduced parsed tool calls from 86 to 78 and still did not catch Hy3 or MiniMax M3.</div>
       </a>
-<a href="/blog/glm52-nvidia-webbrain-planner-benchmark" class="post-card">
+<a href="/blog/glm52-nvidia-webbrain-planner-benchmark" class="post-card" data-search="GLM-5.2 is not WebBrain&#39;s new planner reference yet GLM-5.2 is not WebBrain&#39;s new planner reference yet GLM-5.2 completed four 100-case WebBrain planner suites with zero transport errors after resumed runs. The frozen row lands at 69% Sonnet alignment, 21 exact first calls, and 36 ideal tool-name matches. We ran z-ai/glm-5.2 through WebBrain&#39;s frozen, full, mid, and compact browser-agent first-tool planner suites on NVIDIA. It should be a stronger frontier open-model candidate than the old Sonnet reference, but this narrow planner result is more cautious. July 14, 2026 2026-07-14 WebBrain GLM-5.2 z-ai NVIDIA browser agent planner benchmark tool calling frontier model">
         <div class="post-meta">July 14, 2026 &middot; 6 min read</div>
         <div class="post-title">GLM-5.2 is not WebBrain&#39;s new planner reference yet</div>
         <div class="post-excerpt">GLM-5.2 completed four 100-case WebBrain planner suites with zero transport errors after resumed runs. The frozen row lands at 69% Sonnet alignment, 21 exact first calls, and 36 ideal tool-name matches.</div>
       </a>
-<a href="/blog/webmcp-integration" class="post-card">
+<a href="/blog/webmcp-integration" class="post-card" data-search="WebMCP: Websites as Tools for AI Agents, and Why We&#39;re Excited WebMCP: Websites as Tools for AI Agents, and Why We&#39;re Excited A new browser standard lets websites hand AI agents a menu of actions instead of forcing them to squint at screenshots. One GitHub issue sparked a conversation that could change how WebBrain works with the web. WebMCP lets websites expose structured tools to AI agents. A conversation with Google&#39;s Gemini-in-Chrome team is pushing us toward integration, and we couldn&#39;t be more excited. July 14, 2026 2026-07-14 WebMCP browser agent AI agent tools WebBrain Model Context Protocol agentic web W3C standard web automation">
         <div class="post-meta">July 14, 2026 &middot; 5 min read</div>
         <div class="post-title">WebMCP: Websites as Tools for AI Agents, and Why We&#39;re Excited</div>
         <div class="post-excerpt">A new browser standard lets websites hand AI agents a menu of actions instead of forcing them to squint at screenshots. One GitHub issue sparked a conversation that could change how WebBrain works with the web.</div>
       </a>
-<a href="/blog/poolside-laguna-xs-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/poolside-laguna-xs-openrouter-planner-benchmark" class="post-card" data-search="Poolside Laguna XS is fast and free, but not a WebBrain planner win Poolside Laguna XS is fast and free, but not a WebBrain planner win Laguna XS completed WebBrain&#39;s frozen planner suite with 92 parsed calls, 89 valid tool names, 65% Sonnet alignment, and a 1.30s median latency. The endpoint is quick; the planner quality is not competitive. We ran poolside/laguna-xs-2.1:free through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark on OpenRouter. It is very fast and free to call, but 65% Sonnet alignment, only 6 exact first actions, and malformed tool names keep it out of the planner shortlist. July 10, 2026 2026-07-10 WebBrain Poolside Laguna XS OpenRouter browser agent planner benchmark tool calling free model">
         <div class="post-meta">July 10, 2026 &middot; 6 min read</div>
         <div class="post-title">Poolside Laguna XS is fast and free, but not a WebBrain planner win</div>
         <div class="post-excerpt">Laguna XS completed WebBrain&#39;s frozen planner suite with 92 parsed calls, 89 valid tool names, 65% Sonnet alignment, and a 1.30s median latency. The endpoint is quick; the planner quality is not competitive.</div>
       </a>
-<a href="/blog/thinkingcap-qwen36-27b-planner-benchmark" class="post-card">
+<a href="/blog/thinkingcap-qwen36-27b-planner-benchmark" class="post-card" data-search="ThinkingCap Qwen 3.6 27B is a serious WebBrain planner candidate ThinkingCap Qwen 3.6 27B is a serious WebBrain planner candidate ThinkingCap lands at 77% Sonnet alignment, 91 parsed tool calls, 19 exact first actions, and 2.25s median latency. It looks like a real local planner candidate, but not a clean replacement for the Qwen baselines. We ran ThinkingCap-Qwen3.6-27B INT4 AutoRound through WebBrain&#39;s frozen browser-agent first-tool benchmark. The model tied Qwen 3.6 27B on all-case Sonnet alignment, returned in 2.25s median latency, and exposed a sharper boundary-behavior tradeoff. July 9, 2026 2026-07-09 WebBrain ThinkingCap Qwen 3.6 Qwen 3.6 27B BottleCap AI vLLM browser agent planner benchmark tool calling">
         <div class="post-meta">July 9, 2026 &middot; 8 min read</div>
         <div class="post-title">ThinkingCap Qwen 3.6 27B is a serious WebBrain planner candidate</div>
         <div class="post-excerpt">ThinkingCap lands at 77% Sonnet alignment, 91 parsed tool calls, 19 exact first actions, and 2.25s median latency. It looks like a real local planner candidate, but not a clean replacement for the Qwen baselines.</div>
       </a>
-<a href="/blog/nex-n2-mini-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/nex-n2-mini-openrouter-planner-benchmark" class="post-card" data-search="Nex-N2-mini is cheap and fast, but not a WebBrain planner win Nex-N2-mini is cheap and fast, but not a WebBrain planner win Nex-N2-mini completed WebBrain&#39;s frozen planner suite with 93 parsed tool calls, a 2.23s median latency, and about $0.045 reported OpenRouter cost, but only 65% Sonnet alignment. We ran nex-agi/nex-n2-mini through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark on OpenRouter. The 35B MoE endpoint is fast and extremely cheap, but its planner quality lands well below the current shortlist. July 8, 2026 2026-07-08 WebBrain Nex-N2-mini Nex AGI OpenRouter browser agent planner benchmark tool calling Qwen 3.7 Plus Agents-A1 Tencent Hy3">
         <div class="post-meta">July 8, 2026 &middot; 6 min read</div>
         <div class="post-title">Nex-N2-mini is cheap and fast, but not a WebBrain planner win</div>
         <div class="post-excerpt">Nex-N2-mini completed WebBrain&#39;s frozen planner suite with 93 parsed tool calls, a 2.23s median latency, and about $0.045 reported OpenRouter cost, but only 65% Sonnet alignment.</div>
       </a>
-<a href="/blog/nemotron3-ultra-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/nemotron3-ultra-openrouter-planner-benchmark" class="post-card" data-search="Nemotron 3 Ultra is huge, free, and not a WebBrain planner win Nemotron 3 Ultra is huge, free, and not a WebBrain planner win Nemotron 3 Ultra completed WebBrain&#39;s frozen planner benchmark through OpenRouter&#39;s free endpoint, but 81 parsed calls, 65% Sonnet alignment, and a 40.6s p95 keep it out of the planner shortlist. We ran nvidia/nemotron-3-ultra-550b-a55b:free through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark on OpenRouter. The 550B-total MoE model completed the run, but landed well below the best planner rows. July 8, 2026 2026-07-08 WebBrain Nemotron 3 Ultra NVIDIA OpenRouter browser agent planner benchmark tool calling Qwen 3.7 Plus Agents-A1 Tencent Hy3">
         <div class="post-meta">July 8, 2026 &middot; 6 min read</div>
         <div class="post-title">Nemotron 3 Ultra is huge, free, and not a WebBrain planner win</div>
         <div class="post-excerpt">Nemotron 3 Ultra completed WebBrain&#39;s frozen planner benchmark through OpenRouter&#39;s free endpoint, but 81 parsed calls, 65% Sonnet alignment, and a 40.6s p95 keep it out of the planner shortlist.</div>
       </a>
-<a href="/blog/agents-a1-webbrain-planner-benchmark" class="post-card">
+<a href="/blog/agents-a1-webbrain-planner-benchmark" class="post-card" data-search="Agents-A1 in WebBrain&#39;s frozen planner benchmark Agents-A1 in WebBrain&#39;s frozen planner benchmark Agents-A1 beats Qwen 3.6 35B-A3B on Sonnet alignment and local latency in WebBrain&#39;s frozen planner harness, but it does not beat Qwen on exact or ideal first-call matching. We ran Agents-A1 AWQ INT4 through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark to test whether its agentic benchmark claims transfer to WebBrain&#39;s planner workload. July 8, 2026 2026-07-08 WebBrain Agents-A1 InternScience Qwen 3.6 Ornith Gemma 4 browser agent planner benchmark tool calling">
         <div class="post-meta">July 8, 2026 &middot; 7 min read</div>
         <div class="post-title">Agents-A1 in WebBrain&#39;s frozen planner benchmark</div>
         <div class="post-excerpt">Agents-A1 beats Qwen 3.6 35B-A3B on Sonnet alignment and local latency in WebBrain&#39;s frozen planner harness, but it does not beat Qwen on exact or ideal first-call matching.</div>
       </a>
-<a href="/blog/five-things-you-shouldnt-do-with-webbrain" class="post-card">
+<a href="/blog/five-things-you-shouldnt-do-with-webbrain" class="post-card" data-search="Five things you shouldn&#39;t do with WebBrain Five things you shouldn&#39;t do with WebBrain We briefly interrupt the benchmark series for a video-sized warning label: WebBrain can automate a browser, but consent, legality, and basic human decency still apply. A short pause from WebBrain&#39;s LLM benchmark posts: five things a browser agent can technically help with, but absolutely should not be used for. July 7, 2026 2026-07-07 WebBrain browser agent AI automation AI safety responsible automation YouTube">
         <div class="post-meta">July 7, 2026 &middot; 3 min read</div>
         <div class="post-title">Five things you shouldn&#39;t do with WebBrain</div>
         <div class="post-excerpt">We briefly interrupt the benchmark series for a video-sized warning label: WebBrain can automate a browser, but consent, legality, and basic human decency still apply.</div>
       </a>
-<a href="/blog/tencent-hy3-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/tencent-hy3-openrouter-planner-benchmark" class="post-card" data-search="Tencent Hy3 is a great OpenRouter planner, but text-only for now Tencent Hy3 is a great OpenRouter planner, but text-only for now Tencent Hy3 reached 95/100 parsed tool calls, 20/100 exact first-action matches, and 73% Sonnet alignment. It is a strong OpenRouter planner row, with multimodality as the missing piece. We ran Tencent Hy3 through WebBrain&#39;s frozen 100-case browser-agent planner benchmark on OpenRouter. Hy3 lands in the serious hosted planner tier with 95 parsed tool calls, 20 exact first-action matches, and 73% Sonnet alignment, but the current model is still text-only. July 7, 2026 2026-07-07 WebBrain Tencent Hy3 OpenRouter MiniMax M3 MiniMax M2.7 Qwen 3.7 Plus browser agent planner benchmark tool calling">
         <div class="post-meta">July 7, 2026 &middot; 6 min read</div>
         <div class="post-title">Tencent Hy3 is a great OpenRouter planner, but text-only for now</div>
         <div class="post-excerpt">Tencent Hy3 reached 95/100 parsed tool calls, 20/100 exact first-action matches, and 73% Sonnet alignment. It is a strong OpenRouter planner row, with multimodality as the missing piece.</div>
       </a>
-<a href="/blog/ollama-launch-handoff" class="post-card">
+<a href="/blog/ollama-launch-handoff" class="post-card" data-search="WebBrain now has an Ollama launch handoff WebBrain now has an Ollama launch handoff WebBrain can now be configured from an Ollama launch command: choose a local model, open the WebBrain handoff page, confirm the browser prompt, and the extension switches to Ollama automatically. It is not in upstream Ollama yet, but you can try it from the branch today. A new Ollama launch handoff can configure WebBrain for a local Ollama model from one terminal command. The integration is not upstream in Ollama yet, but it is available today from the esokullu/ollama branch while we work toward official integration. July 2, 2026 2026-07-02 WebBrain Ollama local LLM browser agent open source Chrome extension Firefox extension Ollama launch">
         <div class="post-meta">July 2, 2026 &middot; 4 min read</div>
         <div class="post-title">WebBrain now has an Ollama launch handoff</div>
         <div class="post-excerpt">WebBrain can now be configured from an Ollama launch command: choose a local model, open the WebBrain handoff page, confirm the browser prompt, and the extension switches to Ollama automatically. It is not in upstream Ollama yet, but you can try it from the branch today.</div>
       </a>
-<a href="/blog/qwen37-plus-openrouter-planner-benchmark" class="post-card">
+<a href="/blog/qwen37-plus-openrouter-planner-benchmark" class="post-card" data-search="Qwen 3.7 Plus is a serious OpenRouter rival to MiniMax M3 Qwen 3.7 Plus is a serious OpenRouter rival to MiniMax M3 Qwen 3.7 Plus reached 75/100 Sonnet alignment, 95/100 parsed native tool calls, and the best ideal tool-name score in the top hosted slice of WebBrain&#39;s frozen planner table. We ran qwen/qwen3.7-plus through WebBrain&#39;s frozen 100-case browser-agent planner benchmark on OpenRouter. It ties MiniMax M3 on all-case Sonnet alignment, beats it on tool-call discipline, and lands just below the Gemma 4 31B QAT, Qwen 3.6 27B, and MiniMax M2.7 cluster. July 2, 2026 2026-07-02 WebBrain Qwen 3.7 Plus OpenRouter MiniMax M3 MiniMax M2.7 Gemma 4 31B Qwen 3.6 27B browser agent planner benchmark tool calling">
         <div class="post-meta">July 2, 2026 &middot; 6 min read</div>
         <div class="post-title">Qwen 3.7 Plus is a serious OpenRouter rival to MiniMax M3</div>
         <div class="post-excerpt">Qwen 3.7 Plus reached 75/100 Sonnet alignment, 95/100 parsed native tool calls, and the best ideal tool-name score in the top hosted slice of WebBrain&#39;s frozen planner table.</div>
       </a>
-<a href="/blog/qwen36-27b-nvfp4-planner-benchmark" class="post-card">
+<a href="/blog/qwen36-27b-nvfp4-planner-benchmark" class="post-card" data-search="Qwen 3.6 27B NVFP4 is much faster, but not a clean planner upgrade Qwen 3.6 27B NVFP4 is much faster, but not a clean planner upgrade Qwen 3.6 27B NVFP4 gives WebBrain a big local latency win: 96/100 parsed calls, 1.8s median latency, and a top-10 Sonnet-reference result. The planner quality story is more mixed. We tested nvidia/Qwen3.6-27B-NVFP4 against WebBrain&#39;s frozen browser-agent first-tool benchmark. It is far faster than the older Qwen 3.6 27B row and enters the top 10, but loses three all-case Sonnet-alignment points on boundary cases. July 2, 2026 2026-07-02 WebBrain Qwen 3.6 Qwen 3.6 27B NVFP4 NVIDIA vLLM browser agent planner benchmark tool calling">
         <div class="post-meta">July 2, 2026 &middot; 6 min read</div>
         <div class="post-title">Qwen 3.6 27B NVFP4 is much faster, but not a clean planner upgrade</div>
         <div class="post-excerpt">Qwen 3.6 27B NVFP4 gives WebBrain a big local latency win: 96/100 parsed calls, 1.8s median latency, and a top-10 Sonnet-reference result. The planner quality story is more mixed.</div>
       </a>
-<a href="/blog/ornith-35b-webbrain-planner-benchmark" class="post-card">
+<a href="/blog/ornith-35b-webbrain-planner-benchmark" class="post-card" data-search="Ornith-1.0-35B in WebBrain&#39;s frozen planner benchmark Ornith-1.0-35B in WebBrain&#39;s frozen planner benchmark Ornith-1.0-35B is a strong local planner and narrowly beats Qwen 3.6 35B on WebBrain&#39;s all-case Sonnet alignment. It does not beat Gemma 4 31B QAT in this browser-agent harness. We ran Ornith-1.0-35B through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark after DeepReinforce&#39;s model card claimed wins over Qwen3.6-35B and Gemma4-31B on agentic coding benchmarks. June 26, 2026 2026-06-26 WebBrain Ornith Ornith-1.0-35B DeepReinforce browser agent tool calling planner benchmark Gemma 4 Qwen 3.6">
         <div class="post-meta">June 26, 2026 &middot; 6 min read</div>
         <div class="post-title">Ornith-1.0-35B in WebBrain&#39;s frozen planner benchmark</div>
         <div class="post-excerpt">Ornith-1.0-35B is a strong local planner and narrowly beats Qwen 3.6 35B on WebBrain&#39;s all-case Sonnet alignment. It does not beat Gemma 4 31B QAT in this browser-agent harness.</div>
       </a>
-<a href="/blog/tiny-lfm25-raw-planner-benchmark" class="post-card">
+<a href="/blog/tiny-lfm25-raw-planner-benchmark" class="post-card" data-search="Tiny raw LFM 2.5 checkpoints in WebBrain&#39;s frozen planner benchmark Tiny raw LFM 2.5 checkpoints in WebBrain&#39;s frozen planner benchmark LFM 2.5 230M and 350M both completed the frozen WebBrain planner run without transport errors. The raw tiny checkpoints are not good browser planners yet, but their failure shape is useful fine-tuning data. We ran two tiny raw Liquid LFM 2.5 checkpoints, 230M and 350M, through WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark on a local OpenAI-compatible endpoint. June 26, 2026 2026-06-26 WebBrain LFM 2.5 Liquid AI tiny language model browser agent tool calling planner benchmark Qwen 3.5">
         <div class="post-meta">June 26, 2026 &middot; 5 min read</div>
         <div class="post-title">Tiny raw LFM 2.5 checkpoints in WebBrain&#39;s frozen planner benchmark</div>
         <div class="post-excerpt">LFM 2.5 230M and 350M both completed the frozen WebBrain planner run without transport errors. The raw tiny checkpoints are not good browser planners yet, but their failure shape is useful fine-tuning data.</div>
       </a>
-<a href="/blog/minimax-m3-webbrain-cloud-tool-calling" class="post-card">
+<a href="/blog/minimax-m3-webbrain-cloud-tool-calling" class="post-card" data-search="MiniMax M3 and WebBrain Cloud 1.0 enter the frozen WebBrain planner benchmark MiniMax M3 and WebBrain Cloud 1.0 enter the frozen WebBrain planner benchmark MiniMax M3 landed at 75% Sonnet first-tool alignment, below the older MiniMax M2.7 run. WebBrain Cloud 1.0 reached 73% alignment with a much lower run cost, but higher latency in this test path. We ran MiniMax M3 through OpenRouter and WebBrain Cloud 1.0 through api.webbrain.one against WebBrain&#39;s frozen 100-case browser-agent first-tool benchmark, then updated the Sonnet 4.6 comparison table. June 21, 2026 2026-06-21 WebBrain MiniMax M3 WebBrain Cloud OpenRouter browser agent tool calling Claude Sonnet LLM benchmark">
         <div class="post-meta">June 21, 2026 &middot; 6 min read</div>
         <div class="post-title">MiniMax M3 and WebBrain Cloud 1.0 enter the frozen WebBrain planner benchmark</div>
         <div class="post-excerpt">MiniMax M3 landed at 75% Sonnet first-tool alignment, below the older MiniMax M2.7 run. WebBrain Cloud 1.0 reached 73% alignment with a much lower run cost, but higher latency in this test path.</div>
       </a>
-<a href="/blog/gemma-4-12b-qat-planner-benchmark" class="post-card">
+<a href="/blog/gemma-4-12b-qat-planner-benchmark" class="post-card" data-search="Gemma 4 12B QAT is fast enough for WebBrain, but Qwen 3.5 9B still routes a little better Gemma 4 12B QAT is fast enough for WebBrain, but Qwen 3.5 9B still routes a little better Gemma 4 12B QAT lands as a very fast local WebBrain planner: 92/100 parsed calls, 14% exact, 33% tool-name match, 0.43s median per request, and a working but imperfect vision probe. We tested google/gemma-4-12B-it-qat-w4a16-ct through vLLM against WebBrain&#39;s frozen first-tool-call browser-agent harness at concurrency 8, then ran the same vision probe used in earlier local-model posts. June 20, 2026 2026-06-20 WebBrain Gemma 4 Gemma 4 12B QAT vLLM local LLM browser agent tool calling Qwen 3.5 9B">
         <div class="post-meta">June 20, 2026 &middot; 6 min read</div>
         <div class="post-title">Gemma 4 12B QAT is fast enough for WebBrain, but Qwen 3.5 9B still routes a little better</div>
         <div class="post-excerpt">Gemma 4 12B QAT lands as a very fast local WebBrain planner: 92/100 parsed calls, 14% exact, 33% tool-name match, 0.43s median per request, and a working but imperfect vision probe.</div>
       </a>
-<a href="/blog/gemma-4-31b-qat-planner-benchmark" class="post-card">
+<a href="/blog/gemma-4-31b-qat-planner-benchmark" class="post-card" data-search="Gemma 4 31B QAT quietly becomes the best local Gemma planner we have tested Gemma 4 31B QAT quietly becomes the best local Gemma planner we have tested Gemma 4 31B QAT is not branded like a new generation, but in WebBrain&#39;s local planner bench it behaves like a meaningful upgrade: 95/100 parsed calls, 19% exact, 37% tool-name match, and 0.55s median latency. We tested google/gemma-4-31B-it-qat-w4a16-ct through vLLM against WebBrain&#39;s frozen first-tool-call browser-agent harness. It improves over the older Gemma 4 31B int4 run and narrowly edges Qwen 3.6 27B on strict first-action quality while running much faster. June 20, 2026 2026-06-20 WebBrain Gemma 4 Gemma 4 31B QAT vLLM local LLM browser agent tool calling Qwen 3.6 27B">
         <div class="post-meta">June 20, 2026 &middot; 7 min read</div>
         <div class="post-title">Gemma 4 31B QAT quietly becomes the best local Gemma planner we have tested</div>
         <div class="post-excerpt">Gemma 4 31B QAT is not branded like a new generation, but in WebBrain&#39;s local planner bench it behaves like a meaningful upgrade: 95/100 parsed calls, 19% exact, 37% tool-name match, and 0.55s median latency.</div>
       </a>
-<a href="/blog/local-planner-q4-june-2026" class="post-card">
+<a href="/blog/local-planner-q4-june-2026" class="post-card" data-search="DiffusionGemma hits 0.35s median in the WebBrain local planner bench DiffusionGemma hits 0.35s median in the WebBrain local planner bench Gemma 4 12B Coder, North Mini Code, and DiffusionGemma all completed the frozen legacy tool-call bench through different serving paths. DiffusionGemma was the speed surprise under vLLM and also handled the vision probe, but its diffusion-style generation still needs more WebBrain-specific reliability work. VibeThinker confirmed its own model-card warning: it is not a browser-agent tool-calling model. DiffusionGemma, Gemma 4 12B Coder, Cohere North-Mini-Code, and VibeThinker-3B in WebBrain&#39;s frozen first-tool-call browser-agent harness. June 19, 2026 2026-06-19 WebBrain local LLM browser agent tool calling Gemma 4 12B Coder North-Mini-Code DiffusionGemma VibeThinker-3B llama.cpp vLLM">
         <div class="post-meta">June 19, 2026 &middot; 9 min read</div>
         <div class="post-title">DiffusionGemma hits 0.35s median in the WebBrain local planner bench</div>
         <div class="post-excerpt">Gemma 4 12B Coder, North Mini Code, and DiffusionGemma all completed the frozen legacy tool-call bench through different serving paths. DiffusionGemma was the speed surprise under vLLM and also handled the vision probe, but its diffusion-style generation still needs more WebBrain-specific reliability work. VibeThinker confirmed its own model-card warning: it is not a browser-agent tool-calling model.</div>
       </a>
-<a href="/blog/webbrain-cloud-local-model-benchmarks" class="post-card">
+<a href="/blog/webbrain-cloud-local-model-benchmarks" class="post-card" data-search="WebBrain Cloud is live, and these are the local models we are benchmarking next WebBrain Cloud is live, and these are the local models we are benchmarking next WebBrain Cloud is live in the latest main branch, which means you can try WebBrain without a local LLM or API access. It is request-limited, but useful for a first look. We are also lining up the next local-model benchmark set by hardware band: 4-12GB, 12-24GB, and 24-64GB VRAM. WebBrain Cloud is now live in the latest main branch, so you can try WebBrain without running a local LLM or bringing your own API key. The hosted route is request-limited, but it is enough to see how the browser agent feels. Next up: benchmarks for VibeThinker-3B, Gemma 4 12B Coder, DiffusionGemma 26B, and Cohere North-Mini-Code 30B across practical local-VRAM bands. June 19, 2026 2026-06-19 WebBrain Cloud WebBrain local LLM browser agent VibeThinker-3B Gemma 4 12B Coder DiffusionGemma Cohere North-Mini-Code local model benchmark VRAM">
         <div class="post-meta">June 19, 2026 &middot; 5 min read</div>
         <div class="post-title">WebBrain Cloud is live, and these are the local models we are benchmarking next</div>
         <div class="post-excerpt">WebBrain Cloud is live in the latest main branch, which means you can try WebBrain without a local LLM or API access. It is request-limited, but useful for a first look. We are also lining up the next local-model benchmark set by hardware band: 4-12GB, 12-24GB, and 24-64GB VRAM.</div>
       </a>
-<a href="/blog/molmo2-8b-tool-calling" class="post-card">
+<a href="/blog/molmo2-8b-tool-calling" class="post-card" data-search="Molmo2-8B is truly open. Our current serving path could not give it a fair browser-tool test. Molmo2-8B is truly open. Our current serving path could not give it a fair browser-tool test. Molmo2-8B deserves praise for being open source in the meaningful sense: weights, data, recipe, and no closed-VLM distillation dependency. We could not run a fair native OpenAI-tools comparison through the current LM Studio Molmo path: structured tools failed at prompt rendering, and the fallback text-call run produced only 2 parsed tool calls. We tried to run Molmo2-8B through WebBrain&#39;s frozen 100-case browser-agent tool-calling benchmark. The open-source story is excellent: open weights, data, and recipe. The caveat: LM Studio&#39;s Molmo path rejected native structured tools, so the only successful run used a text-call compatibility shim. June 12, 2026 2026-06-12 Molmo2 Molmo2-8B Ai2 Allen Institute for AI open source AI open weights open data browser agent tool calling WebBrain LM Studio local LLM">
         <div class="post-meta">June 12, 2026 &middot; 8 min read</div>
         <div class="post-title">Molmo2-8B is truly open. Our current serving path could not give it a fair browser-tool test.</div>
         <div class="post-excerpt">Molmo2-8B deserves praise for being open source in the meaningful sense: weights, data, recipe, and no closed-VLM distillation dependency. We could not run a fair native OpenAI-tools comparison through the current LM Studio Molmo path: structured tools failed at prompt rendering, and the fallback text-call run produced only 2 parsed tool calls.</div>
       </a>
-<a href="/blog/agent-security-model" class="post-card">
+<a href="/blog/agent-security-model" class="post-card" data-search="How WebBrain keeps a local AI agent from getting hijacked by the page it&#39;s reading How WebBrain keeps a local AI agent from getting hijacked by the page it&#39;s reading When an AI agent can act on a page as the logged-in user, the page itself becomes an attacker. We walk through WebBrain&#39;s layered defense — untrusted-content quarantine, a language-agnostic permission gate, UI-first actions — and share what our adversarial tests revealed: big models resist injection on their own, small local models need the guardrails, and the guardrails are what flip a confused model from relaying an attacker&#39;s instruction to flagging it. An act-mode browser agent can click, type, and submit as you — which means a malicious page that confuses the model is a real attack. Here&#39;s WebBrain&#39;s security model, the adversarial tests behind it, and what we found about model size and prompt injection. June 2, 2026 2026-06-02 prompt injection browser agent security AI agent safety local LLM untrusted content WebBrain accessibility tree Manifest V3">
         <div class="post-meta">June 2, 2026 &middot; 9 min read</div>
         <div class="post-title">How WebBrain keeps a local AI agent from getting hijacked by the page it&#39;s reading</div>
         <div class="post-excerpt">When an AI agent can act on a page as the logged-in user, the page itself becomes an attacker. We walk through WebBrain&#39;s layered defense — untrusted-content quarantine, a language-agnostic permission gate, UI-first actions — and share what our adversarial tests revealed: big models resist injection on their own, small local models need the guardrails, and the guardrails are what flip a confused model from relaying an attacker&#39;s instruction to flagging it.</div>
       </a>
-<a href="/blog/liquid-lfm25-tool-calling" class="post-card">
+<a href="/blog/liquid-lfm25-tool-calling" class="post-card" data-search="Liquid LFM 2.5-8B-A1B on browser tool calling: where the new on-device MoE fits Liquid LFM 2.5-8B-A1B on browser tool calling: where the new on-device MoE fits Liquid AI&#39;s just-shipped LFM 2.5-8B-A1B (8.3B total / 1.5B active sparse MoE) joins our browser-agent benchmark. It beats both small Qwens and runs within reach of Gemma 4-E2B against Claude Sonnet 4.6 — but for the small-model distillation slot, plain Apache 2.0 still wins over LFM&#39;s $10M-revenue-cliff license. Also: a tool-schema drift bug we caught and the freeze fix we shipped. We added Liquid AI&#39;s LFM 2.5-8B-A1B (8.3B total / 1.5B active MoE) to our browser-agent tool-calling benchmark. Against Claude Sonnet 4.6 it beats both small Qwens but loses to Gemma 4-E2B. Plus: a tool-schema drift bug that changes how we score everything, and why the license asymmetry (LFM&#39;s $10M revenue cliff vs Gemma 4&#39;s plain Apache 2.0) tilts the distillation call to Gemma. May 31, 2026 2026-05-31 LFM 2.5 LFM2.5-8B-A1B Liquid AI on-device LLM MoE tool calling browser agent Claude Sonnet 4.6 WebBrain Liquid Foundation Model sparse mixture of experts">
         <div class="post-meta">May 31, 2026 &middot; 7 min read</div>
         <div class="post-title">Liquid LFM 2.5-8B-A1B on browser tool calling: where the new on-device MoE fits</div>
         <div class="post-excerpt">Liquid AI&#39;s just-shipped LFM 2.5-8B-A1B (8.3B total / 1.5B active sparse MoE) joins our browser-agent benchmark. It beats both small Qwens and runs within reach of Gemma 4-E2B against Claude Sonnet 4.6 — but for the small-model distillation slot, plain Apache 2.0 still wins over LFM&#39;s $10M-revenue-cliff license. Also: a tool-schema drift bug we caught and the freeze fix we shipped.</div>
       </a>
-<a href="/blog/llm-tool-calling-benchmark" class="post-card">
+<a href="/blog/llm-tool-calling-benchmark" class="post-card" data-search="13 LLMs, 100 browser tasks, two baselines: which model actually picks the right tool? 13 LLMs, 100 browser tasks, two baselines: which model actually picks the right tool? We benchmarked 13 local and API models on 100 real browser-agent tool-calling tasks against both consensus voting and Claude Sonnet 4.6. The consensus winner (Qwen 3.6-35B-A3B at 94%) isn&#39;t the Sonnet-match winner (Qwen 3.6-27B at 77%) — and that gap tells you something useful about what &quot;correct&quot; means for tool calling. We benchmarked 13 local and API LLMs on 100 real browser-agent tool-calling tasks against both consensus voting and Claude Sonnet 4.6. The winner depends on which question you ask. May 23, 2026 2026-05-23 LLM benchmark tool calling browser agent Qwen 3.6 Claude Sonnet consensus voting WebBrain self-hosted LLM MoE Gemma 4">
         <div class="post-meta">May 23, 2026 &middot; 8 min read</div>
         <div class="post-title">13 LLMs, 100 browser tasks, two baselines: which model actually picks the right tool?</div>
         <div class="post-excerpt">We benchmarked 13 local and API models on 100 real browser-agent tool-calling tasks against both consensus voting and Claude Sonnet 4.6. The consensus winner (Qwen 3.6-35B-A3B at 94%) isn&#39;t the Sonnet-match winner (Qwen 3.6-27B at 77%) — and that gap tells you something useful about what &quot;correct&quot; means for tool calling.</div>
       </a>
-<a href="/blog/gemma4-turkish-pruning" class="post-card">
+<a href="/blog/gemma4-turkish-pruning" class="post-card" data-search="Pruning Gemma 4 26B-A4B to run on small GPUs Pruning Gemma 4 26B-A4B for small GPUs: Turkish-first, language-agnostic MoE surgery Router hooks + expert activation telemetry + surgical long-tail removal + brief LoRA heal. Early run: 128→101 experts/layer, 26B→21B params, ~11 GB at 4-bit GGUF, with solid Turkish fluency and code performance. A practical Gemma 4 26B-A4B expert-pruning run: remove low-activation experts for Turkish+English workloads, then recover quality with a short LoRA heal. May 19, 2026 2026-05-19 Gemma 4 MoE pruning expert pruning Turkish LLM GGUF IQ4_XS LoRA small GPU WebBrain">
         <div class="post-meta">May 19, 2026 &middot; 4 min read</div>
         <div class="post-title">Pruning Gemma 4 26B-A4B for small GPUs: Turkish-first, language-agnostic MoE surgery</div>
         <div class="post-excerpt">Router hooks + expert activation telemetry + surgical long-tail removal + brief LoRA heal. Early run: 128→101 experts/layer, 26B→21B params, ~11 GB at 4-bit GGUF, with solid Turkish fluency and code performance.</div>
       </a>
-<a href="/blog/vision-shootout-round-4" class="post-card">
+<a href="/blog/vision-shootout-round-4" class="post-card" data-search="Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance A 9B int4 Qwen 3.5 on vLLM classifies the email-chip dropdown explicitly — something the 308B MiMo V2.5 at IQ3_S and the larger Qwen 3.6-35B-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the &quot;Unknowns: None&quot; club. Suddenly the most interesting option for ≤8 GB VRAM. Plus an updated routing-policy table by VRAM bracket. Round 4 of the vision-model shootout for browser agents. A 9B int4 Qwen 3.5 model classifies the email-chip dropdown explicitly — something the 308B MiMo IQ3_S and the larger Qwen 3.6-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the &#39;Unknowns: None&#39; club. May 7, 2026 2026-05-07 Qwen 3.5 9B AutoRound int4 vLLM vision vision model benchmark browser agent affordance classification MiMo V2.5 vs Qwen low VRAM vision model dropdown classification calibrated uncertainty Intel AutoRound llama.cpp vs vLLM">
         <div class="post-meta">May 7, 2026 &middot; 6 min read</div>
         <div class="post-title">Round 4: Qwen 3.5-9B-int4 punches above its weight — when 9B int4 beats 308B IQ3_S on affordance</div>
         <div class="post-excerpt">A 9B int4 Qwen 3.5 on vLLM classifies the email-chip dropdown explicitly — something the 308B MiMo V2.5 at IQ3_S and the larger Qwen 3.6-35B-A3B both missed. Cheapest image tokens after Gemma. The catch: it loses the red-border visual cue and joins the &quot;Unknowns: None&quot; club. Suddenly the most interesting option for ≤8 GB VRAM. Plus an updated routing-policy table by VRAM bracket.</div>
       </a>
-<a href="/blog/vision-shootout-round-3" class="post-card">
+<a href="/blog/vision-shootout-round-3" class="post-card" data-search="Round 3: Xiaomi MiMo V2.5 enters the vision shootout — and joins the &quot;Unknowns: None&quot; club Round 3: Xiaomi MiMo V2.5 enters the vision shootout — and joins the &quot;Unknowns: None&quot; club The empirical follow-up to last week&#39;s MiMo speculation post. Same probe, same Google sign-in screen, same prompt. MiMo at IQ3_S nails OCR and state extraction in the Qwen 3.6 tier — but joins Nemotron and Gemma in writing &quot;Unknowns: None&quot; instead of flagging the red-border ambiguity. Token cost ties the most expensive bucket; latency is in a different class. Plus a probe upgrade so big reasoning models stop tripping the default fetch headers timeout. A third round of vision-model benchmarking for browser agents. Xiaomi&#39;s MiMo-V2.5 — the &quot;looks promising&quot; model from our research notes — sits down at the same probe with the same Google sign-in screen. Strong OCR, expensive image tokens, no calibrated uncertainty. May 7, 2026 2026-05-07 MiMo V2.5 Xiaomi MiMo vision model benchmark browser agent llama.cpp vision IQ3_S quantization calibrated uncertainty Qwen 3.6 vs MiMo multimodal model omni-modal reasoning model undici headers timeout vision probe">
         <div class="post-meta">May 7, 2026 &middot; 7 min read</div>
         <div class="post-title">Round 3: Xiaomi MiMo V2.5 enters the vision shootout — and joins the &quot;Unknowns: None&quot; club</div>
         <div class="post-excerpt">The empirical follow-up to last week&#39;s MiMo speculation post. Same probe, same Google sign-in screen, same prompt. MiMo at IQ3_S nails OCR and state extraction in the Qwen 3.6 tier — but joins Nemotron and Gemma in writing &quot;Unknowns: None&quot; instead of flagging the red-border ambiguity. Token cost ties the most expensive bucket; latency is in a different class. Plus a probe upgrade so big reasoning models stop tripping the default fetch headers timeout.</div>
       </a>
-<a href="/blog/mimo-v25-pro-vs-flash" class="post-card">
+<a href="/blog/mimo-v25-pro-vs-flash" class="post-card" data-search="Xiaomi MiMo V2.5 Pro vs &quot;V2.5 Flash&quot;: should WebBrain add both? Xiaomi MiMo V2.5 Pro vs &quot;V2.5 Flash&quot;: should WebBrain add both? Research notes on Xiaomi&#39;s newly released MiMo V2.5 series and why multimodal Pro+Flash-style routing may outperform text-only stacks for browser-agent workloads, while Qwen 3.6 still leads value on many pure-text tasks. Research notes on Xiaomi&#39;s MiMo V2.5 Pro and the V2.5/Flash-style tier: why these multimodal models look promising for WebBrain compared with text-only alternatives, and how they slot into our routing policy alongside Qwen 3.6. April 30, 2026 2026-04-30 Xiaomi MiMo MiMo V2.5 Pro MiMo V2.5 Flash multimodal model routing browser agent WebBrain Qwen 3.6 DeepSeek-V4 MiniMax M2.7 Nemotron-3-Nano-Omni OpenRouter model routing">
         <div class="post-meta">April 30, 2026 &middot; 6 min read</div>
         <div class="post-title">Xiaomi MiMo V2.5 Pro vs &quot;V2.5 Flash&quot;: should WebBrain add both?</div>
         <div class="post-excerpt">Research notes on Xiaomi&#39;s newly released MiMo V2.5 series and why multimodal Pro+Flash-style routing may outperform text-only stacks for browser-agent workloads, while Qwen 3.6 still leads value on many pure-text tasks.</div>
       </a>
-<a href="/blog/vision-shootout-round-2" class="post-card">
+<a href="/blog/vision-shootout-round-2" class="post-card" data-search="Round 2: Nemotron Omni 30B vs Qwen 3.6 — does cheaper image tokens beat calibrated uncertainty? Round 2: Nemotron Omni 30B vs Qwen 3.6 — does cheaper image tokens beat calibrated uncertainty? A second round of vision-model benchmarking for browser agents. NVIDIA&#39;s Nemotron Omni 30B-A3B-Reasoning is 17% cheaper per image and classifies inputs better than Qwen 3.6-35B-A3B — but loses on calibrated uncertainty, and is English-only. Plus a head-to-head with the dense Qwen 3.6-27B that explains why MoE is the right architecture for self-hosted vision. A second round of vision-model benchmarking for browser agents. NVIDIA&#39;s Nemotron Omni 30B-A3B-Reasoning and the dense Qwen 3.6-27B both enter — and one of them is 17% cheaper per image. We measure what changes for a real browser-agent workload, and what doesn&#39;t. April 29, 2026 2026-04-29 Nemotron Omni 30B Qwen 3.6 35B Qwen 3.6 27B vision model benchmark browser agent MoE vision model calibrated uncertainty vision encoder cost NVFP4 llama.cpp vLLM A3B reasoning model">
         <div class="post-meta">April 29, 2026 &middot; 8 min read</div>
         <div class="post-title">Round 2: Nemotron Omni 30B vs Qwen 3.6 — does cheaper image tokens beat calibrated uncertainty?</div>
         <div class="post-excerpt">A second round of vision-model benchmarking for browser agents. NVIDIA&#39;s Nemotron Omni 30B-A3B-Reasoning is 17% cheaper per image and classifies inputs better than Qwen 3.6-35B-A3B — but loses on calibrated uncertainty, and is English-only. Plus a head-to-head with the dense Qwen 3.6-27B that explains why MoE is the right architecture for self-hosted vision.</div>
       </a>
-<a href="/blog/vision-model-shootout" class="post-card">
+<a href="/blog/vision-model-shootout" class="post-card" data-search="Four vision models, one screenshot: which one is actually worth running locally for a browser agent? Four vision models, one screenshot: which one is actually worth running locally for a browser agent? We fed the same Google sign-in page through Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B using the exact system prompt WebBrain&#39;s vision sub-call ships with. The spread on OCR accuracy, latency, and token cost is wider than you&#39;d expect — and one model quietly changed our mind about which architecture to reach for. We benchmarked Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B on the same browser screenshot using WebBrain&#39;s exact vision-sub-call prompt. Here&#39;s what the numbers look like and why one model changed our default recommendation. April 21, 2026 2026-04-21 vision model benchmark open source browser agent Qwen3.6 Gemma 4 llama.cpp vision local vision model Qwen3.5 27B browser automation OCR">
         <div class="post-meta">April 21, 2026 &middot; 7 min read</div>
         <div class="post-title">Four vision models, one screenshot: which one is actually worth running locally for a browser agent?</div>
         <div class="post-excerpt">We fed the same Google sign-in page through Gemma 4-E2B, Gemma 4-31B, Qwen3.5-27B, and Qwen3.6-35B-A3B using the exact system prompt WebBrain&#39;s vision sub-call ships with. The spread on OCR accuracy, latency, and token cost is wider than you&#39;d expect — and one model quietly changed our mind about which architecture to reach for.</div>
       </a>
+    </div>
+
+    <div class="empty-state" id="empty-state" hidden>
+      <strong>No notes match “<span id="empty-query"></span>”</strong>
+      Try a model name, benchmark, or tool instead.
+      <div><button class="empty-clear" id="empty-clear" type="button">Clear search</button></div>
+    </div>
+
+    <div class="pagination" id="pagination" role="navigation" aria-label="Blog pages" hidden>
+      <button class="page-button page-direction" id="page-previous" type="button">Previous</button>
+      <div class="page-numbers" id="page-numbers"></div>
+      <button class="page-button page-direction" id="page-next" type="button">Next</button>
     </div>
   </main>
 
@@ -1131,6 +1369,161 @@
         if (!LOCALES.includes(target)) return;
         window.location.href = target === 'en' ? '/' : '/' + target + '/';
       });
+    })();
+  </script>
+  <script>
+    (function () {
+      const PAGE_SIZE = 8;
+      const searchInput = document.getElementById('blog-search');
+      const clearButton = document.getElementById('search-clear');
+      const emptyClearButton = document.getElementById('empty-clear');
+      const resultsCount = document.getElementById('results-count');
+      const pageStatus = document.getElementById('page-status');
+      const emptyState = document.getElementById('empty-state');
+      const emptyQuery = document.getElementById('empty-query');
+      const pagination = document.getElementById('pagination');
+      const pageNumbers = document.getElementById('page-numbers');
+      const previousButton = document.getElementById('page-previous');
+      const nextButton = document.getElementById('page-next');
+      const tools = document.getElementById('blog-tools');
+      const cards = Array.from(document.querySelectorAll('.post-card'));
+      if (!searchInput || !cards.length) return;
+
+      let query = '';
+      let currentPage = 1;
+
+      function normalize(value) {
+        return String(value || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLocaleLowerCase();
+      }
+
+      function readUrl() {
+        const params = new URLSearchParams(window.location.search);
+        query = (params.get('q') || '').trim();
+        const requestedPage = Number.parseInt(params.get('page') || '1', 10);
+        currentPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+        searchInput.value = query;
+      }
+
+      function writeUrl(mode) {
+        if (!mode) return;
+        const url = new URL(window.location.href);
+        if (query) url.searchParams.set('q', query);
+        else url.searchParams.delete('q');
+        if (currentPage > 1) url.searchParams.set('page', String(currentPage));
+        else url.searchParams.delete('page');
+        const target = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash;
+        window.history[mode + 'State']({}, '', target);
+      }
+
+      function pageSequence(total, active) {
+        if (total <= 7) return Array.from({ length: total }, function (_, index) { return index + 1; });
+        const candidates = [1, total, active - 2, active - 1, active, active + 1, active + 2]
+          .filter(function (value) { return value >= 1 && value <= total; });
+        const pages = Array.from(new Set(candidates)).sort(function (a, b) { return a - b; });
+        const sequence = [];
+        pages.forEach(function (value, index) {
+          if (index && value - pages[index - 1] > 1) sequence.push('ellipsis-' + value);
+          sequence.push(value);
+        });
+        return sequence;
+      }
+
+      function goToPage(page) {
+        currentPage = page;
+        render('push');
+        tools.scrollIntoView({ block: 'start' });
+        window.requestAnimationFrame(function () {
+          const active = pageNumbers.querySelector('[aria-current="page"]');
+          if (active) active.focus({ preventScroll: true });
+        });
+      }
+
+      function renderPageButtons(totalPages) {
+        pageNumbers.replaceChildren();
+        pageSequence(totalPages, currentPage).forEach(function (entry) {
+          if (typeof entry === 'string') {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'page-ellipsis';
+            ellipsis.textContent = '…';
+            ellipsis.setAttribute('aria-hidden', 'true');
+            pageNumbers.appendChild(ellipsis);
+            return;
+          }
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'page-button';
+          button.textContent = String(entry);
+          button.setAttribute('aria-label', 'Go to page ' + entry);
+          if (entry === currentPage) button.setAttribute('aria-current', 'page');
+          button.addEventListener('click', function () { goToPage(entry); });
+          pageNumbers.appendChild(button);
+        });
+      }
+
+      function render(historyMode) {
+        const terms = normalize(query).split(/\s+/).filter(Boolean);
+        const matches = cards.filter(function (card) {
+          const haystack = normalize(card.dataset.search);
+          return terms.every(function (term) { return haystack.includes(term); });
+        });
+        const totalPages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
+        currentPage = Math.min(currentPage, totalPages);
+        const visible = new Set(matches.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE));
+
+        cards.forEach(function (card) { card.hidden = !visible.has(card); });
+        clearButton.hidden = !query;
+        emptyState.hidden = matches.length !== 0;
+        emptyQuery.textContent = query;
+        pagination.hidden = matches.length === 0 || totalPages <= 1;
+        previousButton.disabled = currentPage === 1;
+        nextButton.disabled = currentPage === totalPages;
+        resultsCount.textContent = query
+          ? matches.length + (matches.length === 1 ? ' note found' : ' notes found')
+          : matches.length + (matches.length === 1 ? ' note' : ' notes');
+        pageStatus.textContent = matches.length ? 'Page ' + currentPage + ' of ' + totalPages : '';
+        renderPageButtons(totalPages);
+        writeUrl(historyMode);
+      }
+
+      function clearSearch() {
+        query = '';
+        currentPage = 1;
+        searchInput.value = '';
+        render('push');
+        searchInput.focus();
+      }
+
+      searchInput.addEventListener('input', function () {
+        query = searchInput.value.trim();
+        currentPage = 1;
+        render('replace');
+      });
+      clearButton.addEventListener('click', clearSearch);
+      emptyClearButton.addEventListener('click', clearSearch);
+      previousButton.addEventListener('click', function () { if (currentPage > 1) goToPage(currentPage - 1); });
+      nextButton.addEventListener('click', function () { goToPage(currentPage + 1); });
+      window.addEventListener('popstate', function () { readUrl(); render(); });
+      document.addEventListener('keydown', function (event) {
+        const target = event.target;
+        const isEditable = target instanceof HTMLElement && (
+          target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+        );
+        if (event.key === '/' && !isEditable && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          searchInput.focus();
+          searchInput.select();
+        }
+        if (event.key === 'Escape' && document.activeElement === searchInput) {
+          if (searchInput.value) clearSearch();
+          else searchInput.blur();
+        }
+      });
+
+      readUrl();
+      render('replace');
     })();
   </script>
 </body>

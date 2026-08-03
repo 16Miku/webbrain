@@ -78,6 +78,15 @@ import {
 
 const providerManager = new ProviderManager();
 const agent = new Agent(providerManager);
+agent.setConversationScopeChangeListener((tabId, state) => {
+  browser.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'agent_update',
+    tabId,
+    type: 'conversation_scope',
+    data: state,
+  }).catch(() => {});
+});
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const profileSync = new ProfileSyncManager(browser.storage.local);
@@ -1896,7 +1905,7 @@ async function handleMessage(msg, sender) {
       if (!tabId) throw new Error('No tab ID');
       return {
         ok: true,
-        conversationId: await agent.ensureConversationId(tabId, msg.mode || 'ask'),
+        ...(await agent.getConversationState(tabId, msg.mode || 'ask')),
       };
     }
 
@@ -2035,7 +2044,12 @@ async function handleMessage(msg, sender) {
           userMemoryTurnContextTaken = true;
           enqueueUserMemoryExtractionAfterTurn(userMemoryPayload);
         }
-        return { content: result, updates, requestId: runUi.requestId, conversationId: await agent.getConversationId(tabId) };
+        return {
+          content: result,
+          updates,
+          requestId: runUi.requestId,
+          ...(await agent.getConversationState(tabId)),
+        };
       } catch (error) {
         runError = error;
         throw error;
@@ -2109,7 +2123,11 @@ async function handleMessage(msg, sender) {
         userMemoryPayload.conversationId = await agent.getConversationId(tabId);
         userMemoryTurnContextTaken = true;
         enqueueUserMemoryExtractionAfterTurn(userMemoryPayload);
-        return { content: result, requestId: runUi.requestId, conversationId: await agent.getConversationId(tabId) };
+        return {
+          content: result,
+          requestId: runUi.requestId,
+          ...(await agent.getConversationState(tabId)),
+        };
       } catch (error) {
         runError = error;
         throw error;
@@ -2165,7 +2183,11 @@ async function handleMessage(msg, sender) {
         userMemoryPayload.conversationId = await agent.getConversationId(tabId);
         userMemoryTurnContextTaken = true;
         enqueueUserMemoryExtractionAfterTurn(userMemoryPayload);
-        return { content: result, requestId: runUi.requestId, conversationId: await agent.getConversationId(tabId) };
+        return {
+          content: result,
+          requestId: runUi.requestId,
+          ...(await agent.getConversationState(tabId)),
+        };
       } catch (error) {
         runError = error;
         throw error;
@@ -2223,6 +2245,7 @@ async function handleMessage(msg, sender) {
           : false);
       return {
         ok: true,
+        ...(await agent.getConversationState(tabId)),
         ...agent.activeRunState(tabId),
         starting: !!starting,
         startingRequestId: starting?.requestId || null,

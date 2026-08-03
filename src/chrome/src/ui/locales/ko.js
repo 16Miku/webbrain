@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': '상세 도구 로그 전환',
   'sp.btn.language': '언어',
   'sp.btn.settings': '설정',
-  'sp.btn.clear': '새 대화 (기록 지우기)',
+  "sp.btn.clear": "새 대화",
   'sp.btn.send': '보내기',
   'sp.chat.follow_response': '답변 따라가기',
   'sp.chat.jump_latest': '최신으로 이동',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': '이 페이지에서 무엇을 도와드릴까요?',
   'sp.cleared_message': '대화가 지워졌습니다. 무엇을 도와드릴까요?',
   'sp.clear.confirm': '이 대화는 사라집니다. 새 대화를 시작할까요?',
+  "sp.clear.title": "새 대화를 시작할까요?",
+  "sp.clear.description": "이 대화의 기록이 삭제됩니다.",
+  "sp.clear.action_warning": "기록 삭제",
+  "sp.selection_scope.title": "선택한 텍스트만",
+  "sp.selection_scope.description": "페이지나 화면에 접근하려면 새 대화를 시작하세요.",
+  "sp.input.selection_placeholder": "선택한 텍스트에 대해 질문하세요...",
 
   'sp.mode.ask': '질문',
   'sp.mode.ask.title': '페이지에 대해 질문 — 변경은 하지 않습니다',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '선택된 릴리스 ZIP이 로컬 스토리지에서 제거되었습니다.',
   'st.skills.cws.package_zip_only': '.zip 릴리스 패키지를 선택하세요.',
   'st.skills.cws.package_too_large': 'ZIP은 1바이트에서 100MB 사이여야 합니다.',
+  'sp.run_progress_replay_gap': '이전 실행 진행 상황 일부를 다시 표시할 수 없습니다',
 };

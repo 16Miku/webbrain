@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'Перемкнути детальний журнал інструментів',
   'sp.btn.language': 'Мова',
   'sp.btn.settings': 'Налаштування',
-  'sp.btn.clear': 'Новий діалог (очистити історію)',
+  "sp.btn.clear": "Новий діалог",
   'sp.btn.send': 'Надіслати',
   'sp.chat.follow_response': 'Стежити за відповіддю',
   'sp.chat.jump_latest': 'До останнього повідомлення',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Чим допомогти на цій сторінці?',
   'sp.cleared_message': 'Діалог очищено. Чим можу допомогти?',
   'sp.clear.confirm': 'Цей діалог буде втрачено. Почати новий діалог?',
+  "sp.clear.title": "Почати новий діалог?",
+  "sp.clear.description": "Історію цього діалогу буде очищено.",
+  "sp.clear.action_warning": "Очищає історію",
+  "sp.selection_scope.title": "Лише виділений текст",
+  "sp.selection_scope.description": "Почніть новий діалог, щоб отримати доступ до сторінки або екрана.",
+  "sp.input.selection_placeholder": "Запитайте про виділений текст...",
 
   'sp.mode.ask': 'Запитати',
   'sp.mode.ask.title': 'Ставити запитання про сторінку — без жодних змін',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Орієнтовна вартість читання з кешу ($ / 1 млн токенів)",
   'st.provider.field.cache_write_cost_per_million': "Орієнтовна вартість запису в кеш на 5 хвилин ($ / 1 млн токенів)",
   'st.provider.field.cache_write_1h_cost_per_million': "Орієнтовна вартість запису в кеш на 1 годину ($ / 1 млн токенів)",
+  'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
 };
