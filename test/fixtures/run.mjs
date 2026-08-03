@@ -3963,7 +3963,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_12' },
+      { ref_id: 'ref_12', text: 'Paris' },
       result,
       candidate,
       familyDecision,
@@ -4055,7 +4055,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const secondEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_199' },
+      { ref_id: 'ref_199', text: 'Paris' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (secondEditorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4093,7 +4093,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarContext: false,
       toolbarRegionRef: '',
     });
-    const unrelatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
+    const unrelatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
       success: true,
       verified: true,
       method: 'contenteditable',
@@ -4110,14 +4110,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarContext: false,
       toolbarRegionRef: '',
     });
-    const unverifiedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
+    const unverifiedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
       success: true,
       method: 'contenteditable',
     });
     if (unverifiedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
       throw new Error('an unverified editor dispatch must retain toolbar completion debt');
     }
-    const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
+    for (const incorrectText of ['', 'Lyon']) {
+      const incorrectTextRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: incorrectText }, {
+        success: true,
+        verified: true,
+        method: 'contenteditable',
+      });
+      if (incorrectTextRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+        throw new Error(`an exact editor edit with mismatched text must retain toolbar completion debt: ${JSON.stringify(incorrectText)}`);
+      }
+    }
+    const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
       success: true,
       verified: true,
       method: 'contenteditable',
@@ -4153,7 +4163,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const refLessIdentityRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_200' },
+      { ref_id: 'ref_200', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (!refLessIdentityRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4205,7 +4215,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unrelatedSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_text',
-      { selector: '#other-editor' },
+      { selector: '#other-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unrelatedSelectorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4224,7 +4234,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const exactSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_text',
-      { selector: '#editor-body' },
+      { selector: '#editor-body', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!exactSelectorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4346,7 +4356,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const iframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { urlFilter: 'frame.example.test', selector: '#editor-body' },
+      { urlFilter: 'frame.example.test', selector: '#editor-body', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!iframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4371,7 +4381,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_12' },
+      { ref_id: 'ref_12', text: 'Document prose' },
       iframeBackedBlock,
       iframeBackedCandidate,
       familyDecision,
@@ -4403,7 +4413,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unrelatedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor' },
+      { selector: '#inner-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unrelatedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4420,7 +4430,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unscopedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor' },
+      { selector: '#inner-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unscopedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4430,7 +4440,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const iframeBackedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor' },
+      { selector: '#inner-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!iframeBackedRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4441,7 +4451,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_nested_toolbar' },
+      { ref_id: 'ref_nested_toolbar', text: 'Document prose' },
       nestedIframeBlock,
       iframeBackedCandidate,
       familyDecision,
@@ -4469,7 +4479,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const wrongNestedScopeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor' },
+      { selector: '#inner-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (wrongNestedScopeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4482,7 +4492,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const nestedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor' },
+      { selector: '#inner-editor', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!nestedIframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4521,7 +4531,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_12' },
+      { ref_id: 'ref_12', text: 'Document prose' },
       staleDocumentResult,
       candidate,
       familyDecision,
@@ -4592,7 +4602,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unrelatedOriginRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_77' },
+      { ref_id: 'ref_77', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (unrelatedOriginRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4601,7 +4611,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unrelatedOriginSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_text',
-      { selector: '#editor-body' },
+      { selector: '#editor-body', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unrelatedOriginSelectorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4620,7 +4630,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const navigatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_77' },
+      { ref_id: 'ref_77', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (navigatedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4646,7 +4656,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const originalRouteRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_78' },
+      { ref_id: 'ref_78', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
       originalRoutePreflight.probe,
     );
@@ -4668,7 +4678,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_anon_toolbar' },
+      { ref_id: 'ref_anon_toolbar', text: 'Document prose' },
       anonymousEditorBlock,
       { ...candidate, associatedEditorRef: '', associatedEditorIdentity: anonymousEditorIdentity },
       familyDecision,
@@ -4689,7 +4699,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const anonymousEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_anon_editor_fresh' },
+      { ref_id: 'ref_anon_editor_fresh', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (!anonymousEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4700,7 +4710,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._applyRichTextToolbarWrongTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_12' },
+      { ref_id: 'ref_12', text: 'Document prose' },
       unscopedBlock,
       { ...candidate, associatedEditorRef: '', associatedEditorIdentity: null },
       familyDecision,
@@ -4735,7 +4745,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const toolbarLikeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_ax',
-      { ref_id: 'ref_toolbar_editor_like' },
+      { ref_id: 'ref_toolbar_editor_like', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (toolbarLikeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4754,7 +4764,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const ordinaryFieldRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_quantity' },
+      { ref_id: 'ref_quantity', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
     if (ordinaryFieldRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4773,7 +4783,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unknownEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_ax',
-      { ref_id: 'ref_ambiguous_editor_a' },
+      { ref_id: 'ref_ambiguous_editor_a', text: 'Document prose' },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!unknownEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {

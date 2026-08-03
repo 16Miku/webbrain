@@ -1794,6 +1794,7 @@ export class Agent extends LoopDetector {
       recoveryOnly: true,
       targetKind: state.targetKind || 'other_formatting',
       detectedAt: state.detectedAt || Date.now(),
+      blockedAttemptedText: state.blockedAttemptedText,
       associatedEditorRef: '',
       associatedEditorIdentity: { ...state.associatedEditorIdentity },
       recoveryTargetUnknown,
@@ -2400,6 +2401,14 @@ export class Agent extends LoopDetector {
         && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
       )
     ) return false;
+    // These tools set verified only after the field's final value matches the
+    // submitted text. Pair that proof with the transient blocked value so an
+    // unrelated edit in the right editor cannot discharge the debt.
+    if (
+      typeof state.blockedAttemptedText !== 'string'
+      || typeof args?.text !== 'string'
+      || args.text !== state.blockedAttemptedText
+    ) return false;
     const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
     const iframeBackedRecovery = toolName === 'iframe_type'
       && ['iframe', 'frame'].includes(expectedEditorTag);
@@ -2519,6 +2528,7 @@ export class Agent extends LoopDetector {
             recoveryOnly: true,
             targetKind: prior.targetKind || 'other_formatting',
             detectedAt: prior.detectedAt || Date.now(),
+            blockedAttemptedText: prior.blockedAttemptedText,
             associatedEditorRef: '',
             associatedEditorIdentity: { ...prior.associatedEditorIdentity },
             recoveryTargetUnknown: prior.recoveryTargetUnknown === true,
@@ -2539,6 +2549,7 @@ export class Agent extends LoopDetector {
         ? decision.targetKind
         : 'other_formatting';
       state.detectedAt = Date.now();
+      state.blockedAttemptedText = typeof args?.text === 'string' ? args.text : undefined;
       state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
       state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
       state.recoveryTargetUnknown = !state.associatedEditorRef
