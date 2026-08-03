@@ -3252,6 +3252,23 @@ export class CDPClient {
               fieldMeta.title,
               fieldMeta.labelText,
             ].some(value => String(value || '').trim());
+            const formattingDescriptor = [
+              fieldMeta.ariaLabel,
+              fieldMeta.ariaLabelledByText,
+              fieldMeta.placeholder,
+              fieldMeta.title,
+              fieldMeta.labelText,
+              fieldMeta.id,
+              fieldMeta.name,
+            ].map(value => String(value || '').normalize('NFKC').toLowerCase()).join(' ');
+            const formattingLabel = [
+              'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
+              'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+              'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
+              'フォント', '字体', '字體', '글꼴', 'шрифт',
+            ].some(token => formattingDescriptor.includes(token));
+            const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
+            if (!unlabeled && searchLike && !formattingLabel) return null;
             if (!unlabeled && !semanticToolbar) return null;
             const compact = rect.height <= 32 && rect.width <= 220;
             const value = String(el.value || '').trim();

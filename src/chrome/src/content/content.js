@@ -3754,6 +3754,21 @@
         baseMeta?.title,
         baseMeta?.labelText,
       ].some(value => String(value || '').trim());
+      const formattingDescriptor = [
+        baseMeta?.ariaLabel,
+        baseMeta?.ariaLabelledByText,
+        baseMeta?.placeholder,
+        baseMeta?.title,
+        baseMeta?.labelText,
+        baseMeta?.id,
+        baseMeta?.name,
+      ].map(value => String(value || '').normalize('NFKC').toLowerCase()).join(' ');
+      const formattingLabel = [
+        'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
+        'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+        'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
+        'フォント', '字体', '字體', '글꼴', 'шрифт',
+      ].some(token => formattingDescriptor.includes(token));
 
       const compact = rect.height <= 32 && rect.width <= 220;
       const value = String(el.value || '').trim();
@@ -3761,6 +3776,8 @@
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
       const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
+      const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
+      if (!unlabeled && searchLike && !formattingLabel) return null;
       if (!unlabeled && !semanticToolbar) return null;
       const interactiveSelector = [
         'input:not([type="hidden"])',

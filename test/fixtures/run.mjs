@@ -1175,7 +1175,8 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     </style>
     <div id="slotted-toolbar-editor">
       <span id="slot-toolbar-host">
-        <input id="slotted-family" aria-label="Font family" value="Default" style="width:118px;height:22px">
+        <input id="slotted-family" type="search" aria-label="Font family" value="Default" style="width:118px;height:22px">
+        <input id="slotted-search" type="search" aria-label="Search" value="" style="width:118px;height:22px">
       </span>
       <div id="slot-editor-component"></div>
     </div>
@@ -1193,6 +1194,10 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
   ) {
     throw new Error(`labelled assigned-slot toolbar and descendant shadow editor were not audited by the CDP selector probe: ${JSON.stringify(slottedProbe)}`);
+  }
+  const ordinarySearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-search');
+  if (!ordinarySearchProbe?.resolved || ordinarySearchProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary labelled toolbar search was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySearchProbe)}`);
   }
 });
 
@@ -3036,7 +3041,9 @@ for (const browserKind of ['chrome', 'firefox']) {
       descendantShadowEditor.className = 'editor';
       descendantShadowEditor.innerHTML = `
         <div role="toolbar" style="height:42px;display:flex;align-items:center">
-          <input id="descendant-shadow-family-input" aria-label="Font family" value="Default"
+          <input id="descendant-shadow-family-input" type="search" aria-label="Font family" value="Default"
+            style="width:118px;height:22px">
+          <input id="descendant-toolbar-search" type="search" aria-label="Search" value=""
             style="width:118px;height:22px">
         </div>`;
       const descendantBodyHost = document.createElement('div');
@@ -3091,6 +3098,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
         descendantShadowFamilyInput: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-shadow-family-input')),
+        descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
         slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
         iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
@@ -3171,6 +3179,17 @@ for (const browserKind of ['chrome', 'firefox']) {
       || !descendantShadowProbe.fieldMeta.toolbarCandidate.associatedEditorRef
     ) {
       throw new Error(`expected descendant shadow editor association, got: ${JSON.stringify(descendantShadowProbe)}`);
+    }
+    const descendantSearchProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.descendantToolbarSearch, text: 'Quarterly roadmap' },
+    });
+    if (
+      !descendantSearchProbe?.resolved
+      || descendantSearchProbe.fieldMeta?.type !== 'search'
+      || descendantSearchProbe.fieldMeta?.toolbarCandidate
+    ) {
+      throw new Error(`ordinary labelled toolbar search must stay outside formatting audit: ${JSON.stringify(descendantSearchProbe)}`);
     }
     const slottedToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
