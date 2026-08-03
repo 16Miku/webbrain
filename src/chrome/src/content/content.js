@@ -1935,7 +1935,7 @@
     const key = params?.key;
     const repeatRaw = Number(params?.repeat ?? 1);
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
-    const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
     if (!SUPPORTED_KEYS.includes(key)) {
       return {
         success: false,
@@ -1959,6 +1959,7 @@
       ArrowUp: { code: 'ArrowUp', keyCode: 38 },
       ArrowRight: { code: 'ArrowRight', keyCode: 39 },
       ArrowDown: { code: 'ArrowDown', keyCode: 40 },
+      ';': { code: 'Semicolon', keyCode: 186 },
     }[key];
     const target = (document.activeElement && document.activeElement !== document.body)
       ? document.activeElement
