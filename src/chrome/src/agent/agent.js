@@ -1977,7 +1977,7 @@ export class Agent extends LoopDetector {
     } : null;
   }
 
-  async _probeRichTextToolbarIframeTarget(tabId, args = {}) {
+  async _probeRichTextToolbarIframeTarget(tabId, args = {}, { mapAnnotation = true } = {}) {
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     if (!selector) return null;
     let navigationFrames;
@@ -2019,7 +2019,10 @@ export class Agent extends LoopDetector {
       } : null;
     }))).filter(Boolean);
     if (!probes.length) return null;
-    const preferredFrameId = this._richTextToolbarStates.get(tabId)?.frameId;
+    const currentState = this._richTextToolbarStates.get(tabId);
+    const preferredFrameId = currentState
+      ? (Number.isInteger(currentState.frameId) ? currentState.frameId : 0)
+      : null;
     const preferred = Number.isInteger(preferredFrameId)
       ? probes.find(probe => probe.frameId === preferredFrameId)
       : null;
@@ -2027,18 +2030,15 @@ export class Agent extends LoopDetector {
       .filter(probe => probe.fieldMeta?.toolbarCandidate)
       .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
       || probes[0];
-    const annotationRect = await this._richTextToolbarFrameRectToTop(
-      tabId,
-      navigationFrames,
-      selected.frameId,
-      selected.rect,
-    );
+    const annotationRect = mapAnnotation
+      ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
+      : null;
     return { ...selected, annotationRect };
   }
 
   async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}) {
     if (toolName === 'iframe_type') {
-      return this._probeRichTextToolbarIframeTarget(tabId, args);
+      return this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
     }
     if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
       try {
@@ -2075,6 +2075,10 @@ export class Agent extends LoopDetector {
     if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_type'].includes(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return null;
+    const sameFrame = Number.isInteger(state.frameId)
+      ? probe.frameId === state.frameId
+      : !Number.isInteger(probe.frameId) || probe.frameId === 0;
+    if (!sameFrame) return null;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
     if (
@@ -2092,11 +2096,8 @@ export class Agent extends LoopDetector {
     }
     const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
     if (refBlock) return refBlock;
-    const sameFrame = !Number.isInteger(state.frameId)
-      || !Number.isInteger(probe.frameId)
-      || state.frameId === probe.frameId;
-    const blockedRef = sameFrame && typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
-    const sameToolbarContext = sameFrame && probe.toolbarContext === true
+    const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
+    const sameToolbarContext = probe.toolbarContext === true
       && typeof probe.toolbarRegionRef === 'string'
       && !!probe.toolbarRegionRef
       && probe.toolbarRegionRef === state.regionRef;
@@ -2112,6 +2113,10 @@ export class Agent extends LoopDetector {
     if (!state?.associatedEditorRef) return false;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return false;
+    const sameFrame = Number.isInteger(state.frameId)
+      ? probe.frameId === state.frameId
+      : !Number.isInteger(probe.frameId) || probe.frameId === 0;
+    if (!sameFrame) return false;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
     if (
@@ -2135,10 +2140,7 @@ export class Agent extends LoopDetector {
         fieldMeta,
         probe.rect || {},
       );
-    const sameFrame = !Number.isInteger(state.frameId)
-      || !Number.isInteger(probe.frameId)
-      || state.frameId === probe.frameId;
-    if (!isEditor || !sameFrame || (!exactRef && !exactSelector)) return false;
+    if (!isEditor || (!exactRef && !exactSelector)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
@@ -2274,13 +2276,30 @@ export class Agent extends LoopDetector {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
       return { block: null, shot: null };
     }
-    const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
-    if (!probe?.resolved) return { block: null, shot: null };
+    const probe = toolName === 'iframe_type'
+      ? await this._probeRichTextToolbarIframeTarget(tabId, args)
+      : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+    if (!probe?.resolved) {
+      return toolName === 'iframe_type'
+        ? {
+            block: {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              retryable: true,
+              error: 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.',
+            },
+            shot: null,
+          }
+        : { block: null, shot: null };
+    }
     if (toolName !== 'iframe_type' && (probe.documentToken || probe.refScopeUrl)) {
       this._rememberAxScope(tabId, probe.documentToken || '', probe.refScopeUrl || '');
     }
     const candidate = probe.fieldMeta?.toolbarCandidate;
-    if (!candidate || Number(candidate.score) < 4 || !probe.rect) return { block: null, shot: null };
+    if (!candidate || Number(candidate.score) < 4 || !probe.rect) {
+      return { block: null, shot: null, probe };
+    }
     let shot = null;
     let audit = null;
     let traceCapture = null;
@@ -2327,9 +2346,9 @@ export class Agent extends LoopDetector {
     if (decision.wrongTarget) {
       const block = {};
       this._applyRichTextToolbarWrongTarget(tabId, toolName, args, block, candidate, decision, audit, probe);
-      return { block, shot, audit, decision, traceCapture };
+      return { block, shot, audit, decision, traceCapture, probe };
     }
-    return { block: null, shot, audit, decision, traceCapture };
+    return { block: null, shot, audit, decision, traceCapture, probe };
   }
 
   async _auditRichTextToolbarTarget(tabId, toolName, args, result) {
@@ -4862,7 +4881,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           fnName,
           fnArgs,
           onUpdate,
-          { completionBatchStartState },
+          {
+            completionBatchStartState,
+            richTextToolbarFrameId: Number.isInteger(toolbarPreflight.probe?.frameId)
+              ? toolbarPreflight.probe.frameId
+              : null,
+          },
         );
       const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
       const inspectFormValidationAfter = formValidationCandidate
@@ -16981,9 +17005,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'selector is required',
           };
         }
+        let targetFrameId = executionContext?.richTextToolbarFrameId;
+        if (!Number.isInteger(targetFrameId)) {
+          const probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          targetFrameId = probe?.frameId;
+        }
+        if (!Number.isInteger(targetFrameId)) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
+          };
+        }
         dispatched = true;
         const results = await chrome.scripting.executeScript({
-          target: { tabId, allFrames: true },
+          target: { tabId, frameIds: [targetFrameId] },
           func: (sel, txt, clr, filter) => {
             if (filter) {
               // Require BOTH: (1) HOST match — so "stripe.com" can't match
@@ -17028,7 +17066,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         const successes = results.map(r => r.result).filter(r => r && r.ok);
         if (successes.length > 0) {
-          return { success: true, dispatched: true, frame: successes[0] };
+          return { success: true, dispatched: true, frameId: targetFrameId, frame: successes[0] };
         }
         const candidates = results.map(r => r.result).filter(r => r && !r.skipped);
         const targetDispatched = candidates.some(candidate => candidate.dispatched === true);

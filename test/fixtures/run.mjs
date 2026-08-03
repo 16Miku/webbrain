@@ -3356,7 +3356,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
       availablePresetValues: ['11', '14'],
     };
-    agent._probeRichTextToolbarRetryTarget = async () => ({
+    agent._probeRichTextToolbarIframeTarget = async () => ({
       resolved: true,
       refId: 'ref_12',
       frameId: 7,
@@ -3379,6 +3379,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     if (agent._richTextToolbarStates.get(tabId)?.frameId !== 7) {
       throw new Error('iframe toolbar debt must retain its frame identity');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'top-doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 8, w: 60, h: 24 },
+      fieldMeta: { toolbarCandidate: iframeCandidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const unrelatedTopFrameBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'click',
+      { selector: '#font-size' },
+    );
+    if (unrelatedTopFrameBlock || !agent._richTextToolbarStates.has(tabId) || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('top-frame ref collisions must not consume or enforce iframe-scoped toolbar state');
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,

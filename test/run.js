@@ -7982,9 +7982,12 @@ test('loop detection classifies mutating tools from each build tool list, not a 
     for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
       assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
     }
-    // The frame/upload tools act on the page but are not auto-screenshot
-    // state changes, so the two sets must not be collapsed into one.
-    for (const name of ['iframe_click', 'iframe_type', 'upload_file', 'solve_captcha']) {
+    // iframe_type now needs state-change screenshots for its toolbar safety
+    // preflight as well as its ordinary post-action evidence.
+    assert.equal(stateChangeTools.has('iframe_type'), true, `${label}: iframe_type must trigger state-change screenshots`);
+    // The remaining frame/upload tools act on the page but are not
+    // auto-screenshot state changes, so the two sets must not be collapsed.
+    for (const name of ['iframe_click', 'upload_file', 'solve_captcha']) {
       assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
       assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
     }
@@ -12333,11 +12336,20 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
 
   try {
     globalThis.chrome = {
+      webNavigation: {
+        getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
+      },
       scripting: {
         executeScript: async () => [{ result: { ok: false, reason: 'not-found', url: 'https://example.test/frame' } }],
       },
       tabs: {
         get: async () => ({ url: 'chrome://settings' }),
+        sendMessage: async () => ({
+          resolved: true,
+          rect: { x: 10, y: 10, w: 120, h: 24 },
+          fieldMeta: { tag: 'input', type: 'text' },
+          toolbarContext: false,
+        }),
       },
     };
     const chromeAgent = new AgentCh({});
@@ -12392,9 +12404,18 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
     );
 
     globalThis.browser = {
+      webNavigation: {
+        getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
+      },
       tabs: {
         executeScript: async () => [{ ok: false, reason: 'not-found', url: 'https://example.test/frame' }],
         get: async () => ({ url: 'about:config' }),
+        sendMessage: async () => ({
+          resolved: true,
+          rect: { x: 10, y: 10, w: 120, h: 24 },
+          fieldMeta: { tag: 'input', type: 'text' },
+          toolbarContext: false,
+        }),
       },
     };
     const firefoxAgent = new AgentFx({});
@@ -27274,33 +27295,64 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   };
 
   try {
+    let chromeIframeExecutionTarget = null;
     globalThis.chrome = {
       webNavigation: { getAllFrames: async () => frames },
       tabs: { sendMessage: async (_tabId, message, options) => messageResult(message, options) },
-      scripting: { executeScript: async () => { throw new Error('probe scripts should already be injected'); } },
+      scripting: {
+        executeScript: async ({ target }) => {
+          chromeIframeExecutionTarget = target;
+          return [{ result: { ok: true, url: 'https://frame.example.test/editor', dispatched: true } }];
+        },
+      },
     };
-    const chromeProbe = await new AgentCh({})._probeRichTextToolbarIframeTarget(42, {
+    const chromeAgent = new AgentCh({});
+    chromeAgent.autoScreenshot = 'state_change';
+    assert.equal(chromeAgent._shouldAutoScreenshot('iframe_type'), true);
+    const chromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
       urlFilter: 'frame.example.test',
       selector: '#font-size',
       text: 'Document prose',
     });
     assert.equal(chromeProbe.frameId, 7);
     assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    const chromeType = await chromeAgent.executeTool(42, 'iframe_type', {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: '14',
+    });
+    assert.equal(chromeType.success, true);
+    assert.deepEqual(chromeIframeExecutionTarget, { tabId: 42, frameIds: [7] });
 
+    let firefoxIframeExecutionDetails = null;
     globalThis.browser = {
       webNavigation: { getAllFrames: async () => frames },
       tabs: {
         sendMessage: async (_tabId, message, options) => messageResult(message, options),
-        executeScript: async () => { throw new Error('probe scripts should already be injected'); },
+        executeScript: async (_tabId, details) => {
+          firefoxIframeExecutionDetails = details;
+          return [{ ok: true, url: 'https://frame.example.test/editor', dispatched: true }];
+        },
       },
     };
-    const firefoxProbe = await new AgentFx({})._probeRichTextToolbarIframeTarget(42, {
+    const firefoxAgent = new AgentFx({});
+    firefoxAgent.autoScreenshot = 'state_change';
+    assert.equal(firefoxAgent._shouldAutoScreenshot('iframe_type'), true);
+    const firefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
       urlFilter: 'frame.example.test',
       selector: '#font-size',
       text: 'Document prose',
     });
     assert.equal(firefoxProbe.frameId, 7);
     assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    const firefoxType = await firefoxAgent.executeTool(42, 'iframe_type', {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: '14',
+    });
+    assert.equal(firefoxType.success, true);
+    assert.equal(firefoxIframeExecutionDetails.frameId, 7);
+    assert.equal(firefoxIframeExecutionDetails.allFrames, undefined);
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
