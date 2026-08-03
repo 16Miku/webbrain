@@ -27545,6 +27545,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
     });
     assert.equal(chromeProbe.frameOwnerMeta?.id, 'editor-frame');
+    assert.equal(chromeProbe.frameOwnerScopeUrl, 'https://example.test/');
     sharedProbeFrameIds.length = 0;
     frameScrollParentId = null;
     const unfilteredChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
@@ -27610,6 +27611,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
     });
     assert.equal(firefoxProbe.frameOwnerMeta?.id, 'editor-frame');
+    assert.equal(firefoxProbe.frameOwnerScopeUrl, 'https://example.test/');
     sharedProbeFrameIds.length = 0;
     frameScrollParentId = null;
     const unfilteredFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {

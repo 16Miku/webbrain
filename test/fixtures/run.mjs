@@ -4219,6 +4219,58 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('a verified edit in the associated iframe editor must clear toolbar debt');
     }
 
+    const nestedIframeBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_nested_toolbar' },
+      nestedIframeBlock,
+      iframeBackedCandidate,
+      familyDecision,
+      familyAudit,
+      {
+        frameId: 7,
+        documentToken: 'toolbar-frame-doc-a',
+        refScopeUrl: 'https://toolbar-frame.example.test/editor',
+        rect: { x: 10, y: 8, w: 60, h: 24 },
+      },
+    );
+    if (!nestedIframeBlock.wrongTarget || agent._richTextToolbarStates.get(tabId)?.frameId !== 7) {
+      throw new Error('a nested iframe editor must retain the toolbar frame scope');
+    }
+    const nestedEditorProbe = {
+      ...matchingAnonymousFrameProbe,
+      frameId: 9,
+      parentFrameId: 7,
+      documentToken: 'nested-editor-doc-a',
+      refScopeUrl: 'https://nested-editor.example.test/editor',
+      frameOwnerScopeUrl: 'https://unrelated-toolbar-frame.example.test/editor',
+      topFrameUrl: 'https://example.test/editor',
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => nestedEditorProbe;
+    const wrongNestedScopeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { selector: '#inner-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (wrongNestedScopeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a matching nested iframe owner in another toolbar frame must retain debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      ...nestedEditorProbe,
+      frameOwnerScopeUrl: 'https://toolbar-frame.example.test/editor',
+    });
+    const nestedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { selector: '#inner-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!nestedIframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a verified nested iframe edit must use the owning toolbar-frame scope and clear debt');
+    }
+
     agent.autoScreenshot = 'state_change';
     agent.autoScreenshotCount.delete(tabId);
     agent.providerManager.getVisionProvider = async () => ({

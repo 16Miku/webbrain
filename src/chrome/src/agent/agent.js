@@ -2206,6 +2206,7 @@ export class Agent extends LoopDetector {
       annotationRect: mapAnnotation ? geometry?.annotationRect || null : null,
       frameOwnerRect: geometry?.frameOwnerRect || null,
       frameOwnerMeta: geometry?.frameOwnerMeta || null,
+      frameOwnerScopeUrl: navigationFrames.find(frame => frame?.frameId === selected.parentFrameId)?.url || '',
       topFrameUrl: navigationFrames.find(frame => frame?.frameId === 0)?.url || '',
     };
   }
@@ -2371,6 +2372,7 @@ export class Agent extends LoopDetector {
       ...liveProbe,
       frameOwnerRect: liveProbe.frameOwnerRect || preDispatchProbe?.frameOwnerRect || null,
       frameOwnerMeta: liveProbe.frameOwnerMeta || preDispatchProbe?.frameOwnerMeta || null,
+      frameOwnerScopeUrl: liveProbe.frameOwnerScopeUrl || preDispatchProbe?.frameOwnerScopeUrl || '',
       topFrameUrl: liveProbe.topFrameUrl || preDispatchProbe?.topFrameUrl || '',
     } : preDispatchProbe;
     if (!probe?.resolved) return false;
@@ -2385,7 +2387,7 @@ export class Agent extends LoopDetector {
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
     const liveRecoveryScopeUrl = iframeBackedRecovery
-      ? String(probe.topFrameUrl || '')
+      ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || '')
       : livePageUrl;
     if (
       (!iframeBackedRecovery && state.documentToken && liveDocument && state.documentToken !== liveDocument)
