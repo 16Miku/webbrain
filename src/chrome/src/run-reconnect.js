@@ -13,6 +13,13 @@ function requestMatches(value, requestId) {
   return value != null && String(value) === String(requestId);
 }
 
+function hasPlannerRequestFailure(updates) {
+  return updates.some(update => (
+    update?.type === 'warning'
+    && update?.data?.code === 'planner_request_failed'
+  ));
+}
+
 function runResponseFromSnapshot(snapshot, {
   reconnected = false,
   resumed = false,
@@ -21,7 +28,12 @@ function runResponseFromSnapshot(snapshot, {
   const updates = (Array.isArray(snapshot?.events) ? snapshot.events : [])
     .filter(event => event?.type && event.type !== 'run_complete')
     .map(event => ({ type: event.type, data: event.data }));
-  if (snapshot?.status === 'failed' && !updates.some(update => update.type === 'error')) {
+  // Planner request failures already render an actionable Retry/Providers card.
+  // Treat that warning as the terminal presentation so recovery cannot append
+  // a second generic error card for the same failed snapshot.
+  if (snapshot?.status === 'failed'
+      && !updates.some(update => update.type === 'error')
+      && !hasPlannerRequestFailure(updates)) {
     updates.push({
       type: 'error',
       data: {

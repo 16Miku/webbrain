@@ -377,6 +377,7 @@ const {
 const {
   isBackgroundConnectionError: isBackgroundConnectionErrorCh,
   runDetachedWithReconnect: runDetachedWithReconnectCh,
+  runResponseFromSnapshot: runResponseFromSnapshotCh,
   sendPlanResponseWithReconnect: sendPlanResponseWithReconnectCh,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/run-reconnect.js').replace(/\\/g, '/')
@@ -384,6 +385,7 @@ const {
 const {
   isBackgroundConnectionError: isBackgroundConnectionErrorFx,
   runDetachedWithReconnect: runDetachedWithReconnectFx,
+  runResponseFromSnapshot: runResponseFromSnapshotFx,
   sendPlanResponseWithReconnect: sendPlanResponseWithReconnectFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/run-reconnect.js').replace(/\\/g, '/')
@@ -55930,6 +55932,52 @@ test('sidepanel run errors dedupe streamed, returned, and restored copies by tab
     assert.equal(claimRunError({ ...base, message: 'A different failure.' }).duplicate, false, `${label}: distinct errors in one run should render`);
     assert.equal(claimRunError({ ...base, requestId: 'req-gmail-retry' }).duplicate, false, `${label}: identical errors from separate runs should render`);
     assert.equal(claimRunError({ ...base, tabId: 42 }).duplicate, false, `${label}: identical errors from separate tabs should render`);
+  }
+});
+
+test('failed planner snapshots keep the actionable warning as the only error presentation', () => {
+  for (const [label, runResponseFromSnapshot] of [
+    ['chrome', runResponseFromSnapshotCh],
+    ['firefox', runResponseFromSnapshotFx],
+  ]) {
+    const plannerMessage = 'Planner request failed before a valid response was available. No tools ran.';
+    const plannerResponse = runResponseFromSnapshot({
+      status: 'failed',
+      requestId: `${label}-planner-failure`,
+      finalContent: plannerMessage,
+      events: [{
+        type: 'warning',
+        data: {
+          code: 'planner_request_failed',
+          message: plannerMessage,
+          failureKind: 'request',
+        },
+      }],
+    });
+    assert.deepEqual(
+      plannerResponse.updates.map(update => update.type),
+      ['warning'],
+      `${label}: planner failure card should not be followed by a synthesized generic error`,
+    );
+
+    const ordinaryResponse = runResponseFromSnapshot({
+      status: 'failed',
+      requestId: `${label}-ordinary-failure`,
+      finalContent: 'Error: Ordinary provider failure.',
+      events: [],
+    });
+    assert.equal(ordinaryResponse.updates.length, 1, `${label}: ordinary failed snapshot should synthesize one error`);
+    assert.equal(ordinaryResponse.updates[0]?.type, 'error', `${label}: ordinary failure should remain an error update`);
+    assert.equal(ordinaryResponse.updates[0]?.data?.message, 'Ordinary provider failure.', `${label}: synthesized error copy`);
+
+    const recordedResponse = runResponseFromSnapshot({
+      status: 'failed',
+      requestId: `${label}-recorded-failure`,
+      finalContent: 'Error: Recorded provider failure.',
+      events: [{ type: 'error', data: { message: 'Recorded provider failure.' } }],
+    });
+    assert.equal(recordedResponse.updates.length, 1, `${label}: recorded error should not be duplicated`);
+    assert.equal(recordedResponse.updates[0]?.type, 'error', `${label}: recorded error should be preserved`);
   }
 });
 
