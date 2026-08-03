@@ -905,4 +905,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "估算缓存读取费用（$ / 100 万 token）",
   'st.provider.field.cache_write_cost_per_million': "估算 5 分钟缓存写入费用（$ / 100 万 token）",
   'st.provider.field.cache_write_1h_cost_per_million': "估算 1 小时缓存写入费用（$ / 100 万 token）",
+  'sp.run_progress_replay_gap': '部分较早的运行进度无法重新显示',
 };

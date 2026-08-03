@@ -932,4 +932,5 @@ export default {
   'st.skills.cws.package_cleared': 'ZIP rilis yang dipilih dihapus dari penyimpanan lokal.',
   'st.skills.cws.package_zip_only': 'Pilih paket rilis berekstensi .zip.',
   'st.skills.cws.package_too_large': 'ZIP harus berukuran antara 1 byte hingga 100 MB.',
+  'sp.run_progress_replay_gap': 'Sebagian kemajuan proses sebelumnya tidak dapat ditampilkan ulang',
 };

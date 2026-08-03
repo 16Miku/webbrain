@@ -905,4 +905,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Perkiraan biaya baca cache ($ / 1 juta token)",
   'st.provider.field.cache_write_cost_per_million': "Perkiraan biaya tulis cache 5 menit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Perkiraan biaya tulis cache 1 jam ($ / 1 juta token)",
+  'sp.run_progress_replay_gap': 'Sebagian kemajuan proses sebelumnya tidak dapat ditampilkan ulang',
 };

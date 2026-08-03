@@ -905,4 +905,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Coste estimado de lectura de caché ($ / 1M tokens)",
   'st.provider.field.cache_write_cost_per_million': "Coste estimado de escritura en caché de 5 min ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Coste estimado de escritura en caché de 1 h ($ / 1M tokens)",
+  'sp.run_progress_replay_gap': 'No se pudo volver a mostrar parte del progreso anterior de la ejecución',
 };

@@ -932,4 +932,5 @@ export default {
   'st.skills.cws.package_cleared': 'ลบ ZIP การเผยแพร่ที่เลือกออกจากที่จัดเก็บในเครื่องแล้ว',
   'st.skills.cws.package_zip_only': 'เลือกแพ็คเกจการเผยแพร่รูปแบบ .zip',
   'st.skills.cws.package_too_large': 'ZIP ต้องมีขนาดระหว่าง 1 ไบต์ถึง 100 MB',
+  'sp.run_progress_replay_gap': 'ไม่สามารถแสดงความคืบหน้าก่อนหน้านี้บางส่วนของการทำงานซ้ำได้',
 };

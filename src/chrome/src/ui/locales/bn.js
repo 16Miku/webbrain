@@ -930,4 +930,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "আনুমানিক ক্যাশে পড়ার খরচ ($ / 1M টোকেন)",
   'st.provider.field.cache_write_cost_per_million': "আনুমানিক 5-মিনিট ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
   'st.provider.field.cache_write_1h_cost_per_million': "আনুমানিক 1-ঘন্টা ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
+  'sp.run_progress_replay_gap': 'আগের কিছু রান অগ্রগতি পুনরায় দেখানো যায়নি',
 };

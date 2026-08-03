@@ -905,4 +905,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "تكلفة قراءة ذاكرة التخزين المؤقت المقدّرة ($ / مليون رمز)",
   'st.provider.field.cache_write_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة 5 دقائق ($ / مليون رمز)",
   'st.provider.field.cache_write_1h_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة ساعة واحدة ($ / مليون رمز)",
+  'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
 };

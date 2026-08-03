@@ -53924,6 +53924,30 @@ test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeat
   }
 });
 
+test('all locales translate the run-progress replay-gap notice', async () => {
+  for (const [label, panelRel, localeDir] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    assert.match(
+      panel,
+      /function addRunProgressReplayGapNote\(\) \{[\s\S]*?note\.textContent = t\('sp\.run_progress_replay_gap'\)/,
+      `${label}: replay-gap notice should render through the locale layer`,
+    );
+    for (const filename of fs.readdirSync(path.join(ROOT, localeDir)).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
+      const message = locale['sp.run_progress_replay_gap'];
+      assert.equal(typeof message, 'string', `${label}/${filename}: missing translated run-progress replay-gap notice`);
+      assert.ok(message.trim().length > 0, `${label}/${filename}: replay-gap notice must not be empty`);
+      // The whole point of the separate notice: replay loss is UI history loss,
+      // so no locale may reuse its context-compaction copy for it.
+      assert.notEqual(message, locale['sp.context_compacted'], `${label}/${filename}: replay loss needs copy distinct from context compaction`);
+      assert.notEqual(message, locale['sp.context_compacted_manual'], `${label}/${filename}: replay loss needs copy distinct from manual context compaction`);
+    }
+  }
+});
+
 test('run UI journal: consequential tool checkpoints stay pending until conversation durability is confirmed', () => {
   for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
     const journal = new Journal();
@@ -54866,7 +54890,7 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(panel, /showActivity\('Reconnecting…'\)/, `${label}: reconnect attempts should be visible`);
     assert.match(panel, /onState: state => applyActiveRunState\(tabId, state\)/, `${label}: reconnect probes should replay missed UI journal events`);
     assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?lastRenderedSeq = unavailableBeforeSeq;[\s\S]*?dataset\.lastRenderedSeq = String\(lastRenderedSeq\)/, `${label}: replay gaps should render once and advance the local replay cursor`);
-    assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?Some earlier run progress could not be replayed/, `${label}: replay loss needs distinct non-context-compaction copy`);
+    assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\('sp\.run_progress_replay_gap'\)/, `${label}: replay loss needs distinct non-context-compaction copy`);
     assert.doesNotMatch(panel, /addContextCompactedNote\(\{ message: 'Some hidden-tab progress was compacted\.' \}\)/, `${label}: replay loss must not masquerade as model-context compaction`);
     assert.match(panel, /void adoptRestoredRunState\(numericTabId, state\)/, `${label}: remounted sidepanels should adopt orphaned run monitors`);
     assert.match(panel, /probeFirst: true,[\s\S]*?requireDurableSubmittedTurn:/, `${label}: remount adoption should probe before any safe continuation`);

@@ -9347,7 +9347,7 @@ function addContextCompactedNote(data) {
 function addRunProgressReplayGapNote() {
   const note = document.createElement('div');
   note.className = 'context-compacted-note run-progress-replay-gap-note';
-  note.textContent = 'Some earlier run progress could not be replayed';
+  note.textContent = t('sp.run_progress_replay_gap');
   const stepsContainer = getOrCreateStepsContainer();
   if (stepsContainer) {
     stepsContainer.appendChild(note);

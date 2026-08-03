@@ -905,4 +905,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "キャッシュ読み取りの推定費用（$ / 100万トークン）",
   'st.provider.field.cache_write_cost_per_million': "5分キャッシュ書き込みの推定費用（$ / 100万トークン）",
   'st.provider.field.cache_write_1h_cost_per_million': "1時間キャッシュ書き込みの推定費用（$ / 100万トークン）",
+  'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
 };

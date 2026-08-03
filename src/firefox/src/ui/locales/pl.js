@@ -865,4 +865,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Szacowany koszt odczytu z pamięci podręcznej ($ / 1M tokenów)",
   'st.provider.field.cache_write_cost_per_million': "Szacowany koszt zapisu do pamięci podręcznej (5 min) ($ / 1M tokenów)",
   'st.provider.field.cache_write_1h_cost_per_million': "Szacowany koszt zapisu do pamięci podręcznej (1 godz.) ($ / 1M tokenów)",
+  'sp.run_progress_replay_gap': 'Nie udało się ponownie wyświetlić części wcześniejszego postępu wykonania',
 };
