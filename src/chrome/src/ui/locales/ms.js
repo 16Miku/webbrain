@@ -938,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': 'ZIP pelepasan yang dipilih dibuang daripada storan tempatan.',
   'st.skills.cws.package_zip_only': 'Pilih pakej pelepasan berformat .zip.',
   'st.skills.cws.package_too_large': 'ZIP mesti antara 1 bait hingga 100 MB.',
+  'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
 };

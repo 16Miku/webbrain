@@ -937,4 +937,5 @@ export default {
   'st.skills.cws.package_cleared': 'Seçili sürüm ZIP\'i yerel depodan kaldırıldı.',
   'st.skills.cws.package_zip_only': '.zip biçiminde bir sürüm paketi seçin.',
   'st.skills.cws.package_too_large': 'ZIP 1 bayt ile 100 MB arasında olmalıdır.',
+  'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
 };

@@ -938,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '선택된 릴리스 ZIP이 로컬 스토리지에서 제거되었습니다.',
   'st.skills.cws.package_zip_only': '.zip 릴리스 패키지를 선택하세요.',
   'st.skills.cws.package_too_large': 'ZIP은 1바이트에서 100MB 사이여야 합니다.',
+  'sp.run_progress_replay_gap': '이전 실행 진행 상황 일부를 다시 표시할 수 없습니다',
 };

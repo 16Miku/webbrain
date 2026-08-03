@@ -864,4 +864,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "עלות משוערת לקריאה מהמטמון ($ / מיליון אסימונים)",
   'st.provider.field.cache_write_cost_per_million': "עלות משוערת לכתיבה למטמון ל-5 דקות ($ / מיליון אסימונים)",
   'st.provider.field.cache_write_1h_cost_per_million': "עלות משוערת לכתיבה למטמון לשעה ($ / מיליון אסימונים)",
+  'sp.run_progress_replay_gap': 'לא ניתן היה להציג מחדש חלק מהתקדמות ההרצה הקודמת',
 };

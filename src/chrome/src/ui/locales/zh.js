@@ -938,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '已从本地存储中移除选中的发布 ZIP。',
   'st.skills.cws.package_zip_only': '请选择 .zip 格式的发布包。',
   'st.skills.cws.package_too_large': 'ZIP 文件大小必须在 1 字节到 100 MB 之间。',
+  'sp.run_progress_replay_gap': '部分较早的运行进度无法重新显示',
 };

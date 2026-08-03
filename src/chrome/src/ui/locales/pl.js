@@ -898,4 +898,5 @@ export default {
   'st.skills.cws.package_cleared': 'Wybrany ZIP publikacji usunięty z pamięci lokalnej.',
   'st.skills.cws.package_zip_only': 'Wybierz pakiet publikacji w formacie .zip.',
   'st.skills.cws.package_too_large': 'ZIP musi mieć rozmiar od 1 bajta do 100 MB.',
+  'sp.run_progress_replay_gap': 'Nie udało się ponownie wyświetlić części wcześniejszego postępu wykonania',
 };

@@ -938,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': 'Выбранный ZIP-файл публикации удалён из локального хранилища.',
   'st.skills.cws.package_zip_only': 'Выберите пакет публикации в формате .zip.',
   'st.skills.cws.package_too_large': 'ZIP-файл должен быть от 1 байта до 100 МБ.',
+  'sp.run_progress_replay_gap': 'Не удалось повторно показать часть предыдущего хода выполнения',
 };

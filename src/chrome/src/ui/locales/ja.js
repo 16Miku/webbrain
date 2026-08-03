@@ -938,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '選択したリリース ZIP がローカルストレージから削除されました。',
   'st.skills.cws.package_zip_only': '.zip リリースパッケージを選択してください。',
   'st.skills.cws.package_too_large': 'ZIP は 1 バイトから 100 MB の間でなければなりません。',
+  'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
 };
