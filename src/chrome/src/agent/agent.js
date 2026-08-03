@@ -1745,23 +1745,28 @@ export class Agent extends LoopDetector {
 
   _clearRichTextToolbarDocumentState(tabId) {
     const state = this._richTextToolbarStates.get(tabId);
+    const recoveryTargetUnknown = state?.recoveryTargetUnknown === true;
     if (
       !this._richTextToolbarDebts.has(tabId)
-      || !Agent._richTextToolbarEditorIdentityRecoverable(state?.associatedEditorIdentity)
+      || (
+        !recoveryTargetUnknown
+        && !Agent._richTextToolbarEditorIdentityRecoverable(state?.associatedEditorIdentity)
+      )
     ) {
       this._richTextToolbarStates.delete(tabId);
       return;
     }
     // Refs, selectors, region refs, frame ids, and document tokens are scoped
-    // to the replaced page. Keep only the stable editor identity needed to
-    // prove a corrected edit after a reload or navigation while the
-    // completion debt remains open.
+    // to the replaced page. Keep the stable editor identity, or the explicit
+    // unknown-target marker, needed to prove a corrected edit after a reload
+    // or navigation while the completion debt remains open.
     this._richTextToolbarStates.set(tabId, {
       recoveryOnly: true,
       targetKind: state.targetKind || 'other_formatting',
       detectedAt: state.detectedAt || Date.now(),
       associatedEditorRef: '',
       associatedEditorIdentity: { ...state.associatedEditorIdentity },
+      recoveryTargetUnknown,
       recoveryPageUrl: state.recoveryPageUrl || state.pageUrl || '',
       documentToken: '',
       pageUrl: '',
@@ -2355,16 +2360,21 @@ export class Agent extends LoopDetector {
     if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified !== true) return false;
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
     const state = this._richTextToolbarStates.get(tabId);
+    const recoveryTargetUnknown = state?.recoveryTargetUnknown === true
+      && !state?.associatedEditorRef
+      && !Agent._richTextToolbarEditorIdentityRecoverable(state?.associatedEditorIdentity);
     if (
       !state
       || (
-        !state.associatedEditorRef
+        !recoveryTargetUnknown
+        && !state.associatedEditorRef
         && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
       )
     ) return false;
     const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
     const iframeBackedRecovery = toolName === 'iframe_type'
       && ['iframe', 'frame'].includes(expectedEditorTag);
+    const unknownIframeRecovery = recoveryTargetUnknown && toolName === 'iframe_type';
     const liveProbe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!liveProbe?.resolved && result.verified !== true) return false;
     const probe = liveProbe?.resolved ? {
@@ -2377,6 +2387,8 @@ export class Agent extends LoopDetector {
     if (!probe?.resolved) return false;
     const sameFrame = iframeBackedRecovery
       ? Number.isInteger(probe.frameId) && probe.frameId !== 0
+      : recoveryTargetUnknown
+      ? true
       : state.recoveryOnly === true
       ? true
       : Number.isInteger(state.frameId)
@@ -2385,8 +2397,8 @@ export class Agent extends LoopDetector {
     if (!sameFrame) return false;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
-    const liveRecoveryScopeUrl = iframeBackedRecovery
-      ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || '')
+    const liveRecoveryScopeUrl = iframeBackedRecovery || unknownIframeRecovery
+      ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || livePageUrl)
       : livePageUrl;
     if (
       (!iframeBackedRecovery && state.documentToken && liveDocument && state.documentToken !== liveDocument)
@@ -2400,6 +2412,13 @@ export class Agent extends LoopDetector {
     }
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
     const innerEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
+    const unknownRecoveryScopeMatches = state.recoveryOnly !== true
+      || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl);
+    const verifiedUnknownEditor = recoveryTargetUnknown
+      && innerEditor
+      && probe.toolbarContext !== true
+      && !fieldMeta.toolbarCandidate
+      && unknownRecoveryScopeMatches;
     const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
     const matchingIdentity = Agent._richTextToolbarEditorIdentityMatches(
       state.associatedEditorIdentity,
@@ -2429,7 +2448,7 @@ export class Agent extends LoopDetector {
       && innerEditor
       && matchingFrameOwner
       && iframeScopeMatches;
-    if (!innerEditor || (!exactRef && !exactIdentity && !exactSelector && !exactIframeEditor)) return false;
+    if (!innerEditor || (!verifiedUnknownEditor && !exactRef && !exactIdentity && !exactSelector && !exactIframeEditor)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
@@ -2438,6 +2457,7 @@ export class Agent extends LoopDetector {
       selectorRecovery: exactSelector,
       identityRecovery: exactIdentity,
       iframeRecovery: exactIframeEditor,
+      unknownEditorRecovery: verifiedUnknownEditor,
     });
     return true;
   }
@@ -2453,6 +2473,7 @@ export class Agent extends LoopDetector {
       && (
         prior.associatedEditorRef
         || Agent._richTextToolbarEditorIdentityRecoverable(prior.associatedEditorIdentity)
+        || prior.recoveryTargetUnknown === true
       )
     );
     const sameBlockedScope = !!(
@@ -2468,6 +2489,7 @@ export class Agent extends LoopDetector {
             detectedAt: prior.detectedAt || Date.now(),
             associatedEditorRef: '',
             associatedEditorIdentity: { ...prior.associatedEditorIdentity },
+            recoveryTargetUnknown: prior.recoveryTargetUnknown === true,
             recoveryPageUrl: prior.recoveryPageUrl || prior.pageUrl || '',
             documentToken: '',
             pageUrl: '',
@@ -2487,6 +2509,8 @@ export class Agent extends LoopDetector {
       state.detectedAt = Date.now();
       state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
       state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
+      state.recoveryTargetUnknown = !state.associatedEditorRef
+        && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
       state.recoveryOnly = false;
       state.recoveryPageUrl = '';
     }
@@ -2499,29 +2523,23 @@ export class Agent extends LoopDetector {
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     const hasExactRecoveryTarget = !!state.associatedEditorRef
       || Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
-    if (hasExactRecoveryTarget) {
-      if (refId) state.blockedRefs.add(refId);
-      if (selector) state.blockedSelectors.add(selector);
-      if (candidate?.regionRef) state.blockedRegionRefs.add(candidate.regionRef);
-      for (const relatedRef of candidate?.relatedRefs || []) {
-        if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
-      }
-      this._richTextToolbarStates.set(tabId, state);
-      const debt = {
-        tool: toolName,
-        ref_id: refId || null,
-        targetKind: state.targetKind,
-        source: decision.source,
-        detectedAt: state.detectedAt,
-      };
-      if (!this._richTextToolbarDebts.has(tabId)) {
-        this._richTextToolbarDebts.set(tabId, debt);
-      }
-    } else {
-      // The edit itself is still blocked, but do not create completion debt
-      // that no later action can prove resolved. A fresh read can expose a
-      // stable editor ref and the next toolbar attempt will be audited again.
-      this._resetRichTextToolbarAudit(tabId);
+    if (refId) state.blockedRefs.add(refId);
+    if (selector) state.blockedSelectors.add(selector);
+    if (candidate?.regionRef) state.blockedRegionRefs.add(candidate.regionRef);
+    for (const relatedRef of candidate?.relatedRefs || []) {
+      if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
+    }
+    this._richTextToolbarStates.set(tabId, state);
+    const debt = {
+      tool: toolName,
+      ref_id: refId || null,
+      targetKind: state.targetKind,
+      source: decision.source,
+      detectedAt: state.detectedAt,
+      recoveryTargetUnknown: !hasExactRecoveryTarget,
+    };
+    if (!this._richTextToolbarDebts.has(tabId)) {
+      this._richTextToolbarDebts.set(tabId, debt);
     }
 
     Object.assign(result, {
@@ -2551,8 +2569,9 @@ export class Agent extends LoopDetector {
         targetKind: state.targetKind,
         source: decision.source,
         confidence: audit?.confidence ?? null,
-        blockedRefCount: hasExactRecoveryTarget ? state.blockedRefs.size : 0,
-        persistentRecoveryDebt: hasExactRecoveryTarget,
+        blockedRefCount: state.blockedRefs.size,
+        persistentRecoveryDebt: true,
+        recoveryTargetUnknown: !hasExactRecoveryTarget,
       });
     }
   }

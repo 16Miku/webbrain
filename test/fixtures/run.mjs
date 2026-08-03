@@ -4522,8 +4522,77 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       familyAudit,
       { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
     );
-    if (!unscopedBlock.wrongTarget || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('missing editor ref and identity must block the edit without creating unrecoverable debt');
+    const unknownRecoveryState = agent._richTextToolbarStates.get(tabId);
+    if (
+      !unscopedBlock.wrongTarget
+      || !agent._richTextToolbarDebts.has(tabId)
+      || unknownRecoveryState?.recoveryTargetUnknown !== true
+    ) {
+      throw new Error('ambiguous editor association must retain completion debt with an unknown recovery target');
+    }
+    const unknownDoneBlock = agent._completionDoneBlock(tabId, 'done', { outcome: 'success' });
+    if (unknownDoneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
+      throw new Error(`ambiguous editor debt must block successful completion: ${JSON.stringify(unknownDoneBlock)}`);
+    }
+    if (agent._completionDoneBlock(tabId, 'done', { outcome: 'partial' })) {
+      throw new Error('ambiguous editor debt must still permit an explicit partial outcome');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_toolbar_editor_like',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 8, w: 300, h: 120 },
+      fieldMeta: { contentEditable: true, toolbarCandidate: candidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const toolbarLikeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_ax',
+      { ref_id: 'ref_toolbar_editor_like' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (toolbarLikeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an editor-like toolbar target must not clear ambiguous editor debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_quantity',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 180, w: 180, h: 32 },
+      fieldMeta: { tag: 'input', type: 'text' },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const ordinaryFieldRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_quantity' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (ordinaryFieldRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an ordinary form field must not clear ambiguous editor debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_ambiguous_editor_a',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 220, w: 300, h: 120 },
+      fieldMeta: { tag: 'div', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const unknownEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_ax',
+      { ref_id: 'ref_ambiguous_editor_a' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!unknownEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a verified non-toolbar editor edit must clear ambiguous editor debt');
     }
 
     let classifierArgCount = 0;
