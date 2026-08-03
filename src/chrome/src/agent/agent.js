@@ -92,6 +92,17 @@ const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the ru
 // boundary instead of guessing when a follow-up reaches beyond the selection.
 const SELECTION_SCOPE_SYSTEM_NOTE = 'The text the user selected on a page is the only source available in this conversation. The current page, other tabs, files, live data, and browser tools are all unavailable. If the user asks about anything beyond the selected text and this conversation, do not guess: briefly explain, in the user\'s language, that this conversation only covers their selected text, and suggest starting a new conversation for questions about the page.';
 const BROWSER_NEW_TAB_URL_PREFIXES = ['chrome://newtab', 'edge://newtab'];
+// Site adapters where a run is likely to compose prose the user will send, so
+// the Humanizer skill is preactivated instead of waiting for a load_skill hop.
+const HUMANIZER_SKILL_SITE_ADAPTERS = new Set([
+  'gmail',
+  'outlook',
+  'yahoo-mail',
+  'proton-mail',
+  'fastmail',
+  'zoho-mail',
+  'yandex-mail',
+]);
 const SET_CHECKED_VERIFY_DELAY_MS = 80;
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'get_accessibility_tree',
@@ -10094,6 +10105,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _preactivateHumanizerSkillForRun(tabId, mode) {
+    if (!HUMANIZER_SKILL_SITE_ADAPTERS.has(this._activeSkillSiteAdapter(tabId))) return false;
+    const tier = this._resolvePromptTier();
+    if (tier === 'compact') return false;
+    const owner = this._eligibleSkills(mode, tier).find((skill) => skill.id === 'humanizer');
+    if (!owner) return false;
+    return this._activateSkillsForRun(tabId, [owner.id], mode, tier).includes(owner.id);
+  }
+
   _preactivateNyTimesSkillForRun(tabId, mode) {
     if (this._activeSkillSiteAdapter(tabId) !== 'nytimes') return false;
     const tier = this._resolvePromptTier();
@@ -19783,7 +19803,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    if (!selectionOnly) {
+      this._preactivateNyTimesSkillForRun(tabId, mode);
+      this._preactivateHumanizerSkillForRun(tabId, mode);
+    }
 
     const provider = this.providerManager.getActive();
 
@@ -20559,7 +20582,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    if (!selectionOnly) {
+      this._preactivateNyTimesSkillForRun(tabId, mode);
+      this._preactivateHumanizerSkillForRun(tabId, mode);
+    }
 
     const provider = this.providerManager.getActive();
 

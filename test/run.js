@@ -103,6 +103,17 @@ function packagedMailTmRecord(prefix) {
   };
 }
 
+function packagedHumanizerRecord(prefix) {
+  return {
+    id: 'humanizer',
+    name: 'Humanizer',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/humanizer.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/humanizer.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedOtpHelperRecord(prefix) {
   return {
     id: 'otp-verification-code-helper',
@@ -13195,6 +13206,56 @@ test('NYTimes runs preactivate the adapter-scoped fallback without weakening ski
   }
 });
 
+test('mail runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const tabId = label === 'chrome' ? 4941 : 4942;
+    const providerManager = { getActive: () => ({ promptTier: 'full' }) };
+    const agent = new AgentClass(providerManager);
+    agent.setCustomSkills([packagedHumanizerRecord(prefix)]);
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('act', tabId) }]);
+
+    for (const adapter of ['gmail', 'outlook', 'proton-mail', 'yahoo-mail', 'fastmail', 'zoho-mail', 'yandex-mail']) {
+      agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      agent.lastSeenAdapter.set(tabId, adapter);
+      assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), true, `${label}: ${adapter} run did not preactivate Humanizer`);
+      assert.ok(agent.activeSkillIds.get(tabId)?.has('humanizer'), `${label}: ${adapter} active skill id missing`);
+    }
+
+    // The skill instructions reach the prompt without a model-visible load_skill hop.
+    assert.ok(
+      agent._buildSystemPrompt('act', tabId).includes('Humanizer'),
+      `${label}: preactivated skill body missing from the system prompt`
+    );
+
+    agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+    agent.lastSeenAdapter.set(tabId, 'nytimes');
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: non-mail adapter preactivated Humanizer`);
+    assert.equal(agent.activeSkillIds.has(tabId), false, `${label}: non-mail adapter retained an active skill`);
+    assert.ok(
+      !agent._buildSystemPrompt('act', tabId).includes('Humanizer'),
+      `${label}: non-mail run still carries the skill body`
+    );
+
+    agent.lastSeenAdapter.set(tabId, '');
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: absent adapter preactivated Humanizer`);
+
+    // A user who removes the default skill must not get it back through preactivation.
+    agent.lastSeenAdapter.set(tabId, 'gmail');
+    agent.setCustomSkills([]);
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: removed skill was preactivated`);
+
+    const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
+    compact.setCustomSkills([packagedHumanizerRecord(prefix)]);
+    compact.conversationModes.set(tabId, 'act');
+    compact.lastSeenAdapter.set(tabId, 'gmail');
+    assert.equal(compact._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: Compact preactivated a skill`);
+  }
+});
+
 test('NYTimes structured pageGate adds a trusted fallback instruction and raw prose cannot spoof it', async () => {
   for (const [label, prefix, AgentClass] of [
     ['chrome', 'src/chrome', AgentCh],
@@ -15151,6 +15212,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
     'frankfurter-fx': ['currency_conversion', 'exchange_rate', 'fx_lookup', 'currency_list'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
+    'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
     ['chrome', 'src/chrome', PACKAGED_SKILL_SOURCES_CH, normalizeCustomSkillsCh],
@@ -52343,6 +52405,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-library-books',
     'wikipedia',
     'frankfurter-fx',
+    'humanizer',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -52353,14 +52416,17 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-library-books',
     'wikipedia',
     'frankfurter-fx',
+    'humanizer',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
+    'humanizer',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
+    'humanizer',
   ]);
   assert.equal(PACKAGED_SKILL_SOURCES_CH.some((skill) => skill.id === 'chrome-web-store-release'), false, 'chrome: release workflow must not appear in available packaged skills');
   assert.equal(PACKAGED_SKILL_SOURCES_FX.some((skill) => skill.id === 'chrome-web-store-release'), false, 'firefox: release workflow must not appear in available packaged skills');

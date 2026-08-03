@@ -285,8 +285,9 @@ Chrome CSS patch records include the top-level `documentId` and a patch-specific
 
 Settings -> Skills stores enabled skills in `customSkills` (`chrome.storage.local`
 or `browser.storage.local`). On startup, `background.js` loads packaged default
-skills from `skills/*`, adds any missing default (currently FreeSkillz.xyz and
-the prompt-only email verification-code helper), and refreshes an existing
+skills from `skills/*`, adds any missing default (currently FreeSkillz.xyz, the
+prompt-only email verification-code helper, and Humanizer), and refreshes an
+existing
 built-in skill record when the packaged copy changes. If the user removes a
 default skill, its removal tombstone prevents it from being silently re-added;
 new default IDs can still be migrated into existing installations.
@@ -311,6 +312,8 @@ new default IDs can still be migrated into existing installations.
   recommended actions can preactivate the skill that owns their first tool;
   NYTimes adapter runs narrowly preactivate FreeSkillz so its site-scoped,
   read-only article fallback is ready after a structured blocking `pageGate`.
+  Webmail adapter runs preactivate the prompt-only Humanizer skill so a composed
+  reply is rewritten without spending a model-visible `load_skill` hop.
 - Tool exposure: `buildSkillToolDefinitions()` reads manifests only from active
   skills' Markdown bodies (never from Agent Skills frontmatter) and appends
   compatible schemas to `getToolsForMode(...)` at LLM-call time, respecting
@@ -377,6 +380,7 @@ tracks as a successful video or hand ffmpeg work to the user.
 | Find, read, copy, or enter a code visible in browser email/message content | OTP / verification-code helper | Ask, Act, Dev | Prompt-only; after loading it guides existing page tools. |
 | Create and use a temporary mailbox for an unimportant signup | Disposable email (Mail.tm) | Act, Dev | Not shown to Ask. It may overlap with OTP during a verification flow, so both can be loaded. |
 | Read a YouTube transcript, fetch a blocked NYTimes article, or resolve/download supported public media | FreeSkillz.xyz | Ask, Act, Dev | Ask can load the skill but still cannot see its Act-only `download_public_media` tool. |
+| Draft or rewrite an email reply, message, or post the user will send | Humanizer | Ask, Act, Dev | Prompt-only; preactivated on webmail adapters and otherwise routed by catalog. Returns final text only. |
 | Look up weather or a short forecast | Open-Meteo weather | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Find books, ISBNs, authors, or publication data | Open Library | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Read-only Wikipedia REST/Action API tools; results are untrusted. |
