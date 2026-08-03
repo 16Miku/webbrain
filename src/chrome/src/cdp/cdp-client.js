@@ -3175,13 +3175,16 @@ export class CDPClient {
             while (current && !seen.has(current)) {
               seen.add(current);
               try { if (current.matches?.(selector)) return current; } catch {}
-              current = current.parentElement || current.getRootNode?.()?.host || null;
+              current = current.assignedSlot
+                || current.parentElement
+                || current.getRootNode?.()?.host
+                || null;
             }
             return null;
           };
           const composedParent = node => {
             if (!node) return null;
-            return node.parentElement || node.getRootNode?.()?.host || null;
+            return node.assignedSlot || node.parentElement || node.getRootNode?.()?.host || null;
           };
           const root = el.getRootNode?.() || document;
           const findById = id => {

@@ -483,6 +483,7 @@
 
   function _composedParent(node) {
     if (!node) return null;
+    if (node.assignedSlot) return node.assignedSlot;
     const parent = node.parentNode;
     if (parent) {
       return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)

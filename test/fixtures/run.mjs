@@ -1083,6 +1083,30 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   ) {
     throw new Error(`shadow-host dense toolbar cluster was not audited by the CDP selector probe: ${JSON.stringify(probe)}`);
   }
+
+  await page.setContent(`<!doctype html>
+    <style>
+      #slotted-toolbar-editor { width:420px; }
+      #slot-editor-body { width:420px; height:160px; }
+    </style>
+    <div id="slotted-toolbar-editor">
+      <span id="slot-toolbar-host">
+        <input id="slotted-family" value="Default" style="width:118px;height:22px">
+      </span>
+      <div id="slot-editor-body" role="textbox" contenteditable="true">Enter text</div>
+    </div>
+    <script>
+      document.querySelector('#slot-toolbar-host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div role="toolbar" style="height:44px;display:flex;align-items:center"><slot></slot></div>';
+    </script>`);
+  const slottedProbe = await client.probeRichTextToolbarSelector(42, '#slotted-family');
+  if (
+    !slottedProbe?.resolved
+    || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
+  ) {
+    throw new Error(`assigned-slot toolbar ancestry was not audited by the CDP selector probe: ${JSON.stringify(slottedProbe)}`);
+  }
 });
 
 for (const browserKind of ['chrome', 'firefox']) {
@@ -2920,6 +2944,28 @@ for (const browserKind of ['chrome', 'firefox']) {
       shadowToolbarBody.textContent = 'Enter text';
       shadowToolbarEditor.appendChild(shadowToolbarBody);
       document.body.appendChild(shadowToolbarEditor);
+
+      const slottedToolbarEditor = document.createElement('div');
+      slottedToolbarEditor.className = 'editor';
+      const slottedToolbarHost = document.createElement('div');
+      slottedToolbarHost.id = 'slotted-toolbar-component';
+      slottedToolbarHost.attachShadow({ mode: 'open' }).innerHTML = `
+        <div role="toolbar" style="height:42px;display:flex;align-items:center">
+          <slot></slot>
+        </div>`;
+      const slottedToolbarInput = document.createElement('input');
+      slottedToolbarInput.id = 'slotted-toolbar-family-input';
+      slottedToolbarInput.value = 'Default';
+      slottedToolbarInput.style.cssText = 'width:118px;height:22px';
+      slottedToolbarHost.appendChild(slottedToolbarInput);
+      slottedToolbarEditor.appendChild(slottedToolbarHost);
+      const slottedToolbarBody = document.createElement('div');
+      slottedToolbarBody.id = 'slotted-toolbar-editor-body';
+      slottedToolbarBody.className = 'body';
+      slottedToolbarBody.contentEditable = 'true';
+      slottedToolbarBody.textContent = 'Enter text';
+      slottedToolbarEditor.appendChild(slottedToolbarBody);
+      document.body.appendChild(slottedToolbarEditor);
       return {
         size: window.__wb_ax_ref(document.getElementById('font-size')),
         family: window.__wb_ax_ref(document.getElementById('font-family')),
@@ -2932,6 +2978,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
+        slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -2996,6 +3043,16 @@ for (const browserKind of ['chrome', 'firefox']) {
     });
     if (shadowToolbarProbe?.fieldMeta?.toolbarCandidate?.associatedEditorIdentity?.id !== 'shadow-toolbar-editor-body') {
       throw new Error(`expected editor association through the toolbar shadow host, got: ${JSON.stringify(shadowToolbarProbe)}`);
+    }
+    const slottedToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.slottedToolbarFamilyInput, text: 'Roboto' },
+    });
+    if (
+      !slottedToolbarProbe?.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+      || slottedToolbarProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slotted-toolbar-editor-body'
+    ) {
+      throw new Error(`expected toolbar ancestry through the input assigned slot, got: ${JSON.stringify(slottedToolbarProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
