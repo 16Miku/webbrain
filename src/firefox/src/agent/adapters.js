@@ -16331,6 +16331,20 @@ const ADAPTERS = [
 - Report success only with "订单号" plus "预订成功" or the applicable "出票成功" status. Pending confirmation, a payment redirect, or an itinerary held for payment is incomplete.`,
   },
   {
+    name: 'traveloka',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?traveloka\.com\//.test(url),
+    notes: `
+- Observed 2026-08: an automated visit can return HTTP 405 with "Human Verification", "Let's confirm you are human", and a "Begin" control instead of inventory. Stop and ask the user to complete it manually; do not retry, bypass it, or report that no trips or rooms exist.
+- Choose the requested product before entering details: "Flights" and "Hotels" have different search, traveler/guest, payment, and fulfillment rules. Re-read locale, language, and currency, then set exact cities or properties, local dates, rooms or travelers, and one-way/round-trip intent.
+- For a flight, verify airports, local departure/arrival dates and times, operating and marketing carrier for a code-share, stops, connection requirements, cabin, and fare rules. A round trip built from two one-way tickets can create separate bookings and separate payments with independent change, cancellation, and disruption handling.
+- Compare the selected offer's supplier and final payable amount, not a headline or crossed-out fare. Read included baggage, taxes, fees, currency, refund/change conditions, and all ancillaries such as seats, meals, insurance, or extra baggage; keep unrequested paid additions out of the order.
+- For a hotel, verify the exact property and room, occupancy, bed, meals, inclusions, taxes, supplier charges, check-in/out, and policy. "Pay Now" and "Pay at Hotel" differ in payment timing and possible hotel-side charges; read the cancellation deadline, refundability, and no-show consequence for the selected room.
+- On order review, re-read every traveler/guest name, required document data, contact, itinerary or stay, supplier, add-ons, policy, payment timing, currency, and total. Never invent identity details, and require explicit confirmation before creating the booking or making payment.
+- After payment, obtain the voucher, e-ticket, or booking confirmation and verify the supplier's confirmation state. Use that booking's own policy and Help flow for a refund or reschedule; eligibility, fees, method, timing, and any Traveloka balance depend on the fare/room and supplier.
+- Report success only from "Bookings" with a booking ID and explicit confirmed/ticketed status for every product or leg. Search results, a selected offer, payment redirect, pending supplier confirmation, or an unconfirmed itinerary are incomplete.`,
+  },
+  {
     name: 'dianping',
     category: 'general',
     matches: (url) => /^https?:\/\/(?:(?:www|m|h5|s)\.)?dianping\.com\//.test(url) || /^https?:\/\/verify\.meituan\.com\//.test(url),
