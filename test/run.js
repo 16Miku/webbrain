@@ -27495,7 +27495,6 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         runtimeConfig: { auto_screenshot: 'state_change', screenshot_redaction: true },
       },
       events: [
-        { kind: 'tool', ts: 1000, data: { name: 'get_screenshot', result: { viewport: { width: 800, height: 600 } } } },
         {
           kind: 'tool',
           ts: 1050,
@@ -27551,9 +27550,10 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
     assert.equal(output.source.candidateCount, 1, 'aria-labelledby/title must exclude ordinary fields while name must not exclude the toolbar input');
-    assert.equal(output.source.toolEventIndex, 3);
-    assert.equal(output.source.screenshotEventIndex, 5, 'the dedicated preflight capture must win over an unrelated screenshot');
+    assert.equal(output.source.toolEventIndex, 2);
+    assert.equal(output.source.screenshotEventIndex, 4, 'the dedicated preflight capture must win over an unrelated screenshot');
     assert.equal(output.case.attemptedText, 'Document prose');
+    assert.equal(output.case.viewport, null, 'an already annotated trace capture must not require a prior viewport event');
     assert.deepEqual(output.case.toolbarCandidate, {
       score: 8,
       reasons: ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
@@ -27567,13 +27567,13 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     const exactResult = spawnSync(process.execPath, [
       path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
       '--trace', tracePath,
-      '--event-index', '3',
+      '--event-index', '2',
       '--dry-run',
       '--output', exactOutputPath,
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(exactResult.status, 0, exactResult.stderr || exactResult.stdout);
     const exactOutput = JSON.parse(fs.readFileSync(exactOutputPath, 'utf8'));
-    assert.equal(exactOutput.source.toolEventIndex, 3, 'exact iframe_type trace selection must remain supported');
+    assert.equal(exactOutput.source.toolEventIndex, 2, 'exact iframe_type trace selection must remain supported');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

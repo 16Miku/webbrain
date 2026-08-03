@@ -282,7 +282,10 @@ async function loadTraceCase(options) {
   const traceRect = [rectObject.x, rectObject.y, rectObject.w, rectObject.h].map(Number);
   if (!traceRect.every(Number.isFinite)) throw new Error('selected trace tool result has no usable rect');
   const traceViewport = findPriorViewport(events, selected.index);
-  if (!traceViewport && !options.viewport) throw new Error('trace has no prior CSS viewport; pass --viewport w,h');
+  const usesAnnotatedTraceCapture = !!screenshotEntry && !options.image;
+  if (!traceViewport && !options.viewport && !usesAnnotatedTraceCapture) {
+    throw new Error('trace has no prior CSS viewport; pass --viewport w,h for a raw replacement image');
+  }
 
   return {
     tracePath,

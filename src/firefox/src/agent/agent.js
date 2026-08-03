@@ -1905,9 +1905,14 @@ export class Agent extends LoopDetector {
   static _richTextToolbarRecoveryScopeMatches(expectedUrl, actualUrl) {
     const expected = String(expectedUrl || '');
     const actual = String(actualUrl || '');
-    if (!expected || !actual) return true;
+    if (!expected || !actual) return false;
     try {
-      return new URL(expected).origin === new URL(actual).origin;
+      const normalize = raw => {
+        const url = new URL(raw);
+        url.hash = '';
+        return url.href;
+      };
+      return normalize(expected) === normalize(actual);
     } catch {
       return expected === actual;
     }

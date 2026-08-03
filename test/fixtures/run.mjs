@@ -3848,8 +3848,35 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       { ref_id: 'ref_77' },
       { success: true, verified: true, method: 'set_field' },
     );
-    if (!navigatedRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('a verified matching editor edit must clear toolbar debt after navigation changes its ref');
+    if (navigatedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a same-shaped editor on another same-origin route must not clear toolbar debt');
+    }
+    const originalRouteProbe = {
+      resolved: true,
+      refId: 'ref_78',
+      documentToken: 'doc-c',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => originalRouteProbe;
+    const originalRoutePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_78', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    const originalRouteRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_78' },
+      { success: true, verified: true, method: 'set_field' },
+      originalRoutePreflight.probe,
+    );
+    if (!originalRouteRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a verified matching editor edit on the original route must clear toolbar debt');
     }
 
     const unscopedBlock = {};
