@@ -2086,7 +2086,8 @@ export class Agent extends LoopDetector {
     const urlFilter = String(args?.urlFilter || '');
     const matchingFrames = navigationFrames.filter(frame => {
       const url = String(frame?.url || '');
-      return !urlFilter || (frameHostMatches(url, urlFilter) && url.includes(urlFilter));
+      return frame?.frameId !== 0
+        && (!urlFilter || (frameHostMatches(url, urlFilter) && url.includes(urlFilter)));
     });
     const probes = (await Promise.all(matchingFrames.map(async frame => {
       const request = () => chrome.tabs.sendMessage(tabId, {

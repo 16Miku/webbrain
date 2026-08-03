@@ -27449,11 +27449,25 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     toolbarContext: true,
     toolbarRegionRef: 'ref_10',
   };
+  const ordinaryProbe = {
+    resolved: true,
+    refId: 'ref_shared',
+    rect: { x: 20, y: 30, w: 180, h: 32 },
+    fieldMeta: { tag: 'input', type: 'text' },
+    toolbarContext: false,
+  };
+  const sharedProbeFrameIds = [];
   let frameContainerOffscreen = false;
   let frameContainerScrolled = false;
   let frameScrollParentId = null;
   const messageResult = (message, options) => {
-    if (message.target === 'content') return options.frameId === 7 ? toolbarProbe : { resolved: false };
+    if (message.target === 'content') {
+      if (message.params?.args?.selector === '#shared-field') {
+        sharedProbeFrameIds.push(options.frameId);
+        return ordinaryProbe;
+      }
+      return options.frameId === 7 ? toolbarProbe : { resolved: false };
+    }
     if (message.target === 'redaction-content' && message.action === 'scroll_child_frame_into_view') {
       frameContainerScrolled = true;
       frameScrollParentId = options.frameId;
@@ -27501,6 +27515,13 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(chromeProbe.frameId, 7);
     assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    sharedProbeFrameIds.length = 0;
+    const unfilteredChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      selector: '#shared-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(unfilteredChromeProbe.frameId, 7);
+    assert.deepEqual(sharedProbeFrameIds, [7], 'Chrome iframe_type probes must exclude the top document');
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -27542,6 +27563,13 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(firefoxProbe.frameId, 7);
     assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    sharedProbeFrameIds.length = 0;
+    const unfilteredFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      selector: '#shared-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(unfilteredFirefoxProbe.frameId, 7);
+    assert.deepEqual(sharedProbeFrameIds, [7], 'Firefox iframe_type probes must exclude the top document');
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
