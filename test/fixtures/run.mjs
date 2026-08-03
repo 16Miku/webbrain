@@ -3240,11 +3240,18 @@ for (const browserKind of ['chrome', 'firefox']) {
       const rect = document.getElementById('iframe-toolbar-family-input').getBoundingClientRect();
       const viewportHeight = window.innerHeight;
       document.documentElement.style.scrollBehavior = 'auto';
-      return { rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height }, viewportHeight };
+      return {
+        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        viewportHeight,
+      };
     });
     if (
       !smoothScrollProbe?.resolved
       || Math.abs(smoothScrollProbe.rect.y - settledTarget.rect.y) > 2
+      || Math.abs(smoothScrollProbe.rect.pageX - (settledTarget.rect.x + settledTarget.scrollX)) > 2
+      || Math.abs(smoothScrollProbe.rect.pageY - (settledTarget.rect.y + settledTarget.scrollY)) > 2
       || smoothScrollProbe.rect.y < 0
       || smoothScrollProbe.rect.y + smoothScrollProbe.rect.h > settledTarget.viewportHeight
     ) {
@@ -4616,6 +4623,48 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('a verified matching editor edit on the original route must clear toolbar debt');
     }
 
+    const anonymousEditorIdentity = {
+      tag: 'div',
+      id: null,
+      name: null,
+      role: 'textbox',
+      pageX: 24,
+      pageY: 620,
+      w: 400,
+      h: 180,
+    };
+    const anonymousEditorBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_anon_toolbar' },
+      anonymousEditorBlock,
+      { ...candidate, associatedEditorRef: '', associatedEditorIdentity: anonymousEditorIdentity },
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-anon-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    agent._clearRichTextToolbarDocumentState(tabId);
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_anon_editor_fresh',
+      documentToken: 'doc-anon-b',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 24, y: 120, pageX: 24, pageY: 620, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: null, name: null, role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const anonymousEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_anon_editor_fresh' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (!anonymousEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('fresh page coordinates must recover an unnamed editor identity after reload');
+    }
+
     const unscopedBlock = {};
     agent._applyRichTextToolbarWrongTarget(
       tabId,
@@ -4701,16 +4750,20 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
 
     let classifierArgCount = 0;
+    let classifierCaptureCount = 0;
     agent.autoScreenshot = 'state_change';
     agent.maxScreenshotsPerTurn = 1;
     agent.autoScreenshotCount.set(tabId, 1);
-    agent._captureAutoScreenshot = async () => ({
-      dataUrl: 'data:image/png;base64,dGVzdA==',
-      width: 800,
-      height: 600,
-      cssWidth: 800,
-      cssHeight: 600,
-    });
+    agent._captureAutoScreenshot = async () => {
+      classifierCaptureCount += 1;
+      return {
+        dataUrl: 'data:image/png;base64,dGVzdA==',
+        width: 800,
+        height: 600,
+        cssWidth: 800,
+        cssHeight: 600,
+      };
+    };
     agent._annotateScreenshot = async dataUrl => dataUrl;
     agent._classifyRichTextToolbarTarget = async (...classifierArgs) => {
       classifierArgCount = classifierArgs.length;
@@ -4733,17 +4786,17 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       { supportsVision: true },
     );
     if (
-      !visualPreflight.shot
+      visualPreflight.shot
       || !visualPreflight.block?.wrongTarget
       || visualPreflight.block.dispatched !== false
       || !visualPreflight.block.rect
       || !visualPreflight.block.fieldMeta?.toolbarCandidate
-      || visualPreflight.traceCapture?.caption !== 'rich-text toolbar target preflight'
-      || visualPreflight.traceCapture?.dataUrl !== 'data:image/png;base64,dGVzdA=='
-      || classifierArgCount !== 3
+      || visualPreflight.traceCapture
+      || classifierArgCount !== 0
+      || classifierCaptureCount !== 0
       || agent.autoScreenshotCount.get(tabId) !== 1
     ) {
-      throw new Error(`expected target-only type_text preflight despite an exhausted model-facing screenshot budget, got: ${JSON.stringify({ visualPreflight, classifierArgCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
+      throw new Error(`exhausted screenshot budget must use structural toolbar preflight without capture: ${JSON.stringify({ visualPreflight, classifierArgCount, classifierCaptureCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
     agent.autoScreenshotCount.delete(tabId);

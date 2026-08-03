@@ -3428,6 +3428,8 @@
         rect: {
           x: Math.round(rect.x),
           y: Math.round(rect.y),
+          pageX: Math.round(rect.x + window.scrollX),
+          pageY: Math.round(rect.y + window.scrollY),
           w: Math.round(rect.width),
           h: Math.round(rect.height),
         },

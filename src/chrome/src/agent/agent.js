@@ -2660,6 +2660,7 @@ export class Agent extends LoopDetector {
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
     const visualAuditEligible = this._shouldAutoScreenshot(toolName)
+      && this._canTakeAutoScreenshot(tabId)
       && (dedicatedVision || provider?.supportsVision);
     if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
       return {
