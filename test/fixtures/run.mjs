@@ -4129,6 +4129,37 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('toolbar refs must be released after exact editor recovery');
     }
 
+    const refLessIdentityRecoveryResult = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'type_text',
+      { selector: '#font-family', text: 'Document prose' },
+      refLessIdentityRecoveryResult,
+      { ...candidate, associatedEditorRef: '' },
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_200',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const refLessIdentityRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_200' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (!refLessIdentityRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a selector-backed rejection without an editor ref must recover through matching editor identity');
+    }
+
     const selectorRecoveryResult = {};
     agent._applyRichTextToolbarWrongTarget(
       tabId,

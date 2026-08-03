@@ -2430,8 +2430,11 @@ export class Agent extends LoopDetector {
       probe.frameOwnerMeta || {},
       probe.frameOwnerRect || {},
     );
-    const exactIdentity = state.recoveryOnly === true
-      && Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl)
+    const exactIdentity = !state.associatedEditorRef
+      && (
+        state.recoveryOnly !== true
+        || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl)
+      )
       && matchingIdentity;
     const selectorScopeMatches = state.recoveryOnly !== true
       || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl);
