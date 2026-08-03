@@ -932,9 +932,6 @@ function reconcileFailedSelectionGroundedStart(tabId, {
   accepted,
 }) {
   if (accepted || (!sourceGrounding && !selectionGroundedBeforeSend)) return;
-  if (sourceGrounding && !selectionGroundedBeforeSend) {
-    setSelectionGroundedForTab(tabId, false);
-  }
   void restoreActiveRunState(tabId);
 }
 

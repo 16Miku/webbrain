@@ -16125,7 +16125,11 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
-    assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?if \(sourceGrounding && !selectionGroundedBeforeSend\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile without clearing a pre-existing scope optimistically`);
+    assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
+    assert.doesNotMatch(panel.slice(
+      panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {'),
+      panel.indexOf('\n\nfunction settleNewConversationConfirmation', panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {')),
+    ), /setSelectionGroundedForTab/, `${label}: uncertain failed starts should not clear the fail-closed local scope before reconciliation`);
     assert.match(panel, /const selectionGroundedBeforeSend = isSelectionGroundedForTab\(tabId\);[\s\S]*?catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, \{\s*sourceGrounding,\s*selectionGroundedBeforeSend,\s*accepted,\s*\}\);/, `${label}: all chat-start failures should reconcile both explicit and inherited selected-text state`);
     assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
 
@@ -16178,12 +16182,10 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     const reconciliationStart = panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {');
     const reconciliationEnd = panel.indexOf('\n\nfunction settleNewConversationConfirmation', reconciliationStart);
     assert.ok(reconciliationStart >= 0 && reconciliationEnd > reconciliationStart, `${label}: failed-start reconciliation helper missing`);
-    const reconciledScopes = [];
     const restoredScopes = [];
     const reconcileFailedSelectionGroundedStart = vm.runInNewContext(
       `(() => { ${panel.slice(reconciliationStart, reconciliationEnd)}; return reconcileFailedSelectionGroundedStart; })()`,
       {
-        setSelectionGroundedForTab: (tabId, grounded) => reconciledScopes.push([tabId, grounded]),
         restoreActiveRunState: (tabId) => { restoredScopes.push(tabId); },
       },
     );
@@ -16192,8 +16194,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     reconcileFailedSelectionGroundedStart(95, { sourceGrounding: null, selectionGroundedBeforeSend: true, accepted: false });
     reconcileFailedSelectionGroundedStart(96, { sourceGrounding, selectionGroundedBeforeSend: false, accepted: true });
     reconcileFailedSelectionGroundedStart(97, { sourceGrounding: null, selectionGroundedBeforeSend: false, accepted: false });
-    assert.deepEqual(reconciledScopes, [[93, false]], `${label}: only a newly optimistic failed scope should clear before reconciliation`);
-    assert.deepEqual(restoredScopes, [93, 94, 95], `${label}: failed explicit and inherited scopes should reconcile against authoritative background state`);
+    assert.deepEqual(restoredScopes, [93, 94, 95], `${label}: failed explicit and inherited scopes should reconcile while keeping scope fail-closed until the probe succeeds`);
 
     const reconnectStart = panel.indexOf('async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}) {');
     const reconnectEnd = panel.indexOf('\n\nfunction formatBackgroundSendError', reconnectStart);
