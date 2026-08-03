@@ -2144,7 +2144,7 @@ export class Agent extends LoopDetector {
       : null;
   }
 
-  async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result) {
+  async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe = null) {
     if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified === false) return false;
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
     const state = this._richTextToolbarStates.get(tabId);
@@ -2155,7 +2155,9 @@ export class Agent extends LoopDetector {
         && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
       )
     ) return false;
-    const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+    const liveProbe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+    if (!liveProbe?.resolved && result.verified !== true) return false;
+    const probe = liveProbe?.resolved ? liveProbe : preDispatchProbe;
     if (!probe?.resolved) return false;
     const sameFrame = Number.isInteger(state.frameId)
       ? probe.frameId === state.frameId
@@ -2321,8 +2323,12 @@ export class Agent extends LoopDetector {
   }
 
   async _preflightRichTextToolbarTarget(tabId, toolName, args, provider, captureOptions = {}) {
-    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
+    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
       return { block: null, shot: null };
+    }
+    if (this._richTextToolbarDebts.has(tabId)) {
+      const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+      return { block: null, shot: null, probe: probe?.resolved ? probe : null };
     }
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
@@ -2399,8 +2405,8 @@ export class Agent extends LoopDetector {
     return { block: null, shot, audit, decision, traceCapture, probe };
   }
 
-  async _auditRichTextToolbarTarget(tabId, toolName, args, result) {
-    await this._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result);
+  async _auditRichTextToolbarTarget(tabId, toolName, args, result, preDispatchProbe = null) {
+    await this._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe);
     return { shot: null };
   }
 
@@ -4495,7 +4501,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
         }
       }
-      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult);
+      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, toolbarPreflight.probe);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,

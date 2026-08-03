@@ -3375,6 +3375,59 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('a selector resolving to the associated editor identity should clear toolbar debt');
     }
 
+    const rerenderRecoveryResult = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'Document prose' },
+      rerenderRecoveryResult,
+      candidate,
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    const validatedEditorProbe = {
+      resolved: true,
+      refId: 'ref_99',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => validatedEditorProbe;
+    const rerenderPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_99', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (rerenderPreflight.probe !== validatedEditorProbe) {
+      throw new Error('toolbar-debt preflight must preserve the validated editor target through execution');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => null;
+    await agent._auditRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_99', text: 'Document prose' },
+      { success: true, method: 'set_field', fieldMeta: validatedEditorProbe.fieldMeta },
+      rerenderPreflight.probe,
+    );
+    if (!agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('pre-dispatch recovery evidence must not clear debt without an explicitly verified edit');
+    }
+    await agent._auditRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_99', text: 'Document prose' },
+      { success: true, verified: true, method: 'set_field', fieldMeta: validatedEditorProbe.fieldMeta },
+      rerenderPreflight.probe,
+    );
+    if (agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a validated editor edit must clear toolbar debt when a controlled rerender invalidates its old ref');
+    }
+
     const iframeCandidate = {
       ...candidate,
       score: 8,
