@@ -16631,7 +16631,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // small integer id (returned by download_files/list_downloads and
       // auto-pinned to the scratchpad) is easy to carry. Resolve it to the real
       // path here so the rest of the handler is unchanged. If both are present,
-      // downloadId wins: filePath may be stale or invented.
+      // prefer a valid downloadId because filePath may be stale or invented, but
+      // keep the supplied path as a fallback. Models occasionally add a guessed
+      // id to an otherwise valid absolute path; that extra bad id must not make
+      // the path-based upload fail.
+      const suppliedFilePath = typeof args.filePath === 'string' && args.filePath.trim()
+        ? args.filePath
+        : null;
       if (args.downloadId != null) {
         try {
           const items = await new Promise((resolve, reject) => {
@@ -16641,12 +16647,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             });
           });
           const it = items && items[0];
-          if (!it) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
-          if (it.state !== 'complete') return { success: false, error: `Download ${args.downloadId} is "${it.state}", not complete — wait for it to finish (wait_for_stable) then retry.` };
-          if (!it.filename) return { success: false, error: `Download ${args.downloadId} has no resolved local path yet. Retry shortly, or use list_downloads to find the path and pass filePath.` };
-          args.filePath = it.filename;
+          if (!it) {
+            if (!suppliedFilePath) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
+          } else if (it.state !== 'complete') {
+            if (!suppliedFilePath) return { success: false, error: `Download ${args.downloadId} is "${it.state}", not complete — wait for it to finish (wait_for_stable) then retry.` };
+          } else if (!it.filename) {
+            if (!suppliedFilePath) return { success: false, error: `Download ${args.downloadId} has no resolved local path yet. Retry shortly, or use list_downloads to find the path and pass filePath.` };
+          } else {
+            args.filePath = it.filename;
+          }
         } catch (e) {
-          return { success: false, error: `Could not resolve downloadId ${args.downloadId}: ${e.message}` };
+          if (!suppliedFilePath) return { success: false, error: `Could not resolve downloadId ${args.downloadId}: ${e.message}` };
         }
       }
       if (!args.filePath) {
