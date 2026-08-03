@@ -44,6 +44,7 @@ function normalizeMessage(message, index) {
   return {
     role: ['user', 'assistant', 'system', 'error'].includes(message?.role) ? message.role : 'unknown',
     text: normalizeText(message?.text),
+    format: message?.format === 'markdown' ? 'markdown' : 'text',
     index: Number.isFinite(Number(message?.index)) ? Number(message.index) : index,
     createdAt: Number.isFinite(Number(message?.createdAt)) ? Number(message.createdAt) : null,
   };
@@ -124,6 +125,75 @@ export async function saveChatHistoryRecord(input) {
   if (!record.id || record.userMessageCount < 1) return null;
   await promisifyReq(tx(db, 'readwrite').objectStore(STORE_NAME).put(record));
   return record;
+}
+
+function sameMessageContent(left, right) {
+  return left.role === right.role
+    && left.text === right.text
+    && (left.format || 'text') === (right.format || 'text')
+    && Number(left.index) === Number(right.index);
+}
+
+/**
+ * Repair only the serialized message content of an existing history record.
+ * Conversation metadata and timestamps remain unchanged, and a missing record
+ * is never recreated by this migration path.
+ * @param {string} id - Existing record ID.
+ * @param {Array<Object>} messages - Messages recovered from restored chat DOM.
+ * @returns {Promise<Object|null>} Repaired/existing record, or null if absent.
+ */
+export async function repairChatHistoryRecordMessages(id, messages) {
+  if (!id || !Array.isArray(messages)) return null;
+  const db = await openDB();
+  const transaction = tx(db, 'readwrite');
+  const store = transaction.objectStore(STORE_NAME);
+
+  return new Promise((resolve, reject) => {
+    let result = null;
+    transaction.oncomplete = () => resolve(result);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error('History repair transaction aborted'));
+
+    const getReq = store.get(String(id));
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      if (!existing) return;
+
+      const previousMessages = Array.isArray(existing.messages) ? existing.messages : [];
+      const normalizedMessages = messages
+        .map((message, index) => {
+          const normalized = normalizeMessage(message, index);
+          const previous = previousMessages.find((candidate) => (
+            Number(candidate?.index) === normalized.index && candidate?.role === normalized.role
+          ));
+          if (Number.isFinite(Number(previous?.createdAt))) {
+            normalized.createdAt = Number(previous.createdAt);
+          }
+          return normalized;
+        })
+        .filter((message) => message.text);
+
+      const unchanged = previousMessages.length === normalizedMessages.length
+        && previousMessages.every((message, index) => sameMessageContent(message, normalizedMessages[index]));
+      if (unchanged) {
+        result = existing;
+        return;
+      }
+
+      const repaired = normalizeRecord({
+        ...existing,
+        messages: normalizedMessages,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+      }, existing);
+      if (repaired.userMessageCount < 1) {
+        result = existing;
+        return;
+      }
+      result = repaired;
+      store.put(repaired);
+    };
+  });
 }
 
 /**

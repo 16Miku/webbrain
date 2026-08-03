@@ -1,6 +1,6 @@
 /**
- * Small, dependency-free Markdown formatter for read-only skill previews.
- * All skill-controlled HTML is escaped before fixed markup is introduced.
+ * Small, dependency-free Markdown formatter for read-only skill previews and
+ * saved chat history. All source HTML is escaped before fixed markup is added.
  */
 
 import { escapeHtml } from './utils.js';
@@ -52,6 +52,15 @@ export function renderSkillMarkdown(content) {
 
   text = escapeHtml(text);
 
+  const quoteBlocks = [];
+  text = text.replace(/(?:^[ \t]*&gt;[^\r\n]*(?:\r?\n|$))+/gm, (block) => {
+    const placeholder = `__SKILL_QUOTE_BLOCK_${quoteBlocks.length}__`;
+    quoteBlocks.push(block.trimEnd().split(/\r?\n/)
+      .map((line) => line.replace(/^[ \t]*&gt;[ \t]?/, ''))
+      .join('\n'));
+    return `${placeholder}\n`;
+  });
+
   // Pull list markers out before parsing emphasis so a `*` bullet cannot be
   // paired with an emphasis marker later in the same item.
   const listBlocks = [];
@@ -70,6 +79,10 @@ export function renderSkillMarkdown(content) {
   listBlocks.forEach(({ tag, items }, index) => {
     const block = `<${tag}>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>`;
     text = text.replace(`__SKILL_LIST_BLOCK_${index}__`, () => block);
+  });
+  quoteBlocks.forEach((quote, index) => {
+    const block = `<blockquote>${renderInlineMarkdown(quote).replace(/\n/g, '<br>')}</blockquote>`;
+    text = text.replace(`__SKILL_QUOTE_BLOCK_${index}__`, () => block);
   });
   inlineCodes.forEach((code, index) => {
     text = text.replace(`__SKILL_INLINE_CODE_${index}__`, () => `<code>${escapeHtml(code)}</code>`);

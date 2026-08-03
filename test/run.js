@@ -355,6 +355,9 @@ const { codeFenceLanguage, highlightCode, renderMarkdownHeadings } = await impor
 const { renderSkillMarkdown } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/skill-markdown.js').replace(/\\/g, '/')
 );
+const { historyTextFromElement } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/history-text.js').replace(/\\/g, '/')
+);
 
 const {
   RunUiJournal: RunUiJournalCh,
@@ -461,6 +464,9 @@ const { codeFenceLanguage: codeFenceLanguageFx, highlightCode: highlightCodeFx, 
 );
 const { renderSkillMarkdown: renderSkillMarkdownFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/skill-markdown.js').replace(/\\/g, '/')
+);
+const { historyTextFromElement: historyTextFromElementFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/history-text.js').replace(/\\/g, '/')
 );
 const {
   CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_CH,
@@ -8881,6 +8887,8 @@ test('skill preview protects link destinations and star list markers before emph
     '[docs](https://host/path/*wildcard*)',
     '',
     '* Item with *emphasis*',
+    '',
+    '> Quoted **reply**',
   ].join('\n');
   for (const [label, render] of [
     ['chrome', renderSkillMarkdown],
@@ -8890,6 +8898,7 @@ test('skill preview protects link destinations and star list markers before emph
     assert.match(out, /href="https:\/\/host\/path\/\*wildcard\*"/, `${label}: wildcard link path changed`);
     assert.doesNotMatch(out, /href="[^"]*<em>/, `${label}: emphasis leaked into link destination`);
     assert.match(out, /<ul><li>Item with <em>emphasis<\/em><\/li><\/ul>/, `${label}: star bullet with emphasis was not rendered as a list`);
+    assert.match(out, /<blockquote>Quoted <strong>reply<\/strong><\/blockquote>/, `${label}: quote block was not rendered`);
   }
 });
 
@@ -18557,6 +18566,152 @@ test('trace viewer locale changes rerender the active pane', () => {
   }
 });
 
+test('chat history text serialization preserves rendered line structure', () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value });
+  const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });
+  const renderedReply = element(
+    'DIV',
+    textNode('You could reply warmly:'),
+    element('BR'),
+    textNode('> Hi Richard,'),
+    element('BR'),
+    element('BR'),
+    textNode('> Congratulations on the new role.'),
+  );
+  const structuredReply = element(
+    'DIV',
+    element('H2', textNode('Suggested reply')),
+    element('BR'),
+    element('STRONG', textNode('Opening:')),
+    textNode(' Hello'),
+    element('DIV', element('PRE', textNode('line 1\nline 2\n'))),
+    textNode('Closing'),
+  );
+  const renderedCodeLanguage = element('SPAN', textNode('javascript'));
+  renderedCodeLanguage.textContent = 'javascript';
+  const renderedCodeHeader = element('DIV', renderedCodeLanguage);
+  renderedCodeHeader.classList = { contains: (name) => name === 'code-block-header' };
+  const renderedCode = element('PRE', element('CODE', textNode('line 1\n')));
+  const renderedCodeWrapper = element('DIV', renderedCodeHeader, renderedCode);
+  renderedCodeWrapper.classList = { contains: (name) => name === 'code-block-wrapper' };
+  renderedCodeWrapper.querySelector = (selector) => selector === '.code-lang' ? renderedCodeLanguage : null;
+  renderedCode.parentElement = renderedCodeWrapper;
+  const renderedCodeFollowedByText = element(
+    'DIV',
+    renderedCodeWrapper,
+    element('BR'),
+    textNode('Closing'),
+  );
+
+  for (const [label, serialize] of [
+    ['chrome', historyTextFromElement],
+    ['firefox', historyTextFromElementFx],
+  ]) {
+    assert.equal(
+      serialize(renderedReply),
+      'You could reply warmly:\n> Hi Richard,\n\n> Congratulations on the new role.',
+      `${label}: <br> elements, including blank lines, should survive history serialization`,
+    );
+    assert.equal(
+      serialize(structuredReply).trim(),
+      '## Suggested reply\n\n**Opening:** Hello\n```\nline 1\nline 2\n```\nClosing',
+      `${label}: block and inline Markdown semantics should survive serialization`,
+    );
+    assert.equal(
+      serialize(structuredReply, { markdown: false }).trim(),
+      'Suggested reply\n\nOpening: Hello\nline 1\nline 2\nClosing',
+      `${label}: plain user and system roles should not gain visible Markdown markers`,
+    );
+    assert.equal(
+      serialize(renderedCodeFollowedByText),
+      '```javascript\nline 1\n```\nClosing',
+      `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
+    );
+  }
+});
+
+test('sidepanel history snapshots use the line-preserving DOM serializer', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    assert.match(
+      source,
+      /import \{ historyTextFromElement \} from '\.\/history-text\.js';/,
+      `${label}: sidepanel should import the history DOM serializer`,
+    );
+    const extractStart = source.indexOf('function extractChatHistoryMessages(root = messagesEl) {');
+    const extractEnd = source.indexOf('\n}\n\nfunction chatHistoryHtmlHasUserMessage', extractStart);
+    assert.notEqual(extractStart, -1, `${label}: history message extractor missing`);
+    assert.notEqual(extractEnd, -1, `${label}: history message extractor boundary missing`);
+    const extractBody = source.slice(extractStart, extractEnd);
+    assert.match(
+      extractBody,
+      /text: normalizeHistoryText\(historyTextFromElement\(textEl, \{ markdown: format === 'markdown' \}\)\)/,
+      `${label}: stored history should preserve rendered line boundaries`,
+    );
+    assert.match(
+      extractBody,
+      /const format = role === 'assistant' \|\| role === 'error' \? 'markdown' : 'text'/,
+      `${label}: only model-authored display roles should be marked as Markdown`,
+    );
+    assert.doesNotMatch(
+      extractBody,
+      /normalizeHistoryText\(textEl\.textContent\)/,
+      `${label}: stored history must not flatten <br> elements through textContent`,
+    );
+  }
+});
+
+test('history page safely renders stored assistant Markdown and keeps plain roles escaped', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.js'), 'utf8');
+    const store = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/chat-history-store.js'), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.html'), 'utf8');
+    assert.match(source, /import \{ renderSkillMarkdown as renderHistoryMarkdown \} from '\.\/skill-markdown\.js';/, `${label}: history should use the tested read-only Markdown renderer`);
+    assert.match(source, /message\?\.format === 'markdown'[\s\S]*?renderHistoryMarkdown\(text\)[\s\S]*?: escapeHtml\(text\)/, `${label}: history should render only explicitly formatted messages as Markdown`);
+    assert.match(store, /format: message\?\.format === 'markdown' \? 'markdown' : 'text'/, `${label}: history storage should default legacy and untrusted formats to plain text`);
+    assert.match(html, /\.message-text blockquote \{[\s\S]*?border-left: 3px solid var\(--accent\)/, `${label}: history quotes should have readable styling`);
+    assert.match(html, /\.message-text pre \{[\s\S]*?white-space: pre;/, `${label}: history code blocks should retain their layout`);
+  }
+
+  const malicious = '> **Safe quote**\n> <img src=x onerror=alert(1)>\n> [bad](javascript:alert(1))';
+  const rendered = renderSkillMarkdown(malicious);
+  assert.match(rendered, /<blockquote><strong>Safe quote<\/strong><br>/);
+  assert.doesNotMatch(rendered, /<img\b|<a [^>]*javascript:/i);
+  assert.match(rendered, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
+test('restored history formatting repair preserves record metadata and recency', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const store = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/chat-history-store.js'), 'utf8');
+    const repairStart = panel.indexOf('async function repairRestoredChatHistorySnapshot(tabId) {');
+    const repairEnd = panel.indexOf('\n}\n\nfunction scheduleHistoryPersist', repairStart);
+    assert.notEqual(repairStart, -1, `${label}: restored history repair helper missing`);
+    assert.notEqual(repairEnd, -1, `${label}: restored history repair helper boundary missing`);
+    const repairBody = panel.slice(repairStart, repairEnd);
+    assert.match(repairBody, /repairChatHistoryRecordMessages\(recordId, messages\)/, `${label}: startup repair should use the content-only store path`);
+    assert.doesNotMatch(repairBody, /persistChatHistorySnapshot|flushChatHistorySnapshot/, `${label}: startup repair must not stamp ordinary snapshot metadata`);
+
+    const storeRepairStart = store.indexOf('export async function repairChatHistoryRecordMessages(id, messages) {');
+    const storeRepairEnd = store.indexOf('\n}\n\n/**\n * List chat history records', storeRepairStart);
+    assert.notEqual(storeRepairStart, -1, `${label}: content-only history store repair missing`);
+    assert.notEqual(storeRepairEnd, -1, `${label}: content-only history store repair boundary missing`);
+    const storeRepairBody = store.slice(storeRepairStart, storeRepairEnd);
+    assert.match(storeRepairBody, /if \(!existing\) return;/, `${label}: repair must not recreate a deleted or missing record`);
+    assert.match(storeRepairBody, /createdAt: existing\.createdAt,[\s\S]*?updatedAt: existing\.updatedAt,/, `${label}: repair should preserve record timestamps`);
+    assert.doesNotMatch(storeRepairBody, /updatedAt: Date\.now\(\)|mode: agentMode|refreshTabInfo/, `${label}: repair must not rewrite recency or live panel metadata`);
+  }
+});
+
 test('history page refresh rerenders the selected conversation pane', () => {
   for (const [label, historyRel] of [
     ['chrome', 'src/chrome/src/ui/history.js'],
@@ -19710,18 +19865,23 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     assert.notEqual(restoreDomIdx, -1, `${label}: switchToTab should restore chat HTML`);
     assert.equal(loadIdx < restoredHasUserIdx && restoredHasUserIdx < hydrateRestoredIdx && hydrateRestoredIdx < postHydrateGuardIdx && postHydrateGuardIdx < restoreDomIdx, true, `${label}: restored chat ids must hydrate before the MutationObserver sees restored HTML`);
 
-    const initMatch = panel.match(/async function init\(\) \{([\s\S]*?)\n  \/\/ Start observing the messages container/);
+    const initMatch = panel.match(/async function init\(\) \{([\s\S]*?)\n  restoreLatestChatTurnPosition\(\);/);
     assert.ok(initMatch, `${label}: init restore block missing`);
     const initBody = initMatch[1];
     const initLoadIdx = initBody.indexOf('loadTabChat(restoreTabId, { waitForHandoff: true })');
     const initHydrateIdx = initBody.indexOf('await hydrateRestoredChatHistory(restoreTabId, html);');
     const initGuardIdx = initBody.indexOf('if (currentTabId === restoreTabId) {', initHydrateIdx);
     const initDomIdx = initBody.indexOf('messagesEl.innerHTML = html;', initGuardIdx);
+    const initObserveIdx = initBody.indexOf('persistObserver.observe(messagesEl');
+    const initRepairIdx = initBody.indexOf('await repairRestoredChatHistorySnapshot(restoreTabId);');
     assert.notEqual(initLoadIdx, -1, `${label}: init should load restored tab chat`);
     assert.notEqual(initHydrateIdx, -1, `${label}: init should hydrate restored chat history ids`);
     assert.notEqual(initGuardIdx, -1, `${label}: init should recheck the active tab after hydration`);
     assert.notEqual(initDomIdx, -1, `${label}: init should restore chat HTML after hydration`);
+    assert.notEqual(initObserveIdx, -1, `${label}: init persistence observer missing`);
+    assert.notEqual(initRepairIdx, -1, `${label}: init should content-repair restored durable history snapshots`);
     assert.equal(initLoadIdx < initHydrateIdx && initHydrateIdx < initGuardIdx && initGuardIdx < initDomIdx, true, `${label}: startup restore must hydrate ids before restoring HTML`);
+    assert.equal(initDomIdx < initObserveIdx && initObserveIdx < initRepairIdx, true, `${label}: startup should repair history after restoring and observing the chat DOM`);
 
     const persistMatch = panel.match(/async function persistChatHistorySnapshot\(tabId, \{ refreshTabInfo = false \} = \{\}\) \{([\s\S]*?)\n\}/);
     assert.ok(persistMatch, `${label}: persistChatHistorySnapshot missing`);
@@ -19742,7 +19902,7 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    assert.match(panel, /import \{ deleteChatHistoryRecord, saveChatHistoryRecord \} from '\.\/chat-history-store\.js';/, `${label}: sidepanel should import durable history deletion`);
+    assert.match(panel, /import \{[\s\S]*?deleteChatHistoryRecord,[\s\S]*?saveChatHistoryRecord,[\s\S]*?\} from '\.\/chat-history-store\.js';/, `${label}: sidepanel should import durable history deletion`);
 
     const resetMatch = panel.match(/async function resetChatHistoryStateForTab\(tabId\) \{([\s\S]*?)\n\}/);
     assert.ok(resetMatch, `${label}: resetChatHistoryStateForTab should be async`);
