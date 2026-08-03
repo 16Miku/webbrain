@@ -1877,11 +1877,7 @@ export class Agent extends LoopDetector {
     const actual = String(actualUrl || '');
     if (!expected || !actual) return false;
     try {
-      const normalize = raw => {
-        const url = new URL(raw);
-        url.hash = '';
-        return url.href;
-      };
+      const normalize = raw => new URL(raw).href;
       return normalize(expected) === normalize(actual);
     } catch {
       return expected === actual;
@@ -2140,9 +2136,73 @@ export class Agent extends LoopDetector {
     return { ...selected, annotationRect };
   }
 
-  async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}) {
+  async _probeRichTextToolbarFocusedTarget(tabId, args = {}, { mapAnnotation = false } = {}) {
+    let navigationFrames;
+    try { navigationFrames = await chrome.webNavigation.getAllFrames({ tabId }); } catch { return null; }
+    if (!Array.isArray(navigationFrames) || !navigationFrames.length) return null;
+    const probeFrame = async frame => {
+      const request = () => chrome.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'probe_rich_text_toolbar_retry_target',
+        params: {
+          toolName: 'type_text',
+          args: { text: args?.text || '' },
+        },
+      }, { frameId: frame.frameId });
+      let probe;
+      try {
+        probe = await request();
+      } catch {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId, frameIds: [frame.frameId] },
+            files: ['src/content/accessibility-tree.js', 'src/content/content.js'],
+          });
+          probe = await request();
+        } catch {
+          return null;
+        }
+      }
+      return probe?.resolved ? {
+        ...probe,
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        frameUrl: frame.url || '',
+      } : null;
+    };
+    const topFrame = navigationFrames.find(frame => frame?.frameId === 0);
+    if (!topFrame) return null;
+    let selected = await probeFrame(topFrame);
+    if (!selected) return null;
+    const seen = new Set();
+    while (['iframe', 'frame'].includes(String(selected.fieldMeta?.tag || '').toLowerCase())) {
+      if (seen.has(selected.frameId)) break;
+      seen.add(selected.frameId);
+      const children = navigationFrames.filter(frame => frame?.parentFrameId === selected.frameId);
+      if (!children.length) break;
+      const childProbes = (await Promise.all(children.map(probeFrame))).filter(Boolean);
+      if (!childProbes.length) break;
+      selected = childProbes
+        .filter(probe => probe.fieldMeta?.toolbarCandidate)
+        .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
+        || childProbes.find(probe => {
+          const meta = probe.fieldMeta || {};
+          return meta.contentEditable === true || ['input', 'textarea', 'select'].includes(String(meta.tag || '').toLowerCase());
+        })
+        || childProbes[0];
+    }
+    const annotationRect = mapAnnotation
+      ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
+      : null;
+    return { ...selected, annotationRect };
+  }
+
+  async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}, { mapAnnotation = false } = {}) {
     if (toolName === 'iframe_type') {
       return this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+    }
+    if (toolName === 'type_text' && !args?.selector && args?.index == null) {
+      return this._probeRichTextToolbarFocusedTarget(tabId, args, { mapAnnotation });
     }
     if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
       try {
@@ -2449,7 +2509,7 @@ export class Agent extends LoopDetector {
     }
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
-      : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+      : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
       return toolName === 'iframe_type'
         ? {

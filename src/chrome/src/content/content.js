@@ -3860,6 +3860,19 @@
     } catch { return { toolbarContext: false, toolbarRegionRef: '' }; }
   }
 
+  function _deepActiveElement() {
+    let active = document.activeElement;
+    const seen = new Set();
+    while (active && !seen.has(active)) {
+      seen.add(active);
+      let inner = null;
+      try { inner = active.shadowRoot?.activeElement || null; } catch {}
+      if (!inner || inner === active) break;
+      active = inner;
+    }
+    return active;
+  }
+
   function _probeRichTextToolbarRetryTarget(params = {}) {
     try {
       const toolName = String(params.toolName || '');
@@ -3874,7 +3887,17 @@
         // light-DOM fallback.
         if (args.selector) el = safeQuerySelector(args.selector);
         else if (args.index != null) el = queryInteractiveForToolIndex()[args.index] || null;
-        else el = document.activeElement;
+        else {
+          // Follow open shadow roots to the element browser text insertion
+          // will actually target. Parent frames legitimately expose their
+          // active iframe without :focus; non-frame targets must still own
+          // the document's focus so stale child-frame state is ignored.
+          el = _deepActiveElement();
+          const tag = String(el?.tagName || '').toLowerCase();
+          if (!['iframe', 'frame'].includes(tag) && el?.matches && !el.matches(':focus')) {
+            return { resolved: false };
+          }
+        }
       } else if (toolName === 'click') {
         if (args.selector) {
           el = safeQuerySelector(args.selector);

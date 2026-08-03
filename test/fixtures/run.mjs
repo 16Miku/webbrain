@@ -3061,6 +3061,21 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
+    await page.evaluate(() => {
+      document.querySelector('#shadow-toolbar-host').shadowRoot
+        .querySelector('#shadow-family-input').focus();
+    });
+    const shadowFocusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'type_text',
+      args: { text: 'Paris' },
+    });
+    if (
+      !shadowFocusedProbe?.resolved
+      || shadowFocusedProbe.refId !== refs.shadowFamilyInput
+      || !shadowFocusedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    ) {
+      throw new Error(`expected deeply focused shadow toolbar target, got: ${JSON.stringify(shadowFocusedProbe)}`);
+    }
 
     const editorPoint = await page.evaluate(() => {
       const editor = document.getElementById('editor-body');
@@ -3135,6 +3150,22 @@ for (const browserKind of ['chrome', 'firefox']) {
 
 test('Agent rich-text toolbar audit accepts visual family classification, rejects ordinary fields, and blocks the full toolbar scope', async () => {
   for (const AgentClass of [Agent, FirefoxAgent]) {
+    if (
+      AgentClass._richTextToolbarRecoveryScopeMatches(
+        'https://example.test/editor?mode=edit#/document/A',
+        'https://example.test/editor?mode=edit#/document/B',
+      )
+    ) {
+      throw new Error('hash-routed editor documents must remain separate recovery scopes');
+    }
+    if (
+      !AgentClass._richTextToolbarRecoveryScopeMatches(
+        'https://example.test/editor?mode=edit#/document/A',
+        'https://example.test/editor?mode=edit#/document/A',
+      )
+    ) {
+      throw new Error('an exact hash-routed editor document must remain recoverable');
+    }
     const familyAudit = AgentClass._normalizeRichTextToolbarAudit({
       regionKind: 'rich_text_toolbar',
       targetKind: 'font_family',
@@ -3390,6 +3421,71 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
 
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 77;
+    const focusAgent = new AgentClass({ getVisionProvider: async () => null });
+    const extensionGlobal = AgentClass === Agent ? 'chrome' : 'browser';
+    const originalExtensionApi = globalThis[extensionGlobal];
+    const frameMessages = [];
+    globalThis[extensionGlobal] = {
+      webNavigation: {
+        async getAllFrames() {
+          return [
+            { frameId: 0, parentFrameId: -1, url: 'https://example.test/editor' },
+            { frameId: 7, parentFrameId: 0, url: 'https://frames.example.test/editor' },
+            { frameId: 8, parentFrameId: 0, url: 'https://frames.example.test/inactive' },
+          ];
+        },
+      },
+      tabs: {
+        async sendMessage(_tabId, message, options) {
+          frameMessages.push({ message, options });
+          if (options.frameId === 0) {
+            return {
+              resolved: true,
+              rect: { x: 10, y: 20, w: 500, h: 300 },
+              fieldMeta: { tag: 'iframe' },
+            };
+          }
+          if (options.frameId === 7) {
+            return {
+              resolved: true,
+              refId: 'ref_7',
+              rect: { x: 12, y: 9, w: 110, h: 24 },
+              fieldMeta: {
+                tag: 'input',
+                toolbarCandidate: { score: 8, reasons: ['semantic_toolbar'] },
+              },
+              toolbarContext: true,
+            };
+          }
+          return { resolved: false };
+        },
+      },
+    };
+    try {
+      focusAgent._richTextToolbarFrameRectToTop = async (_tabId, frames, frameId, rect) => ({
+        ...rect,
+        x: rect.x + (frames.length * 10),
+        frameId,
+      });
+      const deepFrameProbe = await focusAgent._probeRichTextToolbarRetryTarget(
+        tabId,
+        'type_text',
+        { text: 'Paris' },
+        { mapAnnotation: true },
+      );
+      if (
+        deepFrameProbe?.frameId !== 7
+        || deepFrameProbe.refId !== 'ref_7'
+        || deepFrameProbe.annotationRect?.x !== 42
+        || frameMessages.length !== 3
+        || frameMessages.some(entry => entry.message.params.args.selector != null)
+      ) {
+        throw new Error(`focused type_text must probe and select the deeply focused frame field: ${JSON.stringify({ deepFrameProbe, frameMessages })}`);
+      }
+    } finally {
+      if (originalExtensionApi === undefined) delete globalThis[extensionGlobal];
+      else globalThis[extensionGlobal] = originalExtensionApi;
+    }
     let capturedVisionMessages = null;
     agent.providerManager.getVisionProvider = async () => ({
       config: { model: 'fixture-vision', baseUrl: 'https://vision.example.test' },
