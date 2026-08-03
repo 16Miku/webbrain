@@ -16513,6 +16513,22 @@ const ADAPTERS = [
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
+  // ─── Regional — Ozon (Russia) ────────────────────────────────────────
+  {
+    name: 'ozon',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?ozon\.ru\//.test(url),
+    notes: `
+- Observed 2026-08: an automated visit can return HTTP 403 at a URL ending ?__rr=1 with "Похоже, нет соединения" and "Обновить страницу" instead of the storefront. Treat this as an access challenge, not an empty catalog: stop retries, ask the user to open or refresh Ozon manually, and continue only after the normal page is visible.
+- Ozon is a multi-seller MARKETPLACE. For the selected offer read the seller, seller ratings, fulfillment/origin, delivery estimate, return terms, and whether it is marked Ozon Global; pooled product reviews and an Ozon-hosted page do not prove that every offer has the same seller or terms.
+- Select the exact color, size, capacity, pack count, subscription, or bundle before quoting availability or price. Ozon Card prices, points, coupons, crossed-out prices, and quantity promotions are conditional; report them separately and use the selected checkout total as authoritative.
+- Set the destination and deliberately choose "Пункт выдачи" (pickup point) or "Курьер" (courier) before promising cost or arrival. Delivery price is finalized at checkout and can differ by seller, destination, item size, and delivery method.
+- "В корзину" adds the selected offer without ordering it. "Перейти к оформлению" opens order review; re-read the product, variant, seller, quantity, recipient, address or pickup point, delivery timing, discounts, and final total there.
+- At pickup, a barcode identifies the order for receipt; it is not proof of a completed order or acceptance. Inspect the item before accepting when the flow permits it, and never follow a seller-supplied off-platform payment link or make a second payment merely because a seller asks.
+- Cancellation and return are separate after-sales actions whose availability depends on whether the order has entered delivery and on the item's policy. Use the order's own cancel/return control, preserve evidence of a problem, and do not promise a refund method or timing before reading the displayed terms.
+- Do not submit or pay without the user's explicit confirmation of the review page. Report success only from "Заказы" with an order number and explicit paid/processing/delivery status; a cart row, checkout page, payment redirect, or pickup barcode alone is not confirmation.`,
+  },
+
   // ─── Regional — Shopee (Southeast Asia, Taiwan, LATAM) ───────────────
   {
     name: 'shopee',

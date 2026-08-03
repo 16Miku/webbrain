@@ -2868,6 +2868,47 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Ozon consumer storefronts and includes Russian marketplace guidance', () => {
+  const trustedUrls = [
+    'https://ozon.ru/',
+    'https://www.ozon.ru/search/?text=phone',
+    'https://www.ozon.ru/product/example-123/',
+    'https://www.ozon.ru/cart',
+    'https://m.ozon.ru/product/example-123/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'ozon');
+    assert.equal(getActiveAdapterFx(url)?.name, 'ozon');
+  }
+
+  const rejectedUrls = [
+    'https://seller.ozon.ru/',
+    'https://docs.ozon.ru/common/',
+    'https://dostavka.ozon.ru/',
+    'https://ozon.ru.phishing.example/product/example-123/',
+    'https://example.com/?next=https://www.ozon.ru/product/example-123/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'ozon');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'ozon');
+  }
+
+  const adapter = getActiveAdapter('https://www.ozon.ru/product/example-123/');
+  const firefoxAdapter = getActiveAdapterFx('https://m.ozon.ru/cart');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Похоже, нет соединения.*Обновить страницу/s);
+  assert.match(adapter?.notes || '', /MARKETPLACE.*seller.*ratings/s);
+  assert.match(adapter?.notes || '', /Ozon Global/);
+  assert.match(adapter?.notes || '', /Ozon Card.*points.*coupons/s);
+  assert.match(adapter?.notes || '', /Пункт выдачи.*Курьер/s);
+  assert.match(adapter?.notes || '', /В корзину.*Перейти к оформлению/s);
+  assert.match(adapter?.notes || '', /barcode.*not.*completed order/s);
+  assert.match(adapter?.notes || '', /off-platform payment link/);
+  assert.match(adapter?.notes || '', /Заказы.*order number.*status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches current Shopee regional storefronts with marketplace guidance', () => {
   const trustedUrls = [
     'https://shopee.com/',
