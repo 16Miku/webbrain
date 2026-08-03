@@ -15756,13 +15756,11 @@ const ADAPTERS = [
     matches: (url) => /^https?:\/\/(www\.)?github\.com\//.test(url),
     notes: `
 - Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen.
-- Creating a release: navigate to /<owner>/<repo>/releases/new (not /releases). The tag selector is a combobox labeled "Choose a tag" — click({text: "Choose a tag"}) to open it, then type the tag name into the focused popup, then click({text: "Create new tag"}) to confirm.
-- DO NOT use index-based clicks on the release page. GitHub's global header pollutes the index space and the release form is deep in the DOM. Always use click({text:"..."}) for buttons. Specifically: never click element #38 from memory — that's a learned anti-pattern from training data, and on the live site #38 is the "Pull requests" header link that navigates away from the release form.
-- Release body is a CodeMirror editor, not a textarea. Click the editor surface (click({text:"Describe this release"}) on the placeholder works) then type with no selector.
-- The green "Publish release" button is at the bottom of the form. Click it with click({text: "Publish release"}). The gray "Save draft" is right next to it — don't confuse them.
+- Creating a release: navigate to /<owner>/<repo>/releases/new, choose/create the tag with the "Choose a tag" combobox, and verify the "Previous tag" range. If the user supplied no exact notes, prefer "Generate release notes" and review its output; otherwise preserve their text. Finish with "Publish release" or the adjacent "Save draft" as requested.
+- On the release form, use named controls rather than unstable indexes (never reuse remembered element #38). The release body is a CodeMirror editor: click its "Describe this release" surface before typing.
 - EDITING an existing release (URL pattern /<owner>/<repo>/releases/edit/<tag>): the file upload input is \`input#releases-upload\` (NOT a generic input[type="file"] — there are several on the page). Use \`upload_file({selector: "input#releases-upload", filePath: "..."})\` for each binary. After each upload, GitHub renders a small chip listing the filename in the "Attach binaries" area below the body editor — verify the chip appears with the correct filename before moving on. The commit button is green and says "Update release"; navigating away from the edit page WITHOUT clicking it discards the uploads. If you can't see "Update release" without scrolling, scroll down before clicking — don't navigate back to the dist folder thinking you need to re-fetch.
 - Files in a /tree/.../<folder> view (e.g. /tree/main/dist) can be downloaded via raw URLs of the form https://github.com/<owner>/<repo>/raw/<branch>/<path>. Once downloaded, the file is on local disk; do not re-download to "verify".
-- Issue/PR comments use the same CodeMirror editor; markdown preview is on a separate tab.
+- Creating a pull request: when no exact title was supplied, prefer the title field's Copilot button; for a blank description, prefer Copilot > "Summary". Review both suggestions and add missing rationale/testing context. Summary ignores existing description text, so preserve repository templates and user content; if Copilot is unavailable, draft normally. PR descriptions/comments use CodeMirror with a separate Markdown preview.
 - File browser: pressing "t" opens the fuzzy file finder (faster than navigating folders).
 - Settings/admin actions often require re-entering the repo name as a confirmation — read the modal carefully.`,
   },
@@ -15820,8 +15818,49 @@ const ADAPTERS = [
 - The body is a contenteditable div (rich text), not a textarea. When the user asks to revise or replace the whole draft body and the accessibility tree exposes textbox "Message Body" [ref_N], use exactly one set_field({ref_id:"ref_N", text:"<complete revised body>", clear:true, submit:false}) call. Do not click the body first, do not use press_keys to clear it, and do not use click-by-text or coordinates. Re-read the body afterward to verify the replacement. If the user says not to send, never click Send.
 - Sending: the "Send" button is bottom-left of the compose window; "Send + Schedule" arrow is next to it for scheduled send.
 - Search uses operators: from:, to:, subject:, has:attachment, before:YYYY/MM/DD.
-- Threads collapse old messages — click "Show trimmed content" or the message header to expand.
+- Before drafting a reply or forward, make the whole conversation visible and read it from oldest to newest. Prefer Gmail's top-level "Expand all" control; if it is not exposed and Gmail keyboard shortcuts are available, press ; to expand the entire conversation. Expand any still-collapsed message header individually. "Show trimmed content" reveals quoted text inside one message and is not a substitute for expanding the conversation; open it only when that quoted material is needed.
 - Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one; continue with the returned nextPage when truncated.`,
+  },
+  {
+    name: 'yahoo-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.yahoo\.com(?:\/|$)/.test(url),
+    notes: `
+- Yahoo Mail groups related messages into conversations by default, but users can disable that setting. Determine whether the opened item is a conversation before replying.
+- Yahoo does not expose a documented Gmail-style expand-all action. Before drafting a reply or forward, inspect every message in the conversation, opening collapsed message headers individually when needed, and read from oldest to newest. Do not infer the earlier discussion from only the newest message or list preview.`,
+  },
+  {
+    name: 'proton-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.(?:proton\.me|protonmail\.com)(?:\/|$)/.test(url),
+    notes: `
+- Proton Mail's Conversation grouping setting is optional, so first determine whether the opened item contains one message or a grouped conversation.
+- Before drafting a reply or forward to a grouped conversation, inspect every message card, expanding collapsed cards individually when needed, and read from oldest to newest. Do not assume there is a single expand-all control or that the newest visible card contains the full context.`,
+  },
+  {
+    name: 'fastmail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:app|mail)\.fastmail\.com(?:\/|$)/.test(url),
+    notes: `
+- Fastmail groups replies into conversations when conversation grouping is enabled.
+- Before drafting a reply or forward, use Shift+E to expand all collapsed messages in the conversation, then read them from oldest to newest. If a particular message still hides quoted material needed for context, focus that message and use its quote toggle; do not infer the thread from only the last message.
+- A reply targets everyone in the conversation by default unless the user's settings differ. Use the individual message's Actions > Reply to sender when the user intends to answer only that sender.`,
+  },
+  {
+    name: 'zoho-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.zoho\.(?:com|eu|in|com\.au|jp|ca|com\.cn|sa)(?:\/|$)/.test(url),
+    notes: `
+- Zoho Mail can group messages as conversations globally or per folder. The conversation summary stacks the thread in the preview, but normally only the unread or selected message is fully open.
+- Before drafting a reply or forward, open the whole conversation from its summary/conversation control, expand and read every message from oldest to newest, and do not treat the one automatically opened message as the complete thread. In Sent or non-conversation views, use the "Preview whole conversation"/conversation control when available.`,
+  },
+  {
+    name: 'yandex-mail',
+    category: 'general',
+    matches: (url) => /^https?:\/\/mail\.yandex\.(?:com|ru)(?:\/|$)/.test(url),
+    notes: `
+- Yandex Mail groups messages into threads only when "Group messages by threads" is enabled.
+- Before drafting a reply or forward to a grouped thread, click the subject to expand its message list, open every message row, and read the messages from oldest to newest. Do not answer from only the currently selected message.`,
   },
   {
     name: 'google-docs',
@@ -16702,6 +16741,7 @@ const ADAPTERS = [
 - "Focused" vs "Other" inbox tabs split incoming mail. The user's expected message may be in "Other" if it's from a new sender.
 - Folder tree on the left collapses; expand the relevant folder before clicking conversations inside.
 - Calendar integration: New > Calendar event (not Email) opens the event composer.
+- Hotmail accounts use this same Outlook web interface. Before drafting a reply or forward, check whether messages are grouped. If grouped, expand the selected conversation and read every message from oldest to newest; if shown individually, inspect the related messages one by one instead of hunting for a nonexistent expand control. The reply composer's "Show message history" control is not a substitute for reading the conversation first.
 - Reply / Reply all / Forward buttons live at the top of the reading pane AND inline at the bottom of the most recent message; either works.`,
   },
   {

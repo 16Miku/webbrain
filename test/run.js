@@ -2188,7 +2188,7 @@ test('chrome target blank redirect ignores browser new-tab placeholders', async 
 
 console.log('\nadapters');
 
-test('matches github.com and documents username restrictions', () => {
+test('matches github.com and documents account and generated-content guidance', () => {
   const adapters = [
     getActiveAdapter('https://github.com/esokullu/webbrain'),
     getActiveAdapterFx('https://github.com/esokullu/webbrain'),
@@ -2199,6 +2199,15 @@ test('matches github.com and documents username restrictions', () => {
       adapter?.notes || '',
       /Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen\./,
     );
+    assert.match(adapter?.notes || '', /verify the "Previous tag" range/i);
+    assert.match(adapter?.notes || '', /prefer "Generate release notes" and review its output/i);
+    assert.match(adapter?.notes || '', /otherwise preserve their text/i);
+    assert.match(adapter?.notes || '', /title field's Copilot button/i);
+    assert.match(adapter?.notes || '', /blank description, prefer Copilot > "Summary"/i);
+    assert.match(adapter?.notes || '', /Summary ignores existing description text/i);
+    assert.match(adapter?.notes || '', /preserve repository templates and user content/i);
+    const bulletCount = (adapter?.notes || '').split('\n').filter(line => line.startsWith('- ')).length;
+    assert.equal(bulletCount, 8, 'GitHub adapter must stay within its documented eight-bullet prompt budget');
   }
 });
 
@@ -2257,10 +2266,73 @@ test('matches gmail.com under mail.google.com', () => {
   assert.match(a?.notes || '', /do not use click-by-text or coordinates/i);
   assert.match(a?.notes || '', /Re-read the body afterward to verify the replacement/i);
   assert.match(a?.notes || '', /If the user says not to send, never click Send/i);
+  assert.match(a?.notes || '', /top-level "Expand all" control/i);
+  assert.match(a?.notes || '', /read it from oldest to newest/i);
+  assert.match(a?.notes || '', /Show trimmed content.*not a substitute for expanding the conversation/is);
   assert.doesNotMatch(a?.notes || '', /Click into it before typing/i);
   const firefox = getActiveAdapterFx('https://mail.google.com/mail/u/0/#inbox');
   assert.equal(firefox?.name, 'gmail');
   assert.equal(firefox?.notes, a?.notes);
+});
+
+test('email adapters require complete thread context with Chrome/Firefox parity', () => {
+  const cases = [
+    {
+      url: 'https://mail.yahoo.com/d/folders/1/messages/abc',
+      name: 'yahoo-mail',
+      guidance: /inspect every message in the conversation/i,
+    },
+    {
+      url: 'https://mail.proton.me/u/0/inbox/thread-id',
+      name: 'proton-mail',
+      guidance: /inspect every message card/i,
+    },
+    {
+      url: 'https://app.fastmail.com/mail/Inbox/thread-id',
+      name: 'fastmail',
+      guidance: /use Shift\+E to expand all collapsed messages/i,
+    },
+    {
+      url: 'https://mail.zoho.eu/zm/#mail/folder/inbox/p/123',
+      name: 'zoho-mail',
+      guidance: /open the whole conversation/i,
+    },
+    {
+      url: 'https://mail.yandex.com/?uid=1#message/123',
+      name: 'yandex-mail',
+      guidance: /click the subject to expand its message list/i,
+    },
+    {
+      url: 'https://outlook.live.com/mail/0/inbox/id/abc',
+      name: 'outlook',
+      guidance: /Hotmail accounts use this same Outlook web interface/i,
+    },
+  ];
+
+  for (const { url, name, guidance } of cases) {
+    const chrome = getActiveAdapter(url);
+    const firefox = getActiveAdapterFx(url);
+    assert.equal(chrome?.name, name, `${name}: Chrome matcher`);
+    assert.equal(firefox?.name, name, `${name}: Firefox matcher`);
+    assert.match(chrome?.notes || '', guidance, `${name}: complete-thread guidance`);
+    assert.match(chrome?.notes || '', /oldest to newest/i, `${name}: chronological reading guidance`);
+    if (name === 'outlook') {
+      assert.match(chrome?.notes || '', /check whether messages are grouped/i);
+      assert.match(chrome?.notes || '', /shown individually.*nonexistent expand control/i);
+    }
+    assert.equal(firefox?.notes, chrome?.notes, `${name}: Chrome/Firefox notes parity`);
+  }
+
+  for (const url of [
+    'https://mail.yahoo.com.evil.example/',
+    'https://mail.proton.me.evil.example/',
+    'https://app.fastmail.com.evil.example/',
+    'https://mail.zoho.com.evil.example/',
+    'https://mail.yandex.com.evil.example/',
+  ]) {
+    assert.equal(getActiveAdapter(url), null, `must reject lookalike email host: ${url}`);
+    assert.equal(getActiveAdapterFx(url), null, `Firefox must reject lookalike email host: ${url}`);
+  }
 });
 
 test('matches google search across TLDs and includes udm=14, without hijacking other google apps', () => {
