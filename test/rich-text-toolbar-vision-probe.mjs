@@ -188,12 +188,14 @@ function mimeForPath(filePath) {
 
 function isCompactUnlabelledInputAttempt(event) {
   const data = event?.data || event || {};
-  if (!['set_field', 'type_ax'].includes(data.name)) return false;
+  if (!['set_field', 'type_ax', 'type_text'].includes(data.name)) return false;
   const result = data.result || {};
   const meta = result.fieldMeta || {};
   const rect = result.rect || {};
   const input = meta.tag === 'input' && ['text', 'search', 'number'].includes(String(meta.type || 'text'));
-  const unlabelled = ![meta.name, meta.autocomplete, meta.ariaLabel, meta.placeholder, meta.labelText]
+  // Keep this list identical to the runtime candidate detector: technical
+  // name/autocomplete hints are not visible labels, while aria-labelledby is.
+  const unlabelled = ![meta.ariaLabel, meta.ariaLabelledByText, meta.placeholder, meta.labelText]
     .some(value => String(value || '').trim());
   return input && unlabelled
     && Number(rect.w) > 0 && Number(rect.h) > 0
@@ -232,8 +234,8 @@ async function loadTraceCase(options) {
   if (options.eventIndex != null) {
     const event = events[options.eventIndex];
     if (!event) throw new Error(`trace has no events[${options.eventIndex}]`);
-    if (!['set_field', 'type_ax'].includes(event?.data?.name)) {
-      throw new Error(`events[${options.eventIndex}] is not set_field/type_ax`);
+    if (!['set_field', 'type_ax', 'type_text'].includes(event?.data?.name)) {
+      throw new Error(`events[${options.eventIndex}] is not set_field/type_ax/type_text`);
     }
     selected = { event, index: options.eventIndex };
   } else {
@@ -244,14 +246,19 @@ async function loadTraceCase(options) {
   }
 
   const toolData = selected.event.data || {};
-  const screenshotEntry = events
+  const screenshotsAfterAttempt = events
     .map((event, index) => ({ event, index }))
     .slice(selected.index + 1)
-    .find(({ event }) => event?.kind === 'screenshot'
+    .filter(({ event }) => event?.kind === 'screenshot'
       && typeof event?.data?.screenshot_base64 === 'string'
       && Number(event.ts || 0) - Number(selected.event.ts || 0) <= 10_000);
+  // The runtime records the exact redacted, red-outlined classifier input
+  // after the tool event. Prefer it over unrelated post-tool screenshots.
+  const screenshotEntry = screenshotsAfterAttempt.find(({ event }) => (
+    event?.data?.caption === 'rich-text toolbar target preflight'
+  ));
   if (!screenshotEntry && !options.image) {
-    throw new Error('no screenshot was captured within 10 seconds after the selected tool call; use --image with --rect/--viewport, or select a trace recorded with auto-screenshot enabled');
+    throw new Error('no dedicated rich-text toolbar preflight screenshot was captured within 10 seconds after the selected tool call; use --image with --rect/--viewport, or select a newer trace recorded with auto-screenshot enabled');
   }
 
   const rectObject = toolData.result?.rect || {};
@@ -270,7 +277,12 @@ async function loadTraceCase(options) {
     rect: options.rect || traceRect,
     viewport: options.viewport || traceViewport,
     task: options.task ?? `User request 1: ${String(trace.run?.userMessage || '(unavailable)')}`,
-    attemptedText: options.value ?? String(toolData.args?.text || ''),
+    attemptedText: options.value ?? (
+      Object.prototype.hasOwnProperty.call(toolData.args || {}, 'text')
+        ? String(toolData.args.text ?? '')
+        : null
+    ),
+    alreadyAnnotated: true,
     presetValues: options.presetValues.length
       ? options.presetValues
       : (toolData.result?.fieldMeta?.toolbarCandidate?.availablePresetValues || []),
@@ -304,8 +316,8 @@ async function loadCase(options) {
   const viewport = options.viewport || traceCase?.viewport || null;
   if (!options.alreadyAnnotated && !rect) throw new Error('--rect x,y,w,h is required for a raw image');
   const task = options.task ?? traceCase?.task ?? '';
-  const attemptedText = options.value ?? traceCase?.attemptedText ?? '';
-  if (!attemptedText) throw new Error('--value is required when it cannot be derived from a trace');
+  const attemptedText = options.value ?? traceCase?.attemptedText ?? null;
+  if (attemptedText == null) throw new Error('--value is required when it cannot be derived from a trace');
 
   return {
     dataUrl,
@@ -313,6 +325,7 @@ async function loadCase(options) {
     viewport,
     task,
     attemptedText,
+    alreadyAnnotated: options.alreadyAnnotated || (!options.image && traceCase?.alreadyAnnotated === true),
     presetValues: options.presetValues.length ? options.presetValues : (traceCase?.presetValues || []),
     source: traceCase?.source || { kind: 'image', path: imagePath },
   };
@@ -439,8 +452,8 @@ function decide(audit, attemptedText, availablePresetValues = []) {
   }
   if (audit.regionKind === 'rich_text_toolbar') {
     const shape = attemptedTextShape(attemptedText);
-    let compatible = false;
-    switch (audit.targetKind) {
+    let compatible = shape.chars === 0;
+    if (!compatible) switch (audit.targetKind) {
       case 'font_size': compatible = shape.numericPreset === true; break;
       case 'font_family':
         compatible = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
@@ -585,7 +598,7 @@ try {
 try {
   const testCase = await loadCase(options);
   const original = dataUrlParts(testCase.dataUrl);
-  const annotated = options.alreadyAnnotated
+  const annotated = testCase.alreadyAnnotated
     ? { dataUrl: testCase.dataUrl, image: null, cssViewport: null, pixelRect: null }
     : await annotateScreenshot(testCase.dataUrl, testCase.rect, testCase.viewport);
   const sent = dataUrlParts(annotated.dataUrl);

@@ -27238,6 +27238,93 @@ test('Chrome Agent routes selector type_text toolbar preflight through CDP befor
   }
 });
 
+test('Rich-text toolbar vision probe consumes the dedicated preflight trace capture and runtime label fields', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webbrain-toolbar-probe-'));
+  try {
+    const tracePath = path.join(tempDir, 'trace.json');
+    const outputPath = path.join(tempDir, 'result.json');
+    const compactResult = ({ ariaLabelledByText = null, name = null } = {}) => ({
+      rect: { x: 10, y: 12, w: 80, h: 24 },
+      fieldMeta: {
+        tag: 'input',
+        type: 'text',
+        name,
+        autocomplete: 'off',
+        ariaLabel: null,
+        ariaLabelledByText,
+        placeholder: null,
+        labelText: null,
+        toolbarCandidate: {
+          score: 8,
+          reasons: ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
+          availablePresetValues: ['11', '14'],
+        },
+      },
+    });
+    fs.writeFileSync(tracePath, JSON.stringify({
+      run: {
+        runId: 'toolbar-probe-test',
+        userMessage: 'Fill the editor body',
+        runtimeConfig: { auto_screenshot: 'state_change', screenshot_redaction: true },
+      },
+      events: [
+        { kind: 'tool', ts: 1000, data: { name: 'get_screenshot', result: { viewport: { width: 800, height: 600 } } } },
+        {
+          kind: 'tool',
+          ts: 1050,
+          data: {
+            name: 'set_field',
+            args: { ref_id: 'ref_ordinary', text: '12' },
+            result: compactResult({ ariaLabelledByText: 'Quantity' }),
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1100,
+          data: {
+            name: 'type_text',
+            args: { selector: '#font-size', text: 'Document prose' },
+            result: compactResult({ name: 'fontSize' }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1150,
+          data: {
+            caption: 'auto-screenshot after tool batch',
+            screenshot_base64: 'data:image/png;base64,dW5yZWxhdGVk',
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1200,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,ZXhhY3Q=',
+          },
+        },
+      ],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--dry-run',
+      '--output', outputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    assert.equal(output.source.candidateCount, 1, 'aria-labelledby must exclude the ordinary field while name must not exclude the toolbar input');
+    assert.equal(output.source.toolEventIndex, 2);
+    assert.equal(output.source.screenshotEventIndex, 4, 'the dedicated preflight capture must win over a later unrelated screenshot');
+    assert.equal(output.case.attemptedText, 'Document prose');
+    assert.equal(output.image.originalBytes, 5);
+    assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('Chrome selector click distinguishes pre-dispatch failure from uncertain dispatch', async () => {
   const client = new CDPClient();
   client.resolveSelector = async () => null;
@@ -50978,7 +51065,11 @@ test('agent forwards private AX scope and records only the final done verdict', 
       `${label}: verify_form refs do not refresh their private AX scope`,
     );
     assert.match(source, /delete response\.documentToken/, `${label}: private AX document token leaks into model context`);
-    assert.match(source, /if \(!toolResult\?\.done\) (?:await )?recordFinalToolTrace\(toolResult\)/, `${label}: raw done is still recorded before terminal guards`);
+    assert.match(
+      source,
+      /if \(!toolResult\?\.done\) (?:await recordFinalToolTrace\(toolResult\)|\{[\s\S]{0,180}(?:await )?recordFinalToolTrace\(toolResult\))/,
+      `${label}: raw done is still recorded before terminal guards`,
+    );
     assert.match(source, /recordFinalToolTrace\(blockedResult\)/, `${label}: blocked done verdict is not recorded`);
     assert.match(source, /recordFinalToolTrace\(failedResult\)/, `${label}: failed done verdict is not recorded`);
   }

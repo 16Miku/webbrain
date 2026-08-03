@@ -1788,7 +1788,10 @@ export class Agent extends LoopDetector {
   }
 
   static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
-    if (!shape || shape.chars < 1) return false;
+    if (!shape) return false;
+    // An explicit empty value is a formatting reset, not document prose. It
+    // is valid for link, color, font, style, and other toolbar controls.
+    if (shape.chars === 0) return true;
     if (targetKind === 'font_size') return shape.numericPreset === true;
     if (targetKind === 'font_family') {
       const validShape = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
@@ -2011,6 +2014,8 @@ export class Agent extends LoopDetector {
       verified: false,
       dispatched: false,
       noDispatch: true,
+      rect: identity.rect || null,
+      fieldMeta: identity.fieldMeta || null,
       wrongTarget: true,
       richTextToolbar: true,
       targetKind: state.targetKind,
@@ -2098,6 +2103,7 @@ export class Agent extends LoopDetector {
     if (!candidate || Number(candidate.score) < 4 || !probe.rect) return { block: null, shot: null };
     let shot = null;
     let audit = null;
+    let traceCapture = null;
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
     if (
@@ -2119,6 +2125,10 @@ export class Agent extends LoopDetector {
           height: shot.cssHeight || shot.height,
         };
         const annotated = await this._annotateScreenshot(shot.dataUrl, probe.rect, cssViewport);
+        traceCapture = annotated ? {
+          dataUrl: annotated,
+          caption: 'rich-text toolbar target preflight',
+        } : null;
         audit = await this._classifyRichTextToolbarTarget(tabId, provider, annotated);
       }
     }
@@ -2134,9 +2144,9 @@ export class Agent extends LoopDetector {
     if (decision.wrongTarget) {
       const block = {};
       this._applyRichTextToolbarWrongTarget(tabId, toolName, args, block, candidate, decision, audit, probe);
-      return { block, shot, audit, decision };
+      return { block, shot, audit, decision, traceCapture };
     }
-    return { block: null, shot, audit, decision };
+    return { block: null, shot, audit, decision, traceCapture };
   }
 
   async _auditRichTextToolbarTarget(tabId, toolName, args, result) {
@@ -4865,14 +4875,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('tool_result', { name: fnName, result: toolResult });
       }
       const _runIdForTool = this.currentRunId.get(tabId);
-      const recordFinalToolTrace = result => {
-        if (_runIdForTool) {
-          trace.recordToolCall(_runIdForTool, step, {
-            name: fnName, args: fnArgs, result, latencyMs: _toolLatency,
-          });
-        }
+      const recordFinalToolTrace = async result => {
+        try {
+          if (_runIdForTool) {
+            await trace.recordToolCall(_runIdForTool, step, {
+              name: fnName, args: fnArgs, result, latencyMs: _toolLatency,
+            });
+          }
+        } catch {}
       };
-      if (!toolResult?.done) recordFinalToolTrace(toolResult);
+      if (!toolResult?.done) {
+        const toolTracePromise = recordFinalToolTrace(toolResult);
+        if (_runIdForTool && toolbarPreflight.traceCapture?.dataUrl) {
+          try {
+            await toolTracePromise;
+            await trace.recordScreenshot(
+              _runIdForTool,
+              step,
+              toolbarPreflight.traceCapture.dataUrl,
+              toolbarPreflight.traceCapture.caption,
+            );
+          } catch {}
+        }
+      }
 
       // done() short-circuit — push result, persist, and bail out.
       if (toolResult && toolResult.done) {

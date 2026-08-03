@@ -3073,6 +3073,19 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!documentTextFormattingDecision.wrongTarget) {
       throw new Error(`document text must be rejected for other-formatting targets: ${JSON.stringify(documentTextFormattingDecision)}`);
     }
+    for (const targetKind of ['font_size', 'font_family', 'style_preset', 'color', 'link', 'other_formatting']) {
+      const clearingDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(''),
+        attemptedPresetMatch: false,
+      }, {
+        ...familyAudit,
+        targetKind,
+      });
+      if (clearingDecision.wrongTarget) {
+        throw new Error(`explicit empty formatting reset must remain allowed: ${JSON.stringify({ targetKind, clearingDecision })}`);
+      }
+    }
     const ordinaryDecision = AgentClass._richTextToolbarDecision(candidate, {
       regionKind: 'ordinary_form_field',
       targetKind: 'ordinary_input',
@@ -3298,6 +3311,10 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       !visualPreflight.shot
       || !visualPreflight.block?.wrongTarget
       || visualPreflight.block.dispatched !== false
+      || !visualPreflight.block.rect
+      || !visualPreflight.block.fieldMeta?.toolbarCandidate
+      || visualPreflight.traceCapture?.caption !== 'rich-text toolbar target preflight'
+      || visualPreflight.traceCapture?.dataUrl !== 'data:image/png;base64,dGVzdA=='
       || classifierArgCount !== 3
       || agent.autoScreenshotCount.get(tabId)
     ) {
