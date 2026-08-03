@@ -923,7 +923,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'upload_file',
-      description: 'Upload a file directly to an existing file input without opening the page or OS file-picker dialog. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide EITHER downloadId (preferred — the id from download_files/list_downloads; you do not need to recall the path) OR filePath (absolute local path). If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize the widget; then retry upload_file with the exact selector returned or discovered. The file must exist on the local filesystem.',
+      description: 'Upload a file directly to an existing file input without opening the page or OS file-picker dialog. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide EITHER downloadId (preferred — the id from download_files/list_downloads; you do not need to recall the path) OR filePath (absolute local path). Never guess a downloadId. If both are accidentally provided, a valid downloadId is preferred; if that id cannot resolve, the supplied filePath is used as a fallback. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize the widget; then retry upload_file with the exact selector returned or discovered. The file must exist on the local filesystem.',
       parameters: {
         type: 'object',
         properties: {
