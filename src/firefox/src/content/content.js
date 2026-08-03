@@ -2907,7 +2907,9 @@
       const candidates = [];
       let scope = _composedParent(regionNode);
       for (let depth = 0; scope && depth < 5; depth += 1, scope = _composedParent(scope)) {
-        for (const editor of scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"])') || []) {
+        for (const editor of scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame') || []) {
+          const editorTag = String(editor.tagName || '').toLowerCase();
+          const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
           if (
             editor === regionNode
             || regionNode.contains(editor)
@@ -2915,6 +2917,7 @@
             || !_visibleFieldContextNode(editor)
           ) continue;
           const rect = editor.getBoundingClientRect();
+          if (iframeBacked && (rect.width < 160 || rect.height < 80)) continue;
           const overlap = Math.max(0, Math.min(regionRect.right, rect.right) - Math.max(regionRect.left, rect.left));
           const horizontalPenalty = overlap > 0
             ? 0

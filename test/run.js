@@ -27438,6 +27438,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   const frames = [
     { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
     { frameId: 7, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+    { frameId: 9, parentFrameId: 0, url: 'https://frame.example.test/editor' },
   ];
   const toolbarProbe = {
     resolved: true,
@@ -27464,19 +27465,32 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     if (message.target === 'content') {
       if (message.params?.args?.selector === '#shared-field') {
         sharedProbeFrameIds.push(options.frameId);
-        return ordinaryProbe;
+        return options.frameId === 9 ? { resolved: false } : ordinaryProbe;
       }
       return options.frameId === 7 ? toolbarProbe : { resolved: false };
     }
-    if (message.target === 'redaction-content' && message.action === 'scroll_child_frame_into_view') {
-      frameContainerScrolled = true;
+    if (message.target === 'redaction-content' && message.action === 'wait_for_exact_child_frame_rect') {
       frameScrollParentId = options.frameId;
-      return { found: true, scrolled: true };
+      const scrolled = frameContainerOffscreen;
+      if (scrolled) frameContainerScrolled = true;
+      return {
+        found: true,
+        scrolled,
+        outerRect: { x: 100, y: 200, w: 500, h: 400 },
+        contentRect: { x: 100, y: 200, w: 500, h: 400 },
+        ownerMeta: { tag: 'iframe', id: 'editor-frame', name: null, role: null },
+      };
+    }
+    if (message.target === 'redaction-content' && message.action === 'announce_exact_child_frame') {
+      return { announced: true };
     }
     if (message.target === 'redaction-content' && options.frameId === 0) {
       return {
         viewport: { width: 1000, height: 800 },
         childFrames: [{
+          url: 'https://frame.example.test/editor',
+          rect: { x: 700, y: 200, w: 500, h: 400 },
+        }, {
           url: 'https://frame.example.test/editor',
           rect: {
             x: 100,
@@ -27488,6 +27502,9 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       };
     }
     if (message.target === 'redaction-content' && options.frameId === 7) {
+      return { viewport: { width: 500, height: 400 }, childFrames: [] };
+    }
+    if (message.target === 'redaction-content' && options.frameId === 9) {
       return { viewport: { width: 500, height: 400 }, childFrames: [] };
     }
     throw new Error('unexpected frame message');
@@ -27515,13 +27532,19 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(chromeProbe.frameId, 7);
     assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.deepEqual(chromeProbe.frameOwnerRect, {
+      x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
+    });
+    assert.equal(chromeProbe.frameOwnerMeta?.id, 'editor-frame');
     sharedProbeFrameIds.length = 0;
+    frameScrollParentId = null;
     const unfilteredChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
       selector: '#shared-field',
       text: 'Document prose',
     }, { mapAnnotation: false });
     assert.equal(unfilteredChromeProbe.frameId, 7);
-    assert.deepEqual(sharedProbeFrameIds, [7], 'Chrome iframe_type probes must exclude the top document');
+    assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Chrome iframe_type probes must exclude the top document');
+    assert.equal(frameScrollParentId, null, 'ordinary Chrome iframe fields should not start the toolbar geometry handshake');
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -27563,13 +27586,19 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(firefoxProbe.frameId, 7);
     assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.deepEqual(firefoxProbe.frameOwnerRect, {
+      x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
+    });
+    assert.equal(firefoxProbe.frameOwnerMeta?.id, 'editor-frame');
     sharedProbeFrameIds.length = 0;
+    frameScrollParentId = null;
     const unfilteredFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
       selector: '#shared-field',
       text: 'Document prose',
     }, { mapAnnotation: false });
     assert.equal(unfilteredFirefoxProbe.frameId, 7);
-    assert.deepEqual(sharedProbeFrameIds, [7], 'Firefox iframe_type probes must exclude the top document');
+    assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Firefox iframe_type probes must exclude the top document');
+    assert.equal(frameScrollParentId, null, 'ordinary Firefox iframe fields should not start the toolbar geometry handshake');
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;

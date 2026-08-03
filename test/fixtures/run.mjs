@@ -26,6 +26,7 @@ const accessibilityTreeJsPath = path.join(root, 'src', 'chrome', 'src', 'content
 const firefoxAccessibilityTreeJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'accessibility-tree.js');
 const contentJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'content.js');
 const firefoxContentJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'content.js');
+const redactionRegionsJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'redaction-regions.js');
 const filePickerGuardPageJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'file-picker-guard-page.js');
 const firefoxFilePickerGuardPageJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'file-picker-guard-page.js');
 const selectionShortcutJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
@@ -325,6 +326,58 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
+
+test('exact iframe rect handshake distinguishes same-URL sibling frames', async (page) => {
+  await page.setContent(`<!doctype html>
+    <style>
+      body { margin: 0; height: 1200px; }
+      iframe { position: absolute; top: 180px; width: 300px; height: 180px; border: 0; }
+      #first { left: 100px; }
+      #second { left: 600px; }
+    </style>
+    <iframe id="first" srcdoc="<input>"></iframe>
+    <iframe id="second" srcdoc="<input>"></iframe>`);
+  await page.evaluate(() => window.scrollTo(0, 100));
+  const runtimeStub = `
+    window.chrome = window.chrome || {};
+    window.chrome.runtime = {
+      onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
+    };`;
+  const source = await readFile(redactionRegionsJsPath, 'utf-8');
+  for (const frame of page.frames()) {
+    await frame.addScriptTag({ content: runtimeStub });
+    await frame.addScriptTag({ content: source });
+  }
+  const childFrames = page.frames().filter(frame => frame !== page.mainFrame());
+  if (childFrames.length !== 2) throw new Error(`expected two child frames, got ${childFrames.length}`);
+  const token = `fixture-${Date.now()}`;
+  const parentWait = page.evaluate(probeToken => new Promise(resolve => {
+    const keepAlive = window.__redaction_handler({
+      target: 'redaction-content',
+      action: 'wait_for_exact_child_frame_rect',
+      params: { token: probeToken },
+    }, {}, resolve);
+    if (keepAlive !== true) resolve({ found: false, keepAlive });
+  }), token);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const announced = await childFrames[1].evaluate(probeToken => new Promise(resolve => {
+    window.__redaction_handler({
+      target: 'redaction-content',
+      action: 'announce_exact_child_frame',
+      params: { token: probeToken },
+    }, {}, resolve);
+  }), token);
+  const exact = await parentWait;
+  if (
+    announced?.announced !== true
+    || exact?.found !== true
+    || Math.round(exact.outerRect?.x) !== 600
+    || Math.round(exact.outerRect?.y) !== 80
+    || Math.round(exact.outerRect?.pageY) !== 180
+  ) {
+    throw new Error(`expected exact second-frame geometry, got: ${JSON.stringify({ announced, exact })}`);
+  }
+});
 
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
@@ -2966,6 +3019,16 @@ for (const browserKind of ['chrome', 'firefox']) {
       slottedToolbarBody.textContent = 'Enter text';
       slottedToolbarEditor.appendChild(slottedToolbarBody);
       document.body.appendChild(slottedToolbarEditor);
+
+      const iframeBackedEditor = document.createElement('div');
+      iframeBackedEditor.className = 'editor';
+      iframeBackedEditor.innerHTML = `
+        <div role="toolbar" style="height:42px;display:flex;align-items:center">
+          <input id="iframe-toolbar-family-input" value="Default" style="width:118px;height:22px">
+        </div>
+        <iframe id="iframe-editor-body" style="width:400px;height:180px"
+          srcdoc="<div id='inner-editor' contenteditable='true'>Enter text</div>"></iframe>`;
+      document.body.appendChild(iframeBackedEditor);
       return {
         size: window.__wb_ax_ref(document.getElementById('font-size')),
         family: window.__wb_ax_ref(document.getElementById('font-family')),
@@ -2979,6 +3042,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
         slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
+        iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -3053,6 +3117,17 @@ for (const browserKind of ['chrome', 'firefox']) {
       || slottedToolbarProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slotted-toolbar-editor-body'
     ) {
       throw new Error(`expected toolbar ancestry through the input assigned slot, got: ${JSON.stringify(slottedToolbarProbe)}`);
+    }
+    const iframeBackedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.iframeToolbarFamilyInput, text: 'Roboto' },
+    });
+    if (
+      iframeBackedProbe?.fieldMeta?.toolbarCandidate?.associatedEditorIdentity?.tag !== 'iframe'
+      || iframeBackedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'iframe-editor-body'
+      || !iframeBackedProbe.fieldMeta.toolbarCandidate.associatedEditorRef
+    ) {
+      throw new Error(`expected adjacent iframe editor association, got: ${JSON.stringify(iframeBackedProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
@@ -3865,6 +3940,90 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     );
     if (!iframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
       throw new Error('the associated iframe editor edit should clear toolbar debt');
+    }
+
+    const iframeBackedCandidate = {
+      ...candidate,
+      associatedEditorRef: 'ref_200',
+      associatedEditorIdentity: {
+        tag: 'iframe',
+        id: null,
+        name: null,
+        role: null,
+        pageX: 20,
+        pageY: 160,
+        w: 400,
+        h: 180,
+      },
+    };
+    const iframeBackedBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12' },
+      iframeBackedBlock,
+      iframeBackedCandidate,
+      familyDecision,
+      familyAudit,
+      {
+        documentToken: 'top-doc-a',
+        refScopeUrl: 'https://example.test/editor',
+        rect: { x: 10, y: 8, w: 60, h: 24 },
+      },
+    );
+    if (!iframeBackedBlock.wrongTarget || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a top-frame toolbar with an iframe-backed editor must retain recovery debt');
+    }
+    const iframeBackedEditorProbe = {
+      resolved: true,
+      refId: 'ref_inner_editor',
+      frameId: 7,
+      documentToken: 'frame-doc-a',
+      refScopeUrl: 'https://frame.example.test/editor',
+      topFrameUrl: 'https://example.test/editor',
+      rect: { x: 0, y: 0, w: 400, h: 180 },
+      frameOwnerRect: { x: 20, y: 60, pageX: 20, pageY: 160, w: 400, h: 180 },
+      frameOwnerMeta: { tag: 'iframe', id: 'other-frame', name: null, role: null },
+      fieldMeta: { tag: 'div', id: 'inner-editor', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => iframeBackedEditorProbe;
+    const unrelatedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { selector: '#inner-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (unrelatedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an edit in a different iframe must not clear iframe-backed editor debt');
+    }
+    const matchingAnonymousFrameProbe = {
+      ...iframeBackedEditorProbe,
+      frameOwnerMeta: { ...iframeBackedEditorProbe.frameOwnerMeta, id: null },
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      ...matchingAnonymousFrameProbe,
+      topFrameUrl: '',
+    });
+    const unscopedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { selector: '#inner-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (unscopedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an iframe edit without a verified top-page scope must retain toolbar debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => matchingAnonymousFrameProbe;
+    const iframeBackedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { selector: '#inner-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!iframeBackedRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a verified edit in the associated iframe editor must clear toolbar debt');
     }
 
     agent.autoScreenshot = 'state_change';

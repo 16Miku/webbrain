@@ -49,6 +49,8 @@
     let viewport = {
       width: Math.max(1, Math.round(window.innerWidth || 1)),
       height: Math.max(1, Math.round(window.innerHeight || 1)),
+      scrollX: window.scrollX || window.pageXOffset || 0,
+      scrollY: window.scrollY || window.pageYOffset || 0,
     };
     if (space === 'page') {
       viewport = {
@@ -108,40 +110,85 @@
     return { elements: selected, viewport, childFrames };
   }
 
-  function scrollChildFrameIntoView(params) {
+  function waitForExactChildFrameRect(params) {
+    const token = String(params?.token || '');
+    if (!token) return Promise.resolve({ found: false });
+    return new Promise(resolve => {
+      let settled = false;
+      let timer = null;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve(value);
+      };
+      const toRect = rect => ({
+        x: rect.left,
+        y: rect.top,
+        w: rect.width,
+        h: rect.height,
+      });
+      const onMessage = event => {
+        if (event?.data?.__webbrainExactFrameRectToken !== token) return;
+        const frame = Array.from(document.querySelectorAll('iframe, frame'))
+          .find(candidate => candidate.contentWindow === event.source);
+        if (!frame) return;
+        let outer = frame.getBoundingClientRect();
+        const offscreen = outer.right <= 0 || outer.bottom <= 0
+          || outer.left >= window.innerWidth || outer.top >= window.innerHeight;
+        const scrolled = params?.scrollIntoView === true && offscreen;
+        if (scrolled) {
+          try { frame.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); } catch {}
+          outer = frame.getBoundingClientRect();
+        }
+        const transformX = outer.width / (frame.offsetWidth || outer.width || 1);
+        const transformY = outer.height / (frame.offsetHeight || outer.height || 1);
+        finish({
+          found: true,
+          scrolled,
+          outerRect: {
+            ...toRect(outer),
+            pageX: outer.left + (window.scrollX || window.pageXOffset || 0),
+            pageY: outer.top + (window.scrollY || window.pageYOffset || 0),
+          },
+          contentRect: {
+            x: outer.left + (frame.clientLeft || 0) * transformX,
+            y: outer.top + (frame.clientTop || 0) * transformY,
+            w: (frame.clientWidth || outer.width) * transformX,
+            h: (frame.clientHeight || outer.height) * transformY,
+          },
+          ownerMeta: {
+            tag: String(frame.tagName || '').toLowerCase(),
+            id: frame.id || null,
+            name: frame.getAttribute?.('name') || null,
+            role: frame.getAttribute?.('role') || null,
+          },
+        });
+      };
+      window.addEventListener('message', onMessage);
+      timer = setTimeout(() => finish({ found: false }), 750);
+    });
+  }
+
+  function announceExactChildFrame(params) {
+    const token = String(params?.token || '');
+    if (!token || window.parent === window) return { announced: false };
     try {
-      const frames = Array.from(document.querySelectorAll('iframe, frame'));
-      const childUrl = String(params?.childUrl || '');
-      const fallbackIndex = Number(params?.fallbackIndex);
-      const urlKey = (value) => {
-        try {
-          const parsed = new URL(String(value || ''), document.baseURI);
-          parsed.hash = '';
-          return parsed.href;
-        } catch { return String(value || '').split('#')[0]; }
-      };
-      const wanted = urlKey(childUrl);
-      const exact = frames.filter(frame => urlKey(frame.src || frame.getAttribute('src') || 'about:blank') === wanted);
-      const frame = exact.length === 1
-        ? exact[0]
-        : (Number.isInteger(fallbackIndex) ? frames[fallbackIndex] : null);
-      if (!frame) return { found: false, scrolled: false };
-      frame.scrollIntoView({ block: 'center', inline: 'center' });
-      const after = frame.getBoundingClientRect();
-      return {
-        found: true,
-        scrolled: true,
-        rect: { x: Math.round(after.x), y: Math.round(after.y), w: Math.round(after.width), h: Math.round(after.height) },
-      };
-    } catch { return { found: false, scrolled: false }; }
+      window.parent.postMessage({ __webbrainExactFrameRectToken: token }, '*');
+      return { announced: true };
+    } catch { return { announced: false }; }
   }
 
   runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.target !== 'redaction-content') return;
     if (msg.action === 'get_redaction_regions') {
       sendResponse(collectRedactionRegions(msg.params || {}));
-    } else if (msg.action === 'scroll_child_frame_into_view') {
-      sendResponse(scrollChildFrameIntoView(msg.params || {}));
+    } else if (msg.action === 'wait_for_exact_child_frame_rect') {
+      waitForExactChildFrameRect(msg.params || {}).then(sendResponse);
+      return true;
+    } else if (msg.action === 'announce_exact_child_frame') {
+      sendResponse(announceExactChildFrame(msg.params || {}));
     }
   });
 })();

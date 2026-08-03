@@ -2024,43 +2024,9 @@ export class Agent extends LoopDetector {
     };
   }
 
-  async _scrollRichTextToolbarFrameIntoView(tabId, navigationFrames, frameId) {
-    const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
-    const byId = new Map(frames.filter(frame => Number.isInteger(frame?.frameId)).map(frame => [frame.frameId, frame]));
-    const edges = [];
-    const seen = new Set();
-    let child = byId.get(frameId);
-    while (child && child.frameId !== 0 && !seen.has(child.frameId)) {
-      seen.add(child.frameId);
-      const parent = byId.get(child.parentFrameId);
-      if (!parent) return false;
-      const siblings = frames
-        .filter(frame => frame?.parentFrameId === parent.frameId)
-        .sort((a, b) => a.frameId - b.frameId);
-      edges.push({ parent, child, fallbackIndex: siblings.findIndex(frame => frame.frameId === child.frameId) });
-      child = parent;
-    }
-    if (!child || child.frameId !== 0) return false;
-    let found = false;
-    for (const edge of edges.reverse()) {
-      try {
-        const response = await browser.tabs.sendMessage(tabId, {
-          target: 'redaction-content',
-          action: 'scroll_child_frame_into_view',
-          params: { childUrl: edge.child.url || '', fallbackIndex: edge.fallbackIndex },
-        }, { frameId: edge.parent.frameId });
-        if (response?.found) {
-          found = true;
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-      } catch {}
-    }
-    return found;
-  }
-
-  async _richTextToolbarFrameRectToTop(tabId, navigationFrames, frameId, rect) {
+  async _richTextToolbarFrameGeometryToTop(tabId, navigationFrames, frameId, rect) {
     if (!rect || !Number.isInteger(frameId)) return null;
-    if (frameId === 0) return rect;
+    if (frameId === 0) return { annotationRect: rect, frameOwnerRect: null, frameOwnerMeta: null };
     const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
     if (!frames.some(frame => frame?.frameId === 0) || !frames.some(frame => frame?.frameId === frameId)) return null;
     const collectSnapshots = async () => (await Promise.all(frames.map(async frame => {
@@ -2088,23 +2054,109 @@ export class Agent extends LoopDetector {
         frameId: frame.frameId,
         parentFrameId: frame.parentFrameId,
         url: frame.url || '',
-        elements: frame.frameId === frameId
-          ? [{ kind: 'input', type: 'text', rect }]
-          : [],
       };
     }))).filter(Boolean);
-    let snapshots = await collectSnapshots();
-    let mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
-    if (!mapped && await this._scrollRichTextToolbarFrameIntoView(tabId, frames, frameId)) {
-      snapshots = await collectSnapshots();
-      mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
+    const snapshots = await collectSnapshots();
+    const navigationById = new Map(frames.map(frame => [frame.frameId, frame]));
+    const snapshotById = new Map(snapshots.map(frame => [frame.frameId, frame]));
+    const edges = [];
+    const seen = new Set();
+    let child = navigationById.get(frameId);
+    while (child && child.frameId !== 0 && !seen.has(child.frameId)) {
+      seen.add(child.frameId);
+      const parent = navigationById.get(child.parentFrameId);
+      if (!parent) return null;
+      edges.unshift({ parent, child });
+      child = parent;
     }
-    return mapped ? {
-      x: Math.round(mapped.x),
-      y: Math.round(mapped.y),
-      w: Math.round(mapped.w),
-      h: Math.round(mapped.h),
-    } : null;
+    if (!child || child.frameId !== 0) return null;
+    const exactChildRect = async edge => {
+      const token = `wb-frame-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const parentResponse = browser.tabs.sendMessage(tabId, {
+        target: 'redaction-content',
+        action: 'wait_for_exact_child_frame_rect',
+        params: { token, scrollIntoView: true },
+      }, { frameId: edge.parent.frameId }).catch(() => null);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      try {
+        await browser.tabs.sendMessage(tabId, {
+          target: 'redaction-content',
+          action: 'announce_exact_child_frame',
+          params: { token },
+        }, { frameId: edge.child.frameId });
+      } catch {}
+      return parentResponse;
+    };
+    const transforms = new Map([[0, { x: 0, y: 0, scaleX: 1, scaleY: 1 }]]);
+    let frameOwnerRect = null;
+    let frameOwnerMeta = null;
+    for (const edge of edges) {
+      const exact = await exactChildRect(edge);
+      const parentTransform = transforms.get(edge.parent.frameId);
+      const childSnapshot = snapshotById.get(edge.child.frameId);
+      const childWidth = Number(childSnapshot?.viewport?.width);
+      const childHeight = Number(childSnapshot?.viewport?.height);
+      const content = exact?.contentRect;
+      const outer = exact?.outerRect;
+      if (
+        !exact?.found || !parentTransform || !content || !outer
+        || !(content.w > 0 && content.h > 0) || !(childWidth > 0 && childHeight > 0)
+      ) return null;
+      if (exact.scrolled) await new Promise(resolve => setTimeout(resolve, 50));
+      const mappedContent = {
+        x: parentTransform.x + content.x * parentTransform.scaleX,
+        y: parentTransform.y + content.y * parentTransform.scaleY,
+        w: content.w * parentTransform.scaleX,
+        h: content.h * parentTransform.scaleY,
+      };
+      transforms.set(edge.child.frameId, {
+        x: mappedContent.x,
+        y: mappedContent.y,
+        scaleX: mappedContent.w / childWidth,
+        scaleY: mappedContent.h / childHeight,
+      });
+      if (edge.child.frameId === frameId) {
+        const parentViewport = snapshotById.get(edge.parent.frameId)?.viewport || {};
+        const ownerPageX = Number.isFinite(Number(outer.pageX))
+          ? Number(outer.pageX)
+          : Number(outer.x) + (Number(parentViewport.scrollX) || 0);
+        const ownerPageY = Number.isFinite(Number(outer.pageY))
+          ? Number(outer.pageY)
+          : Number(outer.y) + (Number(parentViewport.scrollY) || 0);
+        frameOwnerRect = { ...outer, pageX: ownerPageX, pageY: ownerPageY };
+        frameOwnerMeta = exact.ownerMeta || null;
+      }
+    }
+    const transform = transforms.get(frameId);
+    if (!transform) return null;
+    const mapped = {
+      x: transform.x + Number(rect.x) * transform.scaleX,
+      y: transform.y + Number(rect.y) * transform.scaleY,
+      w: Number(rect.w) * transform.scaleX,
+      h: Number(rect.h) * transform.scaleY,
+    };
+    if (![mapped.x, mapped.y, mapped.w, mapped.h].every(Number.isFinite)) return null;
+    const rounded = value => {
+      const result = {
+        x: Math.round(value.x),
+        y: Math.round(value.y),
+        w: Math.round(value.w),
+        h: Math.round(value.h),
+      };
+      if (Number.isFinite(Number(value.pageX))) result.pageX = Math.round(Number(value.pageX));
+      if (Number.isFinite(Number(value.pageY))) result.pageY = Math.round(Number(value.pageY));
+      return result;
+    };
+    return {
+      annotationRect: rounded(mapped),
+      frameOwnerRect: frameOwnerRect ? rounded(frameOwnerRect) : null,
+      frameOwnerMeta,
+    };
+  }
+
+  async _richTextToolbarFrameRectToTop(tabId, navigationFrames, frameId, rect) {
+    const geometry = await this._richTextToolbarFrameGeometryToTop(tabId, navigationFrames, frameId, rect);
+    return geometry?.annotationRect || null;
   }
 
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, { mapAnnotation = true } = {}) {
@@ -2165,10 +2217,24 @@ export class Agent extends LoopDetector {
       .filter(probe => probe.fieldMeta?.toolbarCandidate)
       .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
       || probes[0];
-    const annotationRect = mapAnnotation
-      ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
+    const recoveryNeedsGeometry = this._richTextToolbarDebts.has(tabId)
+      && ['iframe', 'frame'].includes(String(currentState?.associatedEditorIdentity?.tag || '').toLowerCase());
+    const candidateNeedsAnnotation = Number(selected.fieldMeta?.toolbarCandidate?.score) >= 4;
+    const geometry = mapAnnotation && (candidateNeedsAnnotation || recoveryNeedsGeometry)
+      ? await this._richTextToolbarFrameGeometryToTop(
+          tabId,
+          navigationFrames,
+          selected.frameId,
+          selected.rect,
+        )
       : null;
-    return { ...selected, annotationRect };
+    return {
+      ...selected,
+      annotationRect: mapAnnotation ? geometry?.annotationRect || null : null,
+      frameOwnerRect: geometry?.frameOwnerRect || null,
+      frameOwnerMeta: geometry?.frameOwnerMeta || null,
+      topFrameUrl: navigationFrames.find(frame => frame?.frameId === 0)?.url || '',
+    };
   }
 
   async _probeRichTextToolbarFocusedTarget(tabId, args = {}, { mapAnnotation = false } = {}) {
@@ -2318,11 +2384,21 @@ export class Agent extends LoopDetector {
         && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
       )
     ) return false;
+    const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
+    const iframeBackedRecovery = toolName === 'iframe_type'
+      && ['iframe', 'frame'].includes(expectedEditorTag);
     const liveProbe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!liveProbe?.resolved && result.verified !== true) return false;
-    const probe = liveProbe?.resolved ? liveProbe : preDispatchProbe;
+    const probe = liveProbe?.resolved ? {
+      ...liveProbe,
+      frameOwnerRect: liveProbe.frameOwnerRect || preDispatchProbe?.frameOwnerRect || null,
+      frameOwnerMeta: liveProbe.frameOwnerMeta || preDispatchProbe?.frameOwnerMeta || null,
+      topFrameUrl: liveProbe.topFrameUrl || preDispatchProbe?.topFrameUrl || '',
+    } : preDispatchProbe;
     if (!probe?.resolved) return false;
-    const sameFrame = state.recoveryOnly === true
+    const sameFrame = iframeBackedRecovery
+      ? Number.isInteger(probe.frameId) && probe.frameId !== 0
+      : state.recoveryOnly === true
       ? true
       : Number.isInteger(state.frameId)
         ? probe.frameId === state.frameId
@@ -2330,9 +2406,12 @@ export class Agent extends LoopDetector {
     if (!sameFrame) return false;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
+    const liveRecoveryScopeUrl = iframeBackedRecovery
+      ? String(probe.topFrameUrl || '')
+      : livePageUrl;
     if (
-      (state.documentToken && liveDocument && state.documentToken !== liveDocument)
-      || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
+      (!iframeBackedRecovery && state.documentToken && liveDocument && state.documentToken !== liveDocument)
+      || (state.pageUrl && liveRecoveryScopeUrl && state.pageUrl !== liveRecoveryScopeUrl)
     ) {
       this._clearRichTextToolbarDocumentState(tabId);
       if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
@@ -2341,24 +2420,37 @@ export class Agent extends LoopDetector {
       return false;
     }
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
-    const isEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
+    const innerEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
     const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
     const matchingIdentity = Agent._richTextToolbarEditorIdentityMatches(
       state.associatedEditorIdentity,
       fieldMeta,
       probe.rect || {},
     );
+    const matchingFrameOwner = iframeBackedRecovery && Agent._richTextToolbarEditorIdentityMatches(
+      state.associatedEditorIdentity,
+      probe.frameOwnerMeta || {},
+      probe.frameOwnerRect || {},
+    );
     const exactIdentity = state.recoveryOnly === true
-      && Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, livePageUrl)
+      && Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl)
       && matchingIdentity;
     const selectorScopeMatches = state.recoveryOnly !== true
-      || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, livePageUrl);
+      || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl);
     const exactSelector = ['type_text', 'iframe_type'].includes(toolName)
       && typeof args?.selector === 'string'
       && !!args.selector.trim()
       && selectorScopeMatches
       && matchingIdentity;
-    if (!isEditor || (!exactRef && !exactIdentity && !exactSelector)) return false;
+    const iframeScopeMatches = state.recoveryOnly === true
+      ? selectorScopeMatches
+      : !!liveRecoveryScopeUrl
+        && Agent._richTextToolbarRecoveryScopeMatches(state.pageUrl, liveRecoveryScopeUrl);
+    const exactIframeEditor = iframeBackedRecovery
+      && innerEditor
+      && matchingFrameOwner
+      && iframeScopeMatches;
+    if (!innerEditor || (!exactRef && !exactIdentity && !exactSelector && !exactIframeEditor)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
@@ -2366,6 +2458,7 @@ export class Agent extends LoopDetector {
       refId: probe.refId || null,
       selectorRecovery: exactSelector,
       identityRecovery: exactIdentity,
+      iframeRecovery: exactIframeEditor,
     });
     return true;
   }
