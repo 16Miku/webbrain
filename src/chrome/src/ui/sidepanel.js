@@ -4005,13 +4005,14 @@ async function applyActiveRunState(numericTabId, state) {
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
     const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
-    if (unavailableBeforeSeq > lastRenderedSeq) {
+    const replayGapBeforeSeq = Number(runAssistantEl.dataset.replayGapBeforeSeq || 0);
+    if (unavailableBeforeSeq > lastRenderedSeq
+        && unavailableBeforeSeq > replayGapBeforeSeq) {
       addRunProgressReplayGapNote();
-      // The discarded range has now been represented by the one gap marker.
-      // Advance the local cursor so the 1.2s run-state poll cannot append the
-      // same notice again when there are no replayable events after the gap.
-      lastRenderedSeq = unavailableBeforeSeq;
-      runAssistantEl.dataset.lastRenderedSeq = String(lastRenderedSeq);
+      // Keep replay-loss notice deduplication separate from the rendered-event
+      // cursor. A terminal snapshot can be fully acknowledged (and therefore
+      // absent from events) while finalContent still needs to be restored.
+      runAssistantEl.dataset.replayGapBeforeSeq = String(unavailableBeforeSeq);
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
