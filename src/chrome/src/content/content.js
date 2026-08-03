@@ -3793,6 +3793,7 @@
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
       const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
       const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
+      if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
       if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
       if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
       const interactiveSelector = [

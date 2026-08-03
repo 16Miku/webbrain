@@ -3315,6 +3315,7 @@ export class CDPClient {
               '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
             ].some(token => formattingDescriptor.includes(token));
             const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
+            if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
             if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
             if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
             const compact = rect.height <= 32 && rect.width <= 220;

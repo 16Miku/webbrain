@@ -1196,7 +1196,7 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     <div id="slotted-toolbar-editor">
       <span id="slot-toolbar-host">
         <input id="slotted-family" type="search" aria-label="Font family" value="Default" style="width:118px;height:22px">
-        <input id="slotted-search" type="search" aria-label="Search" value="" style="width:118px;height:22px">
+        <input id="slotted-search" type="search" aria-label="Search links" value="" style="width:118px;height:22px">
         <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
         <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
         <select id="slotted-style" aria-label="Paragraph style" style="width:118px;height:24px">
@@ -3120,7 +3120,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         <div role="toolbar" style="height:42px;display:flex;align-items:center">
           <input id="descendant-shadow-family-input" type="search" aria-label="Font family" value="Default"
             style="width:118px;height:22px">
-          <input id="descendant-toolbar-search" type="search" aria-label="Search" value=""
+          <input id="descendant-toolbar-search" type="search" aria-label="Search links" value=""
             style="width:118px;height:22px">
           <input id="descendant-toolbar-filter" type="text" aria-label="Filter" value=""
             style="width:118px;height:22px">
