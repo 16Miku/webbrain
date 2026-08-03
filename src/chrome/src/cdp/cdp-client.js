@@ -3154,6 +3154,11 @@ export class CDPClient {
       }
       if (!objectId) return { resolved: false };
 
+      await this.sendCommand(tabId, 'DOM.enable');
+      const described = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }).catch(() => null);
+      const selectorBackendNodeId = Number(described?.node?.backendNodeId) || null;
+      if (!selectorBackendNodeId) return { resolved: false };
+
       const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
         objectId,
         returnByValue: true,
@@ -3509,6 +3514,7 @@ export class CDPClient {
         toolbarContext: value.toolbarContext === true,
         toolbarRegionRef: '',
         shadowPierced: true,
+        selectorBackendNodeId,
       };
     } finally {
       if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
@@ -3649,11 +3655,6 @@ export class CDPClient {
       return jsInfo;
     }
 
-    // One-shot content markers are only created in document/open-shadow DOM.
-    // Do not fall back to first-match closed-shadow traversal for a selector
-    // whose caller requires a unique identity at dispatch time.
-    if (requireUnique) return null;
-
     // ---- Strategy 2: CDP traversal (closed shadow roots) ----
     try {
       await this.sendCommand(tabId, 'DOM.enable');
@@ -3675,14 +3676,26 @@ export class CDPClient {
       };
       walk(root);
 
-      let foundNodeId = null;
+      const foundNodeIds = [];
       for (const rootId of searchRoots) {
         try {
           const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
-          if (nodeId) { foundNodeId = nodeId; break; }
+          if (nodeId && !foundNodeIds.includes(nodeId)) {
+            foundNodeIds.push(nodeId);
+            if (!requireUnique) break;
+          }
         } catch (e) { /* invalid selector for this root, keep going */ }
       }
 
+      if (requireUnique && foundNodeIds.length !== 1) {
+        return {
+          found: false,
+          error: `Trusted selector matched ${foundNodeIds.length} elements; expected exactly one.`,
+          nonUnique: true,
+          matchCount: foundNodeIds.length,
+        };
+      }
+      const foundNodeId = foundNodeIds[0] || null;
       if (!foundNodeId) return null;
 
       // Scroll into view and measure.
@@ -4090,6 +4103,55 @@ export class CDPClient {
     return result?.result?.value?.verified === true;
   }
 
+  async _cleanupRichTextToolbarTargetMarker(tabId, attribute, marker, { includeClosed = false } = {}) {
+    await this.evaluate(tabId, `
+      (() => {
+        const selector = ${JSON.stringify(`[${attribute}="${marker}"]`)};
+        const roots = [document];
+        const seen = new Set();
+        while (roots.length) {
+          const root = roots.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          for (const match of root.querySelectorAll(selector)) match.removeAttribute(${JSON.stringify(attribute)});
+          for (const element of root.querySelectorAll('*')) {
+            if (element.shadowRoot && !seen.has(element.shadowRoot)) roots.push(element.shadowRoot);
+          }
+        }
+      })()
+    `).catch(() => null);
+    if (!includeClosed) return;
+    try {
+      await this.sendCommand(tabId, 'DOM.enable');
+      const { root } = await this.sendCommand(tabId, 'DOM.getDocument', { depth: -1, pierce: true });
+      const roots = [];
+      const walk = node => {
+        if (!node) return;
+        if (node.nodeName === '#document' || node.nodeType === 9) roots.push(node.nodeId);
+        for (const shadowRoot of node.shadowRoots || []) {
+          roots.push(shadowRoot.nodeId);
+          walk(shadowRoot);
+        }
+        for (const child of node.children || []) walk(child);
+        if (node.contentDocument) walk(node.contentDocument);
+      };
+      walk(root);
+      const selector = `[${attribute}="${marker}"]`;
+      const matches = new Set();
+      for (const rootNodeId of roots) {
+        const result = await this.sendCommand(tabId, 'DOM.querySelectorAll', {
+          nodeId: rootNodeId,
+          selector,
+        }).catch(() => null);
+        for (const nodeId of result?.nodeIds || []) matches.add(nodeId);
+      }
+      await Promise.all(Array.from(matches, nodeId => this.sendCommand(tabId, 'DOM.removeAttribute', {
+        nodeId,
+        name: attribute,
+      }).catch(() => null)));
+    } catch {}
+  }
+
   /**
    * Type text into an element.
    *
@@ -4106,10 +4168,94 @@ export class CDPClient {
    *      (e.g. element isn't focusable through CDP because it's in a closed
    *      shadow root with no usable hit point).
    */
-  async typeText(tabId, selector, text, clear = false) {
-    const info = await this.resolveSelector(tabId, selector);
+  async typeText(tabId, selector, text, clear = false, expectedBackendNodeId = null, resolveOptions = {}) {
+    const expectedNodeId = Number(expectedBackendNodeId);
+    if (Number.isInteger(expectedNodeId) && expectedNodeId > 0) {
+      const currentInfo = await this.resolveSelector(tabId, selector);
+      if (!currentInfo) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
+      if (currentInfo.error) return { success: false, dispatched: false, noDispatch: true, error: currentInfo.error };
+
+      let objectId = null;
+      let objectGroup = null;
+      let releaseObject = false;
+      const markerAttribute = 'data-webbrain-rich-text-preflight-target';
+      const entropy = new Uint32Array(3);
+      globalThis.crypto.getRandomValues(entropy);
+      const marker = `wbrtt_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+      try {
+        if (currentInfo.nodeId) {
+          await this.sendCommand(tabId, 'DOM.enable');
+          const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: currentInfo.nodeId });
+          objectId = resolved?.object?.objectId || null;
+          releaseObject = !!objectId;
+        } else {
+          const pierced = await this.querySelectorPierce(tabId, selector);
+          objectId = pierced?.objectIds?.[0] || null;
+          objectGroup = pierced?.objectGroup || null;
+        }
+        if (!objectId) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.' };
+        }
+        await this.sendCommand(tabId, 'DOM.enable');
+        const described = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }).catch(() => null);
+        const currentBackendNodeId = Number(described?.node?.backendNodeId) || null;
+        if (currentBackendNodeId !== expectedNodeId) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.' };
+        }
+        const marked = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: `function (attribute, marker) {
+            if (!this || this.nodeType !== 1 || !this.isConnected) return false;
+            const tokenKey = Symbol.for('webbrain.richTextPreflightTarget');
+            try {
+              Object.defineProperty(this, tokenKey, { value: marker, configurable: true });
+            } catch {
+              this[tokenKey] = marker;
+            }
+            this.setAttribute(attribute, marker);
+            return this.getAttribute(attribute) === marker && this[tokenKey] === marker;
+          }`,
+          arguments: [{ value: markerAttribute }, { value: marker }],
+        }).catch(() => null);
+        if (marked?.result?.value !== true) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.' };
+        }
+        const trustedSelector = `[${markerAttribute}="${marker}"]`;
+        return await this.typeText(tabId, trustedSelector, text, clear, null, {
+          requireUnique: true,
+          richTextToolbarTargetToken: marker,
+        });
+      } finally {
+        if (objectId) {
+          await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+            objectId,
+            returnByValue: true,
+            functionDeclaration: `function (attribute, marker) {
+              const tokenKey = Symbol.for('webbrain.richTextPreflightTarget');
+              if (this?.getAttribute?.(attribute) === marker) this.removeAttribute(attribute);
+              if (this?.[tokenKey] === marker) {
+                try { delete this[tokenKey]; } catch {}
+              }
+              return true;
+            }`,
+            arguments: [{ value: markerAttribute }, { value: marker }],
+          }).catch(() => null);
+        }
+        await this._cleanupRichTextToolbarTargetMarker(tabId, markerAttribute, marker, {
+          includeClosed: Number.isInteger(currentInfo.nodeId) && currentInfo.nodeId > 0,
+        });
+        if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
+        if (releaseObject && objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+
+    const info = await this.resolveSelector(tabId, selector, resolveOptions);
     if (!info) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, noDispatch: true, error: info.error };
+    const richTextToolbarTargetToken = String(resolveOptions?.richTextToolbarTargetToken || '');
 
     // ── <select> fast-path ──────────────────────────────────────────────
     // Native <select> elements CANNOT be typed into via Input.insertText.
@@ -4120,10 +4266,12 @@ export class CDPClient {
     if (info.tag === 'SELECT') {
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify((text || '').trim());
+      const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
           const needle = ${textJSON};
+          const targetToken = ${targetTokenJSON};
           const queryDeep = (root) => {
             try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
             const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -4133,6 +4281,9 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el || el.tagName !== 'SELECT') return { success: false, error: 'Select element not found' };
+          if (targetToken && el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) {
+            return { success: false, targetChanged: true, error: 'The selector target changed after safety preflight' };
+          }
           el.focus();
           const opts = Array.from(el.options);
           const match = opts.find(o => o.value === needle)
@@ -4157,6 +4308,7 @@ export class CDPClient {
           ...(sInfo || { success: false, error: 'Select interaction failed' }),
           dispatched: false,
           noDispatch: true,
+          ...(sInfo?.targetChanged ? { retryable: true } : {}),
         };
       }
 
@@ -4223,8 +4375,77 @@ export class CDPClient {
     let focused = false;
     let dispatched = false;
 
+    if (richTextToolbarTargetToken) {
+      let guardedFocus = null;
+      if (Number.isInteger(info.nodeId) && info.nodeId > 0) {
+        let objectId = null;
+        try {
+          const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+          objectId = resolved?.object?.objectId || null;
+          if (objectId) {
+            guardedFocus = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+              objectId,
+              returnByValue: true,
+              functionDeclaration: `function (targetToken) {
+                if (!this || !this.isConnected || this[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) return false;
+                try { this.focus(); } catch { return false; }
+                const root = this.getRootNode?.();
+                return root?.activeElement === this || document.activeElement === this;
+              }`,
+              arguments: [{ value: richTextToolbarTargetToken }],
+            }).catch(() => null);
+          }
+        } finally {
+          if (objectId) {
+            try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          }
+        }
+      } else {
+        const selectorJSON = JSON.stringify(selector);
+        const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
+        guardedFocus = await this.evaluate(tabId, `
+          (() => {
+            const sel = ${selectorJSON};
+            const targetToken = ${targetTokenJSON};
+            const queryDeep = (root) => {
+              try { const match = root.querySelector(sel); if (match) return match; } catch (e) { return null; }
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node = walker.currentNode;
+              while (node) {
+                if (node.shadowRoot) {
+                  const inner = queryDeep(node.shadowRoot);
+                  if (inner) return inner;
+                }
+                node = walker.nextNode();
+              }
+              return null;
+            };
+            const activeDeep = () => {
+              let active = document.activeElement;
+              while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+              return active;
+            };
+            const el = queryDeep(document);
+            if (!el || !el.isConnected || el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) return false;
+            try { el.focus(); } catch { return false; }
+            return activeDeep() === el;
+          })()
+        `).catch(() => null);
+      }
+      if (guardedFocus?.result?.value !== true) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: 'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+        };
+      }
+      focused = true;
+    }
+
     // Focus path A: real mouse click (most reliable, fires trusted events).
-    if (info.inViewport && info.hitOk) {
+    if (!focused && info.inViewport && info.hitOk) {
       try {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
@@ -4301,11 +4522,13 @@ export class CDPClient {
       // JS fallback using native setter. Properly escape via JSON.
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify(text);
+      const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
       dispatched = true;
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
           const txt = ${textJSON};
+          const targetToken = ${targetTokenJSON};
           const queryDeep = (root) => {
             try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
             const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -4315,6 +4538,9 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el) return { success: false, error: 'Element not found (fallback)' };
+          if (targetToken && el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) {
+            return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after safety preflight' };
+          }
           try { el.focus(); } catch (e) {}
 
           if (el.isContentEditable) {

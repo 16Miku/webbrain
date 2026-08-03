@@ -1747,6 +1747,13 @@
 
     if (!el) return noDispatchFailure('Element not found');
 
+    if (!_consumeRichTextToolbarRetryTarget(params.richTextToolbarTargetToken, el)) {
+      return noDispatchFailure(
+        'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+        { retryable: true },
+      );
+    }
+
     // Guard: only INPUT, TEXTAREA, SELECT, and contenteditable are typeable.
     // Calling HTMLInputElement's native value setter on anything else throws
     // "Illegal invocation" because the setter requires `this` to be an input.
@@ -3973,6 +3980,43 @@
     return active;
   }
 
+  const _richTextToolbarRetryTargets = new Map();
+
+  function _rememberRichTextToolbarRetryTarget(el) {
+    if (!el?.isConnected) return '';
+    const entropy = new Uint32Array(3);
+    globalThis.crypto.getRandomValues(entropy);
+    const token = `wbrtt_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const record = { el, pageUrl: location.href, timer: null };
+    _richTextToolbarRetryTargets.set(token, record);
+    record.timer = setTimeout(() => {
+      if (_richTextToolbarRetryTargets.get(token) === record) {
+        _richTextToolbarRetryTargets.delete(token);
+      }
+    }, 60000);
+    return token;
+  }
+
+  function _consumeRichTextToolbarRetryTarget(token, resolvedTarget) {
+    const normalized = String(token || '');
+    if (!normalized) return true;
+    const expected = _richTextToolbarRetryTargets.get(normalized);
+    _richTextToolbarRetryTargets.delete(normalized);
+    if (expected?.timer) clearTimeout(expected.timer);
+    return !!expected
+      && expected.el === resolvedTarget
+      && expected.el.isConnected
+      && expected.pageUrl === location.href;
+  }
+
+  function _releaseRichTextToolbarRetryTarget(params = {}) {
+    const token = String(params.token || '');
+    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+    if (record?.timer) clearTimeout(record.timer);
+    if (token) _richTextToolbarRetryTargets.delete(token);
+    return { success: true };
+  }
+
   async function _settledRichTextToolbarRect(el, shouldScroll) {
     if (shouldScroll) {
       try {
@@ -4071,6 +4115,9 @@
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
       const toolbarContext = _richTextToolbarContextForElement(el);
+      const selectorTargetToken = toolName === 'type_text' && typeof args.selector === 'string' && args.selector
+        ? _rememberRichTextToolbarRetryTarget(el)
+        : '';
       return {
         resolved: true,
         refId,
@@ -4085,6 +4132,7 @@
           h: Math.round(rect.height),
         },
         fieldMeta: _fieldMeta(el),
+        ...(selectorTargetToken ? { selectorTargetToken } : {}),
         ...toolbarContext,
       };
     } catch {
@@ -4122,6 +4170,7 @@
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
+      'release_rich_text_toolbar_retry_target': () => _releaseRichTextToolbarRetryTarget(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),

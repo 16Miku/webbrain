@@ -12344,6 +12344,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
   };
 
   try {
+    let chromeIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'not found',
+    };
     globalThis.chrome = {
       webNavigation: {
         getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
@@ -12353,12 +12359,15 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       },
       tabs: {
         get: async () => ({ url: 'chrome://settings' }),
-        sendMessage: async () => ({
-          resolved: true,
-          rect: { x: 10, y: 10, w: 120, h: 24 },
-          fieldMeta: { tag: 'input', type: 'text' },
-          toolbarContext: false,
-        }),
+        sendMessage: async (_tabId, message) => message.action === 'type'
+          ? chromeIframeTypeResponse
+          : ({
+              resolved: true,
+              selectorTargetToken: 'chrome-iframe-target',
+              rect: { x: 10, y: 10, w: 120, h: 24 },
+              fieldMeta: { tag: 'input', type: 'text' },
+              toolbarContext: false,
+            }),
       },
     };
     const chromeAgent = new AgentCh({});
@@ -12385,9 +12394,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       assertNoDebt('chrome', CompletionInvariantCh, name, {}, await chromeAgent.executeTool(6401, name, {}));
     }
 
-    globalThis.chrome.scripting.executeScript = async () => [{
-      result: { ok: false, dispatched: false, error: 'invalid selector', url: 'https://example.test/frame' },
-    }];
+    chromeIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'invalid selector',
+    };
     assertNoDebt(
       'chrome',
       CompletionInvariantCh,
@@ -12396,9 +12408,11 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       await chromeAgent.executeTool(6401, 'iframe_type', { selector: '::invalid', text: 'x' }),
     );
 
-    globalThis.chrome.scripting.executeScript = async () => [{
-      result: { ok: false, dispatched: true, error: 'event handler threw after target resolution', url: 'https://example.test/frame' },
-    }];
+    chromeIframeTypeResponse = {
+      success: false,
+      dispatched: true,
+      error: 'event handler threw after target resolution',
+    };
     const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
     assert.equal(ambiguousChromeIframe.dispatched, true, 'chrome: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
@@ -12412,6 +12426,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'chrome: ambiguous iframe failure did not fail closed',
     );
 
+    let firefoxIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'not found',
+    };
     globalThis.browser = {
       webNavigation: {
         getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
@@ -12419,12 +12439,15 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       tabs: {
         executeScript: async () => [{ ok: false, reason: 'not-found', url: 'https://example.test/frame' }],
         get: async () => ({ url: 'about:config' }),
-        sendMessage: async () => ({
-          resolved: true,
-          rect: { x: 10, y: 10, w: 120, h: 24 },
-          fieldMeta: { tag: 'input', type: 'text' },
-          toolbarContext: false,
-        }),
+        sendMessage: async (_tabId, message) => message.action === 'type'
+          ? firefoxIframeTypeResponse
+          : ({
+              resolved: true,
+              selectorTargetToken: 'firefox-iframe-target',
+              rect: { x: 10, y: 10, w: 120, h: 24 },
+              fieldMeta: { tag: 'input', type: 'text' },
+              toolbarContext: false,
+            }),
       },
     };
     const firefoxAgent = new AgentFx({});
@@ -12450,12 +12473,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       assertNoDebt('firefox', CompletionInvariantFx, name, {}, await firefoxAgent.executeTool(6402, name, {}));
     }
 
-    globalThis.browser.tabs.executeScript = async () => [{
-      ok: false,
+    firefoxIframeTypeResponse = {
+      success: false,
       dispatched: false,
+      noDispatch: true,
       error: 'invalid selector',
-      url: 'https://example.test/frame',
-    }];
+    };
     assertNoDebt(
       'firefox',
       CompletionInvariantFx,
@@ -12464,12 +12487,11 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '::invalid', text: 'x' }),
     );
 
-    globalThis.browser.tabs.executeScript = async () => [{
-      ok: false,
+    firefoxIframeTypeResponse = {
+      success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
-      url: 'https://example.test/frame',
-    }];
+    };
     const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
     assert.equal(ambiguousFirefoxIframe.dispatched, true, 'firefox: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
@@ -27353,6 +27375,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
   client.sendCommand = async (_tabId, method, params = {}) => {
     commands.push({ method, params });
     if (method === 'DOM.resolveNode') return { object: { objectId: 'closed-shadow-font-size' } };
+    if (method === 'DOM.describeNode') return { node: { backendNodeId: 177 } };
     if (method === 'Runtime.callFunctionOn') {
       assert.equal(params.objectId, 'closed-shadow-font-size');
       assert.match(params.functionDeclaration, /semantic_toolbar/);
@@ -27394,6 +27417,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
 
   const probe = await client.probeRichTextToolbarSelector(42, '#shadow-font-size');
   assert.equal(probe.resolved, true);
+  assert.equal(probe.selectorBackendNodeId, 177);
   assert.equal(probe.shadowPierced, true);
   assert.equal(probe.fieldMeta.toolbarCandidate.score, 8);
   assert.equal(probe.fieldMeta.toolbarCandidate.associatedEditorIdentity.id, 'editor-body');
@@ -27413,6 +27437,7 @@ test('Chrome Agent routes selector type_text toolbar preflight through CDP befor
     cdpClientCh.probeRichTextToolbarSelector = async (_tabId, selector) => ({
       resolved: true,
       shadowPierced: true,
+      selectorBackendNodeId: 177,
       selector,
       rect: { x: 10, y: 8, w: 80, h: 24 },
       fieldMeta: { toolbarCandidate: { score: 8 } },
@@ -27442,6 +27467,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   ];
   const toolbarProbe = {
     resolved: true,
+    selectorTargetToken: 'toolbar-target-token',
     refId: 'ref_12',
     documentToken: 'frame-doc-a',
     refScopeUrl: 'https://frame.example.test/editor',
@@ -27452,6 +27478,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   };
   const ordinaryProbe = {
     resolved: true,
+    selectorTargetToken: 'ordinary-target-token',
     refId: 'ref_shared',
     rect: { x: 20, y: 30, w: 180, h: 32 },
     fieldMeta: { tag: 'input', type: 'text' },
@@ -27461,9 +27488,12 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   let frameContainerOffscreen = false;
   let frameContainerScrolled = false;
   let frameScrollParentId = null;
-  let chromeIframeExecutionCalls = 0;
+  let chromeLegacyIframeTypeCalls = 0;
   const messageResult = (message, options) => {
     if (message.target === 'content') {
+      if (message.action === 'type') {
+        return { success: true, verified: true, dispatched: true, method: 'native-setter' };
+      }
       if (message.params?.args?.selector === '#ambiguous-field') {
         return ordinaryProbe;
       }
@@ -27515,22 +27545,17 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   };
 
   try {
-    let chromeIframeExecutionTarget = null;
+    let chromeIframeTypeFrameId = null;
     globalThis.chrome = {
       webNavigation: { getAllFrames: async () => frames },
-      tabs: { sendMessage: async (_tabId, message, options) => messageResult(message, options) },
+      tabs: { sendMessage: async (_tabId, message, options) => {
+        if (message.action === 'type') chromeIframeTypeFrameId = options?.frameId ?? null;
+        return messageResult(message, options);
+      } },
       scripting: {
-        executeScript: async ({ target }) => {
-          chromeIframeExecutionTarget = target;
-          chromeIframeExecutionCalls += 1;
-          return chromeIframeExecutionCalls === 1
-            ? [{ result: {
-                ok: true,
-                url: 'https://frame.example.test/editor',
-                dispatched: true,
-                beforeSignature: '0:2166136261',
-              } }]
-            : [{ result: { verified: true } }];
+        executeScript: async () => {
+          chromeLegacyIframeTypeCalls += 1;
+          return [];
         },
       },
     };
@@ -27594,26 +27619,22 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(chromeType.success, true);
     assert.equal(chromeType.verified, true);
-    assert.equal(chromeType.frame.beforeSignature, undefined, 'Chrome must not expose the pre-edit signature');
-    assert.deepEqual(chromeIframeExecutionTarget, { tabId: 42, frameIds: [7] });
+    assert.equal(chromeType.frameId, 7);
+    assert.equal(chromeIframeTypeFrameId, 7, 'Chrome must dispatch through the exact preflight frame');
+    assert.equal(chromeLegacyIframeTypeCalls, 0, 'Chrome must not re-query iframe selectors in a separate execution world');
 
-    let firefoxIframeExecutionDetails = null;
-    let firefoxIframeExecutionCalls = 0;
+    let firefoxIframeTypeFrameId = null;
+    let firefoxLegacyIframeTypeCalls = 0;
     globalThis.browser = {
       webNavigation: { getAllFrames: async () => frames },
       tabs: {
-        sendMessage: async (_tabId, message, options) => messageResult(message, options),
-        executeScript: async (_tabId, details) => {
-          firefoxIframeExecutionDetails = details;
-          firefoxIframeExecutionCalls += 1;
-          return firefoxIframeExecutionCalls === 1
-            ? [{
-                ok: true,
-                url: 'https://frame.example.test/editor',
-                dispatched: true,
-                beforeSignature: '0:2166136261',
-              }]
-            : [{ verified: true }];
+        sendMessage: async (_tabId, message, options) => {
+          if (message.action === 'type') firefoxIframeTypeFrameId = options?.frameId ?? null;
+          return messageResult(message, options);
+        },
+        executeScript: async () => {
+          firefoxLegacyIframeTypeCalls += 1;
+          return [];
         },
       },
     };
@@ -27677,9 +27698,9 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(firefoxType.success, true);
     assert.equal(firefoxType.verified, true);
-    assert.equal(firefoxType.frame.beforeSignature, undefined, 'Firefox must not expose the pre-edit signature');
-    assert.equal(firefoxIframeExecutionDetails.frameId, 7);
-    assert.equal(firefoxIframeExecutionDetails.allFrames, undefined);
+    assert.equal(firefoxType.frameId, 7);
+    assert.equal(firefoxIframeTypeFrameId, 7, 'Firefox must dispatch through the exact preflight frame');
+    assert.equal(firefoxLegacyIframeTypeCalls, 0, 'Firefox must not re-query iframe selectors in a separate execution world');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;

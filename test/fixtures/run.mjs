@@ -1290,6 +1290,77 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   }
 });
 
+test('CDP type_text binds dispatch to the selector node approved by toolbar preflight', async (page) => {
+  await page.setContent(`<!doctype html>
+    <input class="shared-target" value="ordinary" style="width:180px;height:32px">`);
+  const session = await page.context().newCDPSession(page);
+  const client = new CDPClient();
+  client.sendCommand = async (_tabId, method, params = {}) => session.send(method, params);
+
+  const staleProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  if (!staleProbe?.resolved || !staleProbe.selectorBackendNodeId) {
+    throw new Error(`CDP selector preflight did not expose an exact node identity: ${JSON.stringify(staleProbe)}`);
+  }
+  await page.evaluate(() => {
+    const previous = document.querySelector('.shared-target');
+    const replacement = previous.cloneNode();
+    replacement.value = '11';
+    previous.replaceWith(replacement);
+  });
+  const rejected = await client.typeText(
+    42,
+    '.shared-target',
+    'Document prose',
+    true,
+    staleProbe.selectorBackendNodeId,
+  );
+  const rejectedValue = await page.locator('.shared-target').inputValue();
+  if (rejected?.success !== false || rejected?.dispatched !== false || !rejected?.retryable || rejectedValue !== '11') {
+    throw new Error(`rerendered CDP selector target did not fail closed: ${JSON.stringify({ rejected, rejectedValue })}`);
+  }
+
+  const cloneProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  await page.evaluate(() => {
+    const observer = new MutationObserver(records => {
+      if (!records.some(record => record.attributeName === 'data-webbrain-rich-text-preflight-target')) return;
+      observer.disconnect();
+      const previous = document.querySelector('.shared-target');
+      const replacement = previous.cloneNode();
+      replacement.value = '12';
+      previous.replaceWith(replacement);
+    });
+    observer.observe(document.querySelector('.shared-target'), {
+      attributes: true,
+      attributeFilter: ['data-webbrain-rich-text-preflight-target'],
+    });
+  });
+  const cloneRejected = await client.typeText(
+    42,
+    '.shared-target',
+    'Document prose',
+    true,
+    cloneProbe.selectorBackendNodeId,
+  );
+  const cloneRejectedValue = await page.locator('.shared-target').inputValue();
+  if (cloneRejected?.success !== false || cloneRejected?.dispatched !== false || !cloneRejected?.retryable || cloneRejectedValue !== '12') {
+    throw new Error(`a replacement that copied the preflight attribute bypassed node identity: ${JSON.stringify({ cloneRejected, cloneRejectedValue })}`);
+  }
+
+  const stableProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  const accepted = await client.typeText(
+    42,
+    '.shared-target',
+    '14',
+    false,
+    stableProbe.selectorBackendNodeId,
+  );
+  const acceptedValue = await page.locator('.shared-target').inputValue();
+  const leakedMarkers = await page.locator('[data-webbrain-rich-text-preflight-target]').count();
+  if (!accepted?.success || accepted?.verified !== true || acceptedValue !== '1214' || leakedMarkers !== 0) {
+    throw new Error(`stable CDP selector target did not type and clean up exactly: ${JSON.stringify({ accepted, acceptedValue, leakedMarkers })}`);
+  }
+});
+
 for (const browserKind of ['chrome', 'firefox']) {
   test(`file picker guard (${browserKind}): blocks the native chooser and returns the exact input`, async (page) => {
     await setupContentHtml(page, `<!doctype html>
@@ -3540,6 +3611,41 @@ for (const browserKind of ['chrome', 'firefox']) {
       throw new Error(`selector retry probe must retain normal target scrolling, got: ${JSON.stringify({ selectorProbe, selectorProbeScrolls })}`);
     }
 
+    await page.evaluate(() => {
+      const input = document.createElement('input');
+      input.id = 'toolbar-identity-rerender';
+      input.value = 'ordinary';
+      document.body.appendChild(input);
+    });
+    const identityProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'type_text',
+      args: { selector: '#toolbar-identity-rerender', text: 'Document prose' },
+    });
+    if (!identityProbe?.resolved || !identityProbe.selectorTargetToken) {
+      throw new Error(`selector type probe must preserve exact target identity, got: ${JSON.stringify(identityProbe)}`);
+    }
+    await page.evaluate(() => {
+      const current = document.getElementById('toolbar-identity-rerender');
+      const replacement = current.cloneNode();
+      replacement.value = '11';
+      current.replaceWith(replacement);
+    });
+    const rerenderedType = await call(page, 'type', {
+      selector: '#toolbar-identity-rerender',
+      text: 'Document prose',
+      clear: true,
+      richTextToolbarTargetToken: identityProbe.selectorTargetToken,
+    });
+    const rerenderedValue = await page.evaluate(() => {
+      const target = document.getElementById('toolbar-identity-rerender');
+      const value = target.value;
+      target.remove();
+      return value;
+    });
+    if (rerenderedType?.success !== false || rerenderedType?.dispatched !== false || !rerenderedType?.retryable || rerenderedValue !== '11') {
+      throw new Error(`rerendered selector target must fail closed before typing, got: ${JSON.stringify({ rerenderedType, rerenderedValue })}`);
+    }
+
     const labelledBy = await call(page, 'set_field', {
       ref_id: refs.labelledBy,
       text: '12',
@@ -4335,6 +4441,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     };
     agent._probeRichTextToolbarIframeTarget = async () => ({
       resolved: true,
+      selectorTargetToken: 'iframe-toolbar-token',
       refId: 'ref_12',
       frameId: 7,
       documentToken: 'frame-doc-a',
@@ -4539,6 +4646,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     });
     agent._probeRichTextToolbarIframeTarget = async () => ({
       resolved: true,
+      selectorTargetToken: 'unmapped-iframe-toolbar-token',
       refId: 'ref_12',
       frameId: 7,
       documentToken: 'frame-doc-a',
@@ -4845,6 +4953,8 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     };
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
+      selectorBackendNodeId: 177,
+      selectorTargetToken: 'selector-toolbar-token',
       refId: 'ref_12',
       documentToken: 'doc-a',
       refScopeUrl: 'https://example.test/editor',

@@ -2220,6 +2220,7 @@ export class Agent extends LoopDetector {
     }))).filter(Boolean);
     if (!probes.length) return null;
     if (probes.length !== 1) {
+      await Promise.all(probes.map(probe => this._releaseRichTextToolbarProbeTarget(tabId, probe)));
       return {
         resolved: false,
         ambiguous: true,
@@ -2313,6 +2314,19 @@ export class Agent extends LoopDetector {
       ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
       : null;
     return { ...selected, annotationRect };
+  }
+
+  async _releaseRichTextToolbarProbeTarget(tabId, probe) {
+    const token = String(probe?.selectorTargetToken || '');
+    if (!token) return;
+    const options = Number.isInteger(probe?.frameId) ? { frameId: probe.frameId } : undefined;
+    try {
+      await browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'release_rich_text_toolbar_retry_target',
+        params: { token },
+      }, options);
+    } catch {}
   }
 
   async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}, { mapAnnotation = false } = {}) {
@@ -2671,22 +2685,41 @@ export class Agent extends LoopDetector {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
       return { block: null, shot: null };
     }
+    const selectorBackedType = toolName === 'type_text'
+      && typeof args?.selector === 'string'
+      && !!args.selector.trim();
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
-      return toolName === 'iframe_type'
+      return toolName === 'iframe_type' || selectorBackedType
         ? {
             block: {
               success: false,
               dispatched: false,
               noDispatch: true,
               retryable: true,
-              error: 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.',
+              error: toolName === 'iframe_type'
+                ? 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.'
+                : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
             },
             shot: null,
           }
         : { block: null, shot: null };
+    }
+    if ((toolName === 'iframe_type' || selectorBackedType) && !probe.selectorTargetToken) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return {
+        block: {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
+        },
+        shot: null,
+        probe,
+      };
     }
     if (toolName !== 'iframe_type' && (probe.documentToken || probe.refScopeUrl)) {
       this._rememberAxScope(tabId, probe.documentToken || '', probe.refScopeUrl || '');
@@ -2706,6 +2739,7 @@ export class Agent extends LoopDetector {
       && this._canTakeAutoScreenshot(tabId)
       && (dedicatedVision || provider?.supportsVision);
     if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return {
         block: {
           success: false,
@@ -2752,6 +2786,7 @@ export class Agent extends LoopDetector {
     if (decision.wrongTarget) {
       const block = {};
       this._applyRichTextToolbarWrongTarget(tabId, toolName, args, block, candidate, decision, audit, probe);
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return { block, shot, audit, decision, traceCapture, probe };
     }
     return { block: null, shot, audit, decision, traceCapture, probe };
@@ -4818,6 +4853,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           richTextToolbarFrameId: Number.isInteger(toolbarPreflight.probe?.frameId)
             ? toolbarPreflight.probe.frameId
             : null,
+          richTextToolbarTargetToken: toolbarPreflight.probe?.selectorTargetToken || null,
         },
       );
       const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
@@ -15544,7 +15580,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_type') {
       let dispatched = false;
       try {
-        const urlFilter = args.urlFilter || '';
         const selector = args.selector;
         const text = args.text || '';
         const clear = !!args.clear;
@@ -15557,11 +15592,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         let targetFrameId = executionContext?.richTextToolbarFrameId;
-        if (!Number.isInteger(targetFrameId)) {
+        let targetToken = executionContext?.richTextToolbarTargetToken || '';
+        if (!Number.isInteger(targetFrameId) || !targetToken) {
           const probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
           targetFrameId = probe?.frameId;
+          targetToken = probe?.selectorTargetToken || '';
         }
-        if (!Number.isInteger(targetFrameId)) {
+        if (!Number.isInteger(targetFrameId) || !targetToken) {
           return {
             success: false,
             dispatched: false,
@@ -15570,98 +15607,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
           };
         }
-        const code = `
-          (() => {
-            const filter = ${JSON.stringify(urlFilter)};
-            if (filter) {
-              // Require BOTH host match (anti-substring) AND the original
-              // substring (so a caller-supplied path disambiguates same-host
-              // frames).
-              let _w = String(filter).toLowerCase().trim();
-              try { _w = new URL(/^[a-z][a-z0-9+.\\-]*:\\/\\//i.test(_w) ? _w : 'https://' + _w).hostname; } catch (e) {}
-              _w = _w.replace(/^www\\./, '');
-              const _h = location.hostname.toLowerCase().replace(/^www\\./, '');
-              const _hostOk = !_w || _h === _w || _h.endsWith('.' + _w);
-              if (!_hostOk || !location.href.includes(filter)) return { ok: false, skipped: 'url-filter', url: location.href };
-            }
-            let targetDispatched = false;
-            try {
-              const el = document.querySelector(${JSON.stringify(selector)});
-              if (!el) return { ok: false, url: location.href, reason: 'not-found' };
-              targetDispatched = true;
-              el.focus();
-              const valueSignature = value => {
-                const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-                let hash = 2166136261;
-                for (let i = 0; i < sampled.length; i += 1) {
-                  hash ^= sampled.charCodeAt(i);
-                  hash = Math.imul(hash, 16777619);
-                }
-                return value.length + ':' + (hash >>> 0);
-              };
-              const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-              const beforeSignature = valueSignature(beforeValue);
-              if (el.isContentEditable) {
-                if (${clear}) el.textContent = '';
-                el.textContent += ${JSON.stringify(text)};
-                el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(text)} }));
-                return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), beforeSignature, dispatched: true };
-              }
-              const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-              const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-              const newVal = (${clear} ? '' : (el.value || '')) + ${JSON.stringify(text)};
-              if (setter) setter.call(el, newVal); else el.value = newVal;
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-              return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), beforeSignature, dispatched: true };
-            } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
-          })()
-        `;
         dispatched = true;
-        const results = await browser.tabs.executeScript(tabId, { code, frameId: targetFrameId });
-        const successes = (results || []).filter(r => r && r.ok);
-        if (successes.length > 0) {
-          const { beforeSignature, ...frame } = successes[0];
-          await new Promise(resolve => setTimeout(resolve, 30));
-          const verificationCode = `
-            (() => {
-              const el = document.querySelector(${JSON.stringify(selector)});
-              if (!el || !el.isConnected) return { verified: false };
-              const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-              const expected = ${JSON.stringify(text)};
-              const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-              let hash = 2166136261;
-              for (let i = 0; i < sampled.length; i += 1) {
-                hash ^= sampled.charCodeAt(i);
-                hash = Math.imul(hash, 16777619);
-              }
-              const after = value.length + ':' + (hash >>> 0);
-              const before = ${JSON.stringify(beforeSignature || '')};
-              return {
-                verified: ${clear}
-                  ? value === expected
-                  : expected.length > 0 && !!before && after !== before && value.includes(expected),
-              };
-            })()
-          `;
-          const verification = await browser.tabs.executeScript(tabId, {
-            code: verificationCode,
+        try {
+          const response = await browser.tabs.sendMessage(tabId, {
+            target: 'content',
+            action: 'type',
+            params: {
+              selector,
+              text,
+              clear,
+              richTextToolbarTargetToken: targetToken,
+            },
+          }, { frameId: targetFrameId });
+          return {
+            ...(response || { success: false, dispatched: false, noDispatch: true, error: 'Iframe type returned no response' }),
             frameId: targetFrameId,
-          }).catch(() => []);
-          const verified = (verification || []).some(item => item?.verified === true);
-          return { success: true, verified, dispatched: true, frameId: targetFrameId, frame };
+          };
+        } catch (error) {
+          return {
+            success: false,
+            dispatched: true,
+            retryable: true,
+            error: `Iframe type response became uncertain: ${error?.message || String(error)}`,
+          };
         }
-        const candidates = (results || []).filter(r => r && !r.skipped);
-        const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
-        return {
-          success: false,
-          ...(targetDispatched
-            ? { dispatched: true }
-            : { dispatched: false, noDispatch: true }),
-          error: 'Input not found in any matching iframe',
-          searchedFrames: candidates.length,
-          frameUrls: candidates.map(c => c.url).slice(0, 5),
-        };
       } catch (e) {
         return {
           success: false,
@@ -15795,13 +15764,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const axScope = this._lastAxScopes.get(tabId);
-    const contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
+    let contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
       ? {
           ...args,
           expectedDocumentToken: axScope.documentToken,
           ...(axScope.pageUrl ? { expectedPageUrl: axScope.pageUrl } : {}),
         }
       : args;
+    let richTextToolbarTargetToken = executionContext?.richTextToolbarTargetToken || '';
+    if (name === 'type_text' && args?.selector && !richTextToolbarTargetToken) {
+      const probe = await this._probeRichTextToolbarRetryTarget(tabId, name, args, { mapAnnotation: false });
+      richTextToolbarTargetToken = probe?.selectorTargetToken || '';
+      if (!richTextToolbarTargetToken) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.',
+        };
+      }
+    }
+    if (name === 'type_text' && richTextToolbarTargetToken) {
+      contentArgs = {
+        ...contentArgs,
+        richTextToolbarTargetToken,
+      };
+    }
 
     try {
       let response = await browser.tabs.sendMessage(tabId, {
