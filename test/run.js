@@ -27154,6 +27154,88 @@ test('CDP querySelectorPierce keeps open-shadow Runtime object handles alive unt
   assert.deepEqual(commands.at(-1).params, { objectGroup: query.objectGroup });
 });
 
+test('Chrome toolbar preflight probes closed-shadow type_text selectors through the dispatch resolver', async () => {
+  const client = new CDPClient();
+  const commands = [];
+  client.resolveSelector = async () => ({
+    found: true,
+    nodeId: 77,
+    x: 50,
+    y: 20,
+    width: 80,
+    height: 24,
+    inViewport: true,
+    hitOk: true,
+  });
+  client.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'closed-shadow-font-size' } };
+    if (method === 'Runtime.callFunctionOn') {
+      assert.equal(params.objectId, 'closed-shadow-font-size');
+      assert.match(params.functionDeclaration, /semantic_toolbar/);
+      assert.match(params.functionDeclaration, /availablePresetValues/);
+      assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
+      return {
+        result: {
+          value: {
+            pageUrl: 'https://example.test/editor',
+            rect: { x: 10, y: 8, w: 80, h: 24 },
+            fieldMeta: {
+              tag: 'input',
+              type: 'text',
+              toolbarCandidate: {
+                score: 8,
+                reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+                availablePresetValues: ['11', '14'],
+              },
+            },
+            toolbarContext: true,
+          },
+        },
+      };
+    }
+    return {};
+  };
+
+  const probe = await client.probeRichTextToolbarSelector(42, '#shadow-font-size');
+  assert.equal(probe.resolved, true);
+  assert.equal(probe.shadowPierced, true);
+  assert.equal(probe.fieldMeta.toolbarCandidate.score, 8);
+  assert.deepEqual(probe.rect, { x: 10, y: 8, w: 80, h: 24 });
+  assert.equal(commands.some(command => command.method.startsWith('Input.')), false, 'preflight must not dispatch input');
+  assert.equal(commands.at(-1).method, 'Runtime.releaseObject');
+});
+
+test('Chrome Agent routes selector type_text toolbar preflight through CDP before content fallback', async () => {
+  const originals = {
+    attach: cdpClientCh.attach,
+    probe: cdpClientCh.probeRichTextToolbarSelector,
+  };
+  try {
+    let attached = 0;
+    cdpClientCh.attach = async () => { attached++; };
+    cdpClientCh.probeRichTextToolbarSelector = async (_tabId, selector) => ({
+      resolved: true,
+      shadowPierced: true,
+      selector,
+      rect: { x: 10, y: 8, w: 80, h: 24 },
+      fieldMeta: { toolbarCandidate: { score: 8 } },
+    });
+    const agent = new AgentCh({});
+    const probe = await agent._probeRichTextToolbarRetryTarget(42, 'type_text', {
+      selector: '#shadow-font-size',
+      text: 'Document prose',
+    });
+    assert.equal(attached, 1);
+    assert.equal(probe.resolved, true);
+    assert.equal(probe.selector, '#shadow-font-size');
+    assert.equal(probe.shadowPierced, true);
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.probeRichTextToolbarSelector = originals.probe;
+  }
+});
+
 test('Chrome selector click distinguishes pre-dispatch failure from uncertain dispatch', async () => {
   const client = new CDPClient();
   client.resolveSelector = async () => null;

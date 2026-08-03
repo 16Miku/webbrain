@@ -1720,12 +1720,16 @@ export class Agent extends LoopDetector {
     } else if (revisitingRoute) {
       this._clearPageLoopState(tabId);
     }
-    if (documentChanged || routeChanged) this._resetRichTextToolbarAudit(tabId);
+    if (documentChanged || routeChanged) this._clearRichTextToolbarDocumentState(tabId);
     this._lastAxScopes.set(tabId, next);
   }
 
-  _resetRichTextToolbarAudit(tabId) {
+  _clearRichTextToolbarDocumentState(tabId) {
     this._richTextToolbarStates.delete(tabId);
+  }
+
+  _resetRichTextToolbarAudit(tabId) {
+    this._clearRichTextToolbarDocumentState(tabId);
     this._richTextToolbarDebts.delete(tabId);
   }
 
@@ -1846,7 +1850,7 @@ export class Agent extends LoopDetector {
     const currentDocument = String(liveDocumentToken || '');
     if (!currentDocument) return null;
     if (state.documentToken && state.documentToken !== currentDocument) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       return null;
     }
     return {
@@ -1877,6 +1881,15 @@ export class Agent extends LoopDetector {
   }
 
   async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}) {
+    if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
+      try {
+        await cdpClient.attach(tabId);
+        return await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
+      } catch {
+        // Fall through to the content probe when CDP is unavailable. Actual
+        // selector dispatch will fail independently if it also cannot attach.
+      }
+    }
     try {
       return await chrome.tabs.sendMessage(tabId, {
         target: 'content',
@@ -1909,7 +1922,7 @@ export class Agent extends LoopDetector {
       (state.documentToken && liveDocument && state.documentToken !== liveDocument)
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
       return null;
     }
@@ -1939,7 +1952,7 @@ export class Agent extends LoopDetector {
       (state.documentToken && liveDocument && state.documentToken !== liveDocument)
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
       return false;
     }

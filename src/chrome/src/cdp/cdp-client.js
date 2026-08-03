@@ -3126,6 +3126,236 @@ export class CDPClient {
     return lastResult;
   }
 
+  /**
+   * Resolve a selector through the exact open/closed-shadow path used by
+   * typeText(), then inspect that resolved element without dispatching input.
+   * The content-script probe cannot see closed shadow roots, so selector-based
+   * type_text preflight must live beside the trusted CDP resolver.
+   */
+  async probeRichTextToolbarSelector(tabId, selector) {
+    if (typeof selector !== 'string' || !selector.trim()) return { resolved: false };
+    const info = await this.resolveSelector(tabId, selector);
+    if (!info) return { resolved: false };
+    if (info.error) return { resolved: false, error: info.error };
+
+    let objectId = null;
+    let objectGroup = null;
+    let releaseObject = false;
+    try {
+      if (info.nodeId) {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+        objectId = resolved?.object?.objectId || null;
+        releaseObject = !!objectId;
+      } else {
+        const pierced = await this.querySelectorPierce(tabId, selector);
+        objectId = pierced?.objectIds?.[0] || null;
+        objectGroup = pierced?.objectGroup || null;
+      }
+      if (!objectId) return { resolved: false };
+
+      const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId,
+        returnByValue: true,
+        functionDeclaration: `function () {
+          const el = this;
+          if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+          const visible = node => {
+            try {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none'
+                && style.visibility !== 'hidden';
+            } catch { return false; }
+          };
+          const composedClosest = (node, selector) => {
+            let current = node;
+            const seen = new Set();
+            while (current && !seen.has(current)) {
+              seen.add(current);
+              try { if (current.matches?.(selector)) return current; } catch {}
+              current = current.parentElement || current.getRootNode?.()?.host || null;
+            }
+            return null;
+          };
+          const root = el.getRootNode?.() || document;
+          const findById = id => {
+            if (!id) return null;
+            try {
+              if (typeof root.getElementById === 'function') {
+                const local = root.getElementById(id);
+                if (local) return local;
+              }
+            } catch {}
+            try {
+              const escaped = globalThis.CSS?.escape ? CSS.escape(id) : id.replace(/["\\\\]/g, '\\\\$&');
+              const local = root.querySelector?.('#' + escaped);
+              if (local) return local;
+            } catch {}
+            try { return document.getElementById(id); } catch { return null; }
+          };
+          const labelledByText = (() => {
+            try {
+              const ids = String(el.getAttribute?.('aria-labelledby') || '').trim().split(/\\s+/).filter(Boolean);
+              const text = ids.map(findById).filter(Boolean)
+                .map(node => String(node.textContent || '').trim()).filter(Boolean)
+                .join(' ').replace(/\\s+/g, ' ').trim();
+              return text ? text.slice(0, 120) : null;
+            } catch { return null; }
+          })();
+          let labelText = null;
+          try {
+            if (el.id) {
+              const escaped = globalThis.CSS?.escape ? CSS.escape(el.id) : el.id.replace(/["\\\\]/g, '\\\\$&');
+              const label = root.querySelector?.('label[for="' + escaped + '"]')
+                || document.querySelector?.('label[for="' + escaped + '"]');
+              if (label) labelText = String(label.textContent || '').trim().slice(0, 120);
+            }
+            if (!labelText) {
+              const wrapping = composedClosest(el, 'label');
+              if (wrapping) labelText = String(wrapping.textContent || '').trim().slice(0, 120);
+            }
+          } catch {}
+          const tag = String(el.tagName || '').toLowerCase();
+          const fieldType = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
+          const fieldMeta = {
+            tag,
+            type: fieldType,
+            contentEditable: el.isContentEditable === true,
+            name: el.getAttribute?.('name') || null,
+            id: el.id || null,
+            autocomplete: el.getAttribute?.('autocomplete') || null,
+            ariaLabel: el.getAttribute?.('aria-label') || null,
+            ariaLabelledByText: labelledByText,
+            placeholder: el.getAttribute?.('placeholder') || null,
+            labelText,
+          };
+          const semanticToolbar = composedClosest(el, '[role="toolbar"]');
+          const rect = el.getBoundingClientRect();
+          const candidate = (() => {
+            if (tag !== 'input' || !['text', 'search', 'number'].includes(fieldType)) return null;
+            if (rect.width < 1 || rect.height < 1) return null;
+            const unlabeled = ![
+              fieldMeta.ariaLabel,
+              fieldMeta.ariaLabelledByText,
+              fieldMeta.placeholder,
+              fieldMeta.labelText,
+            ].some(value => String(value || '').trim());
+            if (!unlabeled) return null;
+            const compact = rect.height <= 32 && rect.width <= 220;
+            const value = String(el.value || '').trim();
+            const numericPreset = value.length > 0 && value.length <= 16
+              && /^-?\\d+(?:[.,]\\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
+            const interactiveSelector = [
+              'input:not([type="hidden"])', 'textarea', 'select', 'button',
+              '[role="button"]', '[role="combobox"]', '[role="listbox"]',
+              '[role="menuitem"]', '[tabindex]',
+            ].join(',');
+            let cluster = null;
+            let node = el.parentElement;
+            for (let depth = 1; node && depth <= 6; depth += 1, node = node.parentElement) {
+              if (!visible(node)) continue;
+              const region = node.getBoundingClientRect();
+              if (region.height > 160 || region.width < rect.width) continue;
+              let controls = [];
+              try {
+                controls = Array.from(node.querySelectorAll(interactiveSelector))
+                  .filter(control => control === el || (!control.isContentEditable && visible(control)));
+              } catch {}
+              if (controls.length < 2 || controls.length > 40) continue;
+              const area = region.width * region.height;
+              if (!cluster || area < cluster.area) cluster = { node, region, area };
+            }
+            const reasons = ['unlabelled_text_control'];
+            let score = 1;
+            if (compact) { reasons.push('compact_control'); score += 1; }
+            if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
+            if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
+            if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
+            if (score < 4) return null;
+            const regionNode = semanticToolbar || cluster?.node || el.parentElement || el;
+            const region = regionNode.getBoundingClientRect();
+            const availablePresetValues = [];
+            const seenValues = new Set();
+            const addValue = raw => {
+              const preset = String(raw || '').normalize('NFKC').replace(/\\s+/g, ' ').trim().slice(0, 80);
+              const key = preset.toLowerCase();
+              if (!preset || seenValues.has(key) || availablePresetValues.length >= 40) return;
+              seenValues.add(key);
+              availablePresetValues.push(preset);
+            };
+            addValue(el.value);
+            const optionRoots = [];
+            try { if (el.list) optionRoots.push(el.list); } catch {}
+            const controlledIds = String(
+              (el.getAttribute?.('aria-controls') || '') + ' ' + (el.getAttribute?.('aria-owns') || ''),
+            ).trim().split(/\\s+/);
+            for (const id of controlledIds) {
+              const optionRoot = findById(id);
+              if (optionRoot && !optionRoots.includes(optionRoot)) optionRoots.push(optionRoot);
+            }
+            const comboRoot = composedClosest(el, '[role="combobox"],[role="listbox"]');
+            if (comboRoot && comboRoot !== el && !optionRoots.includes(comboRoot)) optionRoots.push(comboRoot);
+            for (const optionRoot of optionRoots.slice(0, 6)) {
+              let options = [];
+              try {
+                if (optionRoot.matches?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]')) options.push(optionRoot);
+                options.push(...Array.from(optionRoot.querySelectorAll?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]') || []));
+              } catch {}
+              for (const option of options.slice(0, 40)) {
+                addValue(option.value);
+                addValue(option.getAttribute?.('data-value'));
+                addValue(option.textContent);
+              }
+            }
+            return {
+              score,
+              reasons,
+              availablePresetValues,
+              regionRect: {
+                x: Math.round(region.x), y: Math.round(region.y),
+                w: Math.round(region.width), h: Math.round(region.height),
+              },
+              regionRef: '',
+              relatedRefs: [],
+              associatedEditorRef: '',
+              associatedEditorRect: null,
+            };
+          })();
+          if (candidate) fieldMeta.toolbarCandidate = candidate;
+          return {
+            pageUrl: location.href,
+            rect: {
+              x: Math.round(rect.x), y: Math.round(rect.y),
+              w: Math.round(rect.width), h: Math.round(rect.height),
+            },
+            fieldMeta,
+            toolbarContext: !!semanticToolbar,
+          };
+        }`,
+      });
+      const value = inspected?.result?.value;
+      if (!value?.rect || !value?.fieldMeta) return { resolved: false };
+      return {
+        resolved: true,
+        refId: '',
+        documentToken: '',
+        refScopeUrl: String(value.pageUrl || ''),
+        rect: value.rect,
+        fieldMeta: value.fieldMeta,
+        toolbarContext: value.toolbarContext === true,
+        toolbarRegionRef: '',
+        shadowPierced: true,
+      };
+    } finally {
+      if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
+      if (releaseObject && objectId) {
+        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      }
+    }
+  }
+
   async _resolveSelectorOnce(tabId, selector, options = {}) {
     await this.sendCommand(tabId, 'Runtime.enable');
 

@@ -3832,6 +3832,9 @@
       if (['click_ax', 'type_ax', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
         el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
       } else if (toolName === 'type_text') {
+        // Chrome Agent routes selector-based type_text through the same CDP
+        // open/closed-shadow resolver used for dispatch before reaching this
+        // light-DOM fallback.
         if (args.selector) el = safeQuerySelector(args.selector);
         else if (args.index != null) el = queryInteractiveForToolIndex()[args.index] || null;
         else el = document.activeElement;

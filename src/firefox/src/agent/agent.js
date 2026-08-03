@@ -1750,12 +1750,16 @@ export class Agent extends LoopDetector {
     } else if (revisitingRoute) {
       this._clearPageLoopState(tabId);
     }
-    if (documentChanged || routeChanged) this._resetRichTextToolbarAudit(tabId);
+    if (documentChanged || routeChanged) this._clearRichTextToolbarDocumentState(tabId);
     this._lastAxScopes.set(tabId, next);
   }
 
-  _resetRichTextToolbarAudit(tabId) {
+  _clearRichTextToolbarDocumentState(tabId) {
     this._richTextToolbarStates.delete(tabId);
+  }
+
+  _resetRichTextToolbarAudit(tabId) {
+    this._clearRichTextToolbarDocumentState(tabId);
     this._richTextToolbarDebts.delete(tabId);
   }
 
@@ -1876,7 +1880,7 @@ export class Agent extends LoopDetector {
     const currentDocument = String(liveDocumentToken || '');
     if (!currentDocument) return null;
     if (state.documentToken && state.documentToken !== currentDocument) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       return null;
     }
     return {
@@ -1939,7 +1943,7 @@ export class Agent extends LoopDetector {
       (state.documentToken && liveDocument && state.documentToken !== liveDocument)
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
       return null;
     }
@@ -1969,7 +1973,7 @@ export class Agent extends LoopDetector {
       (state.documentToken && liveDocument && state.documentToken !== liveDocument)
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
-      this._resetRichTextToolbarAudit(tabId);
+      this._clearRichTextToolbarDocumentState(tabId);
       if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
       return false;
     }

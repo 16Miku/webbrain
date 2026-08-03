@@ -3237,9 +3237,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarRegionRef: 'ref_10',
     });
     const crossDocumentBlock = await agent._richTextToolbarToolBlock(tabId, 'click_ax', { ref_id: 'ref_12' });
-    if (crossDocumentBlock || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('live document identity must release stale toolbar blocks after navigation');
+    if (crossDocumentBlock || !agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('navigation must release stale toolbar refs while preserving unresolved completion debt');
     }
+    agent._effectiveRunMode = () => 'act';
+    const navigatedDoneBlock = agent._completionDoneBlock(tabId, 'done', { outcome: 'success' });
+    if (navigatedDoneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
+      throw new Error(`navigation must not permit false success after a blocked toolbar edit: ${JSON.stringify(navigatedDoneBlock)}`);
+    }
+    agent._resetRichTextToolbarAudit(tabId);
 
     const unscopedBlock = {};
     agent._applyRichTextToolbarWrongTarget(
