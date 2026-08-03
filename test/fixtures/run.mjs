@@ -2839,6 +2839,8 @@ for (const browserKind of ['chrome', 'firefox']) {
           <span id="shadow-quantity-label">Shadow quantity</span>
           <input id="shadow-labelled-size" aria-labelledby="shadow-quantity-label" value="11"
             style="width:34px;height:22px">
+          <label for="shadow-explicit-size">Shadow explicit quantity</label>
+          <input id="shadow-explicit-size" value="11" style="width:34px;height:22px">
           <button type="button">B</button>
         </div>`;
       document.body.appendChild(shadowHost);
@@ -2850,6 +2852,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         editor: window.__wb_ax_ref(document.getElementById('editor-body')),
         labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
         shadowLabelledBy: window.__wb_ax_ref(shadowRoot.getElementById('shadow-labelled-size')),
+        shadowExplicitLabel: window.__wb_ax_ref(shadowRoot.getElementById('shadow-explicit-size')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -2936,6 +2939,15 @@ for (const browserKind of ['chrome', 'firefox']) {
     });
     if (!shadowLabelledBy?.success || shadowLabelledBy.fieldMeta?.toolbarCandidate || shadowLabelledBy.fieldMeta?.ariaLabelledByText !== 'Shadow quantity') {
       throw new Error(`shadow-local aria-labelledby field must stay outside toolbar audit, got: ${JSON.stringify(shadowLabelledBy)}`);
+    }
+
+    const shadowExplicitLabel = await call(page, 'set_field', {
+      ref_id: refs.shadowExplicitLabel,
+      text: 'Document prose',
+      clear: true,
+    });
+    if (!shadowExplicitLabel?.success || shadowExplicitLabel.fieldMeta?.toolbarCandidate || shadowExplicitLabel.fieldMeta?.labelText !== 'Shadow explicit quantity') {
+      throw new Error(`shadow-local explicit-label field must stay outside toolbar audit, got: ${JSON.stringify(shadowExplicitLabel)}`);
     }
 
     const title = await call(page, 'set_field', {
@@ -3519,6 +3531,34 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!iframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
       throw new Error('the associated iframe editor edit should clear toolbar debt');
     }
+
+    agent.autoScreenshot = 'state_change';
+    agent.autoScreenshotCount.delete(tabId);
+    agent.providerManager.getVisionProvider = async () => ({
+      config: { model: 'fixture-vision', baseUrl: 'https://vision.example.test' },
+    });
+    agent._probeRichTextToolbarIframeTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      frameId: 7,
+      documentToken: 'frame-doc-a',
+      refScopeUrl: 'https://frame.example.test/editor',
+      rect: { x: 10, y: 8, w: 60, h: 24 },
+      annotationRect: null,
+      fieldMeta: { toolbarCandidate: iframeCandidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const unmappedIframePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#font-family', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (!unmappedIframePreflight.block?.noDispatch || !unmappedIframePreflight.block?.retryable) {
+      throw new Error(`an unmappable iframe toolbar target must fail closed when visual audit is available: ${JSON.stringify(unmappedIframePreflight)}`);
+    }
+    agent.providerManager.getVisionProvider = async () => null;
 
     const staleDocumentResult = {};
     agent._applyRichTextToolbarWrongTarget(

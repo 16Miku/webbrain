@@ -108,8 +108,40 @@
     return { elements: selected, viewport, childFrames };
   }
 
+  function scrollChildFrameIntoView(params) {
+    try {
+      const frames = Array.from(document.querySelectorAll('iframe, frame'));
+      const childUrl = String(params?.childUrl || '');
+      const fallbackIndex = Number(params?.fallbackIndex);
+      const urlKey = (value) => {
+        try {
+          const parsed = new URL(String(value || ''), document.baseURI);
+          parsed.hash = '';
+          return parsed.href;
+        } catch { return String(value || '').split('#')[0]; }
+      };
+      const wanted = urlKey(childUrl);
+      const exact = frames.filter(frame => urlKey(frame.src || frame.getAttribute('src') || 'about:blank') === wanted);
+      const frame = exact.length === 1
+        ? exact[0]
+        : (Number.isInteger(fallbackIndex) ? frames[fallbackIndex] : null);
+      if (!frame) return { found: false, scrolled: false };
+      frame.scrollIntoView({ block: 'center', inline: 'center' });
+      const after = frame.getBoundingClientRect();
+      return {
+        found: true,
+        scrolled: true,
+        rect: { x: Math.round(after.x), y: Math.round(after.y), w: Math.round(after.width), h: Math.round(after.height) },
+      };
+    } catch { return { found: false, scrolled: false }; }
+  }
+
   runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.target !== 'redaction-content' || msg.action !== 'get_redaction_regions') return;
-    sendResponse(collectRedactionRegions(msg.params || {}));
+    if (msg?.target !== 'redaction-content') return;
+    if (msg.action === 'get_redaction_regions') {
+      sendResponse(collectRedactionRegions(msg.params || {}));
+    } else if (msg.action === 'scroll_child_frame_into_view') {
+      sendResponse(scrollChildFrameIntoView(msg.params || {}));
+    }
   });
 })();

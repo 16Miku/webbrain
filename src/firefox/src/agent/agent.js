@@ -1974,12 +1974,46 @@ export class Agent extends LoopDetector {
     };
   }
 
+  async _scrollRichTextToolbarFrameIntoView(tabId, navigationFrames, frameId) {
+    const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
+    const byId = new Map(frames.filter(frame => Number.isInteger(frame?.frameId)).map(frame => [frame.frameId, frame]));
+    const edges = [];
+    const seen = new Set();
+    let child = byId.get(frameId);
+    while (child && child.frameId !== 0 && !seen.has(child.frameId)) {
+      seen.add(child.frameId);
+      const parent = byId.get(child.parentFrameId);
+      if (!parent) return false;
+      const siblings = frames
+        .filter(frame => frame?.parentFrameId === parent.frameId)
+        .sort((a, b) => a.frameId - b.frameId);
+      edges.push({ parent, child, fallbackIndex: siblings.findIndex(frame => frame.frameId === child.frameId) });
+      child = parent;
+    }
+    if (!child || child.frameId !== 0) return false;
+    let found = false;
+    for (const edge of edges.reverse()) {
+      try {
+        const response = await browser.tabs.sendMessage(tabId, {
+          target: 'redaction-content',
+          action: 'scroll_child_frame_into_view',
+          params: { childUrl: edge.child.url || '', fallbackIndex: edge.fallbackIndex },
+        }, { frameId: edge.parent.frameId });
+        if (response?.found) {
+          found = true;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      } catch {}
+    }
+    return found;
+  }
+
   async _richTextToolbarFrameRectToTop(tabId, navigationFrames, frameId, rect) {
     if (!rect || !Number.isInteger(frameId)) return null;
     if (frameId === 0) return rect;
     const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
     if (!frames.some(frame => frame?.frameId === 0) || !frames.some(frame => frame?.frameId === frameId)) return null;
-    const snapshots = (await Promise.all(frames.map(async frame => {
+    const collectSnapshots = async () => (await Promise.all(frames.map(async frame => {
       const collect = () => browser.tabs.sendMessage(tabId, {
         target: 'redaction-content',
         action: 'get_redaction_regions',
@@ -2009,7 +2043,12 @@ export class Agent extends LoopDetector {
           : [],
       };
     }))).filter(Boolean);
-    const mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
+    let snapshots = await collectSnapshots();
+    let mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
+    if (!mapped && await this._scrollRichTextToolbarFrameIntoView(tabId, frames, frameId)) {
+      snapshots = await collectSnapshots();
+      mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
+    }
     return mapped ? {
       x: Math.round(mapped.x),
       y: Math.round(mapped.y),
@@ -2361,12 +2400,23 @@ export class Agent extends LoopDetector {
       || (!Number.isInteger(probe.frameId) || probe.frameId === 0 ? probe.rect : null);
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
-    if (
-      this._shouldAutoScreenshot(toolName)
+    const visualAuditEligible = this._shouldAutoScreenshot(toolName)
       && (dedicatedVision || provider?.supportsVision)
-      && this._canTakeAutoScreenshot(tabId)
-      && annotationRect
-    ) {
+      && this._canTakeAutoScreenshot(tabId);
+    if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
+      return {
+        block: {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: 'Could not bring the matching iframe toolbar target into the visible viewport for visual safety classification. Re-read the iframe and retry after making that editor visible.',
+        },
+        shot: null,
+        probe,
+      };
+    }
+    if (visualAuditEligible && annotationRect) {
       await new Promise(resolve => setTimeout(resolve, 120));
       // This image is consumed only by the internal target classifier. Keep
       // the model-facing per-turn screenshot slot available for the actual

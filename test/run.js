@@ -27289,14 +27289,27 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     toolbarContext: true,
     toolbarRegionRef: 'ref_10',
   };
+  let frameContainerOffscreen = false;
+  let frameContainerScrolled = false;
+  let frameScrollParentId = null;
   const messageResult = (message, options) => {
     if (message.target === 'content') return options.frameId === 7 ? toolbarProbe : { resolved: false };
+    if (message.target === 'redaction-content' && message.action === 'scroll_child_frame_into_view') {
+      frameContainerScrolled = true;
+      frameScrollParentId = options.frameId;
+      return { found: true, scrolled: true };
+    }
     if (message.target === 'redaction-content' && options.frameId === 0) {
       return {
         viewport: { width: 1000, height: 800 },
         childFrames: [{
           url: 'https://frame.example.test/editor',
-          rect: { x: 100, y: 200, w: 500, h: 400 },
+          rect: {
+            x: 100,
+            y: frameContainerOffscreen && !frameContainerScrolled ? 1200 : 200,
+            w: 500,
+            h: 400,
+          },
         }],
       };
     }
@@ -27328,6 +27341,18 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(chromeProbe.frameId, 7);
     assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    frameContainerOffscreen = true;
+    frameContainerScrolled = false;
+    frameScrollParentId = null;
+    const offscreenChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.deepEqual(offscreenChromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.equal(frameContainerScrolled, true, 'Chrome must bring an offscreen iframe into view before visual preflight');
+    assert.equal(frameScrollParentId, 0);
+    frameContainerOffscreen = false;
     const chromeType = await chromeAgent.executeTool(42, 'iframe_type', {
       urlFilter: 'frame.example.test',
       selector: '#font-size',
@@ -27357,6 +27382,18 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     });
     assert.equal(firefoxProbe.frameId, 7);
     assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    frameContainerOffscreen = true;
+    frameContainerScrolled = false;
+    frameScrollParentId = null;
+    const offscreenFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.deepEqual(offscreenFirefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.equal(frameContainerScrolled, true, 'Firefox must bring an offscreen iframe into view before visual preflight');
+    assert.equal(frameScrollParentId, 0);
+    frameContainerOffscreen = false;
     const firefoxType = await firefoxAgent.executeTool(42, 'iframe_type', {
       urlFilter: 'frame.example.test',
       selector: '#font-size',
