@@ -1276,6 +1276,18 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   if (!ordinarySelectProbe?.resolved || ordinarySelectProbe.fieldMeta?.type !== 'select' || ordinarySelectProbe.fieldMeta?.toolbarCandidate) {
     throw new Error(`labelled ordinary select was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySelectProbe)}`);
   }
+
+  await page.setContent(`<!doctype html>
+    <div style="display:flex;align-items:center;gap:6px;width:320px;height:44px">
+      <div id="compact-composer" role="textbox" contenteditable="true"
+        style="width:190px;height:28px">Draft reply</div>
+      <button type="button">Emoji</button>
+      <button type="button">Send</button>
+    </div>`);
+  const compactComposerProbe = await client.probeRichTextToolbarSelector(42, '#compact-composer');
+  if (!compactComposerProbe?.resolved || compactComposerProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`compact contenteditable composer was audited as formatting by the CDP selector probe: ${JSON.stringify(compactComposerProbe)}`);
+  }
 });
 
 for (const browserKind of ['chrome', 'firefox']) {
@@ -3133,6 +3145,15 @@ for (const browserKind of ['chrome', 'firefox']) {
       descendantShadowEditor.appendChild(descendantBodyHost);
       document.body.appendChild(descendantShadowEditor);
 
+      const compactComposer = document.createElement('div');
+      compactComposer.style.cssText = 'display:flex;align-items:center;gap:6px;width:320px;height:44px';
+      compactComposer.innerHTML = `
+        <div id="compact-composer-body" role="textbox" contenteditable="true"
+          style="width:190px;height:28px">Draft reply</div>
+        <button type="button">Emoji</button>
+        <button type="button">Send</button>`;
+      document.body.appendChild(compactComposer);
+
       const conventionalToolbarEditor = document.createElement('div');
       conventionalToolbarEditor.className = 'editor';
       conventionalToolbarEditor.innerHTML = `
@@ -3212,6 +3233,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         descendantShadowFamilyInput: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-shadow-family-input')),
         descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
         descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
+        compactComposer: window.__wb_ax_ref(compactComposer.querySelector('#compact-composer-body')),
         conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
         conventionalTextColor: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-text-color')),
         conventionalShadowFamily: window.__wb_ax_ref(conventionalShadowRoot.getElementById('conventional-shadow-family')),
@@ -3373,6 +3395,17 @@ for (const browserKind of ['chrome', 'firefox']) {
       || descendantFilterProbe.fieldMeta?.toolbarCandidate
     ) {
       throw new Error(`ordinary labelled toolbar text filter must stay outside formatting audit: ${JSON.stringify(descendantFilterProbe)}`);
+    }
+    const compactComposerProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.compactComposer, text: 'Quarterly roadmap' },
+    });
+    if (
+      !compactComposerProbe?.resolved
+      || compactComposerProbe.fieldMeta?.contentEditable !== true
+      || compactComposerProbe.fieldMeta?.toolbarCandidate
+    ) {
+      throw new Error(`compact contenteditable composer must stay outside formatting audit: ${JSON.stringify(compactComposerProbe)}`);
     }
     const conventionalToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',

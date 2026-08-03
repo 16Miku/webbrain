@@ -3314,6 +3314,11 @@ export class CDPClient {
               'buscar', 'filtro', 'pesquisa', 'cerca',
               '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
             ].some(token => formattingDescriptor.includes(token));
+            const editableRole = String(fieldMeta.role || '').toLowerCase();
+            const editableFormattingWidget = formattingLabel && (
+              semanticToolbar || ['combobox', 'listbox', 'spinbutton'].includes(editableRole)
+            );
+            if (editableControl && !editableFormattingWidget) return null;
             const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
             if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
             if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;

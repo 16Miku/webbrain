@@ -3101,13 +3101,18 @@
         'buscar', 'filtro', 'pesquisa', 'cerca',
         '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
       ].some(token => formattingDescriptor.includes(token));
+      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
+      const editableRole = String(baseMeta?.role || '').toLowerCase();
+      const editableFormattingWidget = formattingLabel && (
+        semanticToolbar || ['combobox', 'listbox', 'spinbutton'].includes(editableRole)
+      );
+      if (editableControl && !editableFormattingWidget) return null;
 
       const compact = rect.height <= 32 && rect.width <= 220;
       const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
       const numericPreset = value.length > 0
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
-      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
       const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
       if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
       if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
