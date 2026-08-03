@@ -6996,11 +6996,20 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
+    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+      return false;
+    }
     runCaptureDirective = parseTrailingRunCaptureDirective(text);
     if (runCaptureDirective?.error) {
       showComposerToast(t('sp.slash.invalid_usage', {
         usage: trailingRunCaptureUsage(runCaptureDirective.kind),
       }), { duration: 5000 });
+      return false;
+    }
+    if (runCaptureDirective
+        && (sourceGrounding || isSelectionGroundedForTab(tabId))) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }
     if (runCaptureDirective) text = runCaptureDirective.prompt;
