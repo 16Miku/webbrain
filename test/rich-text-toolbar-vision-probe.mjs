@@ -266,9 +266,15 @@ async function loadTraceCase(options) {
 
   const toolData = selected.event.data || {};
   const toolbarCandidate = toolData.result?.fieldMeta?.toolbarCandidate || null;
+  const nextToolOffset = events
+    .slice(selected.index + 1)
+    .findIndex(event => event?.kind === 'tool');
+  const attemptEndIndex = nextToolOffset >= 0
+    ? selected.index + 1 + nextToolOffset
+    : events.length;
   const screenshotsAfterAttempt = events
     .map((event, index) => ({ event, index }))
-    .slice(selected.index + 1)
+    .slice(selected.index + 1, attemptEndIndex)
     .filter(({ event }) => event?.kind === 'screenshot'
       && typeof event?.data?.screenshot_base64 === 'string'
       && Number(event.ts || 0) - Number(selected.event.ts || 0) <= 10_000);

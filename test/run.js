@@ -27813,6 +27813,22 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           },
         },
         {
+          kind: 'screenshot',
+          ts: 1155,
+          data: {
+            caption: 'auto-screenshot after tool batch',
+            screenshot_base64: 'data:image/png;base64,dW5yZWxhdGVk',
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1160,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,ZXhhY3Q=',
+          },
+        },
+        {
           kind: 'tool',
           ts: 1170,
           data: {
@@ -27822,12 +27838,28 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           },
         },
         {
+          kind: 'screenshot',
+          ts: 1175,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,dXJs',
+          },
+        },
+        {
           kind: 'tool',
           ts: 1180,
           data: {
             name: 'type_ax',
             args: { ref_id: 'ref_editable_family', text: 'Inter Display' },
             result: compactResult({ tag: 'div', type: 'div', contentEditable: true }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1185,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,ZWRpdGFibGU=',
           },
         },
         {
@@ -27841,18 +27873,10 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         },
         {
           kind: 'screenshot',
-          ts: 1200,
-          data: {
-            caption: 'auto-screenshot after tool batch',
-            screenshot_base64: 'data:image/png;base64,dW5yZWxhdGVk',
-          },
-        },
-        {
-          kind: 'screenshot',
-          ts: 1250,
+          ts: 1195,
           data: {
             caption: 'rich-text toolbar target preflight',
-            screenshot_base64: 'data:image/png;base64,ZXhhY3Q=',
+            screenshot_base64: 'data:image/png;base64,c2VsZWN0',
           },
         },
       ],
@@ -27868,7 +27892,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
     assert.equal(output.source.candidateCount, 4, 'trace selection must include runtime text, URL, contenteditable, and native-select candidates while excluding labelled ordinary fields');
     assert.equal(output.source.toolEventIndex, 2);
-    assert.equal(output.source.screenshotEventIndex, 7, 'the dedicated preflight capture must win over an unrelated screenshot');
+    assert.equal(output.source.screenshotEventIndex, 4, 'the dedicated preflight capture must win over an unrelated screenshot from the same attempt');
     assert.equal(output.case.attemptedText, 'Document prose');
     assert.equal(output.case.viewport, null, 'an already annotated trace capture must not require a prior viewport event');
     assert.deepEqual(output.case.toolbarCandidate, {
@@ -27879,6 +27903,23 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     assert.equal(output.case.structuralFallbackDecision.source, 'structural_fallback');
     assert.equal(output.image.originalBytes, 5);
     assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');
+
+    const missingCaptureTracePath = path.join(tempDir, 'trace-missing-first-capture.json');
+    const missingCaptureTrace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
+    missingCaptureTrace.events.splice(4, 1);
+    fs.writeFileSync(missingCaptureTracePath, JSON.stringify(missingCaptureTrace));
+    const missingCaptureResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', missingCaptureTracePath,
+      '--event-index', '2',
+      '--dry-run',
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(missingCaptureResult.status, 1, missingCaptureResult.stderr || missingCaptureResult.stdout);
+    assert.match(
+      missingCaptureResult.stderr,
+      /no dedicated rich-text toolbar preflight screenshot was captured/,
+      'a later attempt capture must not be reused for an earlier attempt',
+    );
 
     for (const [value, expectedDecision] of [
       ['serif', 'reject'],
@@ -27913,7 +27954,8 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(urlResult.status, 0, urlResult.stderr || urlResult.stdout);
     const urlOutput = JSON.parse(fs.readFileSync(urlOutputPath, 'utf8'));
-    assert.equal(urlOutput.source.toolEventIndex, 3, 'URL toolbar attempts must be selectable by --attempt');
+    assert.equal(urlOutput.source.toolEventIndex, 5, 'URL toolbar attempts must be selectable by --attempt');
+    assert.equal(urlOutput.source.screenshotEventIndex, 6, 'URL attempt must use only its own preflight capture');
 
     const editableOutputPath = path.join(tempDir, 'editable-result.json');
     const editableResult = spawnSync(process.execPath, [
@@ -27925,7 +27967,8 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(editableResult.status, 0, editableResult.stderr || editableResult.stdout);
     const editableOutput = JSON.parse(fs.readFileSync(editableOutputPath, 'utf8'));
-    assert.equal(editableOutput.source.toolEventIndex, 4, 'contenteditable toolbar attempts must be selectable by --attempt');
+    assert.equal(editableOutput.source.toolEventIndex, 7, 'contenteditable toolbar attempts must be selectable by --attempt');
+    assert.equal(editableOutput.source.screenshotEventIndex, 8, 'contenteditable attempt must use only its own preflight capture');
 
     const selectOutputPath = path.join(tempDir, 'select-result.json');
     const selectResult = spawnSync(process.execPath, [
@@ -27937,7 +27980,8 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(selectResult.status, 0, selectResult.stderr || selectResult.stdout);
     const selectOutput = JSON.parse(fs.readFileSync(selectOutputPath, 'utf8'));
-    assert.equal(selectOutput.source.toolEventIndex, 5, 'native select toolbar attempts must be selectable by --attempt');
+    assert.equal(selectOutput.source.toolEventIndex, 9, 'native select toolbar attempts must be selectable by --attempt');
+    assert.equal(selectOutput.source.screenshotEventIndex, 10, 'native select attempt must use only its own preflight capture');
 
     const exactOutputPath = path.join(tempDir, 'exact-result.json');
     const exactResult = spawnSync(process.execPath, [
