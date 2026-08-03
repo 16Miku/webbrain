@@ -384,6 +384,7 @@ tracks as a successful video or hand ffmpeg work to the user.
 | Look up weather or a short forecast | Open-Meteo weather | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Find books, ISBNs, authors, or publication data | Open Library | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Read-only Wikipedia REST/Action API tools; results are untrusted. |
+| Restore Turkish characters in ASCII Turkish text after an explicit user request | Turkish deasciifier | Ask, Act, Dev | Prompt-only and opt-in; ordinary form-entry tools continue to type their text argument verbatim. |
 | Upload one non-sensitive file to a short-lived public link | Temporary file share (Litterbox) | Act, Dev | Not shown to Ask; the skill uses existing browser upload tools. |
 
 The runtime enforces catalog membership, mode/tier eligibility, active-skill
