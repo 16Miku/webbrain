@@ -1051,6 +1051,40 @@ test('CDP upload selector bridge resolves hidden and open-shadow file inputs', a
   }
 });
 
+test('CDP toolbar selector probe traverses shadow hosts for dense clusters', async (page) => {
+  await page.setContent(`<!doctype html>
+    <style>
+      #formatting-row { display:flex; align-items:center; gap:6px; width:420px; height:44px; }
+      #editor-body { width:420px; height:160px; }
+    </style>
+    <div id="formatting-row">
+      <button type="button">Bold</button>
+      <span id="family-host"></span>
+      <button type="button">Italic</button>
+    </div>
+    <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>
+    <script>
+      document.querySelector('#family-host').attachShadow({ mode: 'open' }).innerHTML =
+        '<input id="shadow-family" value="Default" style="width:118px;height:22px">';
+    </script>`);
+
+  const session = await page.context().newCDPSession(page);
+  const client = new CDPClient();
+  client.sendCommand = async (_tabId, method, params = {}) => session.send(method, params);
+  client.resolveSelector = async () => ({ found: true, nodeId: null, inViewport: true });
+
+  const probe = await client.probeRichTextToolbarSelector(42, '#shadow-family');
+  const candidate = probe?.fieldMeta?.toolbarCandidate;
+  if (
+    !probe?.resolved
+    || Number(candidate?.score) < 4
+    || !candidate?.reasons?.includes('dense_control_cluster')
+    || candidate?.associatedEditorIdentity?.id !== 'editor-body'
+  ) {
+    throw new Error(`shadow-host dense toolbar cluster was not audited by the CDP selector probe: ${JSON.stringify(probe)}`);
+  }
+});
+
 for (const browserKind of ['chrome', 'firefox']) {
   test(`file picker guard (${browserKind}): blocks the native chooser and returns the exact input`, async (page) => {
     await setupContentHtml(page, `<!doctype html>

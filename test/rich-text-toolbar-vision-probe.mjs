@@ -29,6 +29,22 @@ const TARGET_KINDS = new Set([
   'other_formatting', 'editor_body', 'ordinary_input', 'uncertain',
 ]);
 const CONFIDENCE_THRESHOLD = 0.70;
+const CSS_NAMED_COLOR_KEYWORDS = new Set(`
+  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood
+  cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
+  darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+  darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
+  firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew
+  hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+  lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray
+  lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid
+  mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
+  mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen
+  paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown
+  royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow
+  springgreen steelblue tan teal thistle tomato transparent turquoise violet wheat white whitesmoke yellow yellowgreen
+  currentcolor
+`.trim().split(/\s+/));
 
 function usage(exitCode = 2) {
   const out = exitCode === 0 ? console.log : console.error;
@@ -394,7 +410,8 @@ function attemptedTextShape(attemptedText) {
     lines: text ? text.split(/\r?\n/).length : 0,
     numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(text),
     urlLike,
-    colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(text),
+    colorLike: CSS_NAMED_COLOR_KEYWORDS.has(normalized)
+      || /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(text),
     genericFontFamily: genericFontFamilies.has(normalized),
     semanticStylePreset: /^(?:p|h[1-6]|pre|blockquote|code)$/i.test(text.trim()),
   };
@@ -464,7 +481,9 @@ function decide(audit, attemptedText, availablePresetValues = []) {
         compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
           && (shape.semanticStylePreset === true || presetMatch(attemptedText, availablePresetValues));
         break;
-      case 'color': compatible = shape.colorLike === true; break;
+      case 'color':
+        compatible = shape.colorLike === true || presetMatch(attemptedText, availablePresetValues);
+        break;
       case 'link': compatible = shape.urlLike === true; break;
       case 'other_formatting':
         compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40

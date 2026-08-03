@@ -3179,6 +3179,10 @@ export class CDPClient {
             }
             return null;
           };
+          const composedParent = node => {
+            if (!node) return null;
+            return node.parentElement || node.getRootNode?.()?.host || null;
+          };
           const root = el.getRootNode?.() || document;
           const findById = id => {
             if (!id) return null;
@@ -3256,8 +3260,8 @@ export class CDPClient {
               '[role="menuitem"]', '[tabindex]',
             ].join(',');
             let cluster = null;
-            let node = el.parentElement;
-            for (let depth = 1; node && depth <= 6; depth += 1, node = node.parentElement) {
+            let node = composedParent(el);
+            for (let depth = 1; node && depth <= 6; depth += 1, node = composedParent(node)) {
               if (!visible(node)) continue;
               const region = node.getBoundingClientRect();
               if (region.height > 160 || region.width < rect.width) continue;
@@ -3281,10 +3285,6 @@ export class CDPClient {
             const region = regionNode.getBoundingClientRect();
             const associatedEditor = (() => {
               const candidates = [];
-              const composedParent = node => {
-                if (!node) return null;
-                return node.parentElement || node.getRootNode?.()?.host || null;
-              };
               let scope = composedParent(regionNode);
               for (let depth = 0; scope && depth < 5; depth += 1, scope = composedParent(scope)) {
                 let editors = [];
