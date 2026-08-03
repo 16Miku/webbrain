@@ -16121,7 +16121,52 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
     assert.match(panel, /async function ensureActMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Act should explain why it is unavailable in a selected-text conversation`);
     assert.match(panel, /async function ensureDevMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Dev should explain why it is unavailable in a selected-text conversation`);
+    assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
+    assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, sourceGrounding, accepted\) \{[\s\S]*?if \(!sourceGrounding \|\| accepted\) return;[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: every unaccepted selected-text start should roll back and reconcile optimistic scope state`);
+    assert.match(panel, /catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, sourceGrounding, accepted\);/, `${label}: all chat-start failures should pass through selected-text scope reconciliation`);
     assert.match(panel, /async function renderClearedConversationForTab\(tabId\) \{[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?clearCachedTabChat\(tabId\);/, `${label}: every successful clear entry point should drop local selected-text state`);
+
+    const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
+    const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
+    assert.ok(workflowStart >= 0 && workflowEnd > workflowStart, `${label}: saved workflow launcher missing`);
+    let workflowSends = 0;
+    const workflowInput = { value: 'keep this draft' };
+    const startSavedWorkflowRun = vm.runInNewContext(
+      `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
+      {
+        currentTabId: 92,
+        ensureActMode: async () => false,
+        inputEl: workflowInput,
+        t: () => 'workflow prompt',
+        autoResizeInput: () => {},
+        sendMessage: async () => { workflowSends += 1; return true; },
+      },
+    );
+    assert.equal(
+      await startSavedWorkflowRun({ id: 'workflow_scope_guard', name: 'Blocked workflow' }, {}, 92),
+      false,
+      `${label}: rejected Act transition should reject saved workflow launch`,
+    );
+    assert.equal(workflowSends, 0, `${label}: rejected saved workflow should not reach sendMessage`);
+    assert.equal(workflowInput.value, 'keep this draft', `${label}: rejected saved workflow should preserve the composer draft`);
+
+    const reconciliationStart = panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted) {');
+    const reconciliationEnd = panel.indexOf('\n}', reconciliationStart) + 2;
+    assert.ok(reconciliationStart >= 0 && reconciliationEnd > reconciliationStart, `${label}: failed-start reconciliation helper missing`);
+    const reconciledScopes = [];
+    const restoredScopes = [];
+    const reconcileFailedSelectionGroundedStart = vm.runInNewContext(
+      `(() => { ${panel.slice(reconciliationStart, reconciliationEnd)}; return reconcileFailedSelectionGroundedStart; })()`,
+      {
+        setSelectionGroundedForTab: (tabId, grounded) => reconciledScopes.push([tabId, grounded]),
+        restoreActiveRunState: (tabId) => { restoredScopes.push(tabId); },
+      },
+    );
+    reconcileFailedSelectionGroundedStart(93, sourceGrounding, false);
+    reconcileFailedSelectionGroundedStart(94, sourceGrounding, true);
+    reconcileFailedSelectionGroundedStart(95, null, false);
+    assert.deepEqual(reconciledScopes, [[93, false]], `${label}: only an unaccepted grounded start should clear optimistic scope`);
+    assert.deepEqual(restoredScopes, [93], `${label}: failed grounded start should reconcile against authoritative background state`);
 
     const reconnectStart = panel.indexOf('async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}) {');
     const reconnectEnd = panel.indexOf('\n\nfunction formatBackgroundSendError', reconnectStart);

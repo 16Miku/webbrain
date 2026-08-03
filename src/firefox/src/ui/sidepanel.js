@@ -926,6 +926,12 @@ function applyConversationScopeState(tabId, state) {
   );
 }
 
+function reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted) {
+  if (!sourceGrounding || accepted) return;
+  setSelectionGroundedForTab(tabId, false);
+  void restoreActiveRunState(tabId);
+}
+
 function settleNewConversationConfirmation(confirmed, { restoreFocus = true } = {}) {
   const state = newConversationConfirmationState;
   if (!state) return;
@@ -3309,7 +3315,7 @@ const boundWorkflowParameterForms = new WeakSet();
 
 async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
   if (!workflow?.id || currentTabId !== tabId) return false;
-  await ensureActMode();
+  if (!(await ensureActMode())) return false;
   inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
   autoResizeInput();
   return sendMessage({
@@ -7081,8 +7087,6 @@ async function sendMessage(extraChatParams = {}) {
     return false;
   }
 
-  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
-
   let userEl = null;
   let assistantEl = null;
   // A selection-only shortcut must not inherit unrelated attachment chips
@@ -7134,6 +7138,7 @@ async function sendMessage(extraChatParams = {}) {
   let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
   try {
     const res = await sendRunWithReconnect('chat_start', {
       tabId,
@@ -7232,6 +7237,7 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
+    reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted);
     captureStartFailed = !!runCaptureDirective
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
     contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
@@ -7246,10 +7252,6 @@ async function sendMessage(extraChatParams = {}) {
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
-      if (sourceGrounding) {
-        setSelectionGroundedForTab(tabId, false);
-        void restoreActiveRunState(tabId);
-      }
     } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
