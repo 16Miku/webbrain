@@ -103,6 +103,17 @@ function packagedMailTmRecord(prefix) {
   };
 }
 
+function packagedHumanizerRecord(prefix) {
+  return {
+    id: 'humanizer',
+    name: 'Humanizer',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/humanizer.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/humanizer.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedOtpHelperRecord(prefix) {
   return {
     id: 'otp-verification-code-helper',
@@ -154,6 +165,17 @@ function packagedFrankfurterRecord(prefix) {
     sourceType: 'built-in',
     sourceUrl: 'skills/frankfurter-fx.md',
     content: fs.readFileSync(path.join(ROOT, prefix, 'skills/frankfurter-fx.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
+function packagedTurkishDeasciifierRecord(prefix) {
+  return {
+    id: 'turkish-deasciifier',
+    name: 'Turkish deasciifier',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/turkish-deasciifier.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/turkish-deasciifier.md'), 'utf8'),
     createdAt: 0,
   };
 }
@@ -1891,6 +1913,43 @@ test('navigation-prone detection includes only submit-capable key and field call
     assert.equal(agent._isNavigationProneToolCall('press_keys', { key: 'ArrowDown' }), false, `${label}: arrows should avoid URL probes`);
     assert.equal(agent._isNavigationProneToolCall('set_field', { submit: true }), true, `${label}: submitting fields can navigate`);
     assert.equal(agent._isNavigationProneToolCall('set_field', { submit: false }), false, `${label}: ordinary field edits should avoid URL probes`);
+  }
+});
+
+test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const calls = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (tabId, method, params) => {
+      calls.push({ tabId, method, params });
+      return {};
+    };
+
+    const result = await new AgentCh({}).executeTool(42, 'press_keys', { key: ';' });
+    assert.deepEqual(result, {
+      success: true,
+      dispatched: true,
+      method: 'cdp-key',
+      key: ';',
+      repeat: 1,
+    });
+    assert.deepEqual(calls, [
+      {
+        tabId: 42,
+        method: 'Input.dispatchKeyEvent',
+        params: { type: 'keyDown', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
+      },
+      {
+        tabId: 42,
+        method: 'Input.dispatchKeyEvent',
+        params: { type: 'keyUp', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
+      },
+    ]);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
   }
 });
 
@@ -12509,9 +12568,23 @@ test('field tool contracts advertise settled verification and recovery', () => {
     const tools = getTools('act');
     const typeAx = tools.find(tool => tool.function.name === 'type_ax');
     const setField = tools.find(tool => tool.function.name === 'set_field');
+    const typeText = tools.find(tool => tool.function.name === 'type_text');
     assert.match(typeAx.function.description, /settle[\s\S]*verified:true/i, `${label}: type_ax verification contract missing`);
     assert.match(setField.function.description, /verify the exact settled value/i, `${label}: set_field exact verification contract missing`);
     assert.match(setField.function.description, /recoveryRequired:"fresh_tree"/, `${label}: set_field recovery contract missing`);
+    for (const tool of [typeAx, setField, typeText]) {
+      assert.equal(tool.function.parameters.properties.lang, undefined, `${label}: ${tool.function.name} still exposes a hidden language transform`);
+    }
+  }
+});
+
+test('form entry has no built-in language transform path', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const manifest = fs.readFileSync(path.join(ROOT, prefix, 'manifest.json'), 'utf8');
+    assert.doesNotMatch(content, /tr-deasciify|_loadDeasciifier|_applyLangTransform/, `${label}: content script still mutates text by locale`);
+    assert.doesNotMatch(manifest, /turkish-deasciifier-patterns/, `${label}: retired transform asset remains web-accessible`);
+    assert.equal(fs.existsSync(path.join(ROOT, prefix, 'vendor/turkish-deasciifier-patterns.json')), false, `${label}: retired transform asset still exists`);
   }
 });
 
@@ -12591,8 +12664,10 @@ test('getToolsForMode: find_text replaces unsupported modifier shortcuts', () =>
 
     const pressKeys = fullTools.find(t => t.function.name === 'press_keys');
     assert.deepEqual(pressKeys.function.parameters.properties.key.enum, [
-      'Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+      'Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';',
     ]);
+    assert.equal(askNames.includes('press_keys'), false, `${label}: Ask mode must remain read-only`);
+    assert.match(pressKeys.function.description, /semicolon.*Gmail Expand all/i);
     assert.match(pressKeys.function.description, /Ctrl\/Cmd\/Alt\/Shift combinations.*not supported/i);
     assert.doesNotMatch(pressKeys.function.parameters.properties.key.enum.join(' '), /Control|Meta|Alt|Shift|KeyF/);
 
@@ -13192,6 +13267,56 @@ test('NYTimes runs preactivate the adapter-scoped fallback without weakening ski
     agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     assert.equal(agent._preactivateNyTimesSkillForRun(tabId, 'ask'), true, `${label}: retry run did not re-preactivate the skill`);
     assert.ok(agent._activeSkillToolForName(tabId, 'fetch_nytimes_article'), `${label}: retry run still requires load_skill`);
+  }
+});
+
+test('mail runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const tabId = label === 'chrome' ? 4941 : 4942;
+    const providerManager = { getActive: () => ({ promptTier: 'full' }) };
+    const agent = new AgentClass(providerManager);
+    agent.setCustomSkills([packagedHumanizerRecord(prefix)]);
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('act', tabId) }]);
+
+    for (const adapter of ['gmail', 'outlook', 'proton-mail', 'yahoo-mail', 'fastmail', 'zoho-mail', 'yandex-mail']) {
+      agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      agent.lastSeenAdapter.set(tabId, adapter);
+      assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), true, `${label}: ${adapter} run did not preactivate Humanizer`);
+      assert.ok(agent.activeSkillIds.get(tabId)?.has('humanizer'), `${label}: ${adapter} active skill id missing`);
+    }
+
+    // The skill instructions reach the prompt without a model-visible load_skill hop.
+    assert.ok(
+      agent._buildSystemPrompt('act', tabId).includes('Humanizer'),
+      `${label}: preactivated skill body missing from the system prompt`
+    );
+
+    agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+    agent.lastSeenAdapter.set(tabId, 'nytimes');
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: non-mail adapter preactivated Humanizer`);
+    assert.equal(agent.activeSkillIds.has(tabId), false, `${label}: non-mail adapter retained an active skill`);
+    assert.ok(
+      !agent._buildSystemPrompt('act', tabId).includes('Humanizer'),
+      `${label}: non-mail run still carries the skill body`
+    );
+
+    agent.lastSeenAdapter.set(tabId, '');
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: absent adapter preactivated Humanizer`);
+
+    // A user who removes the default skill must not get it back through preactivation.
+    agent.lastSeenAdapter.set(tabId, 'gmail');
+    agent.setCustomSkills([]);
+    assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: removed skill was preactivated`);
+
+    const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
+    compact.setCustomSkills([packagedHumanizerRecord(prefix)]);
+    compact.conversationModes.set(tabId, 'act');
+    compact.lastSeenAdapter.set(tabId, 'gmail');
+    assert.equal(compact._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: Compact preactivated a skill`);
   }
 });
 
@@ -15150,7 +15275,9 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'open-library-books': ['book_search', 'book_metadata', 'isbn_lookup', 'author_lookup'],
     'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
     'frankfurter-fx': ['currency_conversion', 'exchange_rate', 'fx_lookup', 'currency_list'],
+    'turkish-deasciifier': ['turkish_deasciify', 'restore_turkish_diacritics', 'fix_turkish_characters', 'ascii_turkish_conversion'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
+    'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
     ['chrome', 'src/chrome', PACKAGED_SKILL_SOURCES_CH, normalizeCustomSkillsCh],
@@ -15212,6 +15339,24 @@ test('packaged Mail.tm skill is opt-in before prompt injection', () => {
     const enabled = normalizeSkills([...defaults, packagedMailTmRecord(prefix)]);
     assert.doesNotMatch(buildPrompt(enabled, { mode: 'act', tier: 'full' }), /Disposable email \(Mail\.tm\)/, `${label}: available Mail.tm skill should not be preloaded`);
     assert.match(buildPrompt(enabled, { mode: 'act', tier: 'full', activeSkillIds: new Set(['disposable-email-mailtm']) }), /Disposable email \(Mail\.tm\)/, `${label}: activated Mail.tm skill missing from prompt`);
+  }
+});
+
+test('packaged Turkish deasciifier is available, opt-in, and instruction-only', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, getCatalog, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, getEligibleSkillCatalogCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, getEligibleSkillCatalogFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const enabled = normalizeSkills([packagedTurkishDeasciifierRecord(prefix)]);
+    const catalog = getCatalog(enabled, { mode: 'act', tier: 'full' });
+    assert.deepEqual(catalog.map((skill) => skill.id), ['turkish-deasciifier'], `${label}: opt-in skill missing from the enabled catalog`);
+    assert.doesNotMatch(buildPrompt(enabled, { mode: 'act', tier: 'full' }), /Convert ASCII Turkish text/, `${label}: unloaded skill leaked full instructions`);
+    assert.match(
+      buildPrompt(enabled, { mode: 'act', tier: 'full', activeSkillIds: new Set(['turkish-deasciifier']) }),
+      /Convert ASCII Turkish text/,
+      `${label}: activated skill instructions missing`,
+    );
+    assert.deepEqual(buildDefs(enabled, { mode: 'act', tier: 'full' }), [], `${label}: instruction-only skill added a tool schema`);
   }
 });
 
@@ -40231,11 +40376,17 @@ test('capabilitiesFor: set_field({submit}) requires BOTH type and click', () => 
   assert.deepEqual(capabilitiesFor('read_page', {}), []);
 });
 
-test('press_keys: Enter is a submit (CLICK); Tab/Escape are benign (null)', () => {
-  assert.equal(capabilityFor('press_keys', { key: 'Enter' }), Capability.CLICK);
-  assert.equal(capabilityFor('press_keys', { key: 'Escape' }), null);
-  assert.equal(capabilityFor('press_keys', { key: 'Tab' }), null);
-  assert.equal(capabilityFor('press_keys', {}), Capability.CLICK); // unknown → gate, fail safe
+test('press_keys: Enter and semicolon shortcuts require CLICK; Tab/Escape are benign', () => {
+  for (const [label, capabilityFn, Capabilities] of [
+    ['chrome', capabilityForCh, CapabilityCh],
+    ['firefox', capabilityFor, Capability],
+  ]) {
+    assert.equal(capabilityFn('press_keys', { key: 'Enter' }), Capabilities.CLICK, `${label}: Enter`);
+    assert.equal(capabilityFn('press_keys', { key: ';' }), Capabilities.CLICK, `${label}: semicolon`);
+    assert.equal(capabilityFn('press_keys', { key: 'Escape' }), null, `${label}: Escape`);
+    assert.equal(capabilityFn('press_keys', { key: 'Tab' }), null, `${label}: Tab`);
+    assert.equal(capabilityFn('press_keys', {}), Capabilities.CLICK, `${label}: unknown key`); // fail safe
+  }
 });
 
 test('submit controls bypass native select guards in click paths', () => {
@@ -49794,7 +49945,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
   }
 });
 
-test('upload_file prefers downloadId over a supplied stale filePath (chrome)', async () => {
+test('upload_file prefers a valid downloadId and falls back to filePath for an invalid id (chrome)', async () => {
   const originalChrome = globalThis.chrome;
   const originalCdp = {
     attach: cdpClientCh.attach,
@@ -49806,18 +49957,21 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
   };
   const realPath = '/Users/x/Downloads/real.zip';
   const stalePath = '/Users/Shared/made-up.zip';
+  const exactPath = '/root/Downloads/github-avatar-carloslopez.jpg';
   const uploaded = [];
   const releasedGroups = [];
   let queryCount = 0;
   let selectorMatches = ['input-501'];
+  let expectedPath = realPath;
 
   try {
     globalThis.chrome = {
       runtime: { lastError: null },
       downloads: {
         search(query, cb) {
-          assert.deepEqual(query, { id: 9123 });
-          cb([{ id: 9123, state: 'complete', filename: realPath }]);
+          if (query.id === 9123) cb([{ id: 9123, state: 'complete', filename: realPath }]);
+          else if (query.id === 0) cb([]);
+          else assert.fail(`unexpected download id ${query.id}`);
         },
       },
     };
@@ -49830,14 +49984,14 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
       releasedGroups.push(objectGroup);
     };
     cdpClientCh.probeLocalFile = async (_tabId, filePath) => {
-      assert.equal(filePath, realPath, 'downloadId-resolved path should override stale filePath before probing');
+      assert.equal(filePath, expectedPath);
       return { exists: true, readable: true, size: 123 };
     };
     cdpClientCh.setFileInputFiles = async (_tabId, objectId, files) => {
       assert.equal(objectId, 'input-501');
       uploaded.push(files);
     };
-    cdpClientCh.getFileInputFiles = async () => [{ name: 'real.zip', size: 123, readable: true }];
+    cdpClientCh.getFileInputFiles = async () => [{ name: expectedPath.split('/').pop(), size: 123, readable: true }];
 
     const agent = new AgentCh({});
     const args = { selector: 'input[type=file]', downloadId: 9123, filePath: stalePath };
@@ -49849,6 +50003,15 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
     assert.deepEqual(uploaded, [[realPath]]);
     assert.deepEqual(releasedGroups, ['upload-query-1'], 'successful uploads must release selector handles');
 
+    expectedPath = exactPath;
+    const fallbackArgs = { selector: 'input[type=file]', downloadId: 0, filePath: exactPath };
+    const fallback = await agent.executeTool(42, 'upload_file', fallbackArgs);
+    assert.equal(fallback.success, true);
+    assert.equal(fallback.file, exactPath);
+    assert.equal(fallbackArgs.filePath, exactPath, 'an unresolved downloadId must not replace a supplied absolute path');
+    assert.deepEqual(uploaded, [[realPath], [exactPath]]);
+
+    expectedPath = realPath;
     selectorMatches = ['input-501', 'input-502'];
     const ambiguous = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
@@ -49857,10 +50020,10 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
     assert.equal(ambiguous.success, false);
     assert.match(ambiguous.error, /matched 2 elements/);
     assert.match(ambiguous.error, /exact, unique selector/);
-    assert.deepEqual(uploaded, [[realPath]], 'ambiguous selectors must fail before attaching the file');
+    assert.deepEqual(uploaded, [[realPath], [exactPath]], 'ambiguous selectors must fail before attaching the file');
     assert.deepEqual(
       releasedGroups,
-      ['upload-query-1', 'upload-query-2'],
+      ['upload-query-1', 'upload-query-2', 'upload-query-3'],
       'early upload failures must release selector handles',
     );
   } finally {
@@ -52347,6 +52510,8 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-library-books',
     'wikipedia',
     'frankfurter-fx',
+    'humanizer',
+    'turkish-deasciifier',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -52357,15 +52522,21 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'open-library-books',
     'wikipedia',
     'frankfurter-fx',
+    'humanizer',
+    'turkish-deasciifier',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
+    'humanizer',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
+    'humanizer',
   ]);
+  assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
+  assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');
   assert.equal(PACKAGED_SKILL_SOURCES_CH.some((skill) => skill.id === 'chrome-web-store-release'), false, 'chrome: release workflow must not appear in available packaged skills');
   assert.equal(PACKAGED_SKILL_SOURCES_FX.some((skill) => skill.id === 'chrome-web-store-release'), false, 'firefox: release workflow must not appear in available packaged skills');
 
@@ -52573,6 +52744,11 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(wikipedia, /"name": "get_wikipedia_summary"/, `${label}: Wikipedia summary tool missing`);
     assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia summary endpoint missing`);
     assert.match(wikipedia, /Powered by \[Wikipedia\]\(https:\/\/www\.wikipedia\.org\)/, `${label}: Wikipedia skill should include visible attribution`);
+    const turkishDeasciifier = fs.readFileSync(path.join(ROOT, prefix, 'skills/turkish-deasciifier.md'), 'utf8');
+    assert.match(turkishDeasciifier, /only when the user explicitly requests this transformation/i, `${label}: Turkish deasciifier must require explicit user intent`);
+    assert.match(turkishDeasciifier, /Never infer permission from the user's language, locale, page language, or destination field/i, `${label}: Turkish deasciifier must not infer locale permission`);
+    assert.match(turkishDeasciifier, /Form-entry tools always type their `text` argument verbatim/i, `${label}: Turkish deasciifier must preserve the verbatim base-tool contract`);
+    assert.doesNotMatch(turkishDeasciifier, /```webbrain-tools/i, `${label}: Turkish deasciifier should not add a tool schema`);
     const fileShare = fs.readFileSync(path.join(ROOT, prefix, 'skills/temporary-file-share-litterbox.md'), 'utf8');
     assert.match(fileShare, /https:\/\/litterbox\.catbox\.moe/, `${label}: file-share skill should use Litterbox by default`);
     assert.match(fileShare, /No account, no API key, and no sign-in are required/i, `${label}: file-share skill should document the no-auth provider requirement`);

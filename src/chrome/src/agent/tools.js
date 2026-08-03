@@ -71,7 +71,6 @@ export const AGENT_TOOLS = [
           ref_id: { type: 'string', description: 'A ref_id from get_accessibility_tree, e.g. "ref_42".' },
           text: { type: 'string', description: 'Text to type.' },
           clear: { type: 'boolean', description: 'Clear existing content before typing (default: false).' },
-          lang: { type: 'string', enum: ['tr-deasciify'], description: 'OPTIONAL text transform. "tr-deasciify" converts ASCII Turkish to proper Turkish characters before typing.' },
         },
         required: ['ref_id', 'text'],
       },
@@ -89,7 +88,6 @@ export const AGENT_TOOLS = [
           text: { type: 'string', description: 'Text to type into the field.' },
           clear: { type: 'boolean', description: 'Clear existing content before typing (default: true).' },
           submit: { type: 'boolean', description: 'Press Enter after typing (default: false).' },
-          lang: { type: 'string', enum: ['tr-deasciify'], description: 'OPTIONAL text transform. "tr-deasciify" converts ASCII Turkish to proper Turkish characters before typing.' },
         },
         required: ['ref_id', 'text'],
       },
@@ -299,7 +297,6 @@ export const AGENT_TOOLS = [
           selector: { type: 'string', description: 'OPTIONAL CSS selector for the input element. Omit to type into the currently focused element.' },
           text: { type: 'string', description: 'Text to type.' },
           clear: { type: 'boolean', description: 'Clear existing content before typing (default: false). Works for both forms.' },
-          lang: { type: 'string', enum: ['tr-deasciify'], description: 'OPTIONAL text transform before typing. "tr-deasciify" converts ASCII Turkish (e.g. "calisma") to proper Turkish characters ("çalışma"). Use when the user asks to deasciify, fix Turkish characters, or convert ASCII Turkish text.' },
         },
         required: ['text'],
       },
@@ -309,11 +306,11 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'press_keys',
-      description: 'Press one unmodified keyboard key. Supports only Escape, Tab, Enter, ArrowUp, ArrowDown, ArrowLeft, and ArrowRight. Ctrl/Cmd/Alt/Shift combinations and browser shortcuts such as Ctrl+F are not supported. Use find_text to select one page-text match.',
+      description: 'Press one unmodified keyboard key. Supports Escape, Tab, Enter, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, and ; (semicolon, for page shortcuts such as Gmail Expand all). Ctrl/Cmd/Alt/Shift combinations and browser shortcuts such as Ctrl+F are not supported. Use find_text to select one page-text match.',
       parameters: {
         type: 'object',
         properties: {
-          key: { type: 'string', enum: ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], description: 'Key to press.' },
+          key: { type: 'string', enum: ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'], description: 'Key to press.' },
           repeat: { type: 'number', description: 'How many times to press the key (default: 1, max: 3).' },
         },
         required: ['key'],
@@ -926,7 +923,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'upload_file',
-      description: 'Upload a file directly to an existing file input without opening the page or OS file-picker dialog. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide EITHER downloadId (preferred — the id from download_files/list_downloads; you do not need to recall the path) OR filePath (absolute local path). If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize the widget; then retry upload_file with the exact selector returned or discovered. The file must exist on the local filesystem.',
+      description: 'Upload a file directly to an existing file input without opening the page or OS file-picker dialog. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide EITHER downloadId (preferred — the id from download_files/list_downloads; you do not need to recall the path) OR filePath (absolute local path). Never guess a downloadId. If both are accidentally provided, a valid downloadId is preferred; if that id cannot resolve, the supplied filePath is used as a fallback. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize the widget; then retry upload_file with the exact selector returned or discovered. The file must exist on the local filesystem.',
       parameters: {
         type: 'object',
         properties: {
@@ -1472,7 +1469,7 @@ Available tools:
 - schedule_task: Create a one-shot or fixed-minute-interval task only when the user explicitly asks for future scheduled work. It does not support calendar/cron recurrence; never approximate monthly recurrence. Prefer URL targets for repeatable automations; current_tab is strict and fails if the tab changes.
 - get_selection: Get highlighted text
 - find_text: Select one literal page-text match instead of Ctrl/Cmd+F. Each call replaces the previous selection; it does not open browser Find UI or keep multiple terms highlighted.
-- press_keys: Press only unmodified Escape/Tab/Enter/arrows. Modifier combinations and browser shortcuts are unsupported.
+- press_keys: Press only unmodified Escape/Tab/Enter/arrows or ; (semicolon). Modifier combinations and browser shortcuts are unsupported.
 - new_tab: Open a background reference tab; the current run stays on its original tab
 - clarify: Pause and ask the user a question. Use ONLY for material ambiguity that you cannot resolve by reading the page (e.g. "my API key" on a site with multiple plugins that each have one). Unanswered clarifies auto-select options[0] after the timeout (default 60s) with source=timeout (not high-risk approval); Settings Instant yields source=auto (intentional auto-approve — continue). Put the safe/default first. Do NOT use to confirm correct actions; do NOT call before every step. Budget 1-2 per run, max.
 - done: Signal task completion
@@ -1812,7 +1809,7 @@ TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
 - read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run.
-- get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows, never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.
+- get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.
 - extract_data: tables/headings/images/links. get_selection: read highlighted text. find_text({text}): select one literal page-text match; each call replaces the previous selection and never creates simultaneous highlights or browser Find UI. read_pdf: read a PDF.
 - wait_for_element({selector}) / wait_for_stable({quietMs}): wait for an element / for the page to go quiet after an action.
 - schedule_resume({after_seconds|run_at, reason, resume_instruction}): terminal durable pause for this current task.

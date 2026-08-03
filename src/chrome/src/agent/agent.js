@@ -102,6 +102,17 @@ const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the ru
 // boundary instead of guessing when a follow-up reaches beyond the selection.
 const SELECTION_SCOPE_SYSTEM_NOTE = 'The text the user selected on a page is the only source available in this conversation. The current page, other tabs, files, live data, and browser tools are all unavailable. If the user asks about anything beyond the selected text and this conversation, do not guess: briefly explain, in the user\'s language, that this conversation only covers their selected text, and suggest starting a new conversation for questions about the page.';
 const BROWSER_NEW_TAB_URL_PREFIXES = ['chrome://newtab', 'edge://newtab'];
+// Site adapters where a run is likely to compose prose the user will send, so
+// the Humanizer skill is preactivated instead of waiting for a load_skill hop.
+const HUMANIZER_SKILL_SITE_ADAPTERS = new Set([
+  'gmail',
+  'outlook',
+  'yahoo-mail',
+  'proton-mail',
+  'fastmail',
+  'zoho-mail',
+  'yandex-mail',
+]);
 const SET_CHECKED_VERIFY_DELAY_MS = 80;
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'get_accessibility_tree',
@@ -10500,6 +10511,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _preactivateHumanizerSkillForRun(tabId, mode) {
+    if (!HUMANIZER_SKILL_SITE_ADAPTERS.has(this._activeSkillSiteAdapter(tabId))) return false;
+    const tier = this._resolvePromptTier();
+    if (tier === 'compact') return false;
+    const owner = this._eligibleSkills(mode, tier).find((skill) => skill.id === 'humanizer');
+    if (!owner) return false;
+    return this._activateSkillsForRun(tabId, [owner.id], mode, tier).includes(owner.id);
+  }
+
   _preactivateNyTimesSkillForRun(tabId, mode) {
     if (this._activeSkillSiteAdapter(tabId) !== 'nytimes') return false;
     const tier = this._resolvePromptTier();
@@ -17022,7 +17042,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // small integer id (returned by download_files/list_downloads and
       // auto-pinned to the scratchpad) is easy to carry. Resolve it to the real
       // path here so the rest of the handler is unchanged. If both are present,
-      // downloadId wins: filePath may be stale or invented.
+      // prefer a valid downloadId because filePath may be stale or invented, but
+      // keep the supplied path as a fallback. Models occasionally add a guessed
+      // id to an otherwise valid absolute path; that extra bad id must not make
+      // the path-based upload fail.
+      const suppliedFilePath = typeof args.filePath === 'string' && args.filePath.trim()
+        ? args.filePath
+        : null;
       if (args.downloadId != null) {
         try {
           const items = await new Promise((resolve, reject) => {
@@ -17032,12 +17058,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             });
           });
           const it = items && items[0];
-          if (!it) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
-          if (it.state !== 'complete') return { success: false, error: `Download ${args.downloadId} is "${it.state}", not complete — wait for it to finish (wait_for_stable) then retry.` };
-          if (!it.filename) return { success: false, error: `Download ${args.downloadId} has no resolved local path yet. Retry shortly, or use list_downloads to find the path and pass filePath.` };
-          args.filePath = it.filename;
+          if (!it) {
+            if (!suppliedFilePath) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
+          } else if (it.state !== 'complete') {
+            if (!suppliedFilePath) return { success: false, error: `Download ${args.downloadId} is "${it.state}", not complete — wait for it to finish (wait_for_stable) then retry.` };
+          } else if (!it.filename) {
+            if (!suppliedFilePath) return { success: false, error: `Download ${args.downloadId} has no resolved local path yet. Retry shortly, or use list_downloads to find the path and pass filePath.` };
+          } else {
+            args.filePath = it.filename;
+          }
         } catch (e) {
-          return { success: false, error: `Could not resolve downloadId ${args.downloadId}: ${e.message}` };
+          if (!suppliedFilePath) return { success: false, error: `Could not resolve downloadId ${args.downloadId}: ${e.message}` };
         }
       }
       if (!args.filePath) {
@@ -18558,7 +18589,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const key = args.key;
       const repeatRaw = Number(args.repeat ?? 1);
       const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
-      const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+      const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
       if (!SUPPORTED_KEYS.includes(key)) {
         return {
           success: false,
@@ -18582,6 +18613,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ArrowUp: { code: 'ArrowUp', windowsVirtualKeyCode: 38 },
           ArrowRight: { code: 'ArrowRight', windowsVirtualKeyCode: 39 },
           ArrowDown: { code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+          ';': { code: 'Semicolon', windowsVirtualKeyCode: 186 },
         }[key];
 
         for (let i = 0; i < repeat; i++) {
@@ -20202,7 +20234,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    if (!selectionOnly) {
+      this._preactivateNyTimesSkillForRun(tabId, mode);
+      this._preactivateHumanizerSkillForRun(tabId, mode);
+    }
 
     const provider = this.providerManager.getActive();
 
@@ -20980,7 +21015,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    if (!selectionOnly) {
+      this._preactivateNyTimesSkillForRun(tabId, mode);
+      this._preactivateHumanizerSkillForRun(tabId, mode);
+    }
 
     const provider = this.providerManager.getActive();
 

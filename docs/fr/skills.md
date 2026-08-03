@@ -79,8 +79,9 @@ initialisées comme activées.
 
 ### Activées par défaut
 
-Les deux peuvent être retirées dans Paramètres → Compétences. Une valeur par
-défaut retirée n'est pas restaurée silencieusement.
+Les trois peuvent être retirées dans Paramètres → Compétences. Une valeur par
+défaut retirée n'est pas restaurée silencieusement, pas même par la
+préactivation.
 
 #### FreeSkillz.xyz
 
@@ -104,6 +105,26 @@ requête normale envoyée au fournisseur LLM que vous avez configuré. Si
 réponses du modèle sont également stockés localement jusqu'à la suppression de
 ces traces.
 
+#### Humanizer
+
+Réécrit la prose que WebBrain rédige pour vous, par exemple une réponse à un
+e-mail ou une publication, afin qu'elle se lise comme un texte humain. Elle ne
+déclare aucun outil réseau et n'ajoute aucun outil.
+
+Sur les onglets de webmail (Gmail, Outlook, Yahoo, Proton, Fastmail, Zoho,
+Yandex), elle est préactivée pour l'exécution en cours, si bien qu'une réponse
+est humanisée sans dépenser un appel `load_skill`. La préactivation repose sur
+la correspondance d'adaptateur de site : elle n'a donc aucun effet si les
+**adaptateurs de site** sont désactivés dans les Paramètres, et la compétence se
+charge alors via le catalogue comme ailleurs. Ailleurs, elle se charge via le
+catalogue normal lorsque la demande porte sur la rédaction ou la réécriture
+d'un texte. Elle ne renvoie que le texte final et n'explique pas ses
+modifications, sauf si vous le demandez.
+
+Elle ne réécrit que la prose destinée à un lecteur humain. Le contenu cité, les
+adresses, les codes, les prix, les valeurs de champs de formulaire et la
+formulation que vous fournissez mot pour mot restent intacts.
+
 ### Compétences packagées à activer
 
 Ces compétences sont livrées avec l'extension et apparaissent dans Paramètres →
@@ -116,6 +137,7 @@ Compétences comme disponibles. Elles ne sont pas activées par défaut.
 | Météo Open-Meteo | Ask, Act, Dev | Géocodage + prévisions HTTPS |
 | Open Library | Ask, Act, Dev | Recherche Open Library HTTPS |
 | Wikipédia | Ask, Act, Dev | Recherche REST + résumé Action API HTTPS |
+| Restauration des caractères turcs | Ask, Act, Dev | Instructions uniquement ; utilise les outils ordinaires de saisie textuelle |
 
 N'activez une compétence que si vous voulez ses outils et instructions
 disponibles pour `load_skill` sur les exécutions éligibles.
