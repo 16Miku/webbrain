@@ -201,6 +201,7 @@
             <button class="action" type="button" data-action="explain">Explain</button>
             <button class="action" type="button" data-action="quiz">Quiz me</button>
             <button class="action" type="button" data-action="proofread">Proofread</button>
+            <button class="action" type="button" data-action="humanize">Humanize</button>
             <button class="action" type="button" data-action="translate">Translate</button>
           </div>
           <div class="question-wrap">

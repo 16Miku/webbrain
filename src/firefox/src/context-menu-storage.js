@@ -8,7 +8,24 @@ export const SELECTION_SHORTCUT_ACTIONS = Object.freeze({
   explain: 'Explain this selected text in plain language.',
   quiz: 'Quiz me on this selected text. Ask one question at a time and wait for my answer.',
   proofread: 'Proofread this selected text. Identify errors and provide a corrected version while preserving its meaning and tone.',
+  humanize: 'Rewrite this selected text so it reads as human writing rather than AI output. Keep every claim, the language, and the author\'s intent; return only the rewritten text.',
 });
+
+// Selected-text runs carry no tools, so `load_skill` cannot rescue a writing
+// request mid-run: a prose skill either rides in at run start or never. These
+// are the shortcut actions whose output is prose the user will send, kept as
+// structured ids so no downstream code has to pattern-match prompt wording.
+export const SELECTION_PROSE_ACTIONS = Object.freeze(['humanize', 'custom']);
+
+export function normalizeSelectionAction(value) {
+  const action = String(value == null ? '' : value).trim();
+  if (action === 'custom' || action === 'translate') return action;
+  return Object.prototype.hasOwnProperty.call(SELECTION_SHORTCUT_ACTIONS, action) ? action : '';
+}
+
+export function isSelectionProseAction(value) {
+  return SELECTION_PROSE_ACTIONS.includes(normalizeSelectionAction(value));
+}
 
 // Structured provenance for selected-text shortcuts. Keep this independent
 // from localized/user-visible prompt wording so downstream code never has to

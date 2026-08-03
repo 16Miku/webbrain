@@ -104,6 +104,15 @@ through the catalog like anywhere else. Elsewhere it loads through the normal
 catalog when the request is about drafting or rewriting text. It returns only
 the final text; it does not report what it changed unless you ask.
 
+Select text anywhere and you get a **Humanize** entry, both in the popup and in
+the right-click menu. That entry preactivates the skill on any site, and so does
+a request you type yourself into the selection box; later turns in the same
+selected-text conversation keep it. The canned readers — Summarize, Explain,
+Quiz me, Proofread, Translate — do not, since they compose nothing you are about
+to send. This routing exists because a selected-text run carries no tools at
+all: the catalog is out of reach, so a skill that is not loaded when the run
+starts cannot be loaded later.
+
 It rewrites only prose being composed for a human reader. Quoted material,
 addresses, codes, prices, form-field values, and wording you supplied verbatim
 are left alone.

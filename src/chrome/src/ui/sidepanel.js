@@ -11,6 +11,7 @@ import { buildRecommendedActions, shouldShowRecommendedActions } from './recomme
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
 import {
   formatSelectionPromptForDisplay,
+  normalizeSelectionAction,
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
 import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
@@ -7204,6 +7205,12 @@ async function sendMessage(extraChatParams = {}) {
     : null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
+  // The shortcut action rides along only on the turn that started the scope.
+  // Later turns have none: the agent reads the action off the durable
+  // selected-text scope instead of trusting a resent field.
+  const selectionAction = sourceGrounding ? normalizeSelectionAction(chatExtraParams.selectionAction) : '';
+  delete chatExtraParams.selectionAction;
+  if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await waitForVisibleSidePanelStateRefresh();
   if (contextMenuClaimOwned
       && (document.visibilityState === 'hidden'
