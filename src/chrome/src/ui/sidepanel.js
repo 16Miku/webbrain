@@ -1068,9 +1068,15 @@ function applyConversationScopeState(tabId, state) {
   );
 }
 
-function reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted) {
-  if (!sourceGrounding || accepted) return;
-  setSelectionGroundedForTab(tabId, false);
+function reconcileFailedSelectionGroundedStart(tabId, {
+  sourceGrounding,
+  selectionGroundedBeforeSend,
+  accepted,
+}) {
+  if (accepted || (!sourceGrounding && !selectionGroundedBeforeSend)) return;
+  if (sourceGrounding && !selectionGroundedBeforeSend) {
+    setSelectionGroundedForTab(tabId, false);
+  }
   void restoreActiveRunState(tabId);
 }
 
@@ -7401,6 +7407,7 @@ async function sendMessage(extraChatParams = {}) {
   let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
+  const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
   if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
   try {
     const res = await sendRunWithReconnect('chat_start', {
@@ -7500,7 +7507,11 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
-    reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted);
+    reconcileFailedSelectionGroundedStart(tabId, {
+      sourceGrounding,
+      selectionGroundedBeforeSend,
+      accepted,
+    });
     captureStartFailed = !!runCaptureDirective
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
     contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';

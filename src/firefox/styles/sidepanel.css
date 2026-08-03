@@ -263,15 +263,6 @@ body {
   .new-conversation-confirm-actions {
     grid-template-columns: 1fr;
   }
-
-  .selection-scope-banner {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .selection-scope-banner button {
-    grid-column: 2;
-    justify-self: start;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1883,6 +1874,17 @@ body {
 .selection-scope-banner button:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--warning) 34%, transparent);
   outline-offset: 2px;
+}
+
+@media (max-width: 340px) {
+  .selection-scope-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .selection-scope-banner button {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 
 .mode-btn.selection-scope-unavailable {
