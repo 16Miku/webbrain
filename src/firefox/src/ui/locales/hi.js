@@ -61,7 +61,7 @@ export default {
   'sp.btn.language': "भाषा",
   'sp.btn.history': "चैट इतिहास",
   'sp.btn.settings': "सेटिंग्स",
-  'sp.btn.clear': "नई बातचीत (इतिहास साफ़ करें)",
+  "sp.btn.clear": "नई बातचीत",
   'sp.btn.send': "भेजें",
   'sp.chat.follow_response': 'जवाब का अनुसरण करें',
   'sp.chat.jump_latest': 'नवीनतम पर जाएँ',
@@ -92,6 +92,12 @@ export default {
   'sp.help_message': "मैं इस पेज पर कैसे मदद कर सकता हूँ?",
   'sp.cleared_message': "बातचीत साफ़ हो गई. मैं आपकी कैसे मदद कर सकता हूँ?",
   'sp.clear.confirm': "यह वार्तालाप लुप्त हो जाएगा. एक नई बातचीत शुरू करें?",
+  "sp.clear.title": "नई बातचीत शुरू करें?",
+  "sp.clear.description": "इससे इस बातचीत का इतिहास साफ़ हो जाएगा।",
+  "sp.clear.action_warning": "इतिहास साफ़ करता है",
+  "sp.selection_scope.title": "सिर्फ़ चुना गया टेक्स्ट",
+  "sp.selection_scope.description": "पेज या स्क्रीन तक पहुँचने के लिए नई बातचीत शुरू करें।",
+  "sp.input.selection_placeholder": "चुने गए टेक्स्ट के बारे में पूछें...",
 
   'sp.mode.ask': "पूछो",
   'sp.mode.ask.title': "पृष्ठ के बारे में प्रश्न पूछें - कोई परिवर्तन नहीं किया गया",
@@ -925,4 +931,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "अनुमानित कैश पढ़ने की लागत ($ / 1M टोकन)",
   'st.provider.field.cache_write_cost_per_million': "अनुमानित 5-मिनट कैश लिखने की लागत ($ / 1M टोकन)",
   'st.provider.field.cache_write_1h_cost_per_million': "अनुमानित 1-घंटे कैश लिखने की लागत ($ / 1M टोकन)",
+  'sp.run_progress_replay_gap': 'पहले की कुछ रन प्रगति दोबारा नहीं दिखाई जा सकी',
 };

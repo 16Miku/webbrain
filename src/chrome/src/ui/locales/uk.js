@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'Перемкнути детальний журнал інструментів',
   'sp.btn.language': 'Мова',
   'sp.btn.settings': 'Налаштування',
-  'sp.btn.clear': 'Новий діалог (очистити історію)',
+  "sp.btn.clear": "Новий діалог",
   'sp.btn.send': 'Надіслати',
   'sp.chat.follow_response': 'Стежити за відповіддю',
   'sp.chat.jump_latest': 'До останнього повідомлення',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Чим допомогти на цій сторінці?',
   'sp.cleared_message': 'Діалог очищено. Чим можу допомогти?',
   'sp.clear.confirm': 'Цей діалог буде втрачено. Почати новий діалог?',
+  "sp.clear.title": "Почати новий діалог?",
+  "sp.clear.description": "Історію цього діалогу буде очищено.",
+  "sp.clear.action_warning": "Очищає історію",
+  "sp.selection_scope.title": "Лише виділений текст",
+  "sp.selection_scope.description": "Почніть новий діалог, щоб отримати доступ до сторінки або екрана.",
+  "sp.input.selection_placeholder": "Запитайте про виділений текст...",
 
   'sp.mode.ask': 'Запитати',
   'sp.mode.ask.title': 'Ставити запитання про сторінку — без жодних змін',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': 'Вибраний ZIP-файл публікації видалено з локального сховища.',
   'st.skills.cws.package_zip_only': 'Виберіть пакет публікації у форматі .zip.',
   'st.skills.cws.package_too_large': 'ZIP-файл повинен бути від 1 байта до 100 МБ.',
+  'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
 };

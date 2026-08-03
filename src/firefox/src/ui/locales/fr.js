@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'Basculer le journal détaillé des outils',
   'sp.btn.language': 'Langue',
   'sp.btn.settings': 'Paramètres',
-  'sp.btn.clear': 'Nouvelle conversation (effacer l\'historique)',
+  "sp.btn.clear": "Nouvelle conversation",
   'sp.btn.send': 'Envoyer',
   'sp.chat.follow_response': 'Suivre la réponse',
   'sp.chat.jump_latest': 'Aller au plus récent',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Comment puis-je vous aider avec cette page ?',
   'sp.cleared_message': 'Conversation effacée. Comment puis-je vous aider ?',
   'sp.clear.confirm': 'Cette conversation sera perdue. Démarrer une nouvelle conversation ?',
+  "sp.clear.title": "Démarrer une nouvelle conversation ?",
+  "sp.clear.description": "Cela effacera l’historique de cette conversation.",
+  "sp.clear.action_warning": "Efface l’historique",
+  "sp.selection_scope.title": "Texte sélectionné uniquement",
+  "sp.selection_scope.description": "Démarrez une nouvelle conversation pour accéder à la page ou à l’écran.",
+  "sp.input.selection_placeholder": "Posez une question sur le texte sélectionné…",
 
   'sp.mode.ask': 'Demander',
   'sp.mode.ask.title': 'Posez des questions sur la page — aucune modification',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Coût estimé de lecture du cache ($ / 1M tokens)",
   'st.provider.field.cache_write_cost_per_million': "Coût estimé d’écriture du cache (5 min) ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Coût estimé d’écriture du cache (1 h) ($ / 1M tokens)",
+  'sp.run_progress_replay_gap': 'Une partie de la progression précédente de l’exécution n’a pas pu être réaffichée',
 };

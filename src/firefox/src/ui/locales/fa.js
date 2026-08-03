@@ -61,7 +61,7 @@ export default {
   'sp.btn.language': "زبان",
   'sp.btn.history': "تاریخچه چت",
   'sp.btn.settings': "تنظیمات",
-  'sp.btn.clear': "مکالمه جدید (پاک کردن تاریخچه)",
+  "sp.btn.clear": "مکالمه جدید",
   'sp.btn.send': "ارسال کنید",
   'sp.chat.follow_response': 'دنبال کردن پاسخ',
   'sp.chat.jump_latest': 'رفتن به جدیدترین بخش',
@@ -92,6 +92,12 @@ export default {
   'sp.help_message': "چگونه می توانم به این صفحه کمک کنم؟",
   'sp.cleared_message': "مکالمه پاک شد. چگونه می توانم کمک کنم؟",
   'sp.clear.confirm': "این گفتگو از بین خواهد رفت. مکالمه جدیدی را شروع کنید؟",
+  "sp.clear.title": "مکالمه جدیدی شروع شود؟",
+  "sp.clear.description": "با این کار تاریخچه این مکالمه پاک می‌شود.",
+  "sp.clear.action_warning": "تاریخچه را پاک می‌کند",
+  "sp.selection_scope.title": "فقط متن انتخاب‌شده",
+  "sp.selection_scope.description": "برای دسترسی به صفحه یا نمایشگر، مکالمه جدیدی شروع کنید.",
+  "sp.input.selection_placeholder": "درباره متن انتخاب‌شده بپرسید...",
 
   'sp.mode.ask': "بپرسید",
   'sp.mode.ask.title': "درباره صفحه سوال بپرسید — هیچ تغییری ایجاد نشده است",
@@ -925,4 +931,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "تخمینی هزینه خواندن حافظه پنهان ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_cost_per_million': "تخمینی هزینه نوشتن 5 دقیقه ای کش ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_1h_cost_per_million': "تخمینی هزینه نوشتن حافظه پنهان 1 ساعته ($ / 1 میلیون توکن)",
+  'sp.run_progress_replay_gap': 'بخشی از پیشرفت پیشین اجرا قابل بازپخش نبود',
 };

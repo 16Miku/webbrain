@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'สลับบันทึกเครื่องมือแบบละเอียด',
   'sp.btn.language': 'ภาษา',
   'sp.btn.settings': 'การตั้งค่า',
-  'sp.btn.clear': 'การสนทนาใหม่ (ล้างประวัติ)',
+  "sp.btn.clear": "การสนทนาใหม่",
   'sp.btn.send': 'ส่ง',
   'sp.chat.follow_response': 'ติดตามคำตอบ',
   'sp.chat.jump_latest': 'ไปยังล่าสุด',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'ให้ช่วยอะไรในหน้านี้ดีคะ/ครับ?',
   'sp.cleared_message': 'ล้างการสนทนาแล้ว ให้ช่วยอะไรดี?',
   'sp.clear.confirm': 'การสนทนานี้จะหายไป ต้องการเริ่มการสนทนาใหม่หรือไม่?',
+  "sp.clear.title": "เริ่มการสนทนาใหม่หรือไม่?",
+  "sp.clear.description": "การดำเนินการนี้จะล้างประวัติการสนทนานี้",
+  "sp.clear.action_warning": "ล้างประวัติ",
+  "sp.selection_scope.title": "เฉพาะข้อความที่เลือก",
+  "sp.selection_scope.description": "เริ่มการสนทนาใหม่เพื่อเข้าถึงหน้าหรือหน้าจอ",
+  "sp.input.selection_placeholder": "ถามเกี่ยวกับข้อความที่เลือก...",
 
   'sp.mode.ask': 'ถาม',
   'sp.mode.ask.title': 'ถามเกี่ยวกับหน้านี้ — ไม่มีการเปลี่ยนแปลง',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': 'ลบ ZIP การเผยแพร่ที่เลือกออกจากที่จัดเก็บในเครื่องแล้ว',
   'st.skills.cws.package_zip_only': 'เลือกแพ็คเกจการเผยแพร่รูปแบบ .zip',
   'st.skills.cws.package_too_large': 'ZIP ต้องมีขนาดระหว่าง 1 ไบต์ถึง 100 MB',
+  'sp.run_progress_replay_gap': 'ไม่สามารถแสดงความคืบหน้าก่อนหน้านี้บางส่วนของการทำงานซ้ำได้',
 };

@@ -2,6 +2,34 @@ export const RUN_UI_EVENT_LIMIT = 256;
 export const RUN_UI_TEXT_DELTA_PERSIST_DELAY_MS = 200;
 export const RUN_UI_STREAM_TEXT_LIMIT = 100000;
 
+/**
+ * Highest sequence number that was genuinely evicted from the bounded replay
+ * journal. Older snapshots used `truncatedBeforeSeq` for both eviction and
+ * ordinary acknowledgements, so only treat that legacy value as a replay gap
+ * when it extends beyond the acknowledged boundary.
+ */
+export function runUiDiscardedBeforeSeq(snapshot = {}) {
+  if (Object.prototype.hasOwnProperty.call(snapshot, 'discardedBeforeSeq')) {
+    const explicit = Number(snapshot.discardedBeforeSeq);
+    return Number.isFinite(explicit) ? Math.max(0, explicit) : 0;
+  }
+  const legacy = Number(snapshot.truncatedBeforeSeq || 0);
+  const acknowledged = Number(snapshot.ackedSeq || 0);
+  if (!Number.isFinite(legacy) || legacy <= acknowledged) return 0;
+  return Math.max(0, legacy);
+}
+
+/**
+ * Events at or below this boundary are no longer available to a sidepanel
+ * replay. They may have been rendered and acknowledged by another panel copy,
+ * or genuinely evicted by the bounded journal.
+ */
+export function runUiUnavailableBeforeSeq(snapshot = {}) {
+  const acknowledged = Number(snapshot.ackedSeq || 0);
+  const acknowledgedBoundary = Number.isFinite(acknowledged) ? Math.max(0, acknowledged) : 0;
+  return Math.max(acknowledgedBoundary, runUiDiscardedBeforeSeq(snapshot));
+}
+
 export function createRunRequestId(tabId, supplied = '') {
   const clean = String(supplied || '').trim();
   return clean || `req_${tabId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -121,6 +149,8 @@ export class RunUiJournal {
       status: 'running',
       seq: 0,
       ackedSeq: 0,
+      discardedBeforeSeq: 0,
+      // Legacy alias retained for persisted snapshots and older callers.
       truncatedBeforeSeq: 0,
       events: [],
       pendingPlanId: null,
@@ -192,7 +222,9 @@ export class RunUiJournal {
     }
     while (snapshot.events.length > this.eventLimit) {
       const removed = snapshot.events.shift();
-      snapshot.truncatedBeforeSeq = removed?.seq || snapshot.truncatedBeforeSeq;
+      const removedSeq = Number(removed?.seq || 0);
+      snapshot.discardedBeforeSeq = removedSeq || snapshot.discardedBeforeSeq;
+      snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     }
     if (type === 'plan_review') {
       snapshot.status = 'awaiting_plan';
@@ -260,13 +292,19 @@ export class RunUiJournal {
     snapshot.events.push(event);
     while (snapshot.events.length > this.eventLimit) {
       const removed = snapshot.events.shift();
-      snapshot.truncatedBeforeSeq = removed?.seq || snapshot.truncatedBeforeSeq;
+      const removedSeq = Number(removed?.seq || 0);
+      snapshot.discardedBeforeSeq = removedSeq || snapshot.discardedBeforeSeq;
+      snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     }
     return this._changed(tabId, snapshot);
   }
 
   restore(tabId, snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return null;
+    snapshot.discardedBeforeSeq = runUiDiscardedBeforeSeq(snapshot);
+    // From this point on, keep the legacy field aligned with real eviction
+    // only. Acknowledged events are intentionally released, not lost.
+    snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     if (snapshot.successfulDone !== true) snapshot.successfulDone = false;
     if (snapshot.hadError !== true) snapshot.hadError = false;
     if (typeof snapshot.lastError !== 'string') snapshot.lastError = '';
@@ -300,7 +338,6 @@ export class RunUiJournal {
     if (!snapshot || snapshot.requestId !== requestId || !Number.isFinite(numericSeq)) return null;
     snapshot.ackedSeq = Math.max(Number(snapshot.ackedSeq || 0), numericSeq);
     snapshot.events = snapshot.events.filter(event => Number(event?.seq || 0) > snapshot.ackedSeq);
-    snapshot.truncatedBeforeSeq = Math.max(Number(snapshot.truncatedBeforeSeq || 0), snapshot.ackedSeq);
     return this._changed(tabId, snapshot);
   }
 

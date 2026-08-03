@@ -61,7 +61,7 @@ export default {
   'sp.btn.language': "ভাষা",
   'sp.btn.history': "চ্যাট ইতিহাস",
   'sp.btn.settings': "সেটিংস",
-  'sp.btn.clear': "নতুন কথোপকথন (সাফ ইতিহাস)",
+  "sp.btn.clear": "নতুন কথোপকথন",
   'sp.btn.send': "পাঠান",
   'sp.chat.follow_response': 'উত্তর অনুসরণ করুন',
   'sp.chat.jump_latest': 'সর্বশেষে যান',
@@ -92,6 +92,12 @@ export default {
   'sp.help_message': "আমি কিভাবে এই পৃষ্ঠায় সাহায্য করতে পারি?",
   'sp.cleared_message': "কথোপকথন সাফ করা হয়েছে। আমি কিভাবে সাহায্য করতে পারি?",
   'sp.clear.confirm': "এই কথোপকথন হারিয়ে যাবে. একটি নতুন কথোপকথন শুরু?",
+  "sp.clear.title": "নতুন কথোপকথন শুরু করবেন?",
+  "sp.clear.description": "এটি এই কথোপকথনের ইতিহাস মুছে দেবে।",
+  "sp.clear.action_warning": "ইতিহাস মুছে দেয়",
+  "sp.selection_scope.title": "শুধু নির্বাচিত লেখা",
+  "sp.selection_scope.description": "পৃষ্ঠা বা স্ক্রিন অ্যাক্সেস করতে একটি নতুন কথোপকথন শুরু করুন।",
+  "sp.input.selection_placeholder": "নির্বাচিত লেখা সম্পর্কে জিজ্ঞাসা করুন...",
 
   'sp.mode.ask': "জিজ্ঞাসা করুন",
   'sp.mode.ask.title': "পৃষ্ঠা সম্পর্কে প্রশ্ন জিজ্ঞাসা করুন — কোন পরিবর্তন করা হয়নি",
@@ -925,4 +931,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "আনুমানিক ক্যাশে পড়ার খরচ ($ / 1M টোকেন)",
   'st.provider.field.cache_write_cost_per_million': "আনুমানিক 5-মিনিট ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
   'st.provider.field.cache_write_1h_cost_per_million': "আনুমানিক 1-ঘন্টা ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
+  'sp.run_progress_replay_gap': 'আগের কিছু রান অগ্রগতি পুনরায় দেখানো যায়নি',
 };

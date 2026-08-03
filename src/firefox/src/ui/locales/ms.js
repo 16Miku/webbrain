@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'Togol log alat terperinci',
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Tetapan',
-  'sp.btn.clear': 'Perbualan baharu (kosongkan sejarah)',
+  "sp.btn.clear": "Perbualan baharu",
   'sp.btn.send': 'Hantar',
   'sp.chat.follow_response': 'Ikuti jawapan',
   'sp.chat.jump_latest': 'Pergi ke yang terkini',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Bagaimana saya boleh membantu pada halaman ini?',
   'sp.cleared_message': 'Perbualan dikosongkan. Bagaimana saya boleh membantu?',
   'sp.clear.confirm': 'Perbualan ini akan hilang. Mulakan perbualan baharu?',
+  "sp.clear.title": "Mulakan perbualan baharu?",
+  "sp.clear.description": "Ini akan mengosongkan sejarah perbualan ini.",
+  "sp.clear.action_warning": "Mengosongkan sejarah",
+  "sp.selection_scope.title": "Teks dipilih sahaja",
+  "sp.selection_scope.description": "Mulakan perbualan baharu untuk mengakses halaman atau skrin.",
+  "sp.input.selection_placeholder": "Tanya tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',
   'sp.mode.ask.title': 'Tanya soalan tentang halaman — tiada perubahan dibuat',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Anggaran kos bacaan cache ($ / 1 juta token)",
   'st.provider.field.cache_write_cost_per_million': "Anggaran kos tulis cache 5 minit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Anggaran kos tulis cache 1 jam ($ / 1 juta token)",
+  'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
 };

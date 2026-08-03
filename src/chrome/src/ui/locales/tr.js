@@ -148,7 +148,7 @@ export default {
   'sp.btn.language': 'Dil',
   'sp.btn.history': 'Sohbet geçmişi',
   'sp.btn.settings': 'Ayarlar',
-  'sp.btn.clear': 'Yeni konuşma (geçmişi sil)',
+  "sp.btn.clear": "Yeni konuşma",
   'sp.btn.send': 'Gönder',
   'sp.chat.follow_response': 'Yanıtı takip et',
   'sp.chat.jump_latest': 'En yeniye git',
@@ -162,6 +162,12 @@ export default {
   'sp.help_message': 'Bu sayfayla ilgili nasıl yardımcı olabilirim?',
   'sp.cleared_message': 'Konuşma silindi. Nasıl yardımcı olabilirim?',
   'sp.clear.confirm': 'Bu konuşma kaybolacak. Yeni bir konuşma başlatılsın mı?',
+  "sp.clear.title": "Yeni bir konuşma başlatılsın mı?",
+  "sp.clear.description": "Bu, konuşmanın geçmişini silecek.",
+  "sp.clear.action_warning": "Geçmişi siler",
+  "sp.selection_scope.title": "Yalnızca seçili metin",
+  "sp.selection_scope.description": "Sayfaya veya ekrana erişmek için yeni bir konuşma başlatın.",
+  "sp.input.selection_placeholder": "Seçili metin hakkında sorun...",
 
   'sp.mode.ask': 'Sor',
   'sp.mode.ask.title': 'Sayfa hakkında soru sor — hiçbir değişiklik yapılmaz',
@@ -931,4 +937,5 @@ export default {
   'st.skills.cws.package_cleared': 'Seçili sürüm ZIP\'i yerel depodan kaldırıldı.',
   'st.skills.cws.package_zip_only': '.zip biçiminde bir sürüm paketi seçin.',
   'st.skills.cws.package_too_large': 'ZIP 1 bayt ile 100 MB arasında olmalıdır.',
+  'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
 };

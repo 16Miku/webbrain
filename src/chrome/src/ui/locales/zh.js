@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': '切换详细工具日志',
   'sp.btn.language': '语言',
   'sp.btn.settings': '设置',
-  'sp.btn.clear': '新建会话（清除历史）',
+  "sp.btn.clear": "新对话",
   'sp.btn.send': '发送',
   'sp.chat.follow_response': '跟随回答',
   'sp.chat.jump_latest': '跳到最新内容',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': '需要我在此页面做什么？',
   'sp.cleared_message': '会话已清除。有什么可以帮你的？',
   'sp.clear.confirm': '此对话将丢失。要开始新的对话吗？',
+  "sp.clear.title": "开始新对话？",
+  "sp.clear.description": "这将清除此对话的历史记录。",
+  "sp.clear.action_warning": "清除历史",
+  "sp.selection_scope.title": "仅限所选文本",
+  "sp.selection_scope.description": "请开始新对话以访问页面或屏幕。",
+  "sp.input.selection_placeholder": "询问所选文本...",
 
   'sp.mode.ask': '问',
   'sp.mode.ask.title': '就页面提问 — 不做任何修改',
@@ -932,4 +938,5 @@ export default {
   'st.skills.cws.package_cleared': '已从本地存储中移除选中的发布 ZIP。',
   'st.skills.cws.package_zip_only': '请选择 .zip 格式的发布包。',
   'st.skills.cws.package_too_large': 'ZIP 文件大小必须在 1 字节到 100 MB 之间。',
+  'sp.run_progress_replay_gap': '部分较早的运行进度无法重新显示',
 };

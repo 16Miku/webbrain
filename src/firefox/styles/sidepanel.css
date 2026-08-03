@@ -21,6 +21,8 @@
   --warning: #ff9800;
   --error: #f44336;
   --error-soft: #ff8a80;
+  --destructive-action: #c5363c;
+  --destructive-action-hover: #a92d33;
   --border: rgba(255, 255, 255, 0.08);
   --tint-soft: rgba(255, 255, 255, 0.05);
   --tint-soft-2: rgba(255, 255, 255, 0.04);
@@ -141,10 +143,10 @@ body {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 14px 12px;
-  align-items: center;
-  width: min(100%, 330px);
+  align-items: start;
+  width: min(100%, 340px);
   padding: 20px;
-  border: 1px solid color-mix(in srgb, var(--error) 34%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-secondary);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.30);
@@ -170,10 +172,21 @@ body {
   stroke-linejoin: round;
 }
 
+.new-conversation-confirm-copy {
+  min-width: 0;
+}
+
 .new-conversation-confirm-card h2 {
   color: var(--text-primary);
   font-size: 15px;
   font-weight: 700;
+  line-height: 1.3;
+}
+
+.new-conversation-confirm-copy p {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -185,7 +198,7 @@ body {
 }
 
 .new-conversation-confirm-actions button {
-  min-height: 38px;
+  min-height: 46px;
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -218,12 +231,32 @@ body {
 }
 
 .new-conversation-confirm-actions .new-conversation-confirm-accept {
-  background: var(--error);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--destructive-action);
   color: #fff;
 }
 
+.new-conversation-confirm-action-label {
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.15;
+}
+
+.new-conversation-confirm-action-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
 .new-conversation-confirm-actions .new-conversation-confirm-accept:hover {
-  background: color-mix(in srgb, var(--error) 86%, #000);
+  background: var(--destructive-action-hover);
 }
 
 @media (max-width: 340px) {
@@ -1781,6 +1814,81 @@ body {
 
 #act-warning svg {
   flex-shrink: 0;
+}
+
+.selection-scope-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  background: color-mix(in srgb, var(--warning) 9%, var(--bg-secondary));
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.selection-scope-banner.hidden {
+  display: none;
+}
+
+.selection-scope-banner-icon {
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.selection-scope-banner-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.selection-scope-banner-copy strong {
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.selection-scope-banner button {
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border));
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.selection-scope-banner button:hover {
+  border-color: var(--warning);
+}
+
+.selection-scope-banner button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 340px) {
+  .selection-scope-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .selection-scope-banner button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+.mode-btn.selection-scope-unavailable {
+  opacity: 0.48;
 }
 
 

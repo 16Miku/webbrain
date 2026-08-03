@@ -112,7 +112,7 @@ export default {
   'sp.btn.verbose': 'I-toggle ang detalyadong tool log',
   'sp.btn.language': 'Wika',
   'sp.btn.settings': 'Mga Setting',
-  'sp.btn.clear': 'Bagong pag-uusap (i-clear ang kasaysayan)',
+  "sp.btn.clear": "Bagong pag-uusap",
   'sp.btn.send': 'Ipadala',
   'sp.chat.follow_response': 'Subaybayan ang sagot',
   'sp.chat.jump_latest': 'Pumunta sa pinakabago',
@@ -126,6 +126,12 @@ export default {
   'sp.help_message': 'Paano kita matutulungan sa pahinang ito?',
   'sp.cleared_message': 'Na-clear na ang pag-uusap. Paano kita matutulungan?',
   'sp.clear.confirm': 'Mawawala ang pag-uusap na ito. Magsimula ng bagong pag-uusap?',
+  "sp.clear.title": "Magsimula ng bagong pag-uusap?",
+  "sp.clear.description": "Iki-clear nito ang kasaysayan ng pag-uusap na ito.",
+  "sp.clear.action_warning": "I-clear ang kasaysayan",
+  "sp.selection_scope.title": "Napiling text lang",
+  "sp.selection_scope.description": "Magsimula ng bagong pag-uusap para ma-access ang page o screen.",
+  "sp.input.selection_placeholder": "Magtanong tungkol sa napiling text...",
 
   'sp.mode.ask': 'Tanong',
   'sp.mode.ask.title': 'Magtanong tungkol sa pahina — walang ginagawang pagbabago',
@@ -905,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Tinatayang gastos sa pagbasa ng cache ($ / 1M token)",
   'st.provider.field.cache_write_cost_per_million': "Tinatayang gastos sa 5 minutong pagsulat ng cache ($ / 1M token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Tinatayang gastos sa 1 oras na pagsulat ng cache ($ / 1M token)",
+  'sp.run_progress_replay_gap': 'Hindi maipakita muli ang ilang naunang progreso ng run',
 };

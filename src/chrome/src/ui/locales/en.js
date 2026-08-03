@@ -61,7 +61,7 @@ export default {
   'sp.btn.language': 'Language',
   'sp.btn.history': 'Chat history',
   'sp.btn.settings': 'Settings',
-  'sp.btn.clear': 'New conversation (clear history)',
+  "sp.btn.clear": "New conversation",
   'sp.btn.send': 'Send',
   'sp.chat.follow_response': 'Follow response',
   'sp.chat.jump_latest': 'Jump to latest',
@@ -92,6 +92,12 @@ export default {
   'sp.help_message': 'How can I help with this page?',
   'sp.cleared_message': 'Conversation cleared. How can I help?',
   'sp.clear.confirm': 'This conversation will be lost. Start a new conversation?',
+  "sp.clear.title": "Start a new conversation?",
+  "sp.clear.description": "This will clear this conversation's history.",
+  "sp.clear.action_warning": "Clears history",
+  "sp.selection_scope.title": "Selected text only",
+  "sp.selection_scope.description": "Start a new conversation to access the page or screen.",
+  "sp.input.selection_placeholder": "Ask about the selected text...",
 
   'sp.mode.ask': 'Ask',
   'sp.mode.ask.title': 'Ask questions about the page — no changes made',
@@ -934,4 +940,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Estimated cache read cost ($ / 1M tokens)",
   'st.provider.field.cache_write_cost_per_million': "Estimated 5-minute cache write cost ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Estimated 1-hour cache write cost ($ / 1M tokens)",
+  'sp.run_progress_replay_gap': 'Some earlier run progress could not be replayed',
 };
