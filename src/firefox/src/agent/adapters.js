@@ -16708,6 +16708,20 @@ const ADAPTERS = [
 - "Yemeksepeti Mahalle" (grocery/market quick delivery) is a separate flow from restaurant food ordering — don't expect restaurant menus there.`,
   },
   {
+    name: 'zomato',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?zomato\.com\//.test(url),
+    notes: `
+- As of 2026-08, choose "Delivery" for food ordering rather than "Dining Out" or "Nightlife". Set the exact delivery location first with the location field or "Detect current location", then re-read the address; restaurants, availability, distance, fees, and ETA depend on it, and an inaccurate or unreachable address can cause cancellation charges.
+- Search with "Search for restaurant, cuisine or a dish" and use the visible filters for rating, cuisine, cost, and delivery time. Results marked "Promoted" are paid placements; do not treat their position as independent evidence of quality, speed, or best value.
+- Confirm the exact restaurant and branch, location, hours, current delivery availability, menu, and review count. "Dining Ratings" and "Delivery Ratings" measure different experiences, so use the delivery rating for an order and do not silently substitute one for the other.
+- A visible restaurant or menu is not proof that web ordering is available. Stop when the page says "Online ordering is only supported on the mobile app"; when it says "Currently closed for online ordering", do not try to add items or promise that the restaurant will accept the order now.
+- Open each item and select every required size, quantity, variant, add-on, preparation choice, and dietary option before adding it. Preserve explicit allergy or exclusion requests, but do not infer ingredient safety from category labels alone; surface unresolved questions instead of submitting them as order notes without review.
+- The menu subtotal is not the final price. Read delivery fee, surge charges, taxes, packaging and handling charges, discounts, and tip on the review page; treat the displayed approximate delivery time as an estimate that can change with demand, weather, restaurant preparation, and courier assignment.
+- Adding items is not ordering. Re-read restaurant, delivery address, items, customizations, quantities, contact details, charges, tip, payment method, and total before submit. Cancellation and refund eligibility is limited by the displayed state and terms, and a problem report may require proof such as photos; do not promise either outcome.
+- Require the user's explicit confirmation immediately before placing or paying for the order. Report success only from "Orders" with an order ID and explicit accepted/preparing/out-for-delivery/delivered status; a restaurant page, cart, payment redirect, or approximate ETA alone is incomplete.`,
+  },
+  {
     name: 'foodpanda',
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?foodpanda\.pk\//.test(url),

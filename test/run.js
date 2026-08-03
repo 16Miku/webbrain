@@ -3456,6 +3456,46 @@ test('matches yemeksepeti.com and includes food-delivery guidance', () => {
   assert.match(a?.notes || '', /Restoran/);
 });
 
+test('matches Zomato consumer pages and distinguishes restaurant delivery states', () => {
+  const trustedUrls = [
+    'https://zomato.com/',
+    'https://www.zomato.com/bangalore/delivery?page=1',
+    'https://www.zomato.com/bangalore/example-restaurant/order',
+    'https://www.zomato.com/policies/terms-of-service/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'zomato');
+    assert.equal(getActiveAdapterFx(url)?.name, 'zomato');
+  }
+
+  const rejectedUrls = [
+    'https://business.zomato.com/',
+    'https://blog.zomato.com/',
+    'https://zomato.com.phishing.example/bangalore/delivery',
+    'https://example.com/?next=https://www.zomato.com/bangalore/delivery',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'zomato');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'zomato');
+  }
+
+  const adapter = getActiveAdapter('https://www.zomato.com/bangalore/example-restaurant/order');
+  const firefoxAdapter = getActiveAdapterFx('https://zomato.com/bangalore/delivery');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /Delivery.*Dining Out.*Nightlife/s);
+  assert.match(adapter?.notes || '', /Detect current location.*address/s);
+  assert.match(adapter?.notes || '', /Promoted/);
+  assert.match(adapter?.notes || '', /Dining Ratings.*Delivery Ratings/s);
+  assert.match(adapter?.notes || '', /Online ordering is only supported on the mobile app.*Currently closed for online ordering/s);
+  assert.match(adapter?.notes || '', /restaurant, cuisine or a dish/);
+  assert.match(adapter?.notes || '', /delivery fee.*surge.*packaging.*handling/s);
+  assert.match(adapter?.notes || '', /approximate delivery time/i);
+  assert.match(adapter?.notes || '', /cancellation.*refund.*proof/s);
+  assert.match(adapter?.notes || '', /Orders.*order ID.*status/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches foodpanda.pk and includes food-delivery guidance', () => {
   assert.equal(getActiveAdapter('https://www.foodpanda.pk/')?.name, 'foodpanda');
   assert.equal(getActiveAdapter('https://foodpanda.pk/restaurants')?.name, 'foodpanda');
