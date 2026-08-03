@@ -4,7 +4,7 @@ import { t } from './i18n.js';
 const SOCIAL_HOST_RE = /(^|\.)(instagram\.com|tiktok\.com|x\.com|twitter\.com|facebook\.com|fb\.com|threads\.net|youtube\.com|youtu\.be|reddit\.com|pinterest\.com|snapchat\.com)$/i;
 const PUBLIC_MEDIA_HOST_RE = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com|reddit\.com|redd\.it|facebook\.com|fb\.com|fb\.watch|pinterest\.com|pin\.it|linkedin\.com|threads\.net)$/i;
 const DATING_HOST_RE = /(^|\.)(tinder\.com|bumble\.com|hinge\.co|okcupid\.com|match\.com|pof\.com|badoo\.com|happn\.com|coffeemeetsbagel\.com)$/i;
-const SHOPPING_HOST_RE = /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.[a-z.]+|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.[a-z.]+|lazada\.[a-z.]+)$/i;
+const SHOPPING_HOST_RE = /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.[a-z.]+|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.[a-z.]+|shopeekh\.com|lazada\.[a-z.]+)$/i;
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun)\b/i;
 const RELEASES_PATH_RE = /^\/[^/]+\/[^/]+\/releases(?:\/|$)/i;
 const SEARCH_INPUT_RE = /^(search|q|query|keyword|keywords|s)$/i;

@@ -2868,6 +2868,53 @@ test('matches Mercado Libre LATAM storefronts and includes marketplace guidance'
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches current Shopee regional storefronts with marketplace guidance', () => {
+  const trustedUrls = [
+    'https://shopee.com/',
+    'https://shopee.sg/search?keyword=phone',
+    'https://www.shopee.vn/example-shop/example-item',
+    'https://shopee.tw/',
+    'https://shopee.co.th/',
+    'https://shopee.com.mx/',
+    'https://shopee.com.my/',
+    'https://shopee.com.br/',
+    'https://shopee.com.la/',
+    'https://shopee.com.ar/',
+    'https://shopee.co.id/',
+    'https://shopee.ph/',
+    'https://www.shopeekh.com/',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'shopee');
+    assert.equal(getActiveAdapterFx(url)?.name, 'shopee');
+  }
+
+  const rejectedUrls = [
+    'https://seller.shopee.sg/',
+    'https://help.shopee.sg/portal/4',
+    'https://account.seller.shopee.com/signin',
+    'https://shopee.com.phishing.example/search?keyword=phone',
+    'https://example.com/?next=https://shopee.sg/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'shopee');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'shopee');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[1]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls.at(-1));
+  assert.match(adapter?.notes || '', /2026-08.*Choose a country or region/s);
+  assert.match(adapter?.notes || '', /verify\/traffic.*complete.*manually/s);
+  assert.match(adapter?.notes || '', /preferred variation.*Masukkan Keranjang.*Thêm Vào Giỏ Hàng.*加入購物車/s);
+  assert.match(adapter?.notes || '', /Shopee Mall.*seller.*ratings/s);
+  assert.match(adapter?.notes || '', /seller voucher.*free shipping voucher.*platform voucher.*minimum spend/s);
+  assert.match(adapter?.notes || '', /Add to Cart.*Buy Now.*Place Order/s);
+  assert.match(adapter?.notes || '', /OTP.*manually/s);
+  assert.match(adapter?.notes || '', /Order Received.*release.*funds.*order ID/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Flipkart shopping surfaces with India marketplace guidance', () => {
   const trustedUrls = [
     'https://flipkart.com/',
@@ -9736,6 +9783,17 @@ test('recommended actions match issue scenarios', () => {
     assert.ok(labels.includes(label), `expected ${label} for ${pageInfo.url}; got ${labels.join(', ')}`);
   }
 });
+
+for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+  test(`recommended actions recognize Shopee Cambodia's distinct hostname in ${label}`, () => {
+    const actions = buildRecommendedActions({
+      url: 'https://www.shopeekh.com/kh-en/detail/123',
+      title: 'Wireless headphones',
+      description: 'US$20.00',
+    });
+    assert.ok(actions.some((action) => action.id === 'compare-price'));
+  });
+}
 
 test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go plans', () => {
   const exactPost = 'Introducing WebBrain — an open-source AI browser agent that lives in your browser. Chat with any page, automate multi-step workflows, and bring your own LLM. Extensible by design. Try it: https://webbrain.one';

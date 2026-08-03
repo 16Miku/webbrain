@@ -16513,6 +16513,22 @@ const ADAPTERS = [
 - Search hosts (listado.mercadolibre.com.ar, listado.mercadolibre.com.mx, lista.mercadolivre.com.br) can redirect automation to /gz/account-verification. If that wall appears, STOP and ask the user to complete it manually — do not retry, bypass, or claim results were read.`,
   },
 
+  // ─── Regional — Shopee (Southeast Asia, Taiwan, LATAM) ───────────────
+  {
+    name: 'shopee',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?(?:shopee\.(?:com|sg|vn|tw|co\.th|com\.mx|com\.my|com\.br|com\.la|com\.ar|co\.id|ph)|shopeekh\.com)\//.test(url),
+    notes: `
+- As of 2026-08, shopee.com is a "Choose a country or region" handoff to separate regional storefronts. Choose the user's actual market before searching: accounts, catalog, currency, stock, delivery addresses, vouchers, and payment methods are region-specific, so availability in one storefront is not proof that another can fulfill it.
+- A storefront may first show a language chooser or redirect to /verify/traffic/error with an almost empty page. Select the user's language when offered; for /verify/traffic, stop retries and ask the user to complete the traffic check manually in the current tab, then re-read it. Do not treat the empty tree as no results or try to bypass the check.
+- On a product page select the preferred variation and quantity before comparing or adding it. Key labels include Indonesian "Masukkan Keranjang" / "Beli Sekarang", Vietnamese "Thêm Vào Giỏ Hàng" / "Mua Ngay", Thai "เพิ่มไปยังรถเข็น" / "ซื้อเลย", Chinese "加入購物車" / "直接購買", and Portuguese "Adicionar ao Carrinho" / "Comprar Agora"; use only the labels visible in the active market.
+- Shopee is a multi-seller marketplace. A Shopee Mall badge identifies a participating official store, but still read the selected seller, shop profile, ratings, item reviews, return terms, stock, origin, shipping option, and arrival estimate; product reviews and a Mall badge do not prove every seller offer is equivalent.
+- Discounts are conditional. A seller voucher, free shipping voucher, and platform voucher can have separate minimum spend, product, payment, user, quota, and expiry rules. Shipping also varies by seller; apply only eligible vouchers and quote the final checkout total separately from coins, cashback, and advertised savings.
+- "Add to Cart" preserves a multi-item review step; "Buy Now" jumps directly to checkout. Re-read every selected variation, quantity, seller, shipping option, address, voucher, payment method, and total before "Place Order", and require the user's explicit confirmation before placing or paying for an order.
+- Login can require password, SMS OTP, QR confirmation in the Shopee app, CAPTCHA, or trusted-device approval. Ask the user to complete any OTP, QR, or account verification manually; never request, read, repeat, or expose a verification code, and continue from the returned page instead of restarting the task.
+- "Order Received" can release held purchase funds to the seller and affect guarantee or return timing. Never select it from tracking status alone; require the user's explicit confirmation that the exact goods arrived and were inspected. Report a placed order only from the confirmation or My Purchases page with an order ID; a cart, checkout, payment prompt, or submitted request is incomplete.`,
+  },
+
   // ─── Regional — Flipkart (India) ─────────────────────────────────────
   {
     name: 'flipkart',
