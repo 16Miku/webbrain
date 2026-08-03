@@ -2841,6 +2841,12 @@ for (const browserKind of ['chrome', 'firefox']) {
             style="width:34px;height:22px">
           <label for="shadow-explicit-size">Shadow explicit quantity</label>
           <input id="shadow-explicit-size" value="11" style="width:34px;height:22px">
+          <input id="shadow-family-input" value="Default" aria-controls="shadow-family-presets"
+            style="width:118px;height:22px">
+          <div id="shadow-family-presets" role="listbox">
+            <div role="option">Roboto</div>
+            <div role="option">Noto Sans</div>
+          </div>
           <button type="button">B</button>
         </div>`;
       document.body.appendChild(shadowHost);
@@ -2853,6 +2859,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
         shadowLabelledBy: window.__wb_ax_ref(shadowRoot.getElementById('shadow-labelled-size')),
         shadowExplicitLabel: window.__wb_ax_ref(shadowRoot.getElementById('shadow-explicit-size')),
+        shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -2890,6 +2897,14 @@ for (const browserKind of ['chrome', 'firefox']) {
     const availableFamilies = familyProbe?.fieldMeta?.toolbarCandidate?.availablePresetValues || [];
     if (!availableFamilies.includes('Default') || !availableFamilies.includes('Inter Display') || !availableFamilies.includes('Times New Roman')) {
       throw new Error(`expected bounded control-owned font presets, got: ${JSON.stringify(familyProbe)}`);
+    }
+    const shadowFamilyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.shadowFamilyInput, text: 'Roboto' },
+    });
+    const shadowAvailableFamilies = shadowFamilyProbe?.fieldMeta?.toolbarCandidate?.availablePresetValues || [];
+    if (!shadowAvailableFamilies.includes('Default') || !shadowAvailableFamilies.includes('Roboto') || !shadowAvailableFamilies.includes('Noto Sans')) {
+      throw new Error(`expected shadow-local aria-controls presets, got: ${JSON.stringify(shadowFamilyProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
@@ -3581,15 +3596,69 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarRegionRef: 'ref_10',
     });
     const crossDocumentBlock = await agent._richTextToolbarToolBlock(tabId, 'click_ax', { ref_id: 'ref_12' });
-    if (crossDocumentBlock || !agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('navigation must release stale toolbar refs while preserving unresolved completion debt');
+    const navigatedRecoveryState = agent._richTextToolbarStates.get(tabId);
+    if (
+      crossDocumentBlock
+      || !agent._richTextToolbarDebts.has(tabId)
+      || navigatedRecoveryState?.recoveryOnly !== true
+      || navigatedRecoveryState.associatedEditorRef
+      || navigatedRecoveryState.blockedRefs?.size
+      || navigatedRecoveryState.blockedSelectors?.size
+    ) {
+      throw new Error('navigation must release stale toolbar targets while preserving editor recovery identity');
+    }
+    const navigatedToolbarPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (!navigatedToolbarPreflight.block?.wrongTarget || navigatedToolbarPreflight.block.dispatched !== false) {
+      throw new Error('recovery-only debt must still block a newly scoped toolbar candidate');
     }
     agent._effectiveRunMode = () => 'act';
     const navigatedDoneBlock = agent._completionDoneBlock(tabId, 'done', { outcome: 'success' });
     if (navigatedDoneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
       throw new Error(`navigation must not permit false success after a blocked toolbar edit: ${JSON.stringify(navigatedDoneBlock)}`);
     }
-    agent._resetRichTextToolbarAudit(tabId);
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_77',
+      documentToken: 'doc-b',
+      refScopeUrl: 'https://unrelated.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const unrelatedOriginRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_77' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (unrelatedOriginRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a same-shaped editor on another origin must not clear toolbar debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_77',
+      documentToken: 'doc-b',
+      refScopeUrl: 'https://example.test/next',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const navigatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_77' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (!navigatedRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a verified matching editor edit must clear toolbar debt after navigation changes its ref');
+    }
 
     const unscopedBlock = {};
     agent._applyRichTextToolbarWrongTarget(

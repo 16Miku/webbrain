@@ -2971,9 +2971,10 @@
 
       const roots = [];
       if (el.list) roots.push(el.list);
+      const elementRoot = el.getRootNode?.() || document;
       for (const id of `${el.getAttribute('aria-controls') || ''} ${el.getAttribute('aria-owns') || ''}`.trim().split(/\s+/)) {
         if (!id) continue;
-        const root = document.getElementById(id);
+        const root = elementRoot.getElementById?.(id) || document.getElementById(id);
         if (root && !roots.includes(root)) roots.push(root);
       }
       const comboRoot = el.closest?.('[role="combobox"],[role="listbox"]') || null;

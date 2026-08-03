@@ -390,7 +390,7 @@ export class Agent extends LoopDetector {
     // Default off; user opts in via Settings → "Strict secret handling".
     this.strictSecretMode = false;
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
-    this._richTextToolbarStates = new Map(); // tabId -> visually confirmed toolbar refs for the current document
+    this._richTextToolbarStates = new Map(); // tabId -> document-scoped toolbar targets or stable recovery identity
     this._richTextToolbarDebts = new Map(); // tabId -> unresolved wrong-target text-entry evidence
     // Productive browsing often mixes reads and scrolling, so exact-call loop
     // detection cannot tell when the agent already has enough evidence to
@@ -1774,12 +1774,37 @@ export class Agent extends LoopDetector {
   }
 
   _clearRichTextToolbarDocumentState(tabId) {
-    this._richTextToolbarStates.delete(tabId);
+    const state = this._richTextToolbarStates.get(tabId);
+    if (
+      !this._richTextToolbarDebts.has(tabId)
+      || !Agent._richTextToolbarEditorIdentityRecoverable(state?.associatedEditorIdentity)
+    ) {
+      this._richTextToolbarStates.delete(tabId);
+      return;
+    }
+    // Refs, selectors, region refs, frame ids, and document tokens are scoped
+    // to the replaced page. Keep only the stable editor identity needed to
+    // prove a corrected edit after a reload or navigation while the
+    // completion debt remains open.
+    this._richTextToolbarStates.set(tabId, {
+      recoveryOnly: true,
+      targetKind: state.targetKind || 'other_formatting',
+      detectedAt: state.detectedAt || Date.now(),
+      associatedEditorRef: '',
+      associatedEditorIdentity: { ...state.associatedEditorIdentity },
+      recoveryPageUrl: state.recoveryPageUrl || state.pageUrl || '',
+      documentToken: '',
+      pageUrl: '',
+      frameId: null,
+      regionRef: '',
+      blockedRefs: new Set(),
+      blockedSelectors: new Set(),
+    });
   }
 
   _resetRichTextToolbarAudit(tabId) {
-    this._clearRichTextToolbarDocumentState(tabId);
     this._richTextToolbarDebts.delete(tabId);
+    this._richTextToolbarStates.delete(tabId);
   }
 
   static _normalizeRichTextToolbarAudit(raw) {
@@ -1874,6 +1899,17 @@ export class Agent extends LoopDetector {
     return [expected.pageX, expected.pageY, expected.w, expected.h]
       .map(Number)
       .every(Number.isFinite);
+  }
+
+  static _richTextToolbarRecoveryScopeMatches(expectedUrl, actualUrl) {
+    const expected = String(expectedUrl || '');
+    const actual = String(actualUrl || '');
+    if (!expected || !actual) return true;
+    try {
+      return new URL(expected).origin === new URL(actual).origin;
+    } catch {
+      return expected === actual;
+    }
   }
 
   static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
@@ -2150,9 +2186,11 @@ export class Agent extends LoopDetector {
     if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_type'].includes(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return null;
-    const sameFrame = Number.isInteger(state.frameId)
-      ? probe.frameId === state.frameId
-      : !Number.isInteger(probe.frameId) || probe.frameId === 0;
+    const sameFrame = state.recoveryOnly === true
+      ? true
+      : Number.isInteger(state.frameId)
+        ? probe.frameId === state.frameId
+        : !Number.isInteger(probe.frameId) || probe.frameId === 0;
     if (!sameFrame) return null;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
@@ -2198,9 +2236,11 @@ export class Agent extends LoopDetector {
     if (!liveProbe?.resolved && result.verified !== true) return false;
     const probe = liveProbe?.resolved ? liveProbe : preDispatchProbe;
     if (!probe?.resolved) return false;
-    const sameFrame = Number.isInteger(state.frameId)
-      ? probe.frameId === state.frameId
-      : !Number.isInteger(probe.frameId) || probe.frameId === 0;
+    const sameFrame = state.recoveryOnly === true
+      ? true
+      : Number.isInteger(state.frameId)
+        ? probe.frameId === state.frameId
+        : !Number.isInteger(probe.frameId) || probe.frameId === 0;
     if (!sameFrame) return false;
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
@@ -2217,21 +2257,26 @@ export class Agent extends LoopDetector {
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
     const isEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
     const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
+    const matchingIdentity = Agent._richTextToolbarEditorIdentityMatches(
+      state.associatedEditorIdentity,
+      fieldMeta,
+      probe.rect || {},
+    );
+    const exactIdentity = state.recoveryOnly === true
+      && Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, livePageUrl)
+      && matchingIdentity;
     const exactSelector = ['type_text', 'iframe_type'].includes(toolName)
       && typeof args?.selector === 'string'
       && !!args.selector.trim()
-      && Agent._richTextToolbarEditorIdentityMatches(
-        state.associatedEditorIdentity,
-        fieldMeta,
-        probe.rect || {},
-      );
-    if (!isEditor || (!exactRef && !exactSelector)) return false;
+      && matchingIdentity;
+    if (!isEditor || (!exactRef && !exactIdentity && !exactSelector)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
       toolName,
       refId: probe.refId || null,
       selectorRecovery: exactSelector,
+      identityRecovery: exactIdentity,
     });
     return true;
   }
@@ -2254,6 +2299,8 @@ export class Agent extends LoopDetector {
     state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
     state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
     state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
+    state.recoveryOnly = false;
+    state.recoveryPageUrl = '';
     state.blockedSelectors = state.blockedSelectors instanceof Set ? state.blockedSelectors : new Set();
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     const hasExactRecoveryTarget = !!state.associatedEditorRef
@@ -2367,6 +2414,17 @@ export class Agent extends LoopDetector {
     }
     if (this._richTextToolbarDebts.has(tabId)) {
       const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
+      const recoveryState = this._richTextToolbarStates.get(tabId);
+      if (
+        recoveryState?.recoveryOnly === true
+        && Number(probe?.fieldMeta?.toolbarCandidate?.score) >= 4
+      ) {
+        return {
+          block: this._richTextToolbarRetryBlock(recoveryState),
+          shot: null,
+          probe: probe?.resolved ? probe : null,
+        };
+      }
       return { block: null, shot: null, probe: probe?.resolved ? probe : null };
     }
     const probe = toolName === 'iframe_type'
