@@ -171,12 +171,25 @@
       min-width: 0;
     }
     .nav-links a {
+      position: relative;
       color: var(--text-dim);
       font-size: 14px;
       font-weight: 500;
       white-space: nowrap;
     }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
     .lang-dropdown {
       background: var(--tint-soft);
       color: var(--text);
@@ -226,16 +239,16 @@
       margin: 0 auto;
       padding: 64px 24px 80px;
     }
-    .page-label {
-      display: inline-block;
-      font-size: 12px;
-      letter-spacing: 0;
-      text-transform: uppercase;
-      color: var(--accent2);
-      padding: 4px 10px;
-      border: 1px solid color-mix(in srgb, var(--accent2) 28%, transparent);
-      border-radius: 999px;
-      margin-bottom: 18px;
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     h1 {
       font-size: 38px;
@@ -244,15 +257,9 @@
       letter-spacing: 0;
       margin-bottom: 16px;
     }
-    .page-sub,
     .lede {
       color: var(--text-dim);
       line-height: 1.6;
-    }
-    .page-sub {
-      font-size: 17px;
-      max-width: 580px;
-      margin-bottom: 48px;
     }
     .lede {
       font-size: 19px;
@@ -430,7 +437,6 @@
       .lang-dropdown { display: none; }
       h1 { font-size: 28px; }
       .lede { font-size: 16px; }
-      .page-sub { font-size: 15px; }
       main, article { padding: 48px 20px 64px; }
       h2 { font-size: 20px; margin-top: 36px; }
       .post-card { padding: 20px; }
@@ -500,7 +506,7 @@
       <div class="nav-links">
         <a href="/">Home</a>
         <a href="/docs/">Docs</a>
-        <a href="/blog">Blog</a>
+        <a href="/blog" aria-current="page">Blog</a>
         <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
         <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

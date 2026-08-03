@@ -763,12 +763,25 @@ function blogStyle() {
       min-width: 0;
     }
     .nav-links a {
+      position: relative;
       color: var(--text-dim);
       font-size: 14px;
       font-weight: 500;
       white-space: nowrap;
     }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
     .lang-dropdown {
       background: var(--tint-soft);
       color: var(--text);
@@ -818,16 +831,16 @@ function blogStyle() {
       margin: 0 auto;
       padding: 64px 24px 80px;
     }
-    .page-label {
-      display: inline-block;
-      font-size: 12px;
-      letter-spacing: 0;
-      text-transform: uppercase;
-      color: var(--accent2);
-      padding: 4px 10px;
-      border: 1px solid color-mix(in srgb, var(--accent2) 28%, transparent);
-      border-radius: 999px;
-      margin-bottom: 18px;
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     h1 {
       font-size: 38px;
@@ -836,15 +849,9 @@ function blogStyle() {
       letter-spacing: 0;
       margin-bottom: 16px;
     }
-    .page-sub,
     .lede {
       color: var(--text-dim);
       line-height: 1.6;
-    }
-    .page-sub {
-      font-size: 17px;
-      max-width: 580px;
-      margin-bottom: 48px;
     }
     .lede {
       font-size: 19px;
@@ -1022,7 +1029,6 @@ function blogStyle() {
       .lang-dropdown { display: none; }
       h1 { font-size: 28px; }
       .lede { font-size: 16px; }
-      .page-sub { font-size: 15px; }
       main, article { padding: 48px 20px 64px; }
       h2 { font-size: 20px; margin-top: 36px; }
       .post-card { padding: 20px; }
@@ -1040,7 +1046,7 @@ function blogStyle() {
 function blogIndexStyle() {
   return `<style>
     [hidden] { display: none !important; }
-    .blog-index .page-sub { margin-bottom: 30px; }
+    .blog-index main { padding-top: 40px; }
     .blog-tools {
       position: relative;
       margin: 0 0 26px;
@@ -1465,7 +1471,7 @@ function navHtml() {
       <div class="nav-links">
         <a href="/">Home</a>
         <a href="/docs/">Docs</a>
-        <a href="/blog">Blog</a>
+        <a href="/blog" aria-current="page">Blog</a>
         <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en">${options}</select>
         <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1652,9 +1658,7 @@ ${sharedHead({
   ${navHtml()}
 
   <main>
-    <span class="page-label">Blog</span>
-    <h1>Engineering notes</h1>
-    <p class="page-sub">Short write-ups on design decisions, failure modes, and benchmarks from building an open-source AI browser agent.</p>
+    <h1 class="sr-only">WebBrain Blog</h1>
 
     <section class="blog-tools" id="blog-tools" aria-label="Search the blog archive">
       <label class="archive-search-label" for="blog-search">Search the archive</label>
