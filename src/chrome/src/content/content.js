@@ -3699,8 +3699,9 @@
   // in the accessibility tree (font size/family/style presets). Report a
   // language- and site-neutral *candidate* here; the background combines this
   // structural evidence with a target-annotated screenshot before changing
-  // the tool result. A label suppresses weak standalone candidates, but never
-  // overrides explicit [role=toolbar] ancestry.
+  // the tool result. Ordinary labels suppress weak standalone candidates;
+  // recognized formatting labels may participate in dense clusters, while
+  // explicit [role=toolbar] ancestry remains authoritative.
   function _richTextToolbarAvailablePresetValues(el) {
     try {
       const values = [];
@@ -3743,7 +3744,7 @@
     try {
       if (!el || el.tagName !== 'INPUT') return null;
       const inputType = (el.type || 'text').toLowerCase();
-      if (!['text', 'search', 'number'].includes(inputType)) return null;
+      if (!['text', 'search', 'number', 'url'].includes(inputType)) return null;
       const rect = el.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
 
@@ -3766,8 +3767,15 @@
       const formattingLabel = [
         'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
         'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+        'link', 'hyperlink',
         'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
         'フォント', '字体', '字體', '글꼴', 'шрифт',
+      ].some(token => formattingDescriptor.includes(token));
+      const ordinaryFilterLabel = [
+        'search', 'filter', 'find', 'query', 'lookup',
+        'arama', 'filtre', 'recherche', 'filtrer', 'suche', 'suchen',
+        'buscar', 'filtro', 'pesquisa', 'cerca',
+        '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
       ].some(token => formattingDescriptor.includes(token));
 
       const compact = rect.height <= 32 && rect.width <= 220;
@@ -3777,8 +3785,8 @@
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
       const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
       const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
-      if (!unlabeled && searchLike && !formattingLabel) return null;
-      if (!unlabeled && !semanticToolbar) return null;
+      if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
+      if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
       const interactiveSelector = [
         'input:not([type="hidden"])',
         'textarea',
@@ -3808,6 +3816,7 @@
       let score = 0;
       reasons.push(unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control');
       if (unlabeled) score += 1;
+      if (formattingLabel) { reasons.push('formatting_control_label'); score += 1; }
       if (compact) { reasons.push('compact_control'); score += 1; }
       if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
       if (cluster) { reasons.push('dense_control_cluster'); score += 2; }

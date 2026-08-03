@@ -3243,7 +3243,7 @@ export class CDPClient {
           const semanticToolbar = composedClosest(el, '[role="toolbar"]');
           const rect = el.getBoundingClientRect();
           const candidate = (() => {
-            if (tag !== 'input' || !['text', 'search', 'number'].includes(fieldType)) return null;
+            if (tag !== 'input' || !['text', 'search', 'number', 'url'].includes(fieldType)) return null;
             if (rect.width < 1 || rect.height < 1) return null;
             const unlabeled = ![
               fieldMeta.ariaLabel,
@@ -3264,12 +3264,19 @@ export class CDPClient {
             const formattingLabel = [
               'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
               'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+              'link', 'hyperlink',
               'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
               'フォント', '字体', '字體', '글꼴', 'шрифт',
             ].some(token => formattingDescriptor.includes(token));
+            const ordinaryFilterLabel = [
+              'search', 'filter', 'find', 'query', 'lookup',
+              'arama', 'filtre', 'recherche', 'filtrer', 'suche', 'suchen',
+              'buscar', 'filtro', 'pesquisa', 'cerca',
+              '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
+            ].some(token => formattingDescriptor.includes(token));
             const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
-            if (!unlabeled && searchLike && !formattingLabel) return null;
-            if (!unlabeled && !semanticToolbar) return null;
+            if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
+            if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
             const compact = rect.height <= 32 && rect.width <= 220;
             const value = String(el.value || '').trim();
             const numericPreset = value.length > 0 && value.length <= 16
@@ -3296,6 +3303,7 @@ export class CDPClient {
             }
             const reasons = [unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control'];
             let score = unlabeled ? 1 : 0;
+            if (formattingLabel) { reasons.push('formatting_control_label'); score += 1; }
             if (compact) { reasons.push('compact_control'); score += 1; }
             if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
             if (cluster) { reasons.push('dense_control_cluster'); score += 2; }

@@ -1149,7 +1149,7 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>
     <script>
       document.querySelector('#family-host').attachShadow({ mode: 'open' }).innerHTML =
-        '<input id="shadow-family" value="Default" style="width:118px;height:22px">';
+        '<input id="shadow-family" aria-label="Font family" value="Default" style="width:118px;height:22px">';
     </script>`);
 
   const session = await page.context().newCDPSession(page);
@@ -1177,6 +1177,8 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
       <span id="slot-toolbar-host">
         <input id="slotted-family" type="search" aria-label="Font family" value="Default" style="width:118px;height:22px">
         <input id="slotted-search" type="search" aria-label="Search" value="" style="width:118px;height:22px">
+        <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
+        <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
       </span>
       <div id="slot-editor-component"></div>
     </div>
@@ -1198,6 +1200,18 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   const ordinarySearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-search');
   if (!ordinarySearchProbe?.resolved || ordinarySearchProbe.fieldMeta?.toolbarCandidate) {
     throw new Error(`ordinary labelled toolbar search was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySearchProbe)}`);
+  }
+  const ordinaryFilterProbe = await client.probeRichTextToolbarSelector(42, '#slotted-filter');
+  if (!ordinaryFilterProbe?.resolved || ordinaryFilterProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary labelled toolbar text filter was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinaryFilterProbe)}`);
+  }
+  const linkProbe = await client.probeRichTextToolbarSelector(42, '#slotted-link');
+  if (
+    !linkProbe?.resolved
+    || linkProbe.fieldMeta?.type !== 'url'
+    || !linkProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+  ) {
+    throw new Error(`URL-typed rich-text link control was not audited by the CDP selector probe: ${JSON.stringify(linkProbe)}`);
   }
 });
 
@@ -3045,6 +3059,8 @@ for (const browserKind of ['chrome', 'firefox']) {
             style="width:118px;height:22px">
           <input id="descendant-toolbar-search" type="search" aria-label="Search" value=""
             style="width:118px;height:22px">
+          <input id="descendant-toolbar-filter" type="text" aria-label="Filter" value=""
+            style="width:118px;height:22px">
         </div>`;
       const descendantBodyHost = document.createElement('div');
       descendantBodyHost.id = 'descendant-editor-component';
@@ -3053,6 +3069,19 @@ for (const browserKind of ['chrome', 'firefox']) {
           style="width:400px;height:180px">Enter text</div>`;
       descendantShadowEditor.appendChild(descendantBodyHost);
       document.body.appendChild(descendantShadowEditor);
+
+      const conventionalToolbarEditor = document.createElement('div');
+      conventionalToolbarEditor.className = 'editor';
+      conventionalToolbarEditor.innerHTML = `
+        <div style="height:42px;display:flex;align-items:center;gap:6px">
+          <button type="button">B</button>
+          <input id="conventional-toolbar-family" aria-label="Font family" value="Default"
+            style="width:118px;height:22px">
+          <button type="button">I</button>
+        </div>
+        <div id="conventional-toolbar-editor-body" contenteditable="true"
+          style="width:400px;height:180px">Enter text</div>`;
+      document.body.appendChild(conventionalToolbarEditor);
 
       const slottedToolbarEditor = document.createElement('div');
       slottedToolbarEditor.className = 'editor';
@@ -3099,9 +3128,12 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
         descendantShadowFamilyInput: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-shadow-family-input')),
         descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
+        descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
+        conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
         slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
         iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
+        linkUrl: window.__wb_ax_ref(document.getElementById('link-url')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
       };
@@ -3190,6 +3222,42 @@ for (const browserKind of ['chrome', 'firefox']) {
       || descendantSearchProbe.fieldMeta?.toolbarCandidate
     ) {
       throw new Error(`ordinary labelled toolbar search must stay outside formatting audit: ${JSON.stringify(descendantSearchProbe)}`);
+    }
+    const descendantFilterProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.descendantToolbarFilter, text: 'Quarterly roadmap' },
+    });
+    if (
+      !descendantFilterProbe?.resolved
+      || descendantFilterProbe.fieldMeta?.type !== 'text'
+      || descendantFilterProbe.fieldMeta?.toolbarCandidate
+    ) {
+      throw new Error(`ordinary labelled toolbar text filter must stay outside formatting audit: ${JSON.stringify(descendantFilterProbe)}`);
+    }
+    const conventionalToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.conventionalToolbarFamily, text: 'Inter Display' },
+    });
+    if (
+      Number(conventionalToolbarProbe?.fieldMeta?.toolbarCandidate?.score) < 4
+      || !conventionalToolbarProbe.fieldMeta.toolbarCandidate.reasons?.includes('formatting_control_label')
+      || !conventionalToolbarProbe.fieldMeta.toolbarCandidate.reasons?.includes('dense_control_cluster')
+      || conventionalToolbarProbe.fieldMeta.toolbarCandidate.reasons?.includes('semantic_toolbar')
+      || conventionalToolbarProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'conventional-toolbar-editor-body'
+    ) {
+      throw new Error(`labelled formatting control in a conventional toolbar must enter the audit: ${JSON.stringify(conventionalToolbarProbe)}`);
+    }
+    const linkProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.linkUrl, text: 'https://openai.com' },
+    });
+    if (
+      !linkProbe?.resolved
+      || linkProbe.fieldMeta?.type !== 'url'
+      || !linkProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+      || linkProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+    ) {
+      throw new Error(`URL-typed rich-text link control must enter the toolbar audit: ${JSON.stringify(linkProbe)}`);
     }
     const slottedToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
