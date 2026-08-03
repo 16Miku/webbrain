@@ -209,7 +209,7 @@ function isCompactUnlabelledTypeableAttempt(event) {
   const meta = result.fieldMeta || {};
   const rect = result.rect || {};
   const input = meta.tag === 'input' && ['text', 'search', 'number', 'url'].includes(String(meta.type || 'text'));
-  const typeable = input || meta.contentEditable === true;
+  const typeable = input || meta.tag === 'select' || meta.contentEditable === true;
   // Keep the typeability allowlist aligned with the runtime detector. This
   // convenience selector stays intentionally narrower than the runtime audit:
   // technical name/autocomplete hints are not visible labels, while

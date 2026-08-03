@@ -1179,6 +1179,9 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
         <input id="slotted-search" type="search" aria-label="Search" value="" style="width:118px;height:22px">
         <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
         <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
+        <select id="slotted-style" aria-label="Paragraph style" style="width:118px;height:24px">
+          <option>Body</option><option>Heading 1</option><option>Heading 2</option>
+        </select>
         <div id="slotted-editable-family" contenteditable="true" role="combobox" aria-label="Font family"
           style="width:118px;height:22px">Default</div>
       </span>
@@ -1222,6 +1225,23 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || !editableProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
   ) {
     throw new Error(`contenteditable rich-text formatting control was not audited by the CDP selector probe: ${JSON.stringify(editableProbe)}`);
+  }
+  const nativeStyleProbe = await client.probeRichTextToolbarSelector(42, '#slotted-style');
+  if (
+    !nativeStyleProbe?.resolved
+    || nativeStyleProbe.fieldMeta?.type !== 'select'
+    || !nativeStyleProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || !nativeStyleProbe.fieldMeta.toolbarCandidate.availablePresetValues?.includes('Heading 1')
+  ) {
+    throw new Error(`native rich-text style select was not audited by the CDP selector probe: ${JSON.stringify(nativeStyleProbe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <label for="ordinary-status">Status</label>
+    <select id="ordinary-status"><option>Draft</option><option>Published</option></select>`);
+  const ordinarySelectProbe = await client.probeRichTextToolbarSelector(42, '#ordinary-status');
+  if (!ordinarySelectProbe?.resolved || ordinarySelectProbe.fieldMeta?.type !== 'select' || ordinarySelectProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`labelled ordinary select was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySelectProbe)}`);
   }
 });
 
@@ -3145,7 +3165,9 @@ for (const browserKind of ['chrome', 'firefox']) {
         iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         linkUrl: window.__wb_ax_ref(document.getElementById('link-url')),
+        paragraphStyle: window.__wb_ax_ref(document.getElementById('paragraph-style')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
+        ordinaryStatus: window.__wb_ax_ref(document.getElementById('ordinary-status')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
       };
     });
@@ -3291,6 +3313,19 @@ for (const browserKind of ['chrome', 'firefox']) {
     ) {
       throw new Error(`URL-typed rich-text link control must enter the toolbar audit: ${JSON.stringify(linkProbe)}`);
     }
+    const nativeStyleProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.paragraphStyle, text: 'Heading 1' },
+    });
+    if (
+      !nativeStyleProbe?.resolved
+      || nativeStyleProbe.fieldMeta?.type !== 'select'
+      || !nativeStyleProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+      || !nativeStyleProbe.fieldMeta.toolbarCandidate.availablePresetValues?.includes('Heading 1')
+      || nativeStyleProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+    ) {
+      throw new Error(`native rich-text style select must enter the toolbar audit: ${JSON.stringify(nativeStyleProbe)}`);
+    }
     const slottedToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
       args: { ref_id: refs.slottedToolbarFamilyInput, text: 'Roboto' },
@@ -3337,6 +3372,7 @@ for (const browserKind of ['chrome', 'firefox']) {
 
     const editorPoint = await page.evaluate(() => {
       const editor = document.getElementById('editor-body');
+      editor.scrollIntoView({ block: 'center' });
       const rect = editor.getBoundingClientRect();
       window.__richTextRetryProbeScrolls = 0;
       editor.scrollIntoView = () => { window.__richTextRetryProbeScrolls += 1; };
@@ -3412,6 +3448,13 @@ for (const browserKind of ['chrome', 'firefox']) {
     });
     if (!ordinary?.success || ordinary.fieldMeta?.toolbarCandidate) {
       throw new Error(`labelled ordinary field must keep normal behavior, got: ${JSON.stringify(ordinary)}`);
+    }
+    const ordinarySelect = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.ordinaryStatus, text: 'Published' },
+    });
+    if (!ordinarySelect?.resolved || ordinarySelect.fieldMeta?.type !== 'select' || ordinarySelect.fieldMeta?.toolbarCandidate) {
+      throw new Error(`labelled ordinary select must keep normal behavior, got: ${JSON.stringify(ordinarySelect)}`);
     }
   });
 }

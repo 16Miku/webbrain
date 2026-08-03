@@ -27831,6 +27831,15 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           },
         },
         {
+          kind: 'tool',
+          ts: 1190,
+          data: {
+            name: 'type_ax',
+            args: { ref_id: 'ref_native_style', text: 'Heading 1' },
+            result: compactResult({ tag: 'select', type: 'select' }),
+          },
+        },
+        {
           kind: 'screenshot',
           ts: 1200,
           data: {
@@ -27857,9 +27866,9 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
-    assert.equal(output.source.candidateCount, 3, 'trace selection must include runtime text, URL, and contenteditable candidates while excluding labelled ordinary fields');
+    assert.equal(output.source.candidateCount, 4, 'trace selection must include runtime text, URL, contenteditable, and native-select candidates while excluding labelled ordinary fields');
     assert.equal(output.source.toolEventIndex, 2);
-    assert.equal(output.source.screenshotEventIndex, 6, 'the dedicated preflight capture must win over an unrelated screenshot');
+    assert.equal(output.source.screenshotEventIndex, 7, 'the dedicated preflight capture must win over an unrelated screenshot');
     assert.equal(output.case.attemptedText, 'Document prose');
     assert.equal(output.case.viewport, null, 'an already annotated trace capture must not require a prior viewport event');
     assert.deepEqual(output.case.toolbarCandidate, {
@@ -27917,6 +27926,18 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     assert.equal(editableResult.status, 0, editableResult.stderr || editableResult.stdout);
     const editableOutput = JSON.parse(fs.readFileSync(editableOutputPath, 'utf8'));
     assert.equal(editableOutput.source.toolEventIndex, 4, 'contenteditable toolbar attempts must be selectable by --attempt');
+
+    const selectOutputPath = path.join(tempDir, 'select-result.json');
+    const selectResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--attempt', '4',
+      '--dry-run',
+      '--output', selectOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(selectResult.status, 0, selectResult.stderr || selectResult.stdout);
+    const selectOutput = JSON.parse(fs.readFileSync(selectOutputPath, 'utf8'));
+    assert.equal(selectOutput.source.toolEventIndex, 5, 'native select toolbar attempts must be selectable by --attempt');
 
     const exactOutputPath = path.join(tempDir, 'exact-result.json');
     const exactResult = spawnSync(process.execPath, [

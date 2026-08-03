@@ -3244,8 +3244,9 @@ export class CDPClient {
           const rect = el.getBoundingClientRect();
           const candidate = (() => {
             const supportedInput = tag === 'input' && ['text', 'search', 'number', 'url'].includes(fieldType);
+            const selectControl = tag === 'select';
             const editableControl = fieldMeta.contentEditable === true;
-            if (!supportedInput && !editableControl) return null;
+            if (!supportedInput && !selectControl && !editableControl) return null;
             if (rect.width < 1 || rect.height < 1) return null;
             const unlabeled = ![
               fieldMeta.ariaLabel,
@@ -3400,6 +3401,7 @@ export class CDPClient {
             addValue(el.value);
             if (el.isContentEditable) addValue(el.textContent);
             const optionRoots = [];
+            if (tag === 'select') optionRoots.push(el);
             try { if (el.list) optionRoots.push(el.list); } catch {}
             const controlledIds = String(
               (el.getAttribute?.('aria-controls') || '') + ' ' + (el.getAttribute?.('aria-owns') || ''),

@@ -3033,6 +3033,7 @@
       if (el.isContentEditable) add(el.textContent);
 
       const roots = [];
+      if (el.tagName === 'SELECT') roots.push(el);
       if (el.list) roots.push(el.list);
       const elementRoot = el.getRootNode?.() || document;
       for (const id of `${el.getAttribute('aria-controls') || ''} ${el.getAttribute('aria-owns') || ''}`.trim().split(/\s+/)) {
@@ -3063,8 +3064,9 @@
       const inputControl = el.tagName === 'INPUT';
       const inputType = inputControl ? (el.type || 'text').toLowerCase() : '';
       const supportedInput = inputControl && ['text', 'search', 'number', 'url'].includes(inputType);
+      const selectControl = el.tagName === 'SELECT';
       const editableControl = el.isContentEditable === true;
-      if (!supportedInput && !editableControl) return null;
+      if (!supportedInput && !selectControl && !editableControl) return null;
       const rect = el.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
 
