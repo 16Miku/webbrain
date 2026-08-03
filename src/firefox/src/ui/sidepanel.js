@@ -892,6 +892,14 @@ function isSelectionGroundedForTab(tabId = currentTabId) {
   return Number.isFinite(numericTabId) && selectionGroundedTabs.has(numericTabId);
 }
 
+function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding = null) {
+  if (mode !== 'act' && mode !== 'dev') return false;
+  if (sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+      && !isSelectionGroundedForTab(tabId)) return false;
+  showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+  return true;
+}
+
 function syncSelectionScopeUi() {
   const scoped = isSelectionGroundedForTab(currentTabId);
   selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
@@ -5182,6 +5190,7 @@ function resumeAfterSubscription(btn) {
   const mode = ['ask', 'act', 'dev'].includes(btn?.dataset?.resumeMode)
     ? btn.dataset.resumeMode
     : agentMode;
+  if (rejectSelectionScopedMode(mode)) return;
   setMode(mode);
   void continueAgent({
     mode,
@@ -5246,6 +5255,7 @@ function bindErrorRetryButton(btn) {
     }
     const payload = retryPayloadFromButton(btn);
     if (!payload) return;
+    if (rejectSelectionScopedMode(payload.mode, currentTabId, payload.sourceGrounding)) return;
     if (payload.missingAttachments) {
       showComposerToast(t('sp.retry.attachments_unavailable'), { duration: 5000 });
     }
@@ -7015,6 +7025,7 @@ async function sendMessage(extraChatParams = {}) {
     if (runCaptureDirective) text = runCaptureDirective.prompt;
   }
   const modeForSend = retryOptions?.mode || modeOverride || modeForMessageText(text);
+  if (rejectSelectionScopedMode(modeForSend, tabId, sourceGrounding)) return false;
   const apiMutationsAllowedForSend = retryOptions
     ? !!retryOptions.apiMutationsAllowed
     : isApiMutationsAllowedForTab(tabId) || /^\/allow-api\b/i.test(text);
@@ -7457,6 +7468,10 @@ function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestI
 }
 
 function handleAgentUpdateMessage(msg) {
+  if (msg.type === 'conversation_scope') {
+    applyConversationScopeState(msg.tabId, msg.data);
+    return;
+  }
   if (msg.type === 'scheduled_job') {
     handleScheduledJobEvent(msg.data, msg.tabId).catch((err) => {
       console.warn('[WebBrain] failed to handle scheduled job event:', err);
@@ -9111,8 +9126,9 @@ function showContinueButton(options = {}) {
 
 async function continueAgent(options = {}) {
   const tabId = currentTabId;
-  const requestId = createRunRequestId(tabId);
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
+  const requestId = createRunRequestId(tabId);
   const foregroundForSend = options?.foreground === true;
   clearActiveChatPayloadForTab(tabId);
 

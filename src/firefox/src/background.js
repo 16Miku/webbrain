@@ -78,6 +78,15 @@ import {
 
 const providerManager = new ProviderManager();
 const agent = new Agent(providerManager);
+agent.setConversationScopeChangeListener((tabId, state) => {
+  browser.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'agent_update',
+    tabId,
+    type: 'conversation_scope',
+    data: state,
+  }).catch(() => {});
+});
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const profileSync = new ProfileSyncManager(browser.storage.local);

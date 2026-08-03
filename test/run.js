@@ -16120,12 +16120,21 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /async function refreshConversationScopeState[\s\S]*?sendToBackground\('agent_run_state'[\s\S]*?applyConversationScopeState\(numericTabId, state\);[\s\S]*?return state;/, `${label}: scope refresh should apply only authoritative background state`);
     assert.match(panel, /async function restoreActiveRunState[\s\S]*?refreshConversationScopeState\(numericTabId\);[\s\S]*?applyActiveRunState/, `${label}: active-run restoration should reuse the authoritative scope refresh`);
     assert.match(panel, /function handleScheduledJobEvent\(data, tabId\) \{[\s\S]*?scopeChangingScheduledEvent = event === 'running'[\s\S]*?terminalScheduledEvent[\s\S]*?watchPollEvent[\s\S]*?event === 'needs_user_input'[\s\S]*?refreshConversationScopeState\(runTabId\);/, `${label}: independent scheduled-run lifecycle events should refresh selection scope`);
+    assert.match(agent, /setConversationScopeChangeListener\(listener\) \{[\s\S]*?_conversationScopeChangeListener = typeof listener === 'function'/, `${label}: agent should expose a bounded scope-change listener`);
+    assert.match(agent, /_clearSelectionGroundingForIndependentRun\(tabId, runOptions = \{\}\)[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?_conversationScopeChangeListener\?\.\(tabId, \{ sourceGrounding: null \}\)/, `${label}: independent runs should broadcast the cleared scope after persisting it`);
+    assert.match(background, /setConversationScopeChangeListener\(\(tabId, state\) => \{[\s\S]*?action: 'agent_update'[\s\S]*?type: 'conversation_scope'[\s\S]*?data: state/, `${label}: background should forward independent scope changes to open sidepanels`);
+    assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{\s*if \(msg\.type === 'conversation_scope'\) \{\s*applyConversationScopeState\(msg\.tabId, msg\.data\);\s*return;/, `${label}: sidepanel should apply scope broadcasts before run rendering guards`);
     assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state\);/, `${label}: detached run probes should reconcile scope before returning journal-only results`);
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true\);/, `${label}: context-menu selection should reveal the notice without waiting for model output`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
     assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /function rejectSelectionScopedMode\(mode,[\s\S]*?mode !== 'act' && mode !== 'dev'[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return true;/, `${label}: restored controls should share one selected-scope mode guard`);
+    assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?if \(rejectSelectionScopedMode\(mode\)\) return;[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(/, `${label}: subscription resume should reject restored Act or Dev mode before continuing`);
+    assert.match(panel, /function bindErrorRetryButton\(btn\) \{[\s\S]*?rejectSelectionScopedMode\(payload\.mode, currentTabId, payload\.sourceGrounding\)[\s\S]*?setMode\(payload\.mode\);[\s\S]*?sendMessage\(/, `${label}: error retry should reject restored Act or Dev mode before resubmitting`);
+    assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
     assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page-capture slash commands should stop before dispatch in selected-text conversations`);
     assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page-capture commands before slash dispatch`);
@@ -16183,6 +16192,25 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       assert.equal(await ensureMode(), false, `${label}: stale active ${mode} mode should remain blocked by selected-text scope`);
       assert.deepEqual(scopeToasts, ['selected-text scope warning'], `${label}: blocked ${mode} mode should explain the selected-text scope`);
     }
+
+    const restoredModeGuardStart = panel.indexOf('function rejectSelectionScopedMode(mode,');
+    const restoredModeGuardEnd = panel.indexOf('\n}', restoredModeGuardStart) + 2;
+    assert.ok(restoredModeGuardStart >= 0 && restoredModeGuardEnd > restoredModeGuardStart, `${label}: restored-mode scope guard missing`);
+    const restoredModeToasts = [];
+    const rejectSelectionScopedMode = vm.runInNewContext(
+      `(() => { ${panel.slice(restoredModeGuardStart, restoredModeGuardEnd)}; return rejectSelectionScopedMode; })()`,
+      {
+        currentTabId: 92,
+        SELECTION_ONLY_SOURCE_GROUNDING: sourceGrounding,
+        isSelectionGroundedForTab: () => true,
+        showComposerToast: (message) => restoredModeToasts.push(message),
+        t: () => 'selected-text scope warning',
+      },
+    );
+    assert.equal(rejectSelectionScopedMode('ask'), false, `${label}: restored Ask controls should remain available`);
+    assert.equal(rejectSelectionScopedMode('act'), true, `${label}: restored Act controls should be rejected while scoped`);
+    assert.equal(rejectSelectionScopedMode('dev'), true, `${label}: restored Dev controls should be rejected while scoped`);
+    assert.deepEqual(restoredModeToasts, ['selected-text scope warning', 'selected-text scope warning'], `${label}: restored mode rejections should explain the scope boundary`);
 
     const reconciliationStart = panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, {');
     const reconciliationEnd = panel.indexOf('\n\nfunction settleNewConversationConfirmation', reconciliationStart);
@@ -22210,6 +22238,10 @@ test('independent cloud, scheduled, and workflow runs clear inherited selection 
       agent._hydrate = async () => {};
       let persistCalls = 0;
       agent._persist = () => { persistCalls += 1; };
+      const scopeChanges = [];
+      agent.setConversationScopeChangeListener((changedTabId, state) => {
+        scopeChanges.push({ tabId: changedTabId, sourceGrounding: state.sourceGrounding });
+      });
       let manageContextCalls = 0;
       agent._manageContext = async () => { manageContextCalls += 1; };
       agent._enrichUserMessageWithCurrentPage = async (_tabId, history, content) => {
@@ -22243,6 +22275,7 @@ test('independent cloud, scheduled, and workflow runs clear inherited selection 
       assert.ok(manageContextCalls >= 1, `${label} ${runLabel}: normal context management should run`);
       assert.equal(agent.selectionGroundingScopes.has(tabId), false, `${label} ${runLabel}: stale selection scope survived`);
       assert.ok(persistCalls >= 1, `${label} ${runLabel}: cleared scope was not persisted`);
+      assert.deepEqual(scopeChanges, [{ tabId, sourceGrounding: null }], `${label} ${runLabel}: open sidepanels were not told that independent scope cleared`);
     }
   }
 });

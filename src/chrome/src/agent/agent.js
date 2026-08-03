@@ -264,6 +264,7 @@ export class Agent extends LoopDetector {
     // inherit this scope without exposing conversation history from before the
     // selection. Cleared with the conversation or replaced by a new selection.
     this.selectionGroundingScopes = new Map();
+    this._conversationScopeChangeListener = null;
     this.progressLedgers = new Map(); // tabId -> structured progress rows, projected into a pinned note
     this.progressPageScopes = new Map(); // tabId -> normalized page identity for scoped progress task keys
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
@@ -813,6 +814,10 @@ export class Agent extends LoopDetector {
 
   setScheduler(scheduler) {
     this.scheduler = scheduler;
+  }
+
+  setConversationScopeChangeListener(listener) {
+    this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
   }
 
   isRunning(tabId) {
@@ -13220,9 +13225,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || runOptions?.cloudRun === true
       || runOptions?.scheduledRun === true;
     if (!independentRun) return false;
-    if (this.selectionGroundingScopes.has(tabId)) {
-      this.selectionGroundingScopes.delete(tabId);
+    if (this.selectionGroundingScopes.delete(tabId)) {
       this._persist(tabId);
+      try {
+        this._conversationScopeChangeListener?.(tabId, { sourceGrounding: null });
+      } catch {
+        // Scope persistence is authoritative; UI notification is best-effort.
+      }
     }
     return true;
   }
