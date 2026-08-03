@@ -3039,8 +3039,6 @@
       if (rect.width < 1 || rect.height < 1) return null;
 
       const unlabeled = ![
-        baseMeta?.name,
-        baseMeta?.autocomplete,
         baseMeta?.ariaLabel,
         baseMeta?.ariaLabelledByText,
         baseMeta?.placeholder,

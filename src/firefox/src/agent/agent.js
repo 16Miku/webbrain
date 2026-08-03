@@ -323,9 +323,11 @@ export class Agent extends LoopDetector {
     this.imageDetail = 'auto';       // 'high' | 'low' | 'auto' (provider-dependent)
     this.maxScreenshotsPerTurn = 0;  // 0 = unlimited
     this.maxImageDimension = 1568;   // max width/height in px for any vision image
-    // tabId -> auto-screenshot count within the current turn/run. Enforces
-    // `maxScreenshotsPerTurn` for every automatic capture (initial viewport
-    // AND post-action). Reset when a run starts and on tab cleanup.
+    // tabId -> model-facing auto-screenshot count within the current turn/run.
+    // Initial viewport and post-action captures share this budget. Internal
+    // security-classifier captures are gate-checked against it but do not
+    // consume the slot that supplies post-action evidence to the main model.
+    // Reset when a run starts and on tab cleanup.
     this.autoScreenshotCount = new Map();
     // tabId -> {scaleX, scaleY} image-pixel→CSS-pixel factors for the most
     // recent screenshot shown to the model. Set when maxImageDimension forced
@@ -1963,19 +1965,27 @@ export class Agent extends LoopDetector {
     state.detectedAt = Date.now();
     state.regionRef = candidate?.regionRef || state.regionRef || '';
     state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
-    if (refId) state.blockedRefs.add(refId);
-    for (const relatedRef of candidate?.relatedRefs || []) {
-      if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
+    const hasExactRecoveryTarget = !!state.associatedEditorRef;
+    if (hasExactRecoveryTarget) {
+      if (refId) state.blockedRefs.add(refId);
+      for (const relatedRef of candidate?.relatedRefs || []) {
+        if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
+      }
+      this._richTextToolbarStates.set(tabId, state);
+      const debt = {
+        tool: toolName,
+        ref_id: refId || null,
+        targetKind: state.targetKind,
+        source: decision.source,
+        detectedAt: state.detectedAt,
+      };
+      this._richTextToolbarDebts.set(tabId, debt);
+    } else {
+      // The edit itself is still blocked, but do not create completion debt
+      // that no later action can prove resolved. A fresh read can expose a
+      // stable editor ref and the next toolbar attempt will be audited again.
+      this._resetRichTextToolbarAudit(tabId);
     }
-    this._richTextToolbarStates.set(tabId, state);
-    const debt = {
-      tool: toolName,
-      ref_id: refId || null,
-      targetKind: state.targetKind,
-      source: decision.source,
-      detectedAt: state.detectedAt,
-    };
-    this._richTextToolbarDebts.set(tabId, debt);
 
     Object.assign(result, {
       success: false,
@@ -2002,7 +2012,8 @@ export class Agent extends LoopDetector {
         targetKind: state.targetKind,
         source: decision.source,
         confidence: audit?.confidence ?? null,
-        blockedRefCount: state.blockedRefs.size,
+        blockedRefCount: hasExactRecoveryTarget ? state.blockedRefs.size : 0,
+        persistentRecoveryDebt: hasExactRecoveryTarget,
       });
     }
   }
@@ -2056,7 +2067,7 @@ export class Agent extends LoopDetector {
   }
 
   async _preflightRichTextToolbarTarget(tabId, toolName, args, provider, captureOptions = {}) {
-    if (!['set_field', 'type_ax'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
+    if (!['set_field', 'type_ax', 'type_text'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
       return { block: null, shot: null };
     }
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
@@ -2070,9 +2081,16 @@ export class Agent extends LoopDetector {
     let audit = null;
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
-    if (this._shouldAutoScreenshot(toolName) && (dedicatedVision || provider?.supportsVision)) {
+    if (
+      this._shouldAutoScreenshot(toolName)
+      && (dedicatedVision || provider?.supportsVision)
+      && this._canTakeAutoScreenshot(tabId)
+    ) {
       await new Promise(resolve => setTimeout(resolve, 120));
-      shot = await this._captureBudgetedAutoScreenshot(tabId, {
+      // This image is consumed only by the internal target classifier. Keep
+      // the model-facing per-turn screenshot slot available for the actual
+      // post-edit state while retaining the same redaction/dimension policy.
+      shot = await this._captureAutoScreenshot(tabId, {
         ...captureOptions,
         coordAligned: true,
       });

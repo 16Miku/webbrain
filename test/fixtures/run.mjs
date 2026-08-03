@@ -2808,6 +2808,9 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (!candidate || candidate.score < 6) {
       throw new Error(`expected strong toolbar candidate, got: ${JSON.stringify(toolbar)}`);
     }
+    if (toolbar.fieldMeta?.name !== 'fontSize') {
+      throw new Error(`fixture must cover a named toolbar control, got: ${JSON.stringify(toolbar.fieldMeta)}`);
+    }
     if (!candidate.reasons.includes('semantic_toolbar')) {
       throw new Error(`expected semantic toolbar evidence, got: ${JSON.stringify(candidate)}`);
     }
@@ -3066,9 +3069,26 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('live document identity must release stale toolbar blocks after navigation');
     }
 
+    const unscopedBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12' },
+      unscopedBlock,
+      { ...candidate, associatedEditorRef: '' },
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    if (!unscopedBlock.wrongTarget || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a missing exact editor ref must block the edit without creating unrecoverable debt');
+    }
+
     let classifierArgCount = 0;
     agent.autoScreenshot = 'state_change';
-    agent._captureBudgetedAutoScreenshot = async () => ({
+    agent.maxScreenshotsPerTurn = 1;
+    agent.autoScreenshotCount.delete(tabId);
+    agent._captureAutoScreenshot = async () => ({
       dataUrl: 'data:image/png;base64,dGVzdA==',
       width: 800,
       height: 600,
@@ -3092,17 +3112,38 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     });
     const visualPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
-      'set_field',
-      { ref_id: 'ref_12', text: 'This document sentence is intentionally much too long to be a font family value.' },
+      'type_text',
+      { selector: '#font-family', text: 'This document sentence is intentionally much too long to be a font family value.' },
       { supportsVision: true },
     );
-    if (!visualPreflight.shot || !visualPreflight.block?.wrongTarget || visualPreflight.block.dispatched !== false || classifierArgCount !== 3) {
-      throw new Error(`expected target-only visual preflight before dispatch, got: ${JSON.stringify({ visualPreflight, classifierArgCount })}`);
+    if (
+      !visualPreflight.shot
+      || !visualPreflight.block?.wrongTarget
+      || visualPreflight.block.dispatched !== false
+      || classifierArgCount !== 3
+      || agent.autoScreenshotCount.get(tabId)
+    ) {
+      throw new Error(`expected budget-neutral target-only type_text preflight before dispatch, got: ${JSON.stringify({ visualPreflight, classifierArgCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
 
+    const allowedPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'Inter Display' },
+      { supportsVision: true },
+    );
+    if (allowedPreflight.block || !allowedPreflight.shot || !agent._canTakeAutoScreenshot(tabId)) {
+      throw new Error(`allowed toolbar formatting must preserve the post-edit screenshot slot: ${JSON.stringify(allowedPreflight)}`);
+    }
+    const postEditShot = await agent._captureBudgetedAutoScreenshot(tabId);
+    if (!postEditShot || agent.autoScreenshotCount.get(tabId) !== 1 || agent._canTakeAutoScreenshot(tabId)) {
+      throw new Error('the preserved model-facing slot must remain usable exactly once after preflight');
+    }
+    agent.autoScreenshotCount.delete(tabId);
+
     agent.autoScreenshot = 'navigation';
-    agent._captureBudgetedAutoScreenshot = async () => {
+    agent._captureAutoScreenshot = async () => {
       throw new Error('navigation-only auto-screenshot must suppress non-navigation field capture');
     };
     agent._probeRichTextToolbarRetryTarget = async () => ({
