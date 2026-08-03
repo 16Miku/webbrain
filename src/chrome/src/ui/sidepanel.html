@@ -121,6 +121,7 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="new-conversation-confirm-title"
+    aria-describedby="new-conversation-confirm-description"
     tabindex="-1"
   >
     <div class="new-conversation-confirm-card">
@@ -131,7 +132,10 @@
           <path d="M12 17h.01"/>
         </svg>
       </div>
-      <h2 id="new-conversation-confirm-title" data-i18n="sp.clear.confirm">This conversation will be lost. Start a new conversation?</h2>
+      <div class="new-conversation-confirm-copy">
+        <h2 id="new-conversation-confirm-title" data-i18n="sp.clear.title">Start a new conversation?</h2>
+        <p id="new-conversation-confirm-description" data-i18n="sp.clear.description">This will clear this conversation's history.</p>
+      </div>
       <div class="new-conversation-confirm-actions">
         <button
           id="new-conversation-confirm-cancel"
@@ -145,8 +149,13 @@
           class="new-conversation-confirm-accept"
           type="button"
           data-new-conversation-confirm-action
-          data-i18n="sp.btn.clear"
-        >New conversation (clear history)</button>
+        >
+          <span class="new-conversation-confirm-action-label" data-i18n="sp.btn.clear">New conversation</span>
+          <span class="new-conversation-confirm-action-warning">
+            <span aria-hidden="true">⚠</span>
+            <span data-i18n="sp.clear.action_warning">Clears history</span>
+          </span>
+        </button>
       </div>
     </div>
   </div>
@@ -320,6 +329,15 @@
         <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
       <span data-i18n="sp.mode.act.warning"></span>
+    </div>
+
+    <div id="selection-scope-banner" class="selection-scope-banner hidden" role="region" aria-labelledby="selection-scope-title">
+      <div class="selection-scope-banner-icon" aria-hidden="true">⚠</div>
+      <div class="selection-scope-banner-copy" aria-live="polite">
+        <strong id="selection-scope-title" data-i18n="sp.selection_scope.title">Selected text only</strong>
+        <span data-i18n="sp.selection_scope.description">Start a new conversation to access the page or screen.</span>
+      </div>
+      <button id="selection-scope-new-conversation" type="button" data-i18n="sp.btn.clear">New conversation</button>
     </div>
 
     <!-- Input Area -->
