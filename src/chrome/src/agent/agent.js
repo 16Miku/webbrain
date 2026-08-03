@@ -74,6 +74,16 @@ import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+
+function secureRandomBase36Token(length = 8) {
+  const size = Math.max(1, Math.floor(Number(length) || 0));
+  const bytes = new Uint8Array(size);
+  globalThis.crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += (b % 36).toString(36);
+  return out;
+}
+
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -13543,7 +13553,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _wrapUntrusted(name, content) {
     if (!this._isUntrustedTool(name)) return content;
-    const nonce = Math.random().toString(36).slice(2, 10);
+    const nonce = secureRandomBase36Token(8);
     const safe = String(content).replace(/<\/?untrusted_page_content\b[^>]*>/gi, '[markup stripped]');
     return `<untrusted_page_content id="${nonce}">\n${safe}\n</untrusted_page_content id="${nonce}">`;
   }
@@ -14159,7 +14169,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const css = typeof args.css === 'string' ? args.css : '';
     if (!css.trim()) return { success: false, error: 'inject_css: `css` is required.' };
     if (css.length > 100000) return { success: false, error: 'inject_css: CSS exceeds the 100,000-character limit.' };
-    const patchId = `wb_css_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+    const patchId = `wb_css_${Date.now().toString(36)}_${secureRandomBase36Token(7)}`;
     const injectedCss = `/* webbrain-dev-patch:${patchId} */\n${css}`;
     try {
       const before = await this._getDevDocumentIdentity(tabId);
