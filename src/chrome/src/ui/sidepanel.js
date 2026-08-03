@@ -2820,6 +2820,13 @@ async function handleScheduledJobEvent(data, tabId) {
     watchPollEvent
   );
   if (!sameTab && !crossPanelScheduledEvent) return;
+  const scopeChangingScheduledEvent = event === 'running'
+    || terminalScheduledEvent
+    || watchPollEvent
+    || event === 'needs_user_input';
+  if (scopeChangingScheduledEvent && runTabId != null) {
+    await refreshConversationScopeState(runTabId);
+  }
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
@@ -3928,16 +3935,24 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
 }
 
-async function restoreActiveRunState(tabId = currentTabId) {
+async function refreshConversationScopeState(tabId = currentTabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null) return null;
   let state = null;
   try {
     state = await sendToBackground('agent_run_state', { tabId: numericTabId });
   } catch {
-    return;
+    return null;
   }
   applyConversationScopeState(numericTabId, state);
+  return state;
+}
+
+async function restoreActiveRunState(tabId = currentTabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  const state = await refreshConversationScopeState(numericTabId);
+  if (!state) return;
   await applyActiveRunState(numericTabId, state);
   void adoptRestoredRunState(numericTabId, state);
 }
