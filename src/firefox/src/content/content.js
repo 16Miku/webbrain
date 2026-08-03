@@ -2963,6 +2963,68 @@
     } catch { return false; }
   }
 
+  function _ariaLabelledByText(el) {
+    try {
+      const ids = String(el?.getAttribute?.('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+      if (!ids.length) return null;
+      const text = ids
+        .map(id => document.getElementById(id))
+        .filter(Boolean)
+        .map(node => String(node.textContent || '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return text ? text.slice(0, 120) : null;
+    } catch { return null; }
+  }
+
+  function _associatedRichTextEditor(regionNode) {
+    try {
+      if (!regionNode?.isConnected) return null;
+      const regionRect = regionNode.getBoundingClientRect();
+      const candidates = [];
+      let scope = regionNode.parentElement;
+      for (let depth = 0; scope && depth < 5; depth += 1, scope = scope.parentElement) {
+        for (const editor of scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"])') || []) {
+          if (
+            editor === regionNode
+            || regionNode.contains(editor)
+            || editor.closest?.('[role="toolbar"]')
+            || !_visibleFieldContextNode(editor)
+          ) continue;
+          const rect = editor.getBoundingClientRect();
+          const overlap = Math.max(0, Math.min(regionRect.right, rect.right) - Math.max(regionRect.left, rect.left));
+          const horizontalPenalty = overlap > 0
+            ? 0
+            : Math.min(Math.abs(rect.left - regionRect.right), Math.abs(regionRect.left - rect.right));
+          const verticalPenalty = rect.top >= regionRect.bottom - 8
+            ? Math.max(0, rect.top - regionRect.bottom)
+            : 500 + Math.abs(rect.bottom - regionRect.top);
+          candidates.push({ editor, rect, score: (depth * 250) + verticalPenalty + horizontalPenalty });
+        }
+        if (candidates.length) break;
+      }
+      candidates.sort((a, b) => a.score - b.score);
+      const best = candidates[0];
+      if (!best) return null;
+      const second = candidates[1];
+      if (second && Math.abs(second.score - best.score) < 12) return null;
+      let ref = '';
+      try { if (typeof window.__wb_ax_ref === 'function') ref = window.__wb_ax_ref(best.editor) || ''; } catch {}
+      if (!ref) return null;
+      return {
+        ref,
+        rect: {
+          x: Math.round(best.rect.x),
+          y: Math.round(best.rect.y),
+          w: Math.round(best.rect.width),
+          h: Math.round(best.rect.height),
+        },
+      };
+    } catch { return null; }
+  }
+
   // Rich-text editors often expose formatting widgets as ordinary textboxes
   // in the accessibility tree (font size/family/style presets). Report a
   // language- and site-neutral *candidate* here; the background combines this
@@ -2980,6 +3042,7 @@
         baseMeta?.name,
         baseMeta?.autocomplete,
         baseMeta?.ariaLabel,
+        baseMeta?.ariaLabelledByText,
         baseMeta?.placeholder,
         baseMeta?.labelText,
       ].some(value => String(value || '').trim());
@@ -3058,6 +3121,7 @@
           } catch {}
         }
       }
+      const associatedEditor = _associatedRichTextEditor(regionNode);
 
       return {
         score,
@@ -3070,6 +3134,8 @@
         },
         regionRef,
         relatedRefs,
+        associatedEditorRef: associatedEditor?.ref || '',
+        associatedEditorRect: associatedEditor?.rect || null,
       };
     } catch { return null; }
   }
@@ -3101,6 +3167,7 @@
         id: elId,
         autocomplete: el.getAttribute ? el.getAttribute('autocomplete') : null,
         ariaLabel: el.getAttribute ? el.getAttribute('aria-label') : null,
+        ariaLabelledByText: _ariaLabelledByText(el),
         placeholder: el.getAttribute ? el.getAttribute('placeholder') : null,
         labelText,
       };
@@ -3212,6 +3279,7 @@
       if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
         return { resolved: false };
       }
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
       const rect = el.getBoundingClientRect();
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
@@ -3219,6 +3287,8 @@
       return {
         resolved: true,
         refId,
+        documentToken: _axDocumentToken(),
+        refScopeUrl: location.href,
         rect: {
           x: Math.round(rect.x),
           y: Math.round(rect.y),

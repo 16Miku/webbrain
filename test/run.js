@@ -52227,10 +52227,14 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   const chromeAgentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
-  const toolDispatchIndex = chromeAgentSource.indexOf('const rawToolResult = protectedPageFailure || await this.executeTool(', guardIndex);
+  const toolbarPreflightIndex = chromeAgentSource.indexOf('const toolbarPreflight = protectedPageFailure', webMcpPreparationIndex);
+  const toolDispatchIndex = chromeAgentSource.indexOf('|| await this.executeTool(', toolbarPreflightIndex);
   assert.ok(
-    guardIndex >= 0 && webMcpPreparationIndex > guardIndex && toolDispatchIndex > webMcpPreparationIndex,
-    'chrome: protected-page guard must run before WebMCP preparation and tool dispatch',
+    guardIndex >= 0
+      && webMcpPreparationIndex > guardIndex
+      && toolbarPreflightIndex > webMcpPreparationIndex
+      && toolDispatchIndex > toolbarPreflightIndex,
+    'chrome: protected-page guard must run before WebMCP preparation, toolbar preflight, and tool dispatch',
   );
   assert.match(chromeAgentSource, /TRUSTED RUNTIME ROUTING: Chrome blocks extension DOM\/debugger access/, 'chrome: protected-page recovery should remain outside the untrusted page-content wrapper');
   assert.doesNotMatch(chromeAgentSource, /ask the user to enable\/configure that packaged skill/i, 'chrome: protected-page recovery must not route users to a removed packaged skill');

@@ -2793,7 +2793,10 @@ for (const browserKind of ['chrome', 'firefox']) {
       size: window.__wb_ax_ref(document.getElementById('font-size')),
       family: window.__wb_ax_ref(document.getElementById('font-family')),
       familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
+      editor: window.__wb_ax_ref(document.getElementById('editor-body')),
+      labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
       ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
+      secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
     }));
 
     const toolbar = await call(page, 'set_field', {
@@ -2811,16 +2814,24 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (!candidate.relatedRefs.includes(refs.family) && !candidate.relatedRefs.includes(refs.familyText)) {
       throw new Error(`expected font-family sibling ref in toolbar scope, got: ${JSON.stringify(candidate)}`);
     }
+    if (candidate.associatedEditorRef !== refs.editor) {
+      throw new Error(`expected exact associated editor ref, got: ${JSON.stringify(candidate)}`);
+    }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
       args: { text: 'Paris' },
     });
-    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
+    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
-    const blurResult = await call(page, 'blur_rich_text_toolbar_target', { ref_id: refs.size });
-    if (!blurResult?.success || !blurResult.blurred) {
-      throw new Error(`expected rejected toolbar target to be blurred, got: ${JSON.stringify(blurResult)}`);
+
+    const labelledBy = await call(page, 'set_field', {
+      ref_id: refs.labelledBy,
+      text: '12',
+      clear: true,
+    });
+    if (!labelledBy?.success || labelledBy.fieldMeta?.toolbarCandidate || labelledBy.fieldMeta?.ariaLabelledByText !== 'Quantity') {
+      throw new Error(`aria-labelledby ordinary field must stay outside toolbar audit, got: ${JSON.stringify(labelledBy)}`);
     }
 
     const ordinary = await call(page, 'set_field', {
@@ -2840,14 +2851,13 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       regionKind: 'rich_text_toolbar',
       targetKind: 'font_family',
       confidence: 0.94,
-      taskTargetIntent: 'absent',
-      taskIntentConfidence: 0.97,
     });
     const candidate = {
       score: 4,
       reasons: ['unlabelled_text_control', 'compact_control', 'dense_control_cluster'],
       relatedRefs: ['ref_12', 'ref_13'],
       regionRef: 'ref_10',
+      associatedEditorRef: 'ref_99',
       regionRect: { x: 0, y: 0, w: 320, h: 48 },
       attemptedTextShape: {
         chars: 86,
@@ -2861,42 +2871,32 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!familyDecision.wrongTarget || familyDecision.targetKind !== 'font_family') {
       throw new Error(`expected visual font-family rejection, got: ${JSON.stringify(familyDecision)}`);
     }
-    const shortContentDecision = AgentClass._richTextToolbarDecision({
+    const legitimateFamilyDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
-      attemptedTextShape: {
-        chars: 5,
-        words: 1,
-        lines: 1,
-        numericPreset: false,
-        urlLike: false,
-      },
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Inter Display'),
     }, familyAudit);
-    if (!shortContentDecision.wrongTarget) {
-      throw new Error(`short document content must not bypass visual toolbar rejection: ${JSON.stringify(shortContentDecision)}`);
+    if (legitimateFamilyDecision.wrongTarget) {
+      throw new Error(`short font-family value must remain allowed: ${JSON.stringify(legitimateFamilyDecision)}`);
     }
-    const numericContentDecision = AgentClass._richTextToolbarDecision({
+    const numericSizeDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
-      attemptedTextShape: {
-        chars: 2,
-        words: 1,
-        lines: 1,
-        numericPreset: true,
-        urlLike: false,
-      },
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('14'),
     }, {
       ...familyAudit,
       targetKind: 'font_size',
     });
-    if (!numericContentDecision.wrongTarget) {
-      throw new Error(`numeric document content must not bypass visual toolbar rejection: ${JSON.stringify(numericContentDecision)}`);
+    if (numericSizeDecision.wrongTarget) {
+      throw new Error(`numeric font-size preset must remain allowed: ${JSON.stringify(numericSizeDecision)}`);
     }
-    const legitimateFamilyDecision = AgentClass._richTextToolbarDecision(candidate, {
+    const documentTextSizeDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('This is document content, not a size preset.'),
+    }, {
       ...familyAudit,
-      taskTargetIntent: 'explicit',
-      taskIntentConfidence: 0.95,
+      targetKind: 'font_size',
     });
-    if (legitimateFamilyDecision.wrongTarget) {
-      throw new Error(`explicitly requested font-family edit must remain allowed: ${JSON.stringify(legitimateFamilyDecision)}`);
+    if (!documentTextSizeDecision.wrongTarget) {
+      throw new Error(`document text must be rejected for font-size targets: ${JSON.stringify(documentTextSizeDecision)}`);
     }
     const ordinaryDecision = AgentClass._richTextToolbarDecision(candidate, {
       regionKind: 'ordinary_form_field',
@@ -2909,6 +2909,30 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
 
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 77;
+    let capturedVisionMessages = null;
+    agent.providerManager.getVisionProvider = async () => ({
+      config: { model: 'fixture-vision', baseUrl: 'https://vision.example.test' },
+    });
+    agent._chatWithCostAllowance = async (_vision, messages) => {
+      capturedVisionMessages = messages;
+      return { content: JSON.stringify(familyAudit) };
+    };
+    const targetOnlyAudit = await agent._classifyRichTextToolbarTarget(
+      tabId,
+      { supportsVision: true },
+      'data:image/png;base64,dGVzdA==',
+    );
+    const serializedVisionMessages = JSON.stringify(capturedVisionMessages);
+    if (
+      !targetOnlyAudit
+      || serializedVisionMessages.includes('TRUSTED USER TASK CONTEXT')
+      || serializedVisionMessages.includes('PROPOSED TOOL VALUE')
+      || serializedVisionMessages.includes('taskTargetIntent')
+      || !serializedVisionMessages.includes('Classify only that target')
+    ) {
+      throw new Error(`vision prompt must remain target-only: ${serializedVisionMessages}`);
+    }
+    agent.providerManager.getVisionProvider = async () => null;
     agent._lastAxScopes.set(tabId, { documentToken: 'doc-a', pageUrl: 'https://example.test/editor' });
     const result = { success: true, verified: true, dispatched: true };
     agent._applyRichTextToolbarWrongTarget(
@@ -2919,17 +2943,20 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       candidate,
       familyDecision,
       familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
     );
-    if (result.success || result.verified || !result.wrongTarget) {
-      throw new Error(`wrong target must override apparent field success: ${JSON.stringify(result)}`);
+    if (result.success || result.verified || !result.wrongTarget || result.dispatched !== false || result.noDispatch !== true) {
+      throw new Error(`wrong target must be blocked before dispatch: ${JSON.stringify(result)}`);
     }
-    const siblingBlock = agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' });
+    const siblingBlock = agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a');
     if (!siblingBlock?.blockedToolbarRef || siblingBlock.dispatched !== false) {
       throw new Error(`expected sibling toolbar ref block, got: ${JSON.stringify(siblingBlock)}`);
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_12',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
       rect: { x: 10, y: 8, w: 60, h: 24 },
       fieldMeta: {},
       toolbarContext: true,
@@ -2946,6 +2973,8 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_88',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
       rect: { x: 500, y: 8, w: 60, h: 24 },
       fieldMeta: { toolbarCandidate: { score: 6 } },
       toolbarContext: true,
@@ -2958,6 +2987,8 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_99',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
       rect: { x: 20, y: 160, w: 400, h: 180 },
       fieldMeta: { contentEditable: true },
       toolbarContext: false,
@@ -2972,17 +3003,70 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (doneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
       throw new Error(`expected unresolved toolbar completion block, got: ${JSON.stringify(doneBlock)}`);
     }
-    agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_98',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      fieldMeta: { contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const unrelatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
       success: true,
       verified: true,
       method: 'contenteditable',
     });
-    if (agent._richTextToolbarDebts.has(tabId)) {
-      throw new Error('verified editor-body edit should clear toolbar completion debt');
+    if (unrelatedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an unrelated contenteditable must not clear toolbar completion debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_99',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      fieldMeta: { contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
+      success: true,
+      verified: true,
+      method: 'contenteditable',
+    });
+    if (!exactRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('the exact associated editor edit should clear debt and blocked refs');
+    }
+    if (agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a')) {
+      throw new Error('toolbar refs must be released after exact editor recovery');
     }
 
-    let classifiedTaskContext = '';
-    let classifiedAttemptedText = '';
+    const staleDocumentResult = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12' },
+      staleDocumentResult,
+      candidate,
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'doc-b',
+      refScopeUrl: 'https://example.test/next',
+      fieldMeta: { toolbarCandidate: candidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const crossDocumentBlock = await agent._richTextToolbarToolBlock(tabId, 'click_ax', { ref_id: 'ref_12' });
+    if (crossDocumentBlock || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('live document identity must release stale toolbar blocks after navigation');
+    }
+
+    let classifierArgCount = 0;
     agent.autoScreenshot = 'state_change';
     agent._captureBudgetedAutoScreenshot = async () => ({
       dataUrl: 'data:image/png;base64,dGVzdA==',
@@ -2992,29 +3076,28 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       cssHeight: 600,
     });
     agent._annotateScreenshot = async dataUrl => dataUrl;
-    agent._classifyRichTextToolbarTarget = async (_tabId, _provider, _dataUrl, taskContext, attemptedText) => {
-      classifiedTaskContext = taskContext;
-      classifiedAttemptedText = attemptedText;
+    agent._classifyRichTextToolbarTarget = async (...classifierArgs) => {
+      classifierArgCount = classifierArgs.length;
       return familyAudit;
     };
-    agent._blurRichTextToolbarTarget = async () => {};
-    const visualResult = {
-      success: true,
-      verified: true,
-      dispatched: true,
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
       rect: { x: 10, y: 10, w: 120, h: 24 },
       fieldMeta: { toolbarCandidate: candidate },
-    };
-    const visualAudit = await agent._auditRichTextToolbarTarget(
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const visualPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',
-      { ref_id: 'ref_12', text: 'Paris' },
-      visualResult,
+      { ref_id: 'ref_12', text: 'This document sentence is intentionally much too long to be a font family value.' },
       { supportsVision: true },
-      { trustedTaskContext: 'User request 1: Put Paris in the editor body.' },
     );
-    if (!visualAudit.shot || !visualResult.wrongTarget || !classifiedTaskContext.includes('Put Paris') || classifiedAttemptedText !== 'Paris') {
-      throw new Error(`expected policy-enabled screenshot audit with trusted task context and attempted value, got: ${JSON.stringify({ visualAudit, visualResult, classifiedTaskContext, classifiedAttemptedText })}`);
+    if (!visualPreflight.shot || !visualPreflight.block?.wrongTarget || visualPreflight.block.dispatched !== false || classifierArgCount !== 3) {
+      throw new Error(`expected target-only visual preflight before dispatch, got: ${JSON.stringify({ visualPreflight, classifierArgCount })}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
 
@@ -3022,28 +3105,32 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._captureBudgetedAutoScreenshot = async () => {
       throw new Error('navigation-only auto-screenshot must suppress non-navigation field capture');
     };
-    const structuralResult = {
-      success: true,
-      verified: true,
-      dispatched: true,
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_20',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
       rect: { x: 10, y: 10, w: 24, h: 18 },
       fieldMeta: {
         toolbarCandidate: {
           score: 8,
           reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
           relatedRefs: ['ref_20', 'ref_21'],
+          regionRef: 'ref_10',
+          associatedEditorRef: 'ref_99',
         },
       },
-    };
-    await agent._auditRichTextToolbarTarget(
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const structuralPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',
       { ref_id: 'ref_20', text: 'This is document content, not a size preset.' },
-      structuralResult,
       { supportsVision: true },
     );
-    if (!structuralResult.wrongTarget || structuralResult.visualTargetAudit?.source !== 'structural_fallback') {
-      throw new Error(`expected no-screenshot font-size mismatch fallback, got: ${JSON.stringify(structuralResult)}`);
+    if (!structuralPreflight.block?.wrongTarget || structuralPreflight.block.visualTargetAudit?.source !== 'structural_fallback' || structuralPreflight.block.dispatched !== false) {
+      throw new Error(`expected no-screenshot font-size mismatch preflight, got: ${JSON.stringify(structuralPreflight)}`);
     }
   }
 });
