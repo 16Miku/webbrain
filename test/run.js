@@ -27176,6 +27176,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       assert.equal(params.objectId, 'closed-shadow-font-size');
       assert.match(params.functionDeclaration, /semantic_toolbar/);
       assert.match(params.functionDeclaration, /availablePresetValues/);
+      assert.match(params.functionDeclaration, /title: el\.getAttribute/);
       assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
       return {
         result: {
@@ -27243,7 +27244,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
   try {
     const tracePath = path.join(tempDir, 'trace.json');
     const outputPath = path.join(tempDir, 'result.json');
-    const compactResult = ({ ariaLabelledByText = null, name = null } = {}) => ({
+    const compactResult = ({ ariaLabelledByText = null, name = null, title = null } = {}) => ({
       rect: { x: 10, y: 12, w: 80, h: 24 },
       fieldMeta: {
         tag: 'input',
@@ -27253,6 +27254,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         ariaLabel: null,
         ariaLabelledByText,
         placeholder: null,
+        title,
         labelText: null,
         toolbarCandidate: {
           score: 8,
@@ -27282,6 +27284,15 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           kind: 'tool',
           ts: 1100,
           data: {
+            name: 'set_field',
+            args: { ref_id: 'ref_title', text: '125%' },
+            result: compactResult({ title: 'Zoom level' }),
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1150,
+          data: {
             name: 'type_text',
             args: { selector: '#font-size', text: 'Document prose' },
             result: compactResult({ name: 'fontSize' }),
@@ -27289,7 +27300,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         },
         {
           kind: 'screenshot',
-          ts: 1150,
+          ts: 1200,
           data: {
             caption: 'auto-screenshot after tool batch',
             screenshot_base64: 'data:image/png;base64,dW5yZWxhdGVk',
@@ -27297,7 +27308,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         },
         {
           kind: 'screenshot',
-          ts: 1200,
+          ts: 1250,
           data: {
             caption: 'rich-text toolbar target preflight',
             screenshot_base64: 'data:image/png;base64,ZXhhY3Q=',
@@ -27314,9 +27325,9 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     ], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
-    assert.equal(output.source.candidateCount, 1, 'aria-labelledby must exclude the ordinary field while name must not exclude the toolbar input');
-    assert.equal(output.source.toolEventIndex, 2);
-    assert.equal(output.source.screenshotEventIndex, 4, 'the dedicated preflight capture must win over a later unrelated screenshot');
+    assert.equal(output.source.candidateCount, 1, 'aria-labelledby/title must exclude ordinary fields while name must not exclude the toolbar input');
+    assert.equal(output.source.toolEventIndex, 3);
+    assert.equal(output.source.screenshotEventIndex, 5, 'the dedicated preflight capture must win over an unrelated screenshot');
     assert.equal(output.case.attemptedText, 'Document prose');
     assert.equal(output.image.originalBytes, 5);
     assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');

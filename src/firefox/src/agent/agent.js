@@ -1835,7 +1835,9 @@ export class Agent extends LoopDetector {
     if (targetKind === 'color') return shape.colorLike === true;
     if (targetKind === 'link') return shape.urlLike === true;
     if (targetKind === 'other_formatting') {
-      return shape.lines === 1 && shape.words <= 4 && shape.chars <= 40 && shape.urlLike !== true;
+      const validShape = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
+        && shape.urlLike !== true;
+      return validShape && (shape.numericPreset === true || candidate.attemptedPresetMatch === true);
     }
     return false;
   }

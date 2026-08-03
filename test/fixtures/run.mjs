@@ -2837,6 +2837,7 @@ for (const browserKind of ['chrome', 'firefox']) {
       familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
       editor: window.__wb_ax_ref(document.getElementById('editor-body')),
       labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
+      title: window.__wb_ax_ref(document.getElementById('title-size')),
       ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
       secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
     }));
@@ -2909,6 +2910,15 @@ for (const browserKind of ['chrome', 'firefox']) {
     });
     if (!labelledBy?.success || labelledBy.fieldMeta?.toolbarCandidate || labelledBy.fieldMeta?.ariaLabelledByText !== 'Quantity') {
       throw new Error(`aria-labelledby ordinary field must stay outside toolbar audit, got: ${JSON.stringify(labelledBy)}`);
+    }
+
+    const title = await call(page, 'set_field', {
+      ref_id: refs.title,
+      text: '125%',
+      clear: true,
+    });
+    if (!title?.success || title.fieldMeta?.toolbarCandidate || title.fieldMeta?.title !== 'Zoom level') {
+      throw new Error(`title-labelled ordinary field must stay outside toolbar audit, got: ${JSON.stringify(title)}`);
     }
 
     const ordinary = await call(page, 'set_field', {
@@ -3072,6 +3082,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }, otherFormattingAudit);
     if (!documentTextFormattingDecision.wrongTarget) {
       throw new Error(`document text must be rejected for other-formatting targets: ${JSON.stringify(documentTextFormattingDecision)}`);
+    }
+    for (const prose of ['Paris', 'Quarterly roadmap']) {
+      const shortProseFormattingDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(prose),
+        attemptedPresetMatch: false,
+      }, otherFormattingAudit);
+      if (!shortProseFormattingDecision.wrongTarget) {
+        throw new Error(`short prose must be rejected for other-formatting targets: ${JSON.stringify({ prose, shortProseFormattingDecision })}`);
+      }
+    }
+    const formattingPresetDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Single'),
+      attemptedPresetMatch: true,
+    }, otherFormattingAudit);
+    if (formattingPresetDecision.wrongTarget) {
+      throw new Error(`control-owned other-formatting preset must remain allowed: ${JSON.stringify(formattingPresetDecision)}`);
     }
     for (const targetKind of ['font_size', 'font_family', 'style_preset', 'color', 'link', 'other_formatting']) {
       const clearingDecision = AgentClass._richTextToolbarDecision({

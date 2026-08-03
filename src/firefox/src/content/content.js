@@ -2980,6 +2980,7 @@
         baseMeta?.ariaLabel,
         baseMeta?.ariaLabelledByText,
         baseMeta?.placeholder,
+        baseMeta?.title,
         baseMeta?.labelText,
       ].some(value => String(value || '').trim());
       if (!unlabeled) return null;
@@ -3106,6 +3107,7 @@
         ariaLabel: el.getAttribute ? el.getAttribute('aria-label') : null,
         ariaLabelledByText: _ariaLabelledByText(el),
         placeholder: el.getAttribute ? el.getAttribute('placeholder') : null,
+        title: el.getAttribute ? el.getAttribute('title') : null,
         labelText,
       };
       const toolbarCandidate = _richTextToolbarCandidate(el, meta);

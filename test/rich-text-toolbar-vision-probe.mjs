@@ -195,7 +195,7 @@ function isCompactUnlabelledInputAttempt(event) {
   const input = meta.tag === 'input' && ['text', 'search', 'number'].includes(String(meta.type || 'text'));
   // Keep this list identical to the runtime candidate detector: technical
   // name/autocomplete hints are not visible labels, while aria-labelledby is.
-  const unlabelled = ![meta.ariaLabel, meta.ariaLabelledByText, meta.placeholder, meta.labelText]
+  const unlabelled = ![meta.ariaLabel, meta.ariaLabelledByText, meta.placeholder, meta.title, meta.labelText]
     .some(value => String(value || '').trim());
   return input && unlabelled
     && Number(rect.w) > 0 && Number(rect.h) > 0
@@ -467,7 +467,9 @@ function decide(audit, attemptedText, availablePresetValues = []) {
       case 'color': compatible = shape.colorLike === true; break;
       case 'link': compatible = shape.urlLike === true; break;
       case 'other_formatting':
-        compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40 && shape.urlLike !== true;
+        compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
+          && shape.urlLike !== true
+          && (shape.numericPreset === true || presetMatch(attemptedText, availablePresetValues));
         break;
       default: return { decision: 'reject', source: 'vision_shape_mismatch', shape };
     }

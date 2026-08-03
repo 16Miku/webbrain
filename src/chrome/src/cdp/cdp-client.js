@@ -3229,6 +3229,7 @@ export class CDPClient {
             ariaLabel: el.getAttribute?.('aria-label') || null,
             ariaLabelledByText: labelledByText,
             placeholder: el.getAttribute?.('placeholder') || null,
+            title: el.getAttribute?.('title') || null,
             labelText,
           };
           const semanticToolbar = composedClosest(el, '[role="toolbar"]');
@@ -3240,6 +3241,7 @@ export class CDPClient {
               fieldMeta.ariaLabel,
               fieldMeta.ariaLabelledByText,
               fieldMeta.placeholder,
+              fieldMeta.title,
               fieldMeta.labelText,
             ].some(value => String(value || '').trim());
             if (!unlabeled) return null;
