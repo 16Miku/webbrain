@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Fixtures runner for v4.0.1 overlay defenses.
 //
-// Loads each fixture HTML in Chromium, injects the Chrome build's content.js
-// with a stubbed `chrome.runtime`, and drives `click({text})` through the
-// message handler. Asserts on response shape + which DOM element actually
-// got the click.
+// Loads fixture HTML in Chromium, plus targeted Firefox-engine regressions,
+// injects the matching build's content.js with a stubbed extension runtime,
+// and drives tools through the message handler. Asserts on response shape +
+// which DOM element actually received the interaction.
 //
 // No LLM, no API keys, no real sites — just deterministic regression checks
 // for _findTopmostModal scoping, the occlusion hit-test, and the rich
@@ -12,7 +12,7 @@
 //
 // Run: npm run test:fixtures
 
-import { chromium } from 'playwright';
+import { chromium, firefox as playwrightFirefox } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -323,6 +323,8 @@ async function selectFixtureText(page, selector = '#copy') {
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+const firefoxTests = [];
+function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
@@ -1590,35 +1592,6 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
-  test(`press_keys (${browserKind}): semicolon dispatches a page shortcut event`, async (page) => {
-    await setupContentFixture(page, 'trusted-click-fallback.html', browserKind);
-    await page.evaluate(() => {
-      window.__semicolonShortcutEvents = [];
-      document.addEventListener('keydown', (event) => {
-        if (event.key !== ';') return;
-        window.__semicolonShortcutEvents.push({
-          key: event.key,
-          code: event.code,
-          keyCode: event.keyCode,
-        });
-      });
-    });
-
-    const result = await call(page, 'press_keys', { key: ';' });
-    if (result?.success !== true || result?.dispatched !== true || result?.key !== ';') {
-      throw new Error(`semicolon should dispatch successfully, got: ${JSON.stringify(result)}`);
-    }
-    const events = await page.evaluate(() => window.__semicolonShortcutEvents);
-    if (
-      events?.length !== 1
-      || events[0]?.key !== ';'
-      || events[0]?.code !== 'Semicolon'
-      || events[0]?.keyCode !== 186
-    ) {
-      throw new Error(`semicolon shortcut metadata mismatch: ${JSON.stringify(events)}`);
-    }
-  });
-
   test(`checkbox tools (${browserKind}): AX state and set_checked are explicit and idempotent`, async (page) => {
     await setupContentFixture(page, 'trusted-click-fallback.html', browserKind);
     const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
@@ -1771,6 +1744,45 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 }
+
+async function assertSemicolonShortcutEvent(page, browserKind, expectedKeyCode) {
+  await setupContentFixture(page, 'trusted-click-fallback.html', browserKind);
+  await page.evaluate(() => {
+    window.__semicolonShortcutEvents = [];
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== ';') return;
+      window.__semicolonShortcutEvents.push({
+        key: event.key,
+        code: event.code,
+        keyCode: event.keyCode,
+        which: event.which,
+      });
+    });
+  });
+
+  const result = await call(page, 'press_keys', { key: ';' });
+  if (result?.success !== true || result?.dispatched !== true || result?.key !== ';') {
+    throw new Error(`semicolon should dispatch successfully, got: ${JSON.stringify(result)}`);
+  }
+  const events = await page.evaluate(() => window.__semicolonShortcutEvents);
+  if (
+    events?.length !== 1
+    || events[0]?.key !== ';'
+    || events[0]?.code !== 'Semicolon'
+    || events[0]?.keyCode !== expectedKeyCode
+    || events[0]?.which !== expectedKeyCode
+  ) {
+    throw new Error(`semicolon shortcut metadata mismatch: ${JSON.stringify(events)}`);
+  }
+}
+
+test('press_keys (chrome): semicolon dispatches Chromium-compatible metadata', async (page) => {
+  await assertSemicolonShortcutEvent(page, 'chrome', 186);
+});
+
+firefoxTest('press_keys (firefox engine): semicolon dispatches Gecko-compatible metadata', async (page) => {
+  await assertSemicolonShortcutEvent(page, 'firefox', 59);
+});
 
 test('set_checked (chrome): post-click verification survives same-document route changes', async (page) => {
   await setupContentFixture(page, 'trusted-click-fallback.html', 'chrome');
@@ -2958,23 +2970,28 @@ test('SMD: X photo modal wins over background timeline media', async (page) => {
 });
 
 (async () => {
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
   let passed = 0, failed = 0;
-  for (const t of tests) {
-    const page = await context.newPage();
-    try {
-      await t.fn(page);
-      console.log(`  ✓ ${t.name}`);
-      passed++;
-    } catch (e) {
-      console.log(`  ✗ ${t.name}\n    ${e.message}`);
-      failed++;
-    } finally {
-      await page.close();
+  const runTests = async (browserType, entries) => {
+    const browser = await browserType.launch();
+    const context = await browser.newContext();
+    for (const t of entries) {
+      const page = await context.newPage();
+      try {
+        await t.fn(page);
+        console.log(`  ✓ ${t.name}`);
+        passed++;
+      } catch (e) {
+        console.log(`  ✗ ${t.name}\n    ${e.message}`);
+        failed++;
+      } finally {
+        await page.close();
+      }
     }
-  }
-  await browser.close();
-  console.log(`\n  ${passed} passed, ${failed} failed (${tests.length} total)`);
+    await browser.close();
+  };
+
+  await runTests(chromium, tests);
+  await runTests(playwrightFirefox, firefoxTests);
+  console.log(`\n  ${passed} passed, ${failed} failed (${tests.length + firefoxTests.length} total)`);
   process.exit(failed > 0 ? 1 : 0);
 })();

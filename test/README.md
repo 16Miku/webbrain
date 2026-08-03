@@ -6,7 +6,7 @@ Three layers, each with a different scope, speed, and cost profile.
 
 ```bash
 npm install
-npx playwright install chromium
+npx playwright install chromium firefox
 ```
 
 ## 1. Unit — `npm test`

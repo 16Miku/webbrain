@@ -2154,7 +2154,7 @@
       ArrowUp: { code: 'ArrowUp', keyCode: 38 },
       ArrowRight: { code: 'ArrowRight', keyCode: 39 },
       ArrowDown: { code: 'ArrowDown', keyCode: 40 },
-      ';': { code: 'Semicolon', keyCode: 186 },
+      ';': { code: 'Semicolon', keyCode: 59 },
     }[key];
     const target = (document.activeElement && document.activeElement !== document.body)
       ? document.activeElement
