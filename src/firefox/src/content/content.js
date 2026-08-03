@@ -2931,6 +2931,43 @@
   // language- and site-neutral *candidate* here; the background combines this
   // structural evidence with a target-annotated screenshot before changing
   // the tool result. Ordinary labelled form inputs never enter that audit.
+  function _richTextToolbarAvailablePresetValues(el) {
+    try {
+      const values = [];
+      const seen = new Set();
+      const add = raw => {
+        const value = String(raw || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 80);
+        const key = value.toLowerCase();
+        if (!value || seen.has(key) || values.length >= 40) return;
+        seen.add(key);
+        values.push(value);
+      };
+      add(el.value);
+
+      const roots = [];
+      if (el.list) roots.push(el.list);
+      for (const id of `${el.getAttribute('aria-controls') || ''} ${el.getAttribute('aria-owns') || ''}`.trim().split(/\s+/)) {
+        if (!id) continue;
+        const root = document.getElementById(id);
+        if (root && !roots.includes(root)) roots.push(root);
+      }
+      const comboRoot = el.closest?.('[role="combobox"],[role="listbox"]') || null;
+      if (comboRoot && comboRoot !== el && !roots.includes(comboRoot)) roots.push(comboRoot);
+
+      for (const root of roots.slice(0, 6)) {
+        const options = [];
+        if (root.matches?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]')) options.push(root);
+        options.push(...Array.from(root.querySelectorAll?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]') || []));
+        for (const option of options.slice(0, 40)) {
+          add(option.value);
+          add(option.getAttribute?.('data-value'));
+          add(option.textContent);
+        }
+      }
+      return values;
+    } catch { return []; }
+  }
+
   function _richTextToolbarCandidate(el, baseMeta) {
     try {
       if (!el || el.tagName !== 'INPUT') return null;
@@ -3025,6 +3062,7 @@
       return {
         score,
         reasons,
+        availablePresetValues: _richTextToolbarAvailablePresetValues(el),
         regionRect: {
           x: Math.round(region.x),
           y: Math.round(region.y),

@@ -60,6 +60,8 @@ Options:
   --already-annotated        Do not draw the runtime-style red target outline
   --task <text>              Trusted user-task context override
   --value <text>             Attempted tool value override
+  --preset-value <text>      Available font preset; repeat for multiple values
+  --preset-values <a,b,c>    Comma-separated available font presets
   --endpoint <url>           OpenAI-compatible base URL (default: 127.0.0.1:8080)
   --model <name>             Model to test; repeat to compare multiple models
   --models <a,b,c>           Comma-separated model list
@@ -85,6 +87,7 @@ Env:
 function parseArgs(argv) {
   const options = {
     models: [],
+    presetValues: [],
     attempt: 1,
     endpoint: 'http://127.0.0.1:8080',
     expectedRegion: 'rich_text_toolbar',
@@ -113,6 +116,8 @@ function parseArgs(argv) {
       case '--viewport': options.viewport = parseTuple(take(i, arg), 2, arg); i++; break;
       case '--task': options.task = take(i, arg); i++; break;
       case '--value': options.value = take(i, arg); i++; break;
+      case '--preset-value': options.presetValues.push(take(i, arg)); i++; break;
+      case '--preset-values': options.presetValues.push(...take(i, arg).split(',').map(v => v.trim()).filter(Boolean)); i++; break;
       case '--endpoint': options.endpoint = take(i, arg); i++; break;
       case '--model': options.models.push(take(i, arg)); i++; break;
       case '--models': options.models.push(...take(i, arg).split(',').map(v => v.trim()).filter(Boolean)); i++; break;
@@ -137,6 +142,7 @@ function parseArgs(argv) {
   if (positionals[2]) options.models.push(positionals[2]);
   options.output ||= process.env.VISION_PROBE_OUTPUT || '';
   options.models = [...new Set(options.models)];
+  options.presetValues = [...new Set(options.presetValues)];
   if (!Number.isInteger(options.attempt) || options.attempt < 1) throw new Error('--attempt must be a positive integer');
   if (options.eventIndex != null && (!Number.isInteger(options.eventIndex) || options.eventIndex < 0)) {
     throw new Error('--event-index must be a non-negative integer');
@@ -265,6 +271,9 @@ async function loadTraceCase(options) {
     viewport: options.viewport || traceViewport,
     task: options.task ?? `User request 1: ${String(trace.run?.userMessage || '(unavailable)')}`,
     attemptedText: options.value ?? String(toolData.args?.text || ''),
+    presetValues: options.presetValues.length
+      ? options.presetValues
+      : (toolData.result?.fieldMeta?.toolbarCandidate?.availablePresetValues || []),
     source: {
       kind: 'trace',
       path: tracePath,
@@ -304,6 +313,7 @@ async function loadCase(options) {
     viewport,
     task,
     attemptedText,
+    presetValues: options.presetValues.length ? options.presetValues : (traceCase?.presetValues || []),
     source: traceCase?.source || { kind: 'image', path: imagePath },
   };
 }
@@ -348,6 +358,11 @@ async function annotateScreenshot(dataUrl, rectTuple, viewportTuple) {
 
 function attemptedTextShape(attemptedText) {
   const text = String(attemptedText || '');
+  const normalized = text.trim().replace(/\s+/g, ' ').toLowerCase();
+  const genericFontFamilies = new Set([
+    'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
+    'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
+  ]);
   return {
     chars: text.length,
     words: text.trim() ? text.trim().split(/\s+/).length : 0,
@@ -355,7 +370,15 @@ function attemptedTextShape(attemptedText) {
     numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(text),
     urlLike: /^\s*(?:https?:\/\/|mailto:|#)/i.test(text),
     colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(text),
+    genericFontFamily: genericFontFamilies.has(normalized),
   };
+}
+
+function presetMatch(text, availableValues) {
+  const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const attempted = normalize(text);
+  return !!attempted && Array.isArray(availableValues)
+    && availableValues.slice(0, 40).some(value => normalize(value) === attempted);
 }
 
 function extractFirstJsonObject(raw) {
@@ -397,7 +420,7 @@ function normalizeAudit(raw) {
   };
 }
 
-function decide(audit, attemptedText) {
+function decide(audit, attemptedText, availablePresetValues = []) {
   if (!audit || audit.confidence < CONFIDENCE_THRESHOLD) {
     return { decision: 'uncertain', source: 'insufficient_visual_confidence' };
   }
@@ -408,7 +431,8 @@ function decide(audit, attemptedText) {
       case 'font_size': compatible = shape.numericPreset === true; break;
       case 'font_family':
         compatible = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
-          && shape.numericPreset !== true && shape.urlLike !== true;
+          && shape.numericPreset !== true && shape.urlLike !== true
+          && (shape.genericFontFamily === true || presetMatch(attemptedText, availablePresetValues));
         break;
       case 'style_preset':
         compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
@@ -564,6 +588,7 @@ try {
   console.error('[case] mode:     runtime-exact target-only (shape local)');
   console.error(`[case] value:    ${short(testCase.attemptedText, 120)}`);
   console.error(`[case] shape:    ${JSON.stringify(localShape)}`);
+  console.error(`[case] presets:  ${JSON.stringify(testCase.presetValues)}`);
   console.error(`[case] rect:     ${JSON.stringify(testCase.rect)} viewport=${JSON.stringify(testCase.viewport)}`);
   if (annotated.pixelRect) console.error(`[case] pixels:   ${JSON.stringify(annotated.pixelRect)} image=${annotated.image.width}x${annotated.image.height}`);
   console.error(`[case] expected: ${options.expectedRegion}/${options.expectedTarget} -> ${options.expectedDecision}`);
@@ -592,7 +617,7 @@ try {
           foldSystem: options.foldSystem,
         });
         const audit = normalizeAudit(response.content);
-        const decision = decide(audit, testCase.attemptedText);
+        const decision = decide(audit, testCase.attemptedText, testCase.presetValues);
         const expected = expectation(audit, decision, options);
         results.push({ model, response, audit, decision, expected });
         console.log(`\n========== ${label} ==========`);
@@ -635,6 +660,7 @@ try {
       task: testCase.task,
       attemptedText: testCase.attemptedText,
       attemptedTextShape: localShape,
+      availablePresetValues: testCase.presetValues,
       rect: testCase.rect,
       viewport: testCase.viewport,
       expected: {

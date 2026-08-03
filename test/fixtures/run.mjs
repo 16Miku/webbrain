@@ -2833,6 +2833,7 @@ for (const browserKind of ['chrome', 'firefox']) {
     const refs = await page.evaluate(() => ({
       size: window.__wb_ax_ref(document.getElementById('font-size')),
       family: window.__wb_ax_ref(document.getElementById('font-family')),
+      familyInput: window.__wb_ax_ref(document.getElementById('font-family-input')),
       familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
       editor: window.__wb_ax_ref(document.getElementById('editor-body')),
       labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
@@ -2860,6 +2861,14 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
     if (candidate.associatedEditorRef !== refs.editor) {
       throw new Error(`expected exact associated editor ref, got: ${JSON.stringify(candidate)}`);
+    }
+    const familyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.familyInput, text: 'Inter Display' },
+    });
+    const availableFamilies = familyProbe?.fieldMeta?.toolbarCandidate?.availablePresetValues || [];
+    if (!availableFamilies.includes('Default') || !availableFamilies.includes('Inter Display') || !availableFamilies.includes('Times New Roman')) {
+      throw new Error(`expected bounded control-owned font presets, got: ${JSON.stringify(familyProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
@@ -2924,6 +2933,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       score: 4,
       reasons: ['unlabelled_text_control', 'compact_control', 'dense_control_cluster'],
       relatedRefs: ['ref_12', 'ref_13'],
+      availablePresetValues: ['Default', 'Inter Display', 'Arial', 'Times New Roman'],
       regionRef: 'ref_10',
       associatedEditorRef: 'ref_99',
       regionRect: { x: 0, y: 0, w: 320, h: 48 },
@@ -2942,9 +2952,28 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const legitimateFamilyDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
       attemptedTextShape: AgentClass._richTextToolbarTextShape('Inter Display'),
+      attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch('Inter Display', candidate.availablePresetValues),
     }, familyAudit);
     if (legitimateFamilyDecision.wrongTarget) {
       throw new Error(`short font-family value must remain allowed: ${JSON.stringify(legitimateFamilyDecision)}`);
+    }
+    for (const documentText of ['Paris', 'Quarterly roadmap']) {
+      const mistakenFamilyDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(documentText),
+        attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch(documentText, candidate.availablePresetValues),
+      }, familyAudit);
+      if (!mistakenFamilyDecision.wrongTarget) {
+        throw new Error(`arbitrary short text must be rejected for font-family targets: ${JSON.stringify({ documentText, mistakenFamilyDecision })}`);
+      }
+    }
+    const genericFamilyDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('system-ui'),
+      attemptedPresetMatch: false,
+    }, familyAudit);
+    if (genericFamilyDecision.wrongTarget) {
+      throw new Error(`standard generic font family must remain allowed: ${JSON.stringify(genericFamilyDecision)}`);
     }
     const numericSizeDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
@@ -3207,6 +3236,17 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       || agent.autoScreenshotCount.get(tabId)
     ) {
       throw new Error(`expected budget-neutral target-only type_text preflight before dispatch, got: ${JSON.stringify({ visualPreflight, classifierArgCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
+    }
+    agent._resetRichTextToolbarAudit(tabId);
+
+    const shortDocumentPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'Paris' },
+      { supportsVision: true },
+    );
+    if (!shortDocumentPreflight.block?.wrongTarget || shortDocumentPreflight.block.dispatched !== false) {
+      throw new Error(`short non-preset document text must be blocked before dispatch: ${JSON.stringify(shortDocumentPreflight)}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
 

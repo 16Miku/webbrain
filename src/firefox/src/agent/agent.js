@@ -1777,6 +1777,11 @@ export class Agent extends LoopDetector {
   static _richTextToolbarTextShape(text) {
     const value = String(text || '');
     const trimmed = value.trim();
+    const normalized = trimmed.replace(/\s+/g, ' ').toLowerCase();
+    const genericFontFamilies = new Set([
+      'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
+      'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
+    ]);
     return {
       chars: value.length,
       words: trimmed ? trimmed.split(/\s+/).length : 0,
@@ -1784,15 +1789,24 @@ export class Agent extends LoopDetector {
       numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(value),
       urlLike: /^\s*(?:https?:\/\/|mailto:|#)/i.test(value),
       colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(value),
+      genericFontFamily: genericFontFamilies.has(normalized),
     };
   }
 
-  static _richTextToolbarValueCompatible(targetKind, shape) {
+  static _richTextToolbarPresetMatch(text, availableValues) {
+    const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+    const attempted = normalize(text);
+    if (!attempted || !Array.isArray(availableValues)) return false;
+    return availableValues.slice(0, 40).some(value => normalize(value) === attempted);
+  }
+
+  static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
     if (!shape || shape.chars < 1) return false;
     if (targetKind === 'font_size') return shape.numericPreset === true;
     if (targetKind === 'font_family') {
-      return shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
+      const validShape = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
         && shape.numericPreset !== true && shape.urlLike !== true;
+      return validShape && (shape.genericFontFamily === true || candidate.attemptedPresetMatch === true);
     }
     if (targetKind === 'style_preset') {
       return shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
@@ -1811,7 +1825,7 @@ export class Agent extends LoopDetector {
     const shape = candidate?.attemptedTextShape || null;
     if (audit?.confidence >= 0.7) {
       if (audit.regionKind === 'rich_text_toolbar') {
-        const compatible = Agent._richTextToolbarValueCompatible(audit.targetKind, shape);
+        const compatible = Agent._richTextToolbarValueCompatible(audit.targetKind, shape, candidate);
         return {
           wrongTarget: !compatible,
           source: compatible ? 'vision_shape_compatible' : 'vision_shape_mismatch',
@@ -2113,7 +2127,11 @@ export class Agent extends LoopDetector {
     }
     const attemptedTextShape = Agent._richTextToolbarTextShape(args?.text || '');
     const decision = Agent._richTextToolbarDecision(
-      { ...candidate, attemptedTextShape },
+      {
+        ...candidate,
+        attemptedTextShape,
+        attemptedPresetMatch: Agent._richTextToolbarPresetMatch(args?.text || '', candidate.availablePresetValues),
+      },
       audit,
     );
     if (decision.wrongTarget) {

@@ -6,6 +6,7 @@
   .editor { width: 620px; border: 1px solid #aaa; }
   .toolbar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #ccc; }
   .family { width: 132px; height: 24px; display: flex; align-items: center; padding: 0 6px; border: 1px solid #bbb; }
+  .family-input { width: 118px; height: 22px; padding: 0 6px; }
   .size { width: 34px; height: 22px; padding: 0 3px; }
   .body { min-height: 130px; padding: 12px; outline: none; }
   .ordinary { display: block; width: 180px; height: 32px; margin-top: 24px; }
@@ -14,6 +15,12 @@
 <div class="editor">
   <div class="toolbar" role="toolbar">
     <div id="font-family" class="family" tabindex="0"><span>Inter Display</span></div>
+    <input id="font-family-input" class="family-input" type="text" value="Default" list="font-family-presets">
+    <datalist id="font-family-presets">
+      <option value="Inter Display"></option>
+      <option value="Arial"></option>
+      <option value="Times New Roman"></option>
+    </datalist>
     <div><input id="font-size" class="size" type="text" name="fontSize" value="11"></div>
     <span id="toolbar-quantity-label">Quantity</span>
     <input id="labelled-by-size" class="size" type="text" value="11" aria-labelledby="toolbar-quantity-label">
