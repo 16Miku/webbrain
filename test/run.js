@@ -27197,6 +27197,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       assert.equal(params.objectId, 'closed-shadow-font-size');
       assert.match(params.functionDeclaration, /semantic_toolbar/);
       assert.match(params.functionDeclaration, /availablePresetValues/);
+      assert.match(params.functionDeclaration, /associatedEditorIdentity/);
       assert.match(params.functionDeclaration, /title: el\.getAttribute/);
       assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
       return {
@@ -27211,6 +27212,16 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
                 score: 8,
                 reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
                 availablePresetValues: ['11', '14'],
+                associatedEditorRef: '',
+                associatedEditorIdentity: {
+                  tag: 'div',
+                  id: 'editor-body',
+                  role: 'textbox',
+                  pageX: 20,
+                  pageY: 160,
+                  w: 400,
+                  h: 180,
+                },
               },
             },
             toolbarContext: true,
@@ -27225,6 +27236,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
   assert.equal(probe.resolved, true);
   assert.equal(probe.shadowPierced, true);
   assert.equal(probe.fieldMeta.toolbarCandidate.score, 8);
+  assert.equal(probe.fieldMeta.toolbarCandidate.associatedEditorIdentity.id, 'editor-body');
   assert.deepEqual(probe.rect, { x: 10, y: 8, w: 80, h: 24 });
   assert.equal(commands.some(command => command.method.startsWith('Input.')), false, 'preflight must not dispatch input');
   assert.equal(commands.at(-1).method, 'Runtime.releaseObject');

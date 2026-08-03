@@ -3262,6 +3262,10 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (doneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
       throw new Error(`expected unresolved toolbar completion block, got: ${JSON.stringify(doneBlock)}`);
     }
+    const plainFinalBlock = agent._completionPlainFinalBlock(tabId);
+    if (!plainFinalBlock?.includes('RUNTIME COMPLETION BLOCK') || !plainFinalBlock.includes('rich-text formatting toolbar')) {
+      throw new Error(`expected unresolved toolbar plain-final block, got: ${JSON.stringify(plainFinalBlock)}`);
+    }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_98',
@@ -3303,14 +3307,35 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const selectorRecoveryResult = {};
     agent._applyRichTextToolbarWrongTarget(
       tabId,
-      'set_field',
-      { ref_id: 'ref_12' },
+      'type_text',
+      { selector: '#font-family', text: 'Document prose' },
       selectorRecoveryResult,
-      candidate,
+      { ...candidate, associatedEditorRef: '' },
       familyDecision,
       familyAudit,
       { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
     );
+    if (!agent._richTextToolbarDebts.has(tabId) || !agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('selector rejection with a stable editor identity must retain recoverable completion debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: '',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 8, pageX: 10, pageY: 8, w: 60, h: 24 },
+      fieldMeta: { tag: 'input', type: 'text', toolbarCandidate: candidate },
+      toolbarContext: true,
+      toolbarRegionRef: '',
+    });
+    const selectorRetryBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'type_text',
+      { selector: '#font-family', text: 'Document prose' },
+    );
+    if (!selectorRetryBlock?.wrongTarget || selectorRetryBlock.dispatched !== false) {
+      throw new Error(`the rejected toolbar selector must remain blocked while recovery debt exists: ${JSON.stringify(selectorRetryBlock)}`);
+    }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: '',
@@ -3456,13 +3481,13 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       'set_field',
       { ref_id: 'ref_12' },
       unscopedBlock,
-      { ...candidate, associatedEditorRef: '' },
+      { ...candidate, associatedEditorRef: '', associatedEditorIdentity: null },
       familyDecision,
       familyAudit,
       { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
     );
     if (!unscopedBlock.wrongTarget || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('a missing exact editor ref must block the edit without creating unrecoverable debt');
+      throw new Error('missing editor ref and identity must block the edit without creating unrecoverable debt');
     }
 
     let classifierArgCount = 0;

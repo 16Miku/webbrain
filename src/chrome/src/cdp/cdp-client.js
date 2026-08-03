@@ -3279,6 +3279,61 @@ export class CDPClient {
             if (score < 4) return null;
             const regionNode = semanticToolbar || cluster?.node || el.parentElement || el;
             const region = regionNode.getBoundingClientRect();
+            const associatedEditor = (() => {
+              const candidates = [];
+              const composedParent = node => {
+                if (!node) return null;
+                return node.parentElement || node.getRootNode?.()?.host || null;
+              };
+              let scope = composedParent(regionNode);
+              for (let depth = 0; scope && depth < 5; depth += 1, scope = composedParent(scope)) {
+                let editors = [];
+                try {
+                  editors = Array.from(scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"])') || []);
+                } catch {}
+                for (const editor of editors) {
+                  if (
+                    editor === regionNode
+                    || regionNode.contains?.(editor)
+                    || composedClosest(editor, '[role="toolbar"]')
+                    || !visible(editor)
+                  ) continue;
+                  const editorRect = editor.getBoundingClientRect();
+                  const overlap = Math.max(0, Math.min(region.right, editorRect.right) - Math.max(region.left, editorRect.left));
+                  const horizontalPenalty = overlap > 0
+                    ? 0
+                    : Math.min(Math.abs(editorRect.left - region.right), Math.abs(region.left - editorRect.right));
+                  const verticalPenalty = editorRect.top >= region.bottom - 8
+                    ? Math.max(0, editorRect.top - region.bottom)
+                    : 500 + Math.abs(editorRect.bottom - region.top);
+                  candidates.push({
+                    editor,
+                    rect: editorRect,
+                    score: (depth * 250) + verticalPenalty + horizontalPenalty,
+                  });
+                }
+                if (candidates.length) break;
+              }
+              candidates.sort((a, b) => a.score - b.score);
+              const best = candidates[0];
+              if (!best || (candidates[1] && Math.abs(candidates[1].score - best.score) < 12)) return null;
+              return {
+                rect: {
+                  x: Math.round(best.rect.x), y: Math.round(best.rect.y),
+                  w: Math.round(best.rect.width), h: Math.round(best.rect.height),
+                },
+                identity: {
+                  tag: String(best.editor.tagName || '').toLowerCase(),
+                  id: best.editor.id || null,
+                  name: best.editor.getAttribute?.('name') || null,
+                  role: best.editor.getAttribute?.('role') || null,
+                  pageX: Math.round(best.rect.x + window.scrollX),
+                  pageY: Math.round(best.rect.y + window.scrollY),
+                  w: Math.round(best.rect.width),
+                  h: Math.round(best.rect.height),
+                },
+              };
+            })();
             const availablePresetValues = [];
             const seenValues = new Set();
             const addValue = raw => {
@@ -3323,7 +3378,8 @@ export class CDPClient {
               regionRef: '',
               relatedRefs: [],
               associatedEditorRef: '',
-              associatedEditorRect: null,
+              associatedEditorRect: associatedEditor?.rect || null,
+              associatedEditorIdentity: associatedEditor?.identity || null,
             };
           })();
           if (candidate) fieldMeta.toolbarCandidate = candidate;

@@ -768,6 +768,9 @@ export class Agent extends LoopDetector {
   _completionPlainFinalBlock(tabId) {
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
+    if (this._richTextToolbarDebts.has(tabId)) {
+      return '[RUNTIME COMPLETION BLOCK: The last text-entry attempt targeted a rich-text formatting toolbar, so ordinary final text cannot complete this action. Enter the requested content in the associated editor body and verify that edit on a fresh turn. If recovery is impossible, call done with outcome="partial" or outcome="failed" instead of claiming completion.]';
+    }
     return completionPlainFinalBlock(this.completionInvariants.get(tabId));
   }
 
@@ -1865,6 +1868,14 @@ export class Agent extends LoopDetector {
       && Math.abs(expectedH - actualH) <= sizeTolerance;
   }
 
+  static _richTextToolbarEditorIdentityRecoverable(expected) {
+    if (!expected || typeof expected !== 'object' || !String(expected.tag || '').trim()) return false;
+    if (String(expected.id || '').trim() || String(expected.name || '').trim()) return true;
+    return [expected.pageX, expected.pageY, expected.w, expected.h]
+      .map(Number)
+      .every(Number.isFinite);
+  }
+
   static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
     if (!shape) return false;
     // An explicit empty value is a formatting reset, not document prose. It
@@ -2121,12 +2132,14 @@ export class Agent extends LoopDetector {
     }
     const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
     if (refBlock) return refBlock;
+    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
+    const blockedSelector = !!selector && state.blockedSelectors?.has(selector);
     const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
     const sameToolbarContext = probe.toolbarContext === true
       && typeof probe.toolbarRegionRef === 'string'
       && !!probe.toolbarRegionRef
       && probe.toolbarRegionRef === state.regionRef;
-    return blockedRef || sameToolbarContext
+    return blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(state)
       : null;
   }
@@ -2135,7 +2148,13 @@ export class Agent extends LoopDetector {
     if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified === false) return false;
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
     const state = this._richTextToolbarStates.get(tabId);
-    if (!state?.associatedEditorRef) return false;
+    if (
+      !state
+      || (
+        !state.associatedEditorRef
+        && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
+      )
+    ) return false;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return false;
     const sameFrame = Number.isInteger(state.frameId)
@@ -2194,9 +2213,13 @@ export class Agent extends LoopDetector {
     state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
     state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
     state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
-    const hasExactRecoveryTarget = !!state.associatedEditorRef;
+    state.blockedSelectors = state.blockedSelectors instanceof Set ? state.blockedSelectors : new Set();
+    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
+    const hasExactRecoveryTarget = !!state.associatedEditorRef
+      || Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
     if (hasExactRecoveryTarget) {
       if (refId) state.blockedRefs.add(refId);
+      if (selector) state.blockedSelectors.add(selector);
       for (const relatedRef of candidate?.relatedRefs || []) {
         if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
       }
