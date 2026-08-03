@@ -3315,7 +3315,43 @@
     return active;
   }
 
-  function _probeRichTextToolbarRetryTarget(params = {}) {
+  async function _settledRichTextToolbarRect(el, shouldScroll) {
+    if (shouldScroll) {
+      try {
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      } catch {
+        try { el.scrollIntoView(); } catch {}
+      }
+    }
+    let previous = el.getBoundingClientRect();
+    let stableFrames = 0;
+    const deadline = performance.now() + 750;
+    while (stableFrames < 2 && performance.now() < deadline) {
+      await new Promise(resolve => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          resolve();
+        };
+        setTimeout(finish, 40);
+        try { requestAnimationFrame(finish); } catch {}
+      });
+      if (!el.isConnected) return null;
+      const next = el.getBoundingClientRect();
+      const delta = Math.max(
+        Math.abs(next.x - previous.x),
+        Math.abs(next.y - previous.y),
+        Math.abs(next.width - previous.width),
+        Math.abs(next.height - previous.height),
+      );
+      stableFrames = delta <= 0.5 ? stableFrames + 1 : 0;
+      previous = next;
+    }
+    return el.isConnected ? el.getBoundingClientRect() : null;
+  }
+
+  async function _probeRichTextToolbarRetryTarget(params = {}) {
     try {
       const toolName = String(params.toolName || '');
       const args = params.args || {};
@@ -3376,10 +3412,8 @@
       if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
         return { resolved: false };
       }
-      if (!coordinateTarget) {
-        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-      }
-      const rect = el.getBoundingClientRect();
+      const rect = await _settledRichTextToolbarRect(el, !coordinateTarget);
+      if (!rect) return { resolved: false };
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
       const toolbarContext = _richTextToolbarContextForElement(el);

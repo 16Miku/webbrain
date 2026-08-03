@@ -1170,7 +1170,7 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
 
   await page.setContent(`<!doctype html>
     <style>
-      #slotted-toolbar-editor { width:420px; }
+      #slotted-toolbar-editor { width:420px; margin-top:1400px; }
       #slot-editor-component { display:block; width:420px; height:160px; }
     </style>
     <div id="slotted-toolbar-editor">
@@ -1193,14 +1193,27 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
       document.querySelector('#slot-editor-component').attachShadow({ mode: 'open' }).innerHTML =
         '<div id="slot-editor-body" role="textbox" contenteditable="true" style="width:420px;height:160px">Enter text</div>';
     </script>`);
+  await page.evaluate(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.documentElement.style.scrollBehavior = 'smooth';
+  });
   const slottedProbe = await client.probeRichTextToolbarSelector(42, '#slotted-family');
+  const settledSlottedRect = await page.evaluate(() => {
+    const rect = document.querySelector('#slotted-family').getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    document.documentElement.style.scrollBehavior = 'auto';
+    return { y: rect.y, h: rect.height, viewportHeight };
+  });
   if (
     !slottedProbe?.resolved
     || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
     || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
+    || Math.abs(slottedProbe.rect.y - settledSlottedRect.y) > 2
+    || slottedProbe.rect.y < 0
+    || slottedProbe.rect.y + slottedProbe.rect.h > settledSlottedRect.viewportHeight
   ) {
-    throw new Error(`labelled assigned-slot toolbar and descendant shadow editor were not audited by the CDP selector probe: ${JSON.stringify(slottedProbe)}`);
+    throw new Error(`labelled assigned-slot toolbar must settle before CDP audit: ${JSON.stringify({ slottedProbe, settledSlottedRect })}`);
   }
   const ordinarySearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-search');
   if (!ordinarySearchProbe?.resolved || ordinarySearchProbe.fieldMeta?.toolbarCandidate) {
@@ -3171,6 +3184,31 @@ for (const browserKind of ['chrome', 'firefox']) {
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
       };
     });
+
+    await page.evaluate(() => {
+      const target = document.getElementById('iframe-toolbar-family-input');
+      target.closest('.editor').style.marginTop = '1400px';
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      document.documentElement.style.scrollBehavior = 'smooth';
+    });
+    const smoothScrollProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.iframeToolbarFamilyInput, text: 'Roboto' },
+    });
+    const settledTarget = await page.evaluate(() => {
+      const rect = document.getElementById('iframe-toolbar-family-input').getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      document.documentElement.style.scrollBehavior = 'auto';
+      return { rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height }, viewportHeight };
+    });
+    if (
+      !smoothScrollProbe?.resolved
+      || Math.abs(smoothScrollProbe.rect.y - settledTarget.rect.y) > 2
+      || smoothScrollProbe.rect.y < 0
+      || smoothScrollProbe.rect.y + smoothScrollProbe.rect.h > settledTarget.viewportHeight
+    ) {
+      throw new Error(`smooth-scroll toolbar probe must settle and re-measure the target: ${JSON.stringify({ smoothScrollProbe, settledTarget })}`);
+    }
 
     const toolbar = await call(page, 'set_field', {
       ref_id: refs.size,

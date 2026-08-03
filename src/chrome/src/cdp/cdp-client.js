@@ -3157,9 +3157,45 @@ export class CDPClient {
       const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
         objectId,
         returnByValue: true,
-        functionDeclaration: `function () {
+        awaitPromise: true,
+        functionDeclaration: `async function () {
           const el = this;
           if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+          const settledRect = async () => {
+            try {
+              el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+            } catch {
+              try { el.scrollIntoView(); } catch {}
+            }
+            let previous = el.getBoundingClientRect();
+            let stableFrames = 0;
+            const deadline = performance.now() + 750;
+            while (stableFrames < 2 && performance.now() < deadline) {
+              await new Promise(resolve => {
+                let finished = false;
+                const finish = () => {
+                  if (finished) return;
+                  finished = true;
+                  resolve();
+                };
+                setTimeout(finish, 40);
+                try { requestAnimationFrame(finish); } catch {}
+              });
+              if (!el.isConnected) return null;
+              const next = el.getBoundingClientRect();
+              const delta = Math.max(
+                Math.abs(next.x - previous.x),
+                Math.abs(next.y - previous.y),
+                Math.abs(next.width - previous.width),
+                Math.abs(next.height - previous.height),
+              );
+              stableFrames = delta <= 0.5 ? stableFrames + 1 : 0;
+              previous = next;
+            }
+            return el.isConnected ? el.getBoundingClientRect() : null;
+          };
+          const rect = await settledRect();
+          if (!rect) return null;
           const visible = node => {
             try {
               const rect = node.getBoundingClientRect();
@@ -3241,7 +3277,6 @@ export class CDPClient {
             labelText,
           };
           const semanticToolbar = composedClosest(el, '[role="toolbar"]');
-          const rect = el.getBoundingClientRect();
           const candidate = (() => {
             const supportedInput = tag === 'input' && ['text', 'search', 'number', 'url'].includes(fieldType);
             const selectControl = tag === 'select';
