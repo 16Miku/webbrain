@@ -415,6 +415,9 @@ function decide(audit, attemptedText) {
         break;
       case 'color': compatible = shape.colorLike === true; break;
       case 'link': compatible = shape.urlLike === true; break;
+      case 'other_formatting':
+        compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40 && shape.urlLike !== true;
+        break;
       default: return { decision: 'reject', source: 'vision_shape_mismatch', shape };
     }
     return {

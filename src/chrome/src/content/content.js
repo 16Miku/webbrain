@@ -3889,6 +3889,7 @@
       const toolName = String(params.toolName || '');
       const args = params.args || {};
       let el = null;
+      let coordinateTarget = false;
       if (['click_ax', 'type_ax', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
         el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
       } else if (toolName === 'type_text') {
@@ -3902,6 +3903,7 @@
           el = queryInteractiveForToolIndex()[args.index] || null;
         } else if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) {
           el = document.elementFromPoint(Number(args.x), Number(args.y));
+          coordinateTarget = true;
         } else if (typeof args.text === 'string' && args.text.trim()) {
           const needle = args.text.trim().toLowerCase();
           const scope = _findTopmostModal() || document;
@@ -3926,7 +3928,9 @@
       if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
         return { resolved: false };
       }
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      if (!coordinateTarget) {
+        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      }
       const rect = el.getBoundingClientRect();
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}

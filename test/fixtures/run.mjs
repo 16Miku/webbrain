@@ -2828,6 +2828,30 @@ for (const browserKind of ['chrome', 'firefox']) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
 
+    const editorPoint = await page.evaluate(() => {
+      const editor = document.getElementById('editor-body');
+      const rect = editor.getBoundingClientRect();
+      window.__richTextRetryProbeScrolls = 0;
+      editor.scrollIntoView = () => { window.__richTextRetryProbeScrolls += 1; };
+      return { x: rect.x + 12, y: rect.y + 12 };
+    });
+    const coordinateProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'click',
+      args: editorPoint,
+    });
+    const coordinateProbeScrolls = await page.evaluate(() => window.__richTextRetryProbeScrolls);
+    if (!coordinateProbe?.resolved || coordinateProbe.refId !== refs.editor || coordinateProbeScrolls !== 0) {
+      throw new Error(`coordinate retry probe must preserve viewport coordinates, got: ${JSON.stringify({ coordinateProbe, coordinateProbeScrolls })}`);
+    }
+    const selectorProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'click',
+      args: { selector: '#editor-body' },
+    });
+    const selectorProbeScrolls = await page.evaluate(() => window.__richTextRetryProbeScrolls);
+    if (!selectorProbe?.resolved || selectorProbe.refId !== refs.editor || selectorProbeScrolls !== 1) {
+      throw new Error(`selector retry probe must retain normal target scrolling, got: ${JSON.stringify({ selectorProbe, selectorProbeScrolls })}`);
+    }
+
     const labelledBy = await call(page, 'set_field', {
       ref_id: refs.labelledBy,
       text: '12',
@@ -2900,6 +2924,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     });
     if (!documentTextSizeDecision.wrongTarget) {
       throw new Error(`document text must be rejected for font-size targets: ${JSON.stringify(documentTextSizeDecision)}`);
+    }
+    const otherFormattingAudit = {
+      ...familyAudit,
+      targetKind: 'other_formatting',
+    };
+    const numericFormattingDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('125%'),
+    }, otherFormattingAudit);
+    if (numericFormattingDecision.wrongTarget) {
+      throw new Error(`numeric other-formatting value must remain allowed: ${JSON.stringify(numericFormattingDecision)}`);
+    }
+    const documentTextFormattingDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('This is document content, not a formatting preset.'),
+    }, otherFormattingAudit);
+    if (!documentTextFormattingDecision.wrongTarget) {
+      throw new Error(`document text must be rejected for other-formatting targets: ${JSON.stringify(documentTextFormattingDecision)}`);
     }
     const ordinaryDecision = AgentClass._richTextToolbarDecision(candidate, {
       regionKind: 'ordinary_form_field',
