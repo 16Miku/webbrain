@@ -16119,8 +16119,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true\);/, `${label}: context-menu selection should reveal the notice without waiting for model output`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
-    assert.match(panel, /async function ensureActMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Act should explain why it is unavailable in a selected-text conversation`);
-    assert.match(panel, /async function ensureDevMode\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;/, `${label}: Dev should explain why it is unavailable in a selected-text conversation`);
+    assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
     assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, sourceGrounding, accepted\) \{[\s\S]*?if \(!sourceGrounding \|\| accepted\) return;[\s\S]*?setSelectionGroundedForTab\(tabId, false\);[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: every unaccepted selected-text start should roll back and reconcile optimistic scope state`);
     assert.match(panel, /catch \(e\) \{\s*reconcileFailedSelectionGroundedStart\(tabId, sourceGrounding, accepted\);/, `${label}: all chat-start failures should pass through selected-text scope reconciliation`);
@@ -16149,6 +16149,28 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     );
     assert.equal(workflowSends, 0, `${label}: rejected saved workflow should not reach sendMessage`);
     assert.equal(workflowInput.value, 'keep this draft', `${label}: rejected saved workflow should preserve the composer draft`);
+
+    for (const mode of ['act', 'dev']) {
+      const functionName = mode === 'act' ? 'ensureActMode' : 'ensureDevMode';
+      const modeStart = panel.indexOf(`async function ${functionName}() {`);
+      const modeEnd = panel.indexOf('\n}', modeStart) + 2;
+      assert.ok(modeStart >= 0 && modeEnd > modeStart, `${label}: ${functionName} helper missing`);
+      const scopeToasts = [];
+      const ensureMode = vm.runInNewContext(
+        `(() => { ${panel.slice(modeStart, modeEnd)}; return ${functionName}; })()`,
+        {
+          agentMode: mode,
+          currentTabId: 92,
+          isSelectionGroundedForTab: () => true,
+          showComposerToast: (message) => scopeToasts.push(message),
+          t: () => 'selected-text scope warning',
+          setMode: () => { throw new Error(`${label}: scoped ${mode} guard must not reapply the active mode`); },
+          sendToBackground: async () => ({ devModeAvailable: true }),
+        },
+      );
+      assert.equal(await ensureMode(), false, `${label}: stale active ${mode} mode should remain blocked by selected-text scope`);
+      assert.deepEqual(scopeToasts, ['selected-text scope warning'], `${label}: blocked ${mode} mode should explain the selected-text scope`);
+    }
 
     const reconciliationStart = panel.indexOf('function reconcileFailedSelectionGroundedStart(tabId, sourceGrounding, accepted) {');
     const reconciliationEnd = panel.indexOf('\n}', reconciliationStart) + 2;
