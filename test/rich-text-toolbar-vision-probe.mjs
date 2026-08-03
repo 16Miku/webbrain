@@ -514,13 +514,22 @@ function decide(audit, attemptedText, availablePresetValues = [], toolbarCandida
     }
   }
   const reasons = new Set(Array.isArray(toolbarCandidate?.reasons) ? toolbarCandidate.reasons : []);
-  const structurallyCompatible = shape.chars === 0
-    || attemptedPresetMatch
-    || shape.numericPreset === true
-    || shape.genericFontFamily === true
-    || shape.semanticStylePreset === true
-    || shape.colorLike === true
-    || shape.urlLike === true;
+  const numericCandidate = reasons.has('numeric_preset_value');
+  const structurallyCompatible = numericCandidate
+    ? (
+        shape.chars === 0
+        || shape.numericPreset === true
+        || attemptedPresetMatch
+      )
+    : (
+        shape.chars === 0
+        || attemptedPresetMatch
+        || shape.numericPreset === true
+        || shape.genericFontFamily === true
+        || shape.semanticStylePreset === true
+        || shape.colorLike === true
+        || shape.urlLike === true
+      );
   const structuralRejection = Number(toolbarCandidate?.score) >= 4
     && !structurallyCompatible
     && (

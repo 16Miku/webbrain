@@ -2213,17 +2213,16 @@ export class Agent extends LoopDetector {
       } : null;
     }))).filter(Boolean);
     if (!probes.length) return null;
+    if (probes.length !== 1) {
+      return {
+        resolved: false,
+        ambiguous: true,
+        matchCount: probes.length,
+        matchedFrameIds: probes.map(probe => probe.frameId),
+      };
+    }
     const currentState = this._richTextToolbarStates.get(tabId);
-    const preferredFrameId = currentState
-      ? (Number.isInteger(currentState.frameId) ? currentState.frameId : 0)
-      : null;
-    const preferred = Number.isInteger(preferredFrameId)
-      ? probes.find(probe => probe.frameId === preferredFrameId)
-      : null;
-    const selected = preferred || probes
-      .filter(probe => probe.fieldMeta?.toolbarCandidate)
-      .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
-      || probes[0];
+    const selected = probes[0];
     const recoveryNeedsGeometry = this._richTextToolbarDebts.has(tabId)
       && ['iframe', 'frame'].includes(String(currentState?.associatedEditorIdentity?.tag || '').toLowerCase());
     const candidateNeedsAnnotation = Number(selected.fieldMeta?.toolbarCandidate?.score) >= 4;

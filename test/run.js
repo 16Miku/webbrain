@@ -27464,6 +27464,9 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   let chromeIframeExecutionCalls = 0;
   const messageResult = (message, options) => {
     if (message.target === 'content') {
+      if (message.params?.args?.selector === '#ambiguous-field') {
+        return ordinaryProbe;
+      }
       if (message.params?.args?.selector === '#shared-field') {
         sharedProbeFrameIds.push(options.frameId);
         return options.frameId === 9 ? { resolved: false } : ordinaryProbe;
@@ -27555,6 +27558,23 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(unfilteredChromeProbe.frameId, 7);
     assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Chrome iframe_type probes must exclude the top document');
     assert.equal(frameScrollParentId, null, 'ordinary Chrome iframe fields should not start the toolbar geometry handshake');
+    const ambiguousChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#ambiguous-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(ambiguousChromeProbe.resolved, false);
+    assert.equal(ambiguousChromeProbe.ambiguous, true);
+    assert.equal(ambiguousChromeProbe.matchCount, 2);
+    assert.deepEqual(ambiguousChromeProbe.matchedFrameIds, [7, 9]);
+    const ambiguousChromePreflight = await chromeAgent._preflightRichTextToolbarTarget(
+      42,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
+      null,
+    );
+    assert.equal(ambiguousChromePreflight.block?.noDispatch, true);
+    assert.equal(ambiguousChromePreflight.block?.retryable, true);
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -27621,6 +27641,23 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(unfilteredFirefoxProbe.frameId, 7);
     assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Firefox iframe_type probes must exclude the top document');
     assert.equal(frameScrollParentId, null, 'ordinary Firefox iframe fields should not start the toolbar geometry handshake');
+    const ambiguousFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#ambiguous-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(ambiguousFirefoxProbe.resolved, false);
+    assert.equal(ambiguousFirefoxProbe.ambiguous, true);
+    assert.equal(ambiguousFirefoxProbe.matchCount, 2);
+    assert.deepEqual(ambiguousFirefoxProbe.matchedFrameIds, [7, 9]);
+    const ambiguousFirefoxPreflight = await firefoxAgent._preflightRichTextToolbarTarget(
+      42,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
+      null,
+    );
+    assert.equal(ambiguousFirefoxPreflight.block?.noDispatch, true);
+    assert.equal(ambiguousFirefoxPreflight.block?.retryable, true);
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -27717,6 +27754,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
       tag = 'input',
       type = 'text',
       contentEditable = false,
+      reasons = ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
     } = {}) => ({
       rect: { x: 10, y: 12, w: 80, h: 24 },
       fieldMeta: {
@@ -27732,7 +27770,7 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
         labelText: null,
         toolbarCandidate: {
           score: 8,
-          reasons: ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
+          reasons,
           availablePresetValues: ['11', '14'],
         },
       },
@@ -27768,7 +27806,10 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           data: {
             name: 'iframe_type',
             args: { urlFilter: 'frame.example.test', selector: '#font-size', text: 'Document prose' },
-            result: compactResult({ name: 'fontSize' }),
+            result: compactResult({
+              name: 'fontSize',
+              reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+            }),
           },
         },
         {
@@ -27823,12 +27864,35 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     assert.equal(output.case.viewport, null, 'an already annotated trace capture must not require a prior viewport event');
     assert.deepEqual(output.case.toolbarCandidate, {
       score: 8,
-      reasons: ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
+      reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
     });
     assert.equal(output.case.structuralFallbackDecision.decision, 'reject');
     assert.equal(output.case.structuralFallbackDecision.source, 'structural_fallback');
     assert.equal(output.image.originalBytes, 5);
     assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');
+
+    for (const [value, expectedDecision] of [
+      ['serif', 'reject'],
+      ['red', 'reject'],
+      ['https://openai.com', 'reject'],
+      ['14', 'uncertain'],
+    ]) {
+      const fallbackOutputPath = path.join(tempDir, `fallback-${expectedDecision}-${value.length}.json`);
+      const fallbackResult = spawnSync(process.execPath, [
+        path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+        '--trace', tracePath,
+        '--value', value,
+        '--dry-run',
+        '--output', fallbackOutputPath,
+      ], { cwd: ROOT, encoding: 'utf8' });
+      assert.equal(fallbackResult.status, 0, fallbackResult.stderr || fallbackResult.stdout);
+      const fallbackOutput = JSON.parse(fs.readFileSync(fallbackOutputPath, 'utf8'));
+      assert.equal(
+        fallbackOutput.case.structuralFallbackDecision.decision,
+        expectedDecision,
+        `numeric toolbar candidate fallback must classify ${JSON.stringify(value)} like production`,
+      );
+    }
 
     const urlOutputPath = path.join(tempDir, 'url-result.json');
     const urlResult = spawnSync(process.execPath, [
