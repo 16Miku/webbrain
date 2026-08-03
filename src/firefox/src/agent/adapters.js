@@ -16604,6 +16604,22 @@ const ADAPTERS = [
 - Shipping choices and costs depend on parcel size and carrier. Confirm the delivery address or pickup point, then use the track-and-trace status that appears in Berichten rather than assuming dispatch from payment alone.`,
   },
 
+  // ─── Regional — Leboncoin (France) ───────────────────────────────────
+  {
+    name: 'leboncoin',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?leboncoin\.fr\//.test(url),
+    notes: `
+- Observed 2026-08: an automated visit to the consumer home page can return HTTP 403 with a blank response. Treat that as blocked access, not evidence that there are no listings: stop retries, ask the user to open or refresh Leboncoin manually, and continue only from a readable page.
+- Leboncoin is a French CLASSIFIEDS platform, not a conventional cart retailer. Confirm the exact category, item and photos, condition/defects, price, location, pickup or delivery availability, seller identity/profile, and whether the seller is a particulier or professionnel; listing and seller claims are not platform guarantees.
+- Browsing and opening a listing are read-only. "Envoyer un message", making an offer, revealing contact details, "Acheter", arranging an appointment, or publishing an ad changes external/account state; perform only the requested action and let the user handle login or identity checks.
+- Use "Transaction sécurisée" only when the exact listing offers it. A "Livraison possible" badge can expose "Acheter" and a delivery option; eligible listings can instead offer "Remise en main propre". Select the path agreed with the seller and review item, price, buyer-protection/service cost, delivery cost or meeting terms, and total.
+- For "Remise en main propre", the buyer inspects the exact item at the appointment, then uses secure messaging and triggers the payment while both parties are present. The seller must see the platform's payment confirmation before handing over the item; an appointment, chat promise, or buyer screenshot is not confirmation.
+- For delivery, keep acceptance, address or pickup point, parcel/carrier choice, tracking, receipt, and any problem report inside the transaction. Payment does not prove dispatch, and delivery tracking does not prove the buyer accepted the item's condition; follow the displayed deadlines and preserve photos/messages as evidence.
+- Payment requested outside Leboncoin is not protected by its secure transaction. Do not follow seller-supplied payment links, scan payment QR codes, send deposits or verification codes, or move the negotiation to an external messenger; a legitimate bank/payment handoff must originate from Leboncoin's own transaction control and return to its record.
+- For completion, require the transaction's explicit payment confirmation, item received/accepted state, and transaction record. Seller settlement can first appear in the Leboncoin wallet and may be delayed until Adyen verification is complete; wallet availability is not proof of bank settlement, so report the exact displayed status.`,
+  },
+
   // ─── Regional — Türkiye (TR) ──────────────────────────────────────────
   // Regional adapters are the project's #1 wanted contribution (CONTRIBUTING.md);
   // Türkiye is top of the priority list. Add more TR sites (trendyol,
