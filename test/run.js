@@ -27518,8 +27518,8 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
           kind: 'tool',
           ts: 1150,
           data: {
-            name: 'type_text',
-            args: { selector: '#font-size', text: 'Document prose' },
+            name: 'iframe_type',
+            args: { urlFilter: 'frame.example.test', selector: '#font-size', text: 'Document prose' },
             result: compactResult({ name: 'fontSize' }),
           },
         },
@@ -27554,8 +27554,26 @@ test('Rich-text toolbar vision probe consumes the dedicated preflight trace capt
     assert.equal(output.source.toolEventIndex, 3);
     assert.equal(output.source.screenshotEventIndex, 5, 'the dedicated preflight capture must win over an unrelated screenshot');
     assert.equal(output.case.attemptedText, 'Document prose');
+    assert.deepEqual(output.case.toolbarCandidate, {
+      score: 8,
+      reasons: ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
+    });
+    assert.equal(output.case.structuralFallbackDecision.decision, 'reject');
+    assert.equal(output.case.structuralFallbackDecision.source, 'structural_fallback');
     assert.equal(output.image.originalBytes, 5);
     assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');
+
+    const exactOutputPath = path.join(tempDir, 'exact-result.json');
+    const exactResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--event-index', '3',
+      '--dry-run',
+      '--output', exactOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(exactResult.status, 0, exactResult.stderr || exactResult.stdout);
+    const exactOutput = JSON.parse(fs.readFileSync(exactOutputPath, 'utf8'));
+    assert.equal(exactOutput.source.toolEventIndex, 3, 'exact iframe_type trace selection must remain supported');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

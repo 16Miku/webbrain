@@ -262,6 +262,7 @@ async function loadTraceCase(options) {
   }
 
   const toolData = selected.event.data || {};
+  const toolbarCandidate = toolData.result?.fieldMeta?.toolbarCandidate || null;
   const screenshotsAfterAttempt = events
     .map((event, index) => ({ event, index }))
     .slice(selected.index + 1)
@@ -301,7 +302,11 @@ async function loadTraceCase(options) {
     alreadyAnnotated: true,
     presetValues: options.presetValues.length
       ? options.presetValues
-      : (toolData.result?.fieldMeta?.toolbarCandidate?.availablePresetValues || []),
+      : (toolbarCandidate?.availablePresetValues || []),
+    toolbarCandidate: toolbarCandidate ? {
+      score: Number(toolbarCandidate.score) || 0,
+      reasons: Array.isArray(toolbarCandidate.reasons) ? toolbarCandidate.reasons.map(String) : [],
+    } : null,
     source: {
       kind: 'trace',
       path: tracePath,
@@ -343,6 +348,7 @@ async function loadCase(options) {
     attemptedText,
     alreadyAnnotated: options.alreadyAnnotated || (!options.image && traceCase?.alreadyAnnotated === true),
     presetValues: options.presetValues.length ? options.presetValues : (traceCase?.presetValues || []),
+    toolbarCandidate: traceCase?.toolbarCandidate || null,
     source: traceCase?.source || { kind: 'image', path: imagePath },
   };
 }
@@ -463,45 +469,64 @@ function normalizeAudit(raw) {
   };
 }
 
-function decide(audit, attemptedText, availablePresetValues = []) {
-  if (!audit || audit.confidence < CONFIDENCE_THRESHOLD) {
-    return { decision: 'uncertain', source: 'insufficient_visual_confidence' };
-  }
-  if (audit.regionKind === 'rich_text_toolbar') {
-    const shape = attemptedTextShape(attemptedText);
-    let compatible = shape.chars === 0;
-    if (!compatible) switch (audit.targetKind) {
-      case 'font_size': compatible = shape.numericPreset === true; break;
-      case 'font_family':
-        compatible = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
-          && shape.numericPreset !== true && shape.urlLike !== true
-          && (shape.genericFontFamily === true || presetMatch(attemptedText, availablePresetValues));
-        break;
-      case 'style_preset':
-        compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
-          && (shape.semanticStylePreset === true || presetMatch(attemptedText, availablePresetValues));
-        break;
-      case 'color':
-        compatible = shape.colorLike === true || presetMatch(attemptedText, availablePresetValues);
-        break;
-      case 'link': compatible = shape.urlLike === true; break;
-      case 'other_formatting':
-        compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
-          && shape.urlLike !== true
-          && (shape.numericPreset === true || presetMatch(attemptedText, availablePresetValues));
-        break;
-      default: return { decision: 'reject', source: 'vision_shape_mismatch', shape };
+function decide(audit, attemptedText, availablePresetValues = [], toolbarCandidate = null) {
+  const shape = attemptedTextShape(attemptedText);
+  const attemptedPresetMatch = presetMatch(attemptedText, availablePresetValues);
+  if (audit?.confidence >= CONFIDENCE_THRESHOLD) {
+    if (audit.regionKind === 'rich_text_toolbar') {
+      let compatible = shape.chars === 0;
+      if (!compatible) switch (audit.targetKind) {
+        case 'font_size': compatible = shape.numericPreset === true; break;
+        case 'font_family':
+          compatible = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
+            && shape.numericPreset !== true && shape.urlLike !== true
+            && (shape.genericFontFamily === true || attemptedPresetMatch);
+          break;
+        case 'style_preset':
+          compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
+            && (shape.semanticStylePreset === true || attemptedPresetMatch);
+          break;
+        case 'color':
+          compatible = shape.colorLike === true || attemptedPresetMatch;
+          break;
+        case 'link': compatible = shape.urlLike === true; break;
+        case 'other_formatting':
+          compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
+            && shape.urlLike !== true
+            && (shape.numericPreset === true || attemptedPresetMatch);
+          break;
+        default: return { decision: 'reject', source: 'vision_shape_mismatch', shape };
+      }
+      return {
+        decision: compatible ? 'allow' : 'reject',
+        source: compatible ? 'vision_shape_compatible' : 'vision_shape_mismatch',
+        shape,
+      };
     }
-    return {
-      decision: compatible ? 'allow' : 'reject',
-      source: compatible ? 'vision_shape_compatible' : 'vision_shape_mismatch',
-      shape,
-    };
+    if (audit.regionKind === 'editor_body' || audit.regionKind === 'ordinary_form_field') {
+      return { decision: 'allow', source: 'vision' };
+    }
   }
-  if (audit.regionKind === 'editor_body' || audit.regionKind === 'ordinary_form_field') {
-    return { decision: 'allow', source: 'vision' };
-  }
-  return { decision: 'uncertain', source: 'vision_uncertain_region' };
+  const reasons = new Set(Array.isArray(toolbarCandidate?.reasons) ? toolbarCandidate.reasons : []);
+  const structurallyCompatible = shape.chars === 0
+    || attemptedPresetMatch
+    || shape.numericPreset === true
+    || shape.genericFontFamily === true
+    || shape.semanticStylePreset === true
+    || shape.colorLike === true
+    || shape.urlLike === true;
+  const structuralRejection = Number(toolbarCandidate?.score) >= 4
+    && !structurallyCompatible
+    && (
+      reasons.has('numeric_preset_value')
+      || reasons.has('semantic_toolbar')
+      || reasons.has('dense_control_cluster')
+    );
+  return {
+    decision: structuralRejection ? 'reject' : 'uncertain',
+    source: structuralRejection ? 'structural_fallback' : 'uncertain',
+    shape,
+  };
 }
 
 function expectation(audit, decision, options) {
@@ -627,6 +652,12 @@ try {
   const systemPrompt = SYSTEM_PROMPT;
   const userText = USER_TEXT;
   const localShape = attemptedTextShape(testCase.attemptedText);
+  const localStructuralDecision = decide(
+    null,
+    testCase.attemptedText,
+    testCase.presetValues,
+    testCase.toolbarCandidate,
+  );
 
   console.error(`[case] source:   ${testCase.source.kind} ${testCase.source.path || ''}`);
   if (testCase.source.kind === 'trace') {
@@ -637,6 +668,8 @@ try {
   console.error(`[case] value:    ${short(testCase.attemptedText, 120)}`);
   console.error(`[case] shape:    ${JSON.stringify(localShape)}`);
   console.error(`[case] presets:  ${JSON.stringify(testCase.presetValues)}`);
+  console.error(`[case] candidate: ${JSON.stringify(testCase.toolbarCandidate)}`);
+  console.error(`[case] fallback: ${JSON.stringify(localStructuralDecision)}`);
   console.error(`[case] rect:     ${JSON.stringify(testCase.rect)} viewport=${JSON.stringify(testCase.viewport)}`);
   if (annotated.pixelRect) console.error(`[case] pixels:   ${JSON.stringify(annotated.pixelRect)} image=${annotated.image.width}x${annotated.image.height}`);
   console.error(`[case] expected: ${options.expectedRegion}/${options.expectedTarget} -> ${options.expectedDecision}`);
@@ -665,7 +698,7 @@ try {
           foldSystem: options.foldSystem,
         });
         const audit = normalizeAudit(response.content);
-        const decision = decide(audit, testCase.attemptedText, testCase.presetValues);
+        const decision = decide(audit, testCase.attemptedText, testCase.presetValues, testCase.toolbarCandidate);
         const expected = expectation(audit, decision, options);
         results.push({ model, response, audit, decision, expected });
         console.log(`\n========== ${label} ==========`);
@@ -709,6 +742,8 @@ try {
       attemptedText: testCase.attemptedText,
       attemptedTextShape: localShape,
       availablePresetValues: testCase.presetValues,
+      toolbarCandidate: testCase.toolbarCandidate,
+      structuralFallbackDecision: localStructuralDecision,
       rect: testCase.rect,
       viewport: testCase.viewport,
       expected: {
