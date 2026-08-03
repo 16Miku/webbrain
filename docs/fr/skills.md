@@ -122,14 +122,14 @@ d'un texte. Elle ne renvoie que le texte final et n'explique pas ses
 modifications, sauf si vous le demandez.
 
 Sélectionnez du texte n'importe où et une entrée **Humanize** apparaît, dans la
-fenêtre flottante comme dans le menu contextuel. Elle préactive la compétence
-sur tous les sites, tout comme une demande que vous saisissez vous-même dans la
-zone de sélection ; les tours suivants de la même conversation la conservent.
-Les actions prédéfinies — Summarize, Explain, Quiz me, Proofread, Translate — ne
-le font pas, car elles ne rédigent rien que vous alliez envoyer. Ce routage
-existe parce qu'une exécution sur texte sélectionné n'embarque aucun outil : le
-catalogue lui est inaccessible, et une compétence absente au démarrage ne peut
-plus être chargée ensuite.
+fenêtre flottante comme dans le menu contextuel. Cette entrée explicite
+préactive la compétence sur tous les sites ; les tours suivants de la même
+conversation la conservent. Les actions prédéfinies — Summarize, Explain, Quiz
+me, Proofread, Translate — et les questions libres saisies dans la zone de
+sélection ne le font pas, car elles n'établissent pas une demande de rédaction
+structurée. Ce routage existe parce qu'une exécution sur texte sélectionné
+n'embarque aucun outil : le catalogue lui est inaccessible, et une compétence
+absente au démarrage ne peut plus être chargée ensuite.
 
 Elle ne réécrit que la prose destinée à un lecteur humain. Le contenu cité, les
 adresses, les codes, les prix, les valeurs de champs de formulaire et la

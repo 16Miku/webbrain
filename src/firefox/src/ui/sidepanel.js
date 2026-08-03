@@ -5239,14 +5239,19 @@ function retryPayloadFromButton(btn) {
   const retryId = btn.dataset.retryId || '';
   const attachments = retryAttachmentPayloads.get(retryId) || [];
   const attachmentCount = Number(btn.dataset.retryAttachmentCount || 0) || 0;
+  const sourceGrounding = btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : null;
+  const selectionAction = sourceGrounding
+    ? normalizeSelectionAction(btn.dataset.retrySelectionAction)
+    : '';
   return {
     text,
     mode,
     apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
     foreground: btn.dataset.retryForeground === 'true',
-    ...(btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-      ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
-      : {}),
+    ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
     attachments,
     missingAttachments: attachmentCount > 0 && attachments.length === 0,
   };
@@ -5281,6 +5286,7 @@ function bindErrorRetryButton(btn) {
         apiMutationsAllowed: payload.apiMutationsAllowed,
         foreground: payload.foreground,
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
+        ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
         attachments: payload.attachments,
       },
     });
@@ -5312,6 +5318,12 @@ function retryPayloadForRunAssistant(assistantEl) {
   while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
   const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
   if (!String(text || '').trim()) return null;
+  const sourceGrounding = assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : null;
+  const selectionAction = sourceGrounding
+    ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
+    : '';
   return {
     text,
     mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
@@ -5319,9 +5331,8 @@ function retryPayloadForRunAssistant(assistantEl) {
       : agentMode,
     apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
     foreground: assistantEl?.dataset.retryForeground === 'true',
-    ...(assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-      ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
-      : {}),
+    ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
     attachments: [],
     attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
   };
@@ -6947,10 +6958,11 @@ async function sendMessage(extraChatParams = {}) {
     : null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
-  // The shortcut action rides along only on the turn that started the scope.
-  // Later turns have none: the agent reads the action off the durable
-  // selected-text scope instead of trusting a resent field.
-  const selectionAction = sourceGrounding ? normalizeSelectionAction(chatExtraParams.selectionAction) : '';
+  // The shortcut action rides along only on the turn that started the scope,
+  // or on an explicit retry of that same turn. Later follow-ups have none: the
+  // agent reads the action off the durable selected-text scope instead.
+  const requestedSelectionAction = retryOptions?.selectionAction ?? chatExtraParams.selectionAction;
+  const selectionAction = sourceGrounding ? normalizeSelectionAction(requestedSelectionAction) : '';
   delete chatExtraParams.selectionAction;
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await waitForVisibleSidePanelStateRefresh();
@@ -7161,6 +7173,7 @@ async function sendMessage(extraChatParams = {}) {
     apiMutationsAllowed: apiMutationsAllowedForSend,
     foreground: foregroundForSend,
     ...(sourceGrounding ? { sourceGrounding } : {}),
+    ...(selectionAction ? { selectionAction } : {}),
     attachments: attachmentsForSend,
   };
   if (renderToCurrentTab) {
@@ -7181,6 +7194,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retryApiMutationsAllowed = apiMutationsAllowedForSend ? 'true' : 'false';
     assistantEl.dataset.retryForeground = foregroundForSend ? 'true' : 'false';
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
+    assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
@@ -8979,6 +8993,9 @@ function configureRetryButton(btn, retryPayload) {
   btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
   btn.dataset.retrySourceGrounding = retryPayload.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
     ? SELECTION_ONLY_SOURCE_GROUNDING
+    : '';
+  btn.dataset.retrySelectionAction = btn.dataset.retrySourceGrounding
+    ? normalizeSelectionAction(retryPayload.selectionAction)
     : '';
   const attachmentCount = Number.isFinite(Number(retryPayload.attachmentCount))
     ? Math.max(0, Number(retryPayload.attachmentCount))

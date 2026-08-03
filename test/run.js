@@ -13246,7 +13246,7 @@ test('mail and selected-text runs preactivate the Humanizer skill without wideni
     // Selected-text runs suppress page context, so the adapter is empty or
     // stale; they route on the shortcut action instead, and their empty tool
     // list means load_skill can never load the skill afterwards.
-    for (const action of ['humanize', 'custom']) {
+    for (const action of ['humanize']) {
       assert.equal(
         agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
         true,
@@ -13256,9 +13256,10 @@ test('mail and selected-text runs preactivate the Humanizer skill without wideni
       agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     }
 
-    // The canned readers compose nothing the user sends, so they must not pay
-    // for the skill body — and neither must an unknown or absent action.
-    for (const action of ['summarize', 'explain', 'quiz', 'translate', 'proofread', 'load_skill', '']) {
+    // The free-form question box and canned readers do not establish a writing
+    // request, so they must not pay for the skill body. Neither may an unknown
+    // or absent action.
+    for (const action of ['custom', 'summarize', 'explain', 'quiz', 'translate', 'proofread', 'load_skill', '']) {
       assert.equal(
         agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
         false,
@@ -23257,6 +23258,31 @@ test('sidepanel preserves selection-only grounding across retries and attachment
       /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
       `${label}: rendered retry controls should preserve the selection boundary`,
     );
+    assert.match(
+      panel,
+      /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?normalizeSelectionAction\(requestedSelectionAction\)/,
+      `${label}: retries should restore their normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /const retryPayload = \{[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),[\s\S]*?assistantEl\.dataset\.retrySelectionAction = selectionAction;/,
+      `${label}: live and persisted retry state should retain the selection action`,
+    );
+    assert.match(
+      panel,
+      /function configureRetryButton\([\s\S]*?btn\.dataset\.retrySelectionAction = btn\.dataset\.retrySourceGrounding[\s\S]*?normalizeSelectionAction\(retryPayload\.selectionAction\)/,
+      `${label}: retry buttons should retain only a grounded normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadFromButton\([\s\S]*?normalizeSelectionAction\(btn\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: retry button reads should restore the selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadForRunAssistant\([\s\S]*?normalizeSelectionAction\(assistantEl\?\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: reconstructed retries should restore the persisted selection action`,
+    );
 
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(
@@ -23432,7 +23458,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     const prompts = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/context-menu-prompts.js'), 'utf8');
     assert.match(prompts, /const selectionAction = sourceGrounding \? normalizeSelectionAction\(payload\?\.selectionAction\) : '';/, `${label}: only a source-bound prompt should keep a shortcut action`);
     assert.match(prompts, /\.\.\.\(payload\.selectionAction \? \{ selectionAction: payload\.selectionAction \} : \{\}\),/, `${label}: the stored action should ride with the prompt it belongs to`);
-    assert.match(panelSource, /const selectionAction = sourceGrounding \? normalizeSelectionAction\(chatExtraParams\.selectionAction\) : '';[\s\S]*?delete chatExtraParams\.selectionAction;/, `${label}: sidepanel should drop an action that arrives without selected-text grounding`);
+    assert.match(panelSource, /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?const selectionAction = sourceGrounding \? normalizeSelectionAction\(requestedSelectionAction\) : '';[\s\S]*?delete chatExtraParams\.selectionAction;/, `${label}: sidepanel should retain retry actions but drop actions without selected-text grounding`);
     assert.match(agentSource, /action: normalizeSelectionAction\(runOptions\?\.selectionAction\),/, `${label}: the durable scope should record the shortcut action`);
     assert.match(agentSource, /action: normalizeSelectionAction\(entry\.selectionGroundingScope\.action\),/, `${label}: a restarted worker should restore the shortcut action`);
     assert.match(agentSource, /selectionAction: normalizeSelectionAction\(scope\?\.action\),/, `${label}: follow-up turns should read the action off the scope, not a resent field`);

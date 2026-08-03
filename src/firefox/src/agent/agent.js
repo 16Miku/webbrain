@@ -8878,11 +8878,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * An ordinary run matches the webmail adapter and can still reach the skill
    * through load_skill if the match misses. A selected-text run cannot: it
    * carries no tools at all, and it suppresses page context, which leaves
-   * lastSeenAdapter stale or empty. So it routes on the shortcut action the
-   * user picked — Humanize, or their own typed request — which the durable
-   * selection scope keeps across follow-up turns. The canned readers
-   * (summarize, explain, quiz, translate, proofread) produce no prose to send
-   * and would only pay for the skill body in tokens.
+   * lastSeenAdapter stale or empty. So it routes only on the explicit Humanize
+   * shortcut action, which the durable selection scope keeps across follow-up
+   * turns. The canned readers and general-purpose custom question box do not
+   * establish a writing request and would only pay for the skill body in
+   * tokens.
    */
   _preactivateHumanizerSkillForRun(tabId, mode, { selectionOnly = false, selectionAction = '' } = {}) {
     if (selectionOnly

@@ -12,10 +12,10 @@ export const SELECTION_SHORTCUT_ACTIONS = Object.freeze({
 });
 
 // Selected-text runs carry no tools, so `load_skill` cannot rescue a writing
-// request mid-run: a prose skill either rides in at run start or never. These
-// are the shortcut actions whose output is prose the user will send, kept as
-// structured ids so no downstream code has to pattern-match prompt wording.
-export const SELECTION_PROSE_ACTIONS = Object.freeze(['humanize', 'custom']);
+// request mid-run: a prose skill either rides in at run start or never. Keep
+// this limited to explicit structured writing actions; `custom` is the
+// general-purpose question box and does not imply a rewrite request.
+export const SELECTION_PROSE_ACTIONS = Object.freeze(['humanize']);
 
 export function normalizeSelectionAction(value) {
   const action = String(value == null ? '' : value).trim();
