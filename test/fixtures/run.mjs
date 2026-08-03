@@ -3347,7 +3347,14 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
           ...candidate,
           score: 8,
           reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+          relatedRefs: ['ref_88', 'ref_89'],
           regionRef: 'ref_80',
+          associatedEditorRef: 'ref_199',
+          associatedEditorIdentity: {
+            ...candidate.associatedEditorIdentity,
+            id: 'editor-body-b',
+            pageX: 500,
+          },
         },
       },
       toolbarContext: true,
@@ -3365,6 +3372,35 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     );
     if (!otherToolbarPreflight.block?.wrongTarget || otherToolbarPreflight.block.dispatched !== false) {
       throw new Error('a second toolbar must still be audited while recovery debt is open');
+    }
+    const preservedRecoveryState = agent._richTextToolbarStates.get(tabId);
+    if (
+      preservedRecoveryState?.associatedEditorRef !== 'ref_99'
+      || preservedRecoveryState?.associatedEditorIdentity?.id !== 'editor-body'
+      || !preservedRecoveryState.blockedRegionRefs?.has('ref_10')
+      || !preservedRecoveryState.blockedRegionRefs?.has('ref_80')
+      || agent._richTextToolbarDebts.get(tabId)?.ref_id !== 'ref_12'
+    ) {
+      throw new Error(`a later toolbar must not replace the first unresolved editor: ${JSON.stringify(preservedRecoveryState)}`);
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_199',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 500, y: 160, pageX: 500, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body-b', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const secondEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_199' },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (secondEditorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('editing the second toolbar\'s editor must not clear the first unresolved editor debt');
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
@@ -3729,6 +3765,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (unrelatedOriginRecovery || !agent._richTextToolbarDebts.has(tabId)) {
       throw new Error('a same-shaped editor on another origin must not clear toolbar debt');
     }
+    const unrelatedOriginSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_text',
+      { selector: '#editor-body' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (unrelatedOriginSelectorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('selector recovery on another origin must not clear toolbar debt');
+    }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_77',
@@ -3767,7 +3812,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     let classifierArgCount = 0;
     agent.autoScreenshot = 'state_change';
     agent.maxScreenshotsPerTurn = 1;
-    agent.autoScreenshotCount.delete(tabId);
+    agent.autoScreenshotCount.set(tabId, 1);
     agent._captureAutoScreenshot = async () => ({
       dataUrl: 'data:image/png;base64,dGVzdA==',
       width: 800,
@@ -3805,11 +3850,12 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       || visualPreflight.traceCapture?.caption !== 'rich-text toolbar target preflight'
       || visualPreflight.traceCapture?.dataUrl !== 'data:image/png;base64,dGVzdA=='
       || classifierArgCount !== 3
-      || agent.autoScreenshotCount.get(tabId)
+      || agent.autoScreenshotCount.get(tabId) !== 1
     ) {
-      throw new Error(`expected budget-neutral target-only type_text preflight before dispatch, got: ${JSON.stringify({ visualPreflight, classifierArgCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
+      throw new Error(`expected target-only type_text preflight despite an exhausted model-facing screenshot budget, got: ${JSON.stringify({ visualPreflight, classifierArgCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
+    agent.autoScreenshotCount.delete(tabId);
 
     const shortDocumentPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,

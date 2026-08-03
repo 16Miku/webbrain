@@ -1769,6 +1769,7 @@ export class Agent extends LoopDetector {
       regionRef: '',
       blockedRefs: new Set(),
       blockedSelectors: new Set(),
+      blockedRegionRefs: new Set(),
     });
   }
 
@@ -2190,7 +2191,10 @@ export class Agent extends LoopDetector {
     const sameToolbarContext = probe.toolbarContext === true
       && typeof probe.toolbarRegionRef === 'string'
       && !!probe.toolbarRegionRef
-      && probe.toolbarRegionRef === state.regionRef;
+      && (
+        probe.toolbarRegionRef === state.regionRef
+        || state.blockedRegionRefs?.has(probe.toolbarRegionRef)
+      );
     return blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(state)
       : null;
@@ -2240,9 +2244,12 @@ export class Agent extends LoopDetector {
     const exactIdentity = state.recoveryOnly === true
       && Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, livePageUrl)
       && matchingIdentity;
+    const selectorScopeMatches = state.recoveryOnly !== true
+      || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, livePageUrl);
     const exactSelector = ['type_text', 'iframe_type'].includes(toolName)
       && typeof args?.selector === 'string'
       && !!args.selector.trim()
+      && selectorScopeMatches
       && matchingIdentity;
     if (!isEditor || (!exactRef && !exactIdentity && !exactSelector)) return false;
     this._resetRichTextToolbarAudit(tabId);
@@ -2261,28 +2268,62 @@ export class Agent extends LoopDetector {
     const documentToken = String(identity.documentToken || '');
     const pageUrl = String(identity.refScopeUrl || '');
     const prior = this._richTextToolbarStates.get(tabId);
-    const state = prior && (!prior.documentToken || !documentToken || prior.documentToken === documentToken)
+    const priorHasRecovery = !!(
+      prior
+      && this._richTextToolbarDebts.has(tabId)
+      && (
+        prior.associatedEditorRef
+        || Agent._richTextToolbarEditorIdentityRecoverable(prior.associatedEditorIdentity)
+      )
+    );
+    const sameBlockedScope = !!(
+      prior
+      && (!prior.documentToken || !documentToken || prior.documentToken === documentToken)
+    );
+    const state = sameBlockedScope
       ? prior
-      : { documentToken, blockedRefs: new Set() };
+      : priorHasRecovery
+        ? {
+            recoveryOnly: true,
+            targetKind: prior.targetKind || 'other_formatting',
+            detectedAt: prior.detectedAt || Date.now(),
+            associatedEditorRef: '',
+            associatedEditorIdentity: { ...prior.associatedEditorIdentity },
+            recoveryPageUrl: prior.recoveryPageUrl || prior.pageUrl || '',
+            documentToken: '',
+            pageUrl: '',
+            frameId: null,
+            regionRef: '',
+            blockedRefs: new Set(),
+            blockedSelectors: new Set(),
+            blockedRegionRefs: new Set(),
+          }
+        : { documentToken, blockedRefs: new Set() };
     state.documentToken = documentToken || state.documentToken || '';
     state.pageUrl = pageUrl || state.pageUrl || '';
-    state.targetKind = decision.targetKind && decision.targetKind !== 'uncertain'
-      ? decision.targetKind
-      : 'other_formatting';
-    state.detectedAt = Date.now();
-    state.regionRef = candidate?.regionRef || state.regionRef || '';
-    state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
-    state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
-    state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
-    state.recoveryOnly = false;
-    state.recoveryPageUrl = '';
+    if (!priorHasRecovery) {
+      state.targetKind = decision.targetKind && decision.targetKind !== 'uncertain'
+        ? decision.targetKind
+        : 'other_formatting';
+      state.detectedAt = Date.now();
+      state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
+      state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
+      state.recoveryOnly = false;
+      state.recoveryPageUrl = '';
+    }
+    state.regionRef = state.regionRef || candidate?.regionRef || '';
+    if (state.recoveryOnly !== true) {
+      state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
+    }
     state.blockedSelectors = state.blockedSelectors instanceof Set ? state.blockedSelectors : new Set();
+    state.blockedRegionRefs = state.blockedRegionRefs instanceof Set ? state.blockedRegionRefs : new Set();
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     const hasExactRecoveryTarget = !!state.associatedEditorRef
       || Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
     if (hasExactRecoveryTarget) {
       if (refId) state.blockedRefs.add(refId);
       if (selector) state.blockedSelectors.add(selector);
+      if (candidate?.regionRef) state.blockedRegionRefs.add(candidate.regionRef);
       for (const relatedRef of candidate?.relatedRefs || []) {
         if (typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef)) state.blockedRefs.add(relatedRef);
       }
@@ -2294,7 +2335,9 @@ export class Agent extends LoopDetector {
         source: decision.source,
         detectedAt: state.detectedAt,
       };
-      this._richTextToolbarDebts.set(tabId, debt);
+      if (!this._richTextToolbarDebts.has(tabId)) {
+        this._richTextToolbarDebts.set(tabId, debt);
+      }
     } else {
       // The edit itself is still blocked, but do not create completion debt
       // that no later action can prove resolved. A fresh read can expose a
@@ -2419,8 +2462,7 @@ export class Agent extends LoopDetector {
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
     const visualAuditEligible = this._shouldAutoScreenshot(toolName)
-      && (dedicatedVision || provider?.supportsVision)
-      && this._canTakeAutoScreenshot(tabId);
+      && (dedicatedVision || provider?.supportsVision);
     if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
       return {
         block: {
