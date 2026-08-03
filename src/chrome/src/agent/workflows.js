@@ -41,7 +41,10 @@ const TARGET_FIELDS = [
 ];
 
 function nowMs() { return Date.now(); }
-function randomId() { return Math.random().toString(36).slice(2, 10); }
+function randomId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 8);
+}
 
 function cleanText(value, max = MAX_TEXT) {
   const text = String(value ?? '')
