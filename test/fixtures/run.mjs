@@ -2850,6 +2850,24 @@ for (const browserKind of ['chrome', 'firefox']) {
           <button type="button">B</button>
         </div>`;
       document.body.appendChild(shadowHost);
+
+      const composedEditor = document.createElement('div');
+      composedEditor.className = 'editor';
+      composedEditor.innerHTML = `
+        <div id="composed-toolbar" class="toolbar" role="toolbar"></div>
+        <div id="composed-editor-body" class="body" contenteditable="true">Enter text</div>`;
+      const composedHost = document.createElement('span');
+      composedHost.id = 'composed-family-host';
+      const composedRoot = composedHost.attachShadow({ mode: 'open' });
+      composedRoot.innerHTML = `
+        <input id="composed-family-input" value="Default" aria-controls="composed-family-presets"
+          style="width:118px;height:22px">
+        <div id="composed-family-presets" role="listbox">
+          <div role="option">Roboto</div>
+          <div role="option">Noto Sans</div>
+        </div>`;
+      composedEditor.querySelector('#composed-toolbar').appendChild(composedHost);
+      document.body.appendChild(composedEditor);
       return {
         size: window.__wb_ax_ref(document.getElementById('font-size')),
         family: window.__wb_ax_ref(document.getElementById('font-family')),
@@ -2860,6 +2878,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowLabelledBy: window.__wb_ax_ref(shadowRoot.getElementById('shadow-labelled-size')),
         shadowExplicitLabel: window.__wb_ax_ref(shadowRoot.getElementById('shadow-explicit-size')),
         shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
+        composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -2905,6 +2924,18 @@ for (const browserKind of ['chrome', 'firefox']) {
     const shadowAvailableFamilies = shadowFamilyProbe?.fieldMeta?.toolbarCandidate?.availablePresetValues || [];
     if (!shadowAvailableFamilies.includes('Default') || !shadowAvailableFamilies.includes('Roboto') || !shadowAvailableFamilies.includes('Noto Sans')) {
       throw new Error(`expected shadow-local aria-controls presets, got: ${JSON.stringify(shadowFamilyProbe)}`);
+    }
+    const composedFamilyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.composedFamilyInput, text: 'Roboto' },
+    });
+    const composedCandidate = composedFamilyProbe?.fieldMeta?.toolbarCandidate;
+    if (
+      Number(composedCandidate?.score) < 4
+      || !composedCandidate.reasons?.includes('semantic_toolbar')
+      || composedCandidate.associatedEditorIdentity?.id !== 'composed-editor-body'
+    ) {
+      throw new Error(`expected toolbar ancestry through the input shadow host, got: ${JSON.stringify(composedFamilyProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',

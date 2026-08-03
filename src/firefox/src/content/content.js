@@ -505,14 +505,18 @@
   }
 
   function _hasComposedClosest(el, selector) {
+    return !!_composedClosestElement(el, selector);
+  }
+
+  function _composedClosestElement(el, selector) {
     let cur = el;
     while (cur) {
       try {
-        if (cur.nodeType === Node.ELEMENT_NODE && cur.matches(selector)) return true;
+        if (cur.nodeType === Node.ELEMENT_NODE && cur.matches(selector)) return cur;
       } catch {}
       cur = _composedParent(cur);
     }
-    return false;
+    return null;
   }
 
   function isVisiblyInteractive(el) {
@@ -3016,7 +3020,7 @@
       const numericPreset = value.length > 0
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
-      const semanticToolbar = el.closest?.('[role="toolbar"]') || null;
+      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
       const interactiveSelector = [
         'input:not([type="hidden"])',
         'textarea',
@@ -3030,8 +3034,8 @@
       ].join(',');
 
       let cluster = null;
-      let node = el.parentElement;
-      for (let depth = 1; node && depth <= 6; depth++, node = node.parentElement) {
+      let node = _composedParent(el);
+      for (let depth = 1; node && depth <= 6; depth++, node = _composedParent(node)) {
         if (!_visibleFieldContextNode(node)) continue;
         const region = node.getBoundingClientRect();
         if (region.height > 160 || region.width < rect.width) continue;
