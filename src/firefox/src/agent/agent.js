@@ -34,6 +34,7 @@ import {
   PDF_PASSTHROUGH_MAX_BYTES,
 } from './pdf-tools.js';
 import * as trace from '../trace/recorder.js';
+import { randomBytes } from 'crypto';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
@@ -12147,7 +12148,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _wrapUntrusted(name, content) {
     if (!this._isUntrustedTool(name)) return content;
-    const nonce = Math.random().toString(36).slice(2, 10);
+    const nonce = randomBytes(6).toString('base64url');
     const safe = String(content).replace(/<\/?untrusted_page_content\b[^>]*>/gi, '[markup stripped]');
     return `<untrusted_page_content id="${nonce}">\n${safe}\n</untrusted_page_content id="${nonce}">`;
   }
