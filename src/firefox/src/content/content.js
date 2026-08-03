@@ -2868,8 +2868,23 @@
     try {
       const ids = String(el?.getAttribute?.('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
       if (!ids.length) return null;
+      const root = el?.getRootNode?.() || document;
+      const findById = id => {
+        try {
+          if (typeof root.getElementById === 'function') {
+            const local = root.getElementById(id);
+            if (local) return local;
+          }
+        } catch {}
+        try {
+          const escaped = globalThis.CSS?.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
+          const local = root.querySelector?.(`#${escaped}`);
+          if (local) return local;
+        } catch {}
+        try { return root === document ? null : document.getElementById(id); } catch { return null; }
+      };
       const text = ids
-        .map(id => document.getElementById(id))
+        .map(findById)
         .filter(Boolean)
         .map(node => String(node.textContent || '').trim())
         .filter(Boolean)

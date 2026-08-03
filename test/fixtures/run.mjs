@@ -2830,17 +2830,31 @@ for (const browserKind of ['chrome', 'firefox']) {
   test(`${browserKind}: rich-text toolbar metadata covers size and sibling family controls without flagging a labelled field`, async (page) => {
     await setupContentFixture(page, 'rich-text-toolbar-target.html', browserKind);
 
-    const refs = await page.evaluate(() => ({
-      size: window.__wb_ax_ref(document.getElementById('font-size')),
-      family: window.__wb_ax_ref(document.getElementById('font-family')),
-      familyInput: window.__wb_ax_ref(document.getElementById('font-family-input')),
-      familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
-      editor: window.__wb_ax_ref(document.getElementById('editor-body')),
-      labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
-      title: window.__wb_ax_ref(document.getElementById('title-size')),
-      ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
-      secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
-    }));
+    const refs = await page.evaluate(() => {
+      const shadowHost = document.createElement('div');
+      shadowHost.id = 'shadow-toolbar-host';
+      const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
+      shadowRoot.innerHTML = `
+        <div role="toolbar">
+          <span id="shadow-quantity-label">Shadow quantity</span>
+          <input id="shadow-labelled-size" aria-labelledby="shadow-quantity-label" value="11"
+            style="width:34px;height:22px">
+          <button type="button">B</button>
+        </div>`;
+      document.body.appendChild(shadowHost);
+      return {
+        size: window.__wb_ax_ref(document.getElementById('font-size')),
+        family: window.__wb_ax_ref(document.getElementById('font-family')),
+        familyInput: window.__wb_ax_ref(document.getElementById('font-family-input')),
+        familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
+        editor: window.__wb_ax_ref(document.getElementById('editor-body')),
+        labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
+        shadowLabelledBy: window.__wb_ax_ref(shadowRoot.getElementById('shadow-labelled-size')),
+        title: window.__wb_ax_ref(document.getElementById('title-size')),
+        ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
+        secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
+      };
+    });
 
     const toolbar = await call(page, 'set_field', {
       ref_id: refs.size,
@@ -2913,6 +2927,15 @@ for (const browserKind of ['chrome', 'firefox']) {
     });
     if (!labelledBy?.success || labelledBy.fieldMeta?.toolbarCandidate || labelledBy.fieldMeta?.ariaLabelledByText !== 'Quantity') {
       throw new Error(`aria-labelledby ordinary field must stay outside toolbar audit, got: ${JSON.stringify(labelledBy)}`);
+    }
+
+    const shadowLabelledBy = await call(page, 'set_field', {
+      ref_id: refs.shadowLabelledBy,
+      text: 'Document prose',
+      clear: true,
+    });
+    if (!shadowLabelledBy?.success || shadowLabelledBy.fieldMeta?.toolbarCandidate || shadowLabelledBy.fieldMeta?.ariaLabelledByText !== 'Shadow quantity') {
+      throw new Error(`shadow-local aria-labelledby field must stay outside toolbar audit, got: ${JSON.stringify(shadowLabelledBy)}`);
     }
 
     const title = await call(page, 'set_field', {
