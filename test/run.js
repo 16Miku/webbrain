@@ -18566,8 +18566,15 @@ test('chat history text serialization preserves rendered line structure', () => 
     element('DIV', element('PRE', textNode('line 1\nline 2\n'))),
     textNode('Closing'),
   );
-  const renderedCodeWrapper = element('DIV', element('PRE', element('CODE', textNode('line 1\n'))));
+  const renderedCodeLanguage = element('SPAN', textNode('javascript'));
+  renderedCodeLanguage.textContent = 'javascript';
+  const renderedCodeHeader = element('DIV', renderedCodeLanguage);
+  renderedCodeHeader.classList = { contains: (name) => name === 'code-block-header' };
+  const renderedCode = element('PRE', element('CODE', textNode('line 1\n')));
+  const renderedCodeWrapper = element('DIV', renderedCodeHeader, renderedCode);
   renderedCodeWrapper.classList = { contains: (name) => name === 'code-block-wrapper' };
+  renderedCodeWrapper.querySelector = (selector) => selector === '.code-lang' ? renderedCodeLanguage : null;
+  renderedCode.parentElement = renderedCodeWrapper;
   const renderedCodeFollowedByText = element(
     'DIV',
     renderedCodeWrapper,
@@ -18596,8 +18603,8 @@ test('chat history text serialization preserves rendered line structure', () => 
     );
     assert.equal(
       serialize(renderedCodeFollowedByText),
-      '```\nline 1\n```\nClosing',
-      `${label}: the source <br> after a rendered code wrapper should provide the only post-fence newline`,
+      '```javascript\nline 1\n```\nClosing',
+      `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
     );
   }
 });

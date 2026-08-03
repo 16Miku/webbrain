@@ -69,8 +69,9 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
       return;
     }
     if (markdown && tagName === 'PRE') {
+      const language = String(node.parentElement?.querySelector?.('.code-lang')?.textContent || '').trim();
       ensureBreak();
-      output += '```\n';
+      output += `\`\`\`${language}\n`;
       for (const child of Array.from(node.childNodes || [])) visit(child, false, true);
       ensureBreak();
       output += '```';
