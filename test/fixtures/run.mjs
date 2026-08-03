@@ -1590,6 +1590,35 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
+  test(`press_keys (${browserKind}): semicolon dispatches a page shortcut event`, async (page) => {
+    await setupContentFixture(page, 'trusted-click-fallback.html', browserKind);
+    await page.evaluate(() => {
+      window.__semicolonShortcutEvents = [];
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== ';') return;
+        window.__semicolonShortcutEvents.push({
+          key: event.key,
+          code: event.code,
+          keyCode: event.keyCode,
+        });
+      });
+    });
+
+    const result = await call(page, 'press_keys', { key: ';' });
+    if (result?.success !== true || result?.dispatched !== true || result?.key !== ';') {
+      throw new Error(`semicolon should dispatch successfully, got: ${JSON.stringify(result)}`);
+    }
+    const events = await page.evaluate(() => window.__semicolonShortcutEvents);
+    if (
+      events?.length !== 1
+      || events[0]?.key !== ';'
+      || events[0]?.code !== 'Semicolon'
+      || events[0]?.keyCode !== 186
+    ) {
+      throw new Error(`semicolon shortcut metadata mismatch: ${JSON.stringify(events)}`);
+    }
+  });
+
   test(`checkbox tools (${browserKind}): AX state and set_checked are explicit and idempotent`, async (page) => {
     await setupContentFixture(page, 'trusted-click-fallback.html', browserKind);
     const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });

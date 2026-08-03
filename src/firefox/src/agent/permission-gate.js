@@ -167,7 +167,8 @@ const TOOL_CAPABILITY = {
  *     via downloads → DOWNLOAD. These are not model-exposed tools.
  *   - set_field: TYPE normally, but CLICK when submit:true (pressing Enter
  *     submits the form — a TYPE grant must not authorize a submit).
- *   - press_keys: Enter can submit/activate → CLICK; Tab/Escape are benign.
+ *   - press_keys: Enter and page shortcuts such as ; can mutate → CLICK;
+ *     Tab/Escape are benign.
  */
 export function capabilityFor(name, args) {
   args = args || {};

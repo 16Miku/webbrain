@@ -1916,6 +1916,43 @@ test('navigation-prone detection includes only submit-capable key and field call
   }
 });
 
+test('Chrome press_keys dispatches semicolon as a trusted CDP shortcut', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const calls = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (tabId, method, params) => {
+      calls.push({ tabId, method, params });
+      return {};
+    };
+
+    const result = await new AgentCh({}).executeTool(42, 'press_keys', { key: ';' });
+    assert.deepEqual(result, {
+      success: true,
+      dispatched: true,
+      method: 'cdp-key',
+      key: ';',
+      repeat: 1,
+    });
+    assert.deepEqual(calls, [
+      {
+        tabId: 42,
+        method: 'Input.dispatchKeyEvent',
+        params: { type: 'keyDown', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
+      },
+      {
+        tabId: 42,
+        method: 'Input.dispatchKeyEvent',
+        params: { type: 'keyUp', key: ';', code: 'Semicolon', windowsVirtualKeyCode: 186 },
+      },
+    ]);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+});
+
 test('agent URL normalization preserves query and hash for nav change detection', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -12627,8 +12664,10 @@ test('getToolsForMode: find_text replaces unsupported modifier shortcuts', () =>
 
     const pressKeys = fullTools.find(t => t.function.name === 'press_keys');
     assert.deepEqual(pressKeys.function.parameters.properties.key.enum, [
-      'Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+      'Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';',
     ]);
+    assert.equal(askNames.includes('press_keys'), false, `${label}: Ask mode must remain read-only`);
+    assert.match(pressKeys.function.description, /semicolon.*Gmail Expand all/i);
     assert.match(pressKeys.function.description, /Ctrl\/Cmd\/Alt\/Shift combinations.*not supported/i);
     assert.doesNotMatch(pressKeys.function.parameters.properties.key.enum.join(' '), /Control|Meta|Alt|Shift|KeyF/);
 
@@ -40337,11 +40376,17 @@ test('capabilitiesFor: set_field({submit}) requires BOTH type and click', () => 
   assert.deepEqual(capabilitiesFor('read_page', {}), []);
 });
 
-test('press_keys: Enter is a submit (CLICK); Tab/Escape are benign (null)', () => {
-  assert.equal(capabilityFor('press_keys', { key: 'Enter' }), Capability.CLICK);
-  assert.equal(capabilityFor('press_keys', { key: 'Escape' }), null);
-  assert.equal(capabilityFor('press_keys', { key: 'Tab' }), null);
-  assert.equal(capabilityFor('press_keys', {}), Capability.CLICK); // unknown → gate, fail safe
+test('press_keys: Enter and semicolon shortcuts require CLICK; Tab/Escape are benign', () => {
+  for (const [label, capabilityFn, Capabilities] of [
+    ['chrome', capabilityForCh, CapabilityCh],
+    ['firefox', capabilityFor, Capability],
+  ]) {
+    assert.equal(capabilityFn('press_keys', { key: 'Enter' }), Capabilities.CLICK, `${label}: Enter`);
+    assert.equal(capabilityFn('press_keys', { key: ';' }), Capabilities.CLICK, `${label}: semicolon`);
+    assert.equal(capabilityFn('press_keys', { key: 'Escape' }), null, `${label}: Escape`);
+    assert.equal(capabilityFn('press_keys', { key: 'Tab' }), null, `${label}: Tab`);
+    assert.equal(capabilityFn('press_keys', {}), Capabilities.CLICK, `${label}: unknown key`); // fail safe
+  }
 });
 
 test('submit controls bypass native select guards in click paths', () => {
