@@ -2975,6 +2975,66 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (genericFamilyDecision.wrongTarget) {
       throw new Error(`standard generic font family must remain allowed: ${JSON.stringify(genericFamilyDecision)}`);
     }
+    const styleAudit = {
+      ...familyAudit,
+      targetKind: 'style_preset',
+    };
+    const stylePresetValues = ['Body', 'Heading 1', 'Title'];
+    const legitimateStyleDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Heading 1'),
+      attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch('Heading 1', stylePresetValues),
+    }, styleAudit);
+    if (legitimateStyleDecision.wrongTarget) {
+      throw new Error(`control-owned style preset must remain allowed: ${JSON.stringify(legitimateStyleDecision)}`);
+    }
+    const mistakenStyleDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Quarterly roadmap'),
+      attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch('Quarterly roadmap', stylePresetValues),
+    }, styleAudit);
+    if (!mistakenStyleDecision.wrongTarget) {
+      throw new Error(`arbitrary short text must be rejected for style-preset targets: ${JSON.stringify(mistakenStyleDecision)}`);
+    }
+    const semanticStyleDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('h2'),
+      attemptedPresetMatch: false,
+    }, styleAudit);
+    if (semanticStyleDecision.wrongTarget) {
+      throw new Error(`semantic style token must remain allowed: ${JSON.stringify(semanticStyleDecision)}`);
+    }
+    const linkAudit = {
+      ...familyAudit,
+      targetKind: 'link',
+    };
+    for (const destination of [
+      'https://example.com/docs',
+      'www.example.com',
+      '/docs/start',
+      '../docs/start',
+      'person@example.com',
+      'mailto:person@example.com',
+      'tel:+15551234567',
+      '#overview',
+    ]) {
+      const linkDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(destination),
+      }, linkAudit);
+      if (linkDecision.wrongTarget) {
+        throw new Error(`common link destination must remain allowed: ${JSON.stringify({ destination, linkDecision })}`);
+      }
+    }
+    for (const prose of ['Quarterly roadmap', 'Contact the project team']) {
+      const proseLinkDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(prose),
+      }, linkAudit);
+      if (!proseLinkDecision.wrongTarget) {
+        throw new Error(`ordinary prose must be rejected for link targets: ${JSON.stringify({ prose, proseLinkDecision })}`);
+      }
+    }
     const numericSizeDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
       attemptedTextShape: AgentClass._richTextToolbarTextShape('14'),
@@ -3250,6 +3310,53 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     agent._resetRichTextToolbarAudit(tabId);
 
+    agent._classifyRichTextToolbarTarget = async () => styleAudit;
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_14',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 140, y: 10, w: 120, h: 24 },
+      fieldMeta: {
+        toolbarCandidate: {
+          ...candidate,
+          availablePresetValues: stylePresetValues,
+        },
+      },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const shortStylePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_14', text: 'Quarterly roadmap' },
+      { supportsVision: true },
+    );
+    if (!shortStylePreflight.block?.wrongTarget || shortStylePreflight.block.dispatched !== false) {
+      throw new Error(`short non-preset style text must be blocked before dispatch: ${JSON.stringify(shortStylePreflight)}`);
+    }
+    agent._resetRichTextToolbarAudit(tabId);
+    const allowedStylePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_14', text: 'Heading 1' },
+      { supportsVision: true },
+    );
+    if (allowedStylePreflight.block) {
+      throw new Error(`control-owned style preset must pass preflight: ${JSON.stringify(allowedStylePreflight)}`);
+    }
+
+    agent._classifyRichTextToolbarTarget = async () => familyAudit;
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 10, w: 120, h: 24 },
+      fieldMeta: { toolbarCandidate: candidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
     const allowedPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',

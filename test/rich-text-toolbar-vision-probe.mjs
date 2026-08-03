@@ -363,14 +363,27 @@ function attemptedTextShape(attemptedText) {
     'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
     'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
   ]);
+  const urlLike = !!text.trim() && !/\s/.test(text.trim()) && (
+    /^https?:\/\/[^/?#\s]+(?:[/?#]\S*)?$/i.test(text.trim())
+    || /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(text.trim())
+    || /^tel:\+?[\d().-]{3,}$/i.test(text.trim())
+    || /^www\.[^\s.]+\.[^\s]+$/i.test(text.trim())
+    || /^\/(?!\/)\S*$/.test(text.trim())
+    || /^\.\.?\/\S+$/.test(text.trim())
+    || /^\?\S+$/.test(text.trim())
+    || /^#\S*$/.test(text.trim())
+    || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim())
+    || /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#]\S*)?$/i.test(text.trim())
+  );
   return {
     chars: text.length,
     words: text.trim() ? text.trim().split(/\s+/).length : 0,
     lines: text ? text.split(/\r?\n/).length : 0,
     numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(text),
-    urlLike: /^\s*(?:https?:\/\/|mailto:|#)/i.test(text),
+    urlLike,
     colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(text),
     genericFontFamily: genericFontFamilies.has(normalized),
+    semanticStylePreset: /^(?:p|h[1-6]|pre|blockquote|code)$/i.test(text.trim()),
   };
 }
 
@@ -435,7 +448,8 @@ function decide(audit, attemptedText, availablePresetValues = []) {
           && (shape.genericFontFamily === true || presetMatch(attemptedText, availablePresetValues));
         break;
       case 'style_preset':
-        compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
+        compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
+          && (shape.semanticStylePreset === true || presetMatch(attemptedText, availablePresetValues));
         break;
       case 'color': compatible = shape.colorLike === true; break;
       case 'link': compatible = shape.urlLike === true; break;

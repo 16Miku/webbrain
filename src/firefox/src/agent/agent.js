@@ -1782,14 +1782,27 @@ export class Agent extends LoopDetector {
       'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
       'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
     ]);
+    const urlLike = !!trimmed && !/\s/.test(trimmed) && (
+      /^https?:\/\/[^/?#\s]+(?:[/?#]\S*)?$/i.test(trimmed)
+      || /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(trimmed)
+      || /^tel:\+?[\d().-]{3,}$/i.test(trimmed)
+      || /^www\.[^\s.]+\.[^\s]+$/i.test(trimmed)
+      || /^\/(?!\/)\S*$/.test(trimmed)
+      || /^\.\.?\/\S+$/.test(trimmed)
+      || /^\?\S+$/.test(trimmed)
+      || /^#\S*$/.test(trimmed)
+      || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)
+      || /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#]\S*)?$/i.test(trimmed)
+    );
     return {
       chars: value.length,
       words: trimmed ? trimmed.split(/\s+/).length : 0,
       lines: value ? value.split(/\r?\n/).length : 0,
       numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(value),
-      urlLike: /^\s*(?:https?:\/\/|mailto:|#)/i.test(value),
+      urlLike,
       colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(value),
       genericFontFamily: genericFontFamilies.has(normalized),
+      semanticStylePreset: /^(?:p|h[1-6]|pre|blockquote|code)$/i.test(trimmed),
     };
   }
 
@@ -1809,7 +1822,8 @@ export class Agent extends LoopDetector {
       return validShape && (shape.genericFontFamily === true || candidate.attemptedPresetMatch === true);
     }
     if (targetKind === 'style_preset') {
-      return shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
+      const validShape = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
+      return validShape && (shape.semanticStylePreset === true || candidate.attemptedPresetMatch === true);
     }
     if (targetKind === 'color') return shape.colorLike === true;
     if (targetKind === 'link') return shape.urlLike === true;
