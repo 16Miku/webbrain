@@ -1171,25 +1171,28 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   await page.setContent(`<!doctype html>
     <style>
       #slotted-toolbar-editor { width:420px; }
-      #slot-editor-body { width:420px; height:160px; }
+      #slot-editor-component { display:block; width:420px; height:160px; }
     </style>
     <div id="slotted-toolbar-editor">
       <span id="slot-toolbar-host">
-        <input id="slotted-family" value="Default" style="width:118px;height:22px">
+        <input id="slotted-family" aria-label="Font family" value="Default" style="width:118px;height:22px">
       </span>
-      <div id="slot-editor-body" role="textbox" contenteditable="true">Enter text</div>
+      <div id="slot-editor-component"></div>
     </div>
     <script>
       document.querySelector('#slot-toolbar-host').attachShadow({ mode: 'open' }).innerHTML =
         '<div role="toolbar" style="height:44px;display:flex;align-items:center"><slot></slot></div>';
+      document.querySelector('#slot-editor-component').attachShadow({ mode: 'open' }).innerHTML =
+        '<div id="slot-editor-body" role="textbox" contenteditable="true" style="width:420px;height:160px">Enter text</div>';
     </script>`);
   const slottedProbe = await client.probeRichTextToolbarSelector(42, '#slotted-family');
   if (
     !slottedProbe?.resolved
     || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
     || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
   ) {
-    throw new Error(`assigned-slot toolbar ancestry was not audited by the CDP selector probe: ${JSON.stringify(slottedProbe)}`);
+    throw new Error(`labelled assigned-slot toolbar and descendant shadow editor were not audited by the CDP selector probe: ${JSON.stringify(slottedProbe)}`);
   }
 });
 
@@ -2969,7 +2972,7 @@ test('Firefox: type_text rejects disabled indexed text input fallback', async (p
 });
 
 for (const browserKind of ['chrome', 'firefox']) {
-  test(`${browserKind}: rich-text toolbar metadata covers size and sibling family controls without flagging a labelled field`, async (page) => {
+  test(`${browserKind}: rich-text toolbar metadata covers labelled controls and excludes labelled ordinary fields`, async (page) => {
     await setupContentFixture(page, 'rich-text-toolbar-target.html', browserKind);
 
     const refs = await page.evaluate(() => {
@@ -2977,12 +2980,12 @@ for (const browserKind of ['chrome', 'firefox']) {
       shadowHost.id = 'shadow-toolbar-host';
       const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
       shadowRoot.innerHTML = `
+        <span id="shadow-quantity-label">Shadow quantity</span>
+        <input id="shadow-labelled-size" aria-labelledby="shadow-quantity-label" value="11"
+          style="width:34px;height:22px">
+        <label for="shadow-explicit-size">Shadow explicit quantity</label>
+        <input id="shadow-explicit-size" value="11" style="width:34px;height:22px">
         <div role="toolbar">
-          <span id="shadow-quantity-label">Shadow quantity</span>
-          <input id="shadow-labelled-size" aria-labelledby="shadow-quantity-label" value="11"
-            style="width:34px;height:22px">
-          <label for="shadow-explicit-size">Shadow explicit quantity</label>
-          <input id="shadow-explicit-size" value="11" style="width:34px;height:22px">
           <input id="shadow-family-input" value="Default" aria-controls="shadow-family-presets"
             style="width:118px;height:22px">
           <div id="shadow-family-presets" role="listbox">
@@ -3018,7 +3021,7 @@ for (const browserKind of ['chrome', 'firefox']) {
       const shadowToolbarRoot = shadowToolbarHost.attachShadow({ mode: 'open' });
       shadowToolbarRoot.innerHTML = `
         <div role="toolbar" style="height:42px;display:flex;align-items:center">
-          <input id="shadow-toolbar-family-input" value="Default" style="width:118px;height:22px">
+          <input id="shadow-toolbar-family-input" aria-label="Font family" value="Default" style="width:118px;height:22px">
         </div>`;
       shadowToolbarEditor.appendChild(shadowToolbarHost);
       const shadowToolbarBody = document.createElement('div');
@@ -3028,6 +3031,21 @@ for (const browserKind of ['chrome', 'firefox']) {
       shadowToolbarBody.textContent = 'Enter text';
       shadowToolbarEditor.appendChild(shadowToolbarBody);
       document.body.appendChild(shadowToolbarEditor);
+
+      const descendantShadowEditor = document.createElement('div');
+      descendantShadowEditor.className = 'editor';
+      descendantShadowEditor.innerHTML = `
+        <div role="toolbar" style="height:42px;display:flex;align-items:center">
+          <input id="descendant-shadow-family-input" aria-label="Font family" value="Default"
+            style="width:118px;height:22px">
+        </div>`;
+      const descendantBodyHost = document.createElement('div');
+      descendantBodyHost.id = 'descendant-editor-component';
+      descendantBodyHost.attachShadow({ mode: 'open' }).innerHTML = `
+        <div id="descendant-shadow-editor-body" role="textbox" contenteditable="true"
+          style="width:400px;height:180px">Enter text</div>`;
+      descendantShadowEditor.appendChild(descendantBodyHost);
+      document.body.appendChild(descendantShadowEditor);
 
       const slottedToolbarEditor = document.createElement('div');
       slottedToolbarEditor.className = 'editor';
@@ -3072,6 +3090,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
+        descendantShadowFamilyInput: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-shadow-family-input')),
         slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
         iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
@@ -3136,8 +3155,22 @@ for (const browserKind of ['chrome', 'firefox']) {
       toolName: 'set_field',
       args: { ref_id: refs.shadowToolbarFamilyInput, text: 'Roboto' },
     });
-    if (shadowToolbarProbe?.fieldMeta?.toolbarCandidate?.associatedEditorIdentity?.id !== 'shadow-toolbar-editor-body') {
+    if (
+      !shadowToolbarProbe?.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
+      || shadowToolbarProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'shadow-toolbar-editor-body'
+    ) {
       throw new Error(`expected editor association through the toolbar shadow host, got: ${JSON.stringify(shadowToolbarProbe)}`);
+    }
+    const descendantShadowProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.descendantShadowFamilyInput, text: 'Roboto' },
+    });
+    if (
+      !descendantShadowProbe?.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
+      || descendantShadowProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'descendant-shadow-editor-body'
+      || !descendantShadowProbe.fieldMeta.toolbarCandidate.associatedEditorRef
+    ) {
+      throw new Error(`expected descendant shadow editor association, got: ${JSON.stringify(descendantShadowProbe)}`);
     }
     const slottedToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
@@ -3212,8 +3245,13 @@ for (const browserKind of ['chrome', 'firefox']) {
       text: '12',
       clear: true,
     });
-    if (!labelledBy?.success || labelledBy.fieldMeta?.toolbarCandidate || labelledBy.fieldMeta?.ariaLabelledByText !== 'Quantity') {
-      throw new Error(`aria-labelledby ordinary field must stay outside toolbar audit, got: ${JSON.stringify(labelledBy)}`);
+    if (
+      !labelledBy?.success
+      || labelledBy.fieldMeta?.ariaLabelledByText !== 'Quantity'
+      || !labelledBy.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
+      || !labelledBy.fieldMeta.toolbarCandidate.reasons.includes('semantic_toolbar')
+    ) {
+      throw new Error(`aria-labelledby toolbar field must enter the toolbar audit, got: ${JSON.stringify(labelledBy)}`);
     }
 
     const shadowLabelledBy = await call(page, 'set_field', {
@@ -3239,8 +3277,13 @@ for (const browserKind of ['chrome', 'firefox']) {
       text: '125%',
       clear: true,
     });
-    if (!title?.success || title.fieldMeta?.toolbarCandidate || title.fieldMeta?.title !== 'Zoom level') {
-      throw new Error(`title-labelled ordinary field must stay outside toolbar audit, got: ${JSON.stringify(title)}`);
+    if (
+      !title?.success
+      || title.fieldMeta?.title !== 'Zoom level'
+      || !title.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
+      || !title.fieldMeta.toolbarCandidate.reasons.includes('semantic_toolbar')
+    ) {
+      throw new Error(`title-labelled toolbar field must enter the toolbar audit, got: ${JSON.stringify(title)}`);
     }
 
     const ordinary = await call(page, 'set_field', {

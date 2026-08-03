@@ -2927,6 +2927,31 @@
     } catch { return null; }
   }
 
+  function _richTextEditorsAcrossOpenShadowRoots(scope) {
+    const selector = 'textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame';
+    const editors = [];
+    const roots = [scope];
+    const seenRoots = new Set();
+    let scannedHosts = 0;
+    while (roots.length && seenRoots.size < 128 && editors.length < 200 && scannedHosts < 5000) {
+      const root = roots.shift();
+      if (!root || seenRoots.has(root)) continue;
+      seenRoots.add(root);
+      try {
+        for (const editor of root.querySelectorAll?.(selector) || []) {
+          if (!editors.includes(editor)) editors.push(editor);
+          if (editors.length >= 200) break;
+        }
+        for (const host of root.querySelectorAll?.('*') || []) {
+          scannedHosts += 1;
+          if (host.shadowRoot && !seenRoots.has(host.shadowRoot)) roots.push(host.shadowRoot);
+          if (scannedHosts >= 5000) break;
+        }
+      } catch {}
+    }
+    return editors;
+  }
+
   function _associatedRichTextEditor(regionNode) {
     try {
       if (!regionNode?.isConnected) return null;
@@ -2934,7 +2959,7 @@
       const candidates = [];
       let scope = _composedParent(regionNode);
       for (let depth = 0; scope && depth < 5; depth += 1, scope = _composedParent(scope)) {
-        for (const editor of scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame') || []) {
+        for (const editor of _richTextEditorsAcrossOpenShadowRoots(scope)) {
           const editorTag = String(editor.tagName || '').toLowerCase();
           const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
           if (
@@ -2990,7 +3015,8 @@
   // in the accessibility tree (font size/family/style presets). Report a
   // language- and site-neutral *candidate* here; the background combines this
   // structural evidence with a target-annotated screenshot before changing
-  // the tool result. Ordinary labelled form inputs never enter that audit.
+  // the tool result. A label suppresses weak standalone candidates, but never
+  // overrides explicit [role=toolbar] ancestry.
   function _richTextToolbarAvailablePresetValues(el) {
     try {
       const values = [];
@@ -3044,7 +3070,6 @@
         baseMeta?.title,
         baseMeta?.labelText,
       ].some(value => String(value || '').trim());
-      if (!unlabeled) return null;
 
       const compact = rect.height <= 32 && rect.width <= 220;
       const value = String(el.value || '').trim();
@@ -3052,6 +3077,7 @@
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
       const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
+      if (!unlabeled && !semanticToolbar) return null;
       const interactiveSelector = [
         'input:not([type="hidden"])',
         'textarea',
@@ -3079,8 +3105,8 @@
 
       const reasons = [];
       let score = 0;
-      reasons.push('unlabelled_text_control');
-      score += 1;
+      reasons.push(unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control');
+      if (unlabeled) score += 1;
       if (compact) { reasons.push('compact_control'); score += 1; }
       if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
       if (cluster) { reasons.push('dense_control_cluster'); score += 2; }

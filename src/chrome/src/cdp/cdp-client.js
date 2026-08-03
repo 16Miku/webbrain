@@ -3252,7 +3252,7 @@ export class CDPClient {
               fieldMeta.title,
               fieldMeta.labelText,
             ].some(value => String(value || '').trim());
-            if (!unlabeled) return null;
+            if (!unlabeled && !semanticToolbar) return null;
             const compact = rect.height <= 32 && rect.width <= 220;
             const value = String(el.value || '').trim();
             const numericPreset = value.length > 0 && value.length <= 16
@@ -3277,8 +3277,8 @@ export class CDPClient {
               const area = region.width * region.height;
               if (!cluster || area < cluster.area) cluster = { node, region, area };
             }
-            const reasons = ['unlabelled_text_control'];
-            let score = 1;
+            const reasons = [unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control'];
+            let score = unlabeled ? 1 : 0;
             if (compact) { reasons.push('compact_control'); score += 1; }
             if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
             if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
@@ -3288,13 +3288,35 @@ export class CDPClient {
             const region = regionNode.getBoundingClientRect();
             const associatedEditor = (() => {
               const candidates = [];
+              const editorsAcrossOpenShadowRoots = root => {
+                const editors = [];
+                const roots = [root];
+                const seenRoots = new Set();
+                let scannedHosts = 0;
+                while (roots.length && seenRoots.size < 128 && editors.length < 200 && scannedHosts < 5000) {
+                  const current = roots.shift();
+                  if (!current || seenRoots.has(current)) continue;
+                  seenRoots.add(current);
+                  try {
+                    for (const editor of current.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame') || []) {
+                      if (!editors.includes(editor)) editors.push(editor);
+                      if (editors.length >= 200) break;
+                    }
+                    for (const host of current.querySelectorAll?.('*') || []) {
+                      scannedHosts += 1;
+                      if (host.shadowRoot && !seenRoots.has(host.shadowRoot)) roots.push(host.shadowRoot);
+                      if (scannedHosts >= 5000) break;
+                    }
+                  } catch {}
+                }
+                return editors;
+              };
               let scope = composedParent(regionNode);
               for (let depth = 0; scope && depth < 5; depth += 1, scope = composedParent(scope)) {
-                let editors = [];
-                try {
-                  editors = Array.from(scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"])') || []);
-                } catch {}
+                const editors = editorsAcrossOpenShadowRoots(scope);
                 for (const editor of editors) {
+                  const editorTag = String(editor.tagName || '').toLowerCase();
+                  const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
                   if (
                     editor === regionNode
                     || regionNode.contains?.(editor)
@@ -3302,6 +3324,7 @@ export class CDPClient {
                     || !visible(editor)
                   ) continue;
                   const editorRect = editor.getBoundingClientRect();
+                  if (iframeBacked && (editorRect.width < 160 || editorRect.height < 80)) continue;
                   const overlap = Math.max(0, Math.min(region.right, editorRect.right) - Math.max(region.left, editorRect.left));
                   const horizontalPenalty = overlap > 0
                     ? 0
