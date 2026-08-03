@@ -13,7 +13,12 @@ import {
   formatSelectionPromptForDisplay,
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
-import { deleteChatHistoryRecord, saveChatHistoryRecord } from './chat-history-store.js';
+import {
+  deleteChatHistoryRecord,
+  repairChatHistoryRecordMessages,
+  saveChatHistoryRecord,
+} from './chat-history-store.js';
+import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
@@ -1693,9 +1698,12 @@ function extractChatHistoryMessages(root = messagesEl) {
     clone.querySelectorAll('button, input, textarea, select, .msg-copy-btn, .code-copy-btn, .error-retry-btn')
       .forEach((el) => el.remove());
     const textEl = clone.querySelector('.message-text') || clone.querySelector('.message-content') || clone;
+    const role = roleFromMessageElement(msgEl);
+    const format = role === 'assistant' || role === 'error' ? 'markdown' : 'text';
     return {
-      role: roleFromMessageElement(msgEl),
-      text: normalizeHistoryText(textEl.textContent),
+      role,
+      text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
+      format,
       index,
       createdAt: Date.now(),
     };
@@ -1808,6 +1816,20 @@ async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}
     messages,
   }).catch((error) => {
     console.warn('[WebBrain] failed to save chat history:', error);
+  });
+}
+
+async function repairRestoredChatHistorySnapshot(tabId) {
+  const numericTabId = Number(tabId);
+  if (document.visibilityState === 'hidden'
+      || !Number.isFinite(numericTabId)
+      || renderedTabId !== numericTabId) return;
+  const recordId = chatHistoryRecordIdsByTab.get(numericTabId);
+  if (!recordId) return;
+  const messages = extractChatHistoryMessages(messagesEl);
+  if (!messages.some((message) => message.role === 'user')) return;
+  await repairChatHistoryRecordMessages(recordId, messages).catch((error) => {
+    console.warn('[WebBrain] failed to repair restored chat history:', error);
   });
 }
 
@@ -3592,6 +3614,11 @@ async function init() {
   // Start observing the messages container for changes to persist.
   persistObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
   await restoreActiveRunState(restoreTabId);
+  if (restoreTabId != null && currentTabId === restoreTabId) {
+    // Repair only stored message formatting; opening the panel must not make a
+    // conversation look newer or replace its original mode/page metadata.
+    await repairRestoredChatHistorySnapshot(restoreTabId);
+  }
   restoreLatestChatTurnPosition();
 
   await loadProviders();

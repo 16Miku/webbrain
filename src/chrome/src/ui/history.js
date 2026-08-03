@@ -8,6 +8,7 @@ import { formatSelectionPromptForDisplay } from '../context-menu-storage.js';
 import { listRuns } from '../trace/recorder.js';
 import { t } from './i18n.js';
 import { escapeHtml, escapeAttr } from './utils.js';
+import { renderSkillMarkdown as renderHistoryMarkdown } from './skill-markdown.js';
 
 const listEl = document.getElementById('history-list');
 const mainPane = document.getElementById('main-pane');
@@ -254,10 +255,14 @@ function displayRecordTitle(record) {
 
 function renderMessage(message) {
   const role = ['user', 'assistant', 'system', 'error'].includes(message?.role) ? message.role : 'unknown';
+  const text = displayMessageText(message);
+  const renderedText = message?.format === 'markdown'
+    ? renderHistoryMarkdown(text)
+    : escapeHtml(text);
   return `
     <article class="message ${escapeAttr(role)}">
       <div class="message-role">${escapeHtml(t(`hist.role.${role}`))}</div>
-      <div class="message-text">${escapeHtml(displayMessageText(message))}</div>
+      <div class="message-text">${renderedText}</div>
     </article>
   `;
 }
