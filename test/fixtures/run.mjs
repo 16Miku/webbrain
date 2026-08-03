@@ -4175,11 +4175,21 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (
       preservedRecoveryState?.associatedEditorRef !== 'ref_99'
       || preservedRecoveryState?.associatedEditorIdentity?.id !== 'editor-body'
+      || preservedRecoveryState?.recoveryObligations?.length !== 2
       || !preservedRecoveryState.blockedRegionRefs?.has('ref_10')
       || !preservedRecoveryState.blockedRegionRefs?.has('ref_80')
       || agent._richTextToolbarDebts.get(tabId)?.ref_id !== 'ref_12'
     ) {
       throw new Error(`a later toolbar must not replace the first unresolved editor: ${JSON.stringify(preservedRecoveryState)}`);
+    }
+    await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_88', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (agent._richTextToolbarStates.get(tabId)?.recoveryObligations?.length !== 2) {
+      throw new Error('an identical blocked retry must not create duplicate recovery obligations');
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
@@ -4232,7 +4242,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarContext: false,
       toolbarRegionRef: '',
     });
-    const unrelatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
+    const unrelatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris', clear: true }, {
       success: true,
       verified: true,
       method: 'contenteditable',
@@ -4249,7 +4259,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarContext: false,
       toolbarRegionRef: '',
     });
-    const unverifiedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
+    const unverifiedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris', clear: true }, {
       success: true,
       method: 'contenteditable',
     });
@@ -4257,7 +4267,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       throw new Error('an unverified editor dispatch must retain toolbar completion debt');
     }
     for (const incorrectText of ['', 'Lyon']) {
-      const incorrectTextRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: incorrectText }, {
+      const incorrectTextRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: incorrectText, clear: true }, {
         success: true,
         verified: true,
         method: 'contenteditable',
@@ -4266,17 +4276,88 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
         throw new Error(`an exact editor edit with mismatched text must retain toolbar completion debt: ${JSON.stringify(incorrectText)}`);
       }
     }
-    const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
+    const appendModeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris' }, {
       success: true,
       verified: true,
       method: 'contenteditable',
     });
-    if (!exactRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
-      throw new Error('the exact associated editor edit should clear debt and blocked refs');
+    if (appendModeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('append-mode recovery must not discharge a blocked replacement edit');
+    }
+    const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', { text: 'Paris', clear: true }, {
+      success: true,
+      verified: true,
+      method: 'contenteditable',
+    });
+    const secondRecoveryState = agent._richTextToolbarStates.get(tabId);
+    if (
+      !exactRecovery
+      || !agent._richTextToolbarDebts.has(tabId)
+      || secondRecoveryState?.associatedEditorRef !== 'ref_199'
+      || secondRecoveryState?.blockedAttemptedText !== 'Document prose'
+      || secondRecoveryState?.recoveryObligations?.length !== 1
+    ) {
+      throw new Error('recovering the first editor must retain and promote the second toolbar obligation');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_199',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 500, y: 160, pageX: 500, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body-b', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const finalRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'set_field', { ref_id: 'ref_199', text: 'Document prose' }, {
+      success: true,
+      verified: true,
+      method: 'set_field',
+    });
+    if (!finalRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('every accumulated toolbar obligation must be recovered before debt clears');
     }
     if (agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a')) {
       throw new Error('toolbar refs must be released after exact editor recovery');
     }
+
+    const queuedFirstBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_queue_toolbar_a', text: 'First queued edit' },
+      queuedFirstBlock,
+      candidate,
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-queue-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    const queuedSecondBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'type_text',
+      { selector: '#queue-toolbar-b', text: 'Second queued edit' },
+      queuedSecondBlock,
+      {
+        ...candidate,
+        regionRef: 'ref_queue_region_b',
+        associatedEditorRef: 'ref_queue_editor_b',
+        associatedEditorIdentity: { ...candidate.associatedEditorIdentity, id: 'queue-editor-b', pageX: 500 },
+      },
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-queue-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    agent._clearRichTextToolbarDocumentState(tabId);
+    const queuedNavigationState = agent._richTextToolbarStates.get(tabId);
+    if (
+      queuedNavigationState?.recoveryObligations?.length !== 2
+      || queuedNavigationState.recoveryObligations.some(obligation => obligation.recoveryOnly !== true || obligation.associatedEditorRef)
+      || !agent._richTextToolbarDebts.has(tabId)
+    ) {
+      throw new Error('navigation must preserve every accumulated recovery obligation while releasing document-scoped refs');
+    }
+    agent._resetRichTextToolbarAudit(tabId);
 
     const refLessIdentityRecoveryResult = {};
     agent._applyRichTextToolbarWrongTarget(
@@ -4302,7 +4383,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const refLessIdentityRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_200', text: 'Document prose' },
+      { ref_id: 'ref_200', text: 'Document prose', clear: false },
       { success: true, verified: true, method: 'set_field' },
     );
     if (!refLessIdentityRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4553,7 +4634,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unrelatedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor', text: 'Document prose' },
+      { selector: '#inner-editor', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unrelatedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4570,7 +4651,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unscopedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor', text: 'Document prose' },
+      { selector: '#inner-editor', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (unscopedIframeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4580,7 +4661,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const iframeBackedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor', text: 'Document prose' },
+      { selector: '#inner-editor', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!iframeBackedRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4619,7 +4700,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const wrongNestedScopeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor', text: 'Document prose' },
+      { selector: '#inner-editor', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (wrongNestedScopeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4632,7 +4713,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const nestedIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'iframe_type',
-      { selector: '#inner-editor', text: 'Document prose' },
+      { selector: '#inner-editor', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!nestedIframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
@@ -4886,7 +4967,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const toolbarLikeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_ax',
-      { ref_id: 'ref_toolbar_editor_like', text: 'Document prose' },
+      { ref_id: 'ref_toolbar_editor_like', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (toolbarLikeRecovery || !agent._richTextToolbarDebts.has(tabId)) {
@@ -4924,7 +5005,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const unknownEditorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'type_ax',
-      { ref_id: 'ref_ambiguous_editor_a', text: 'Document prose' },
+      { ref_id: 'ref_ambiguous_editor_a', text: 'Document prose', clear: true },
       { success: true, verified: true, method: 'contenteditable' },
     );
     if (!unknownEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
