@@ -2412,21 +2412,6 @@ export class Agent extends LoopDetector {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
       return { block: null, shot: null };
     }
-    if (this._richTextToolbarDebts.has(tabId)) {
-      const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
-      const recoveryState = this._richTextToolbarStates.get(tabId);
-      if (
-        recoveryState?.recoveryOnly === true
-        && Number(probe?.fieldMeta?.toolbarCandidate?.score) >= 4
-      ) {
-        return {
-          block: this._richTextToolbarRetryBlock(recoveryState),
-          shot: null,
-          probe: probe?.resolved ? probe : null,
-        };
-      }
-      return { block: null, shot: null, probe: probe?.resolved ? probe : null };
-    }
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);

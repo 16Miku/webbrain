@@ -2868,6 +2868,24 @@ for (const browserKind of ['chrome', 'firefox']) {
         </div>`;
       composedEditor.querySelector('#composed-toolbar').appendChild(composedHost);
       document.body.appendChild(composedEditor);
+
+      const shadowToolbarEditor = document.createElement('div');
+      shadowToolbarEditor.className = 'editor';
+      const shadowToolbarHost = document.createElement('div');
+      shadowToolbarHost.id = 'shadow-toolbar-component';
+      const shadowToolbarRoot = shadowToolbarHost.attachShadow({ mode: 'open' });
+      shadowToolbarRoot.innerHTML = `
+        <div role="toolbar" style="height:42px;display:flex;align-items:center">
+          <input id="shadow-toolbar-family-input" value="Default" style="width:118px;height:22px">
+        </div>`;
+      shadowToolbarEditor.appendChild(shadowToolbarHost);
+      const shadowToolbarBody = document.createElement('div');
+      shadowToolbarBody.id = 'shadow-toolbar-editor-body';
+      shadowToolbarBody.className = 'body';
+      shadowToolbarBody.contentEditable = 'true';
+      shadowToolbarBody.textContent = 'Enter text';
+      shadowToolbarEditor.appendChild(shadowToolbarBody);
+      document.body.appendChild(shadowToolbarEditor);
       return {
         size: window.__wb_ax_ref(document.getElementById('font-size')),
         family: window.__wb_ax_ref(document.getElementById('font-family')),
@@ -2879,6 +2897,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowExplicitLabel: window.__wb_ax_ref(shadowRoot.getElementById('shadow-explicit-size')),
         shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
+        shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
         ordinary: window.__wb_ax_ref(document.getElementById('ordinary-size')),
         secondary: window.__wb_ax_ref(document.getElementById('secondary-notes')),
@@ -2936,6 +2955,13 @@ for (const browserKind of ['chrome', 'firefox']) {
       || composedCandidate.associatedEditorIdentity?.id !== 'composed-editor-body'
     ) {
       throw new Error(`expected toolbar ancestry through the input shadow host, got: ${JSON.stringify(composedFamilyProbe)}`);
+    }
+    const shadowToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.shadowToolbarFamilyInput, text: 'Roboto' },
+    });
+    if (shadowToolbarProbe?.fieldMeta?.toolbarCandidate?.associatedEditorIdentity?.id !== 'shadow-toolbar-editor-body') {
+      throw new Error(`expected editor association through the toolbar shadow host, got: ${JSON.stringify(shadowToolbarProbe)}`);
     }
     const focusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
@@ -3316,13 +3342,29 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       documentToken: 'doc-a',
       refScopeUrl: 'https://example.test/editor',
       rect: { x: 500, y: 8, w: 60, h: 24 },
-      fieldMeta: { toolbarCandidate: { score: 6 } },
+      fieldMeta: {
+        toolbarCandidate: {
+          ...candidate,
+          score: 8,
+          reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+          regionRef: 'ref_80',
+        },
+      },
       toolbarContext: true,
       toolbarRegionRef: 'ref_80',
     });
     const otherToolbarBlock = await agent._richTextToolbarToolBlock(tabId, 'click', { selector: '#other-toolbar' });
     if (otherToolbarBlock) {
       throw new Error(`an unrelated toolbar must not be blocked: ${JSON.stringify(otherToolbarBlock)}`);
+    }
+    const otherToolbarPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_88', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (!otherToolbarPreflight.block?.wrongTarget || otherToolbarPreflight.block.dispatched !== false) {
+      throw new Error('a second toolbar must still be audited while recovery debt is open');
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
@@ -3638,6 +3680,22 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     ) {
       throw new Error('navigation must release stale toolbar targets while preserving editor recovery identity');
     }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'doc-b',
+      refScopeUrl: 'https://example.test/next',
+      rect: { x: 10, y: 8, w: 60, h: 24 },
+      fieldMeta: {
+        toolbarCandidate: {
+          ...candidate,
+          score: 8,
+          reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+        },
+      },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
     const navigatedToolbarPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',

@@ -3588,13 +3588,13 @@
       if (!regionNode?.isConnected) return null;
       const regionRect = regionNode.getBoundingClientRect();
       const candidates = [];
-      let scope = regionNode.parentElement;
-      for (let depth = 0; scope && depth < 5; depth += 1, scope = scope.parentElement) {
+      let scope = _composedParent(regionNode);
+      for (let depth = 0; scope && depth < 5; depth += 1, scope = _composedParent(scope)) {
         for (const editor of scope.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"])') || []) {
           if (
             editor === regionNode
             || regionNode.contains(editor)
-            || editor.closest?.('[role="toolbar"]')
+            || _hasComposedClosest(editor, '[role="toolbar"]')
             || !_visibleFieldContextNode(editor)
           ) continue;
           const rect = editor.getBoundingClientRect();
