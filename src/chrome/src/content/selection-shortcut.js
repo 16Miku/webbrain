@@ -142,7 +142,9 @@
           transform:translateY(-1px);
         }
         .popup {
-          position:fixed; width:min(${POPUP_WIDTH}px,calc(100vw - 16px)); padding:12px;
+          position:fixed; width:min(${POPUP_WIDTH}px,calc(100vw - 16px));
+          max-height:calc(100vh - 16px); overflow-y:auto; overscroll-behavior:contain;
+          padding:12px;
           border:1px solid var(--border); border-radius:16px; background:var(--bg);
           color:var(--text); box-shadow:var(--shadow); pointer-events:auto;
           font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
