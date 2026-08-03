@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Rich text toolbar target fixture</title>
+<style>
+  body { margin: 24px; font: 16px sans-serif; }
+  .editor { width: 620px; border: 1px solid #aaa; }
+  .toolbar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #ccc; }
+  .family { width: 132px; height: 24px; display: flex; align-items: center; padding: 0 6px; border: 1px solid #bbb; }
+  .size { width: 34px; height: 22px; padding: 0 3px; }
+  .body { min-height: 130px; padding: 12px; outline: none; }
+  .ordinary { display: block; width: 180px; height: 32px; margin-top: 24px; }
+</style>
+
+<div class="editor">
+  <div class="toolbar" role="toolbar">
+    <div id="font-family" class="family" tabindex="0"><span>Inter Display</span></div>
+    <div><input id="font-size" class="size" type="text" value="11"></div>
+    <button id="bold" type="button">B</button>
+    <button id="link" type="button">Link</button>
+  </div>
+  <div id="editor-body" class="body" contenteditable="true">Enter text</div>
+</div>
+
+<label for="ordinary-size">Quantity</label>
+<input id="ordinary-size" class="ordinary" type="text" value="11">

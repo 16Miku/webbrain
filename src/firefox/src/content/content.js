@@ -2952,6 +2952,128 @@
     return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
   }
 
+  function _visibleFieldContextNode(node) {
+    try {
+      if (!node || !node.isConnected) return false;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0
+        && style.display !== 'none'
+        && style.visibility !== 'hidden';
+    } catch { return false; }
+  }
+
+  // Rich-text editors often expose formatting widgets as ordinary textboxes
+  // in the accessibility tree (font size/family/style presets). Report a
+  // language- and site-neutral *candidate* here; the background combines this
+  // structural evidence with a target-annotated screenshot before changing
+  // the tool result. Ordinary labelled form inputs never enter that audit.
+  function _richTextToolbarCandidate(el, baseMeta) {
+    try {
+      if (!el || el.tagName !== 'INPUT') return null;
+      const inputType = (el.type || 'text').toLowerCase();
+      if (!['text', 'search', 'number'].includes(inputType)) return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return null;
+
+      const unlabeled = ![
+        baseMeta?.name,
+        baseMeta?.autocomplete,
+        baseMeta?.ariaLabel,
+        baseMeta?.placeholder,
+        baseMeta?.labelText,
+      ].some(value => String(value || '').trim());
+      if (!unlabeled) return null;
+
+      const compact = rect.height <= 32 && rect.width <= 220;
+      const value = String(el.value || '').trim();
+      const numericPreset = value.length > 0
+        && value.length <= 16
+        && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
+      const semanticToolbar = el.closest?.('[role="toolbar"]') || null;
+      const interactiveSelector = [
+        'input:not([type="hidden"])',
+        'textarea',
+        'select',
+        'button',
+        '[role="button"]',
+        '[role="combobox"]',
+        '[role="listbox"]',
+        '[role="menuitem"]',
+        '[tabindex]',
+      ].join(',');
+
+      let cluster = null;
+      let node = el.parentElement;
+      for (let depth = 1; node && depth <= 6; depth++, node = node.parentElement) {
+        if (!_visibleFieldContextNode(node)) continue;
+        const region = node.getBoundingClientRect();
+        if (region.height > 160 || region.width < rect.width) continue;
+        const controls = Array.from(node.querySelectorAll(interactiveSelector))
+          .filter(candidate => candidate === el || (!candidate.isContentEditable && _visibleFieldContextNode(candidate)));
+        if (controls.length < 2 || controls.length > 40) continue;
+        const area = region.width * region.height;
+        if (!cluster || area < cluster.area) cluster = { node, controls, region, area };
+      }
+
+      const reasons = [];
+      let score = 0;
+      reasons.push('unlabelled_text_control');
+      score += 1;
+      if (compact) { reasons.push('compact_control'); score += 1; }
+      if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
+      if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
+      if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
+      if (score < 4) return null;
+
+      const regionNode = semanticToolbar || cluster?.node || el.parentElement || el;
+      const region = regionNode.getBoundingClientRect();
+      const related = Array.from(regionNode.querySelectorAll?.(interactiveSelector) || [])
+        .filter(candidate => !candidate.isContentEditable && _visibleFieldContextNode(candidate))
+        .slice(0, 30);
+      const compactTextLeaves = Array.from(regionNode.querySelectorAll?.('*') || [])
+        .filter(candidate => {
+          if (candidate.children?.length || candidate.closest?.('[contenteditable]:not([contenteditable="false"])')) return false;
+          const text = String(candidate.textContent || '').trim();
+          if (!text || text.length > 60 || !_visibleFieldContextNode(candidate)) return false;
+          const candidateRect = candidate.getBoundingClientRect();
+          return candidateRect.height <= 48;
+        })
+        .slice(0, 30);
+      for (const leaf of compactTextLeaves) {
+        let candidate = leaf;
+        for (let depth = 0; candidate && candidate !== regionNode && depth < 3; depth++, candidate = candidate.parentElement) {
+          if (!candidate.closest?.('[contenteditable]:not([contenteditable="false"])') && !related.includes(candidate)) related.push(candidate);
+        }
+      }
+      if (!related.includes(el)) related.unshift(el);
+      const relatedRefs = [];
+      let regionRef = '';
+      if (typeof window.__wb_ax_ref === 'function') {
+        try { regionRef = window.__wb_ax_ref(regionNode) || ''; } catch {}
+        for (const candidate of related.slice(0, 30)) {
+          try {
+            const ref = window.__wb_ax_ref(candidate);
+            if (ref && !relatedRefs.includes(ref)) relatedRefs.push(ref);
+          } catch {}
+        }
+      }
+
+      return {
+        score,
+        reasons,
+        regionRect: {
+          x: Math.round(region.x),
+          y: Math.round(region.y),
+          w: Math.round(region.width),
+          h: Math.round(region.height),
+        },
+        regionRef,
+        relatedRefs,
+      };
+    } catch { return null; }
+  }
+
   function _fieldMeta(el) {
     try {
       const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -2971,7 +3093,7 @@
           if (wrappingLabel) labelText = (wrappingLabel.textContent || '').trim().slice(0, 120);
         }
       } catch {}
-      return {
+      const meta = {
         tag,
         type: fieldType,
         contentEditable: !!el.isContentEditable,
@@ -2982,6 +3104,9 @@
         placeholder: el.getAttribute ? el.getAttribute('placeholder') : null,
         labelText,
       };
+      const toolbarCandidate = _richTextToolbarCandidate(el, meta);
+      if (toolbarCandidate) meta.toolbarCandidate = toolbarCandidate;
+      return meta;
     } catch { return null; }
   }
 
@@ -3018,6 +3143,113 @@
     } catch { return false; }
   }
 
+  function _richTextToolbarContextForElement(el) {
+    try {
+      if (!el || !el.isConnected) return { toolbarContext: false, toolbarRegionRef: '' };
+      const semanticToolbar = el.closest?.('[role="toolbar"]') || null;
+      if (semanticToolbar) {
+        let toolbarRegionRef = '';
+        try { if (typeof window.__wb_ax_ref === 'function') toolbarRegionRef = window.__wb_ax_ref(semanticToolbar) || ''; } catch {}
+        return { toolbarContext: true, toolbarRegionRef };
+      }
+      const targetRect = el.getBoundingClientRect();
+      const cx = targetRect.x + targetRect.width / 2;
+      const cy = targetRect.y + targetRect.height / 2;
+      let node = el.parentElement;
+      for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+        for (const field of node.querySelectorAll?.('input:not([type="hidden"])') || []) {
+          const candidate = _fieldMeta(field)?.toolbarCandidate;
+          const region = candidate?.regionRect;
+          if (!region) continue;
+          if (cx >= region.x && cx <= region.x + region.w && cy >= region.y && cy <= region.y + region.h) {
+            return { toolbarContext: true, toolbarRegionRef: candidate.regionRef || '' };
+          }
+        }
+      }
+      return { toolbarContext: false, toolbarRegionRef: '' };
+    } catch { return { toolbarContext: false, toolbarRegionRef: '' }; }
+  }
+
+  function _probeRichTextToolbarRetryTarget(params = {}) {
+    try {
+      const toolName = String(params.toolName || '');
+      const args = params.args || {};
+      let el = null;
+      if (['click_ax', 'type_ax', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
+        el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
+      } else if (toolName === 'type_text') {
+        if (args.selector) el = safeQuerySelector(args.selector);
+        else if (args.index != null) el = queryInteractiveForToolIndex()[args.index] || null;
+        else el = document.activeElement;
+      } else if (toolName === 'click') {
+        if (args.selector) {
+          el = safeQuerySelector(args.selector);
+        } else if (args.index != null) {
+          el = queryInteractiveForToolIndex()[args.index] || null;
+        } else if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) {
+          el = document.elementFromPoint(Number(args.x), Number(args.y));
+        } else if (typeof args.text === 'string' && args.text.trim()) {
+          const needle = args.text.trim().toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const selector = 'button,a[href],input,textarea,select,[role="button"],[role="textbox"],[role="combobox"],[tabindex],label';
+          const candidates = Array.from(scope.querySelectorAll(selector))
+            .map(candidate => ({ candidate, text: _siteInteractionText(candidate).trim().toLowerCase() }))
+            .filter(item => item.text);
+          for (const match of [
+            item => item.text === needle,
+            item => item.text.startsWith(needle),
+            item => item.text.includes(needle),
+          ]) {
+            const matches = candidates.filter(match);
+            if (matches.length === 1) {
+              el = _resolveInteractiveAncestor(matches[0].candidate);
+              break;
+            }
+            if (matches.length > 1) break;
+          }
+        }
+      }
+      if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
+        return { resolved: false };
+      }
+      const rect = el.getBoundingClientRect();
+      let refId = '';
+      try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
+      const toolbarContext = _richTextToolbarContextForElement(el);
+      return {
+        resolved: true,
+        refId,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          w: Math.round(rect.width),
+          h: Math.round(rect.height),
+        },
+        fieldMeta: _fieldMeta(el),
+        ...toolbarContext,
+      };
+    } catch {
+      return { resolved: false };
+    }
+  }
+
+  function _blurRichTextToolbarTarget(params = {}) {
+    try {
+      const active = document.activeElement;
+      if (!active || active === document.body || active === document.documentElement) return { success: true, blurred: false };
+      const refTarget = typeof params.ref_id === 'string' && typeof window.__wb_ax_lookup === 'function'
+        ? window.__wb_ax_lookup(params.ref_id)
+        : null;
+      if (active === refTarget || refTarget?.contains?.(active)) {
+        active.blur?.();
+        return { success: true, blurred: document.activeElement !== active };
+      }
+      return { success: true, blurred: false };
+    } catch {
+      return { success: false, blurred: false };
+    }
+  }
+
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
@@ -3030,6 +3262,8 @@
       'click': () => clickElement(msg.params || {}),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),
+      'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
+      'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),
       'extract_data': () => extractData(msg.params || {}),
