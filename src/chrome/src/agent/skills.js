@@ -56,11 +56,17 @@ export const PACKAGED_SKILL_SOURCES = Object.freeze([
     name: 'Frankfurter FX',
     path: 'skills/frankfurter-fx.md',
   }),
+  Object.freeze({
+    id: 'humanizer',
+    name: 'Humanizer',
+    path: 'skills/humanizer.md',
+  }),
 ]);
 export const DEFAULT_SKILL_SOURCES = Object.freeze(
   PACKAGED_SKILL_SOURCES.filter((source) => [
     'freeskillz-xyz',
     'otp-verification-code-helper',
+    'humanizer',
   ].includes(source.id))
 );
 
