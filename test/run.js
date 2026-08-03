@@ -3839,6 +3839,72 @@ test('12306 exposes a validated regional workflow profile with browser parity', 
   assert.deepEqual(validateAdapterWorkflowProfile(chromeProfiles[0]), { ok: true });
 });
 
+test('workflow profile enumeration rejects partial entries and returns detached snapshots', () => {
+  const builds = [
+    {
+      label: 'chrome',
+      getAdapter: getActiveAdapter,
+      listProfiles: listAdapterWorkflowProfiles,
+      validateProfile: validateAdapterWorkflowProfile,
+    },
+    {
+      label: 'firefox',
+      getAdapter: getActiveAdapterFx,
+      listProfiles: listAdapterWorkflowProfilesFx,
+      validateProfile: validateAdapterWorkflowProfileFx,
+    },
+  ];
+
+  for (const { label, getAdapter, listProfiles, validateProfile } of builds) {
+    const adapter = getAdapter('https://www.12306.cn/');
+    assert.ok(adapter?.workflow, `${label}: expected the 12306 workflow profile`);
+
+    const originalWorkflow = adapter.workflow;
+    try {
+      delete adapter.workflow;
+      assert.throws(
+        () => listProfiles(),
+        /`workflow` must be an object/,
+        `${label}: partial profile metadata must fail enumeration`,
+      );
+    } finally {
+      adapter.workflow = originalWorkflow;
+    }
+
+    const sourceSnapshot = structuredClone(adapter.workflow);
+    try {
+      const profile = listProfiles()[0];
+      profile.regions.push('tampered');
+      profile.jobs.push('tampered');
+      profile.workflow.schema = 'tampered';
+      profile.workflow.states.commit.requiresConfirmation = false;
+      profile.workflow.states.fulfillment.evidence.push('Tampered evidence.');
+      profile.workflow.states.fulfillment.terminalFor.push('tampered');
+
+      const fresh = listProfiles()[0];
+      assert.deepEqual(fresh.regions, ['CN'], `${label}: regions leaked a caller mutation`);
+      assert.deepEqual(fresh.jobs, ['rail-booking'], `${label}: jobs leaked a caller mutation`);
+      assert.equal(fresh.workflow.schema, ADAPTER_WORKFLOW_SCHEMA, `${label}: schema leaked a caller mutation`);
+      assert.equal(fresh.workflow.states.commit.requiresConfirmation, true, `${label}: state fields leaked a caller mutation`);
+      assert.deepEqual(
+        fresh.workflow.states.fulfillment.evidence,
+        ['An order number and successful paid or ticket-issued status are visible.'],
+        `${label}: evidence leaked a caller mutation`,
+      );
+      assert.deepEqual(
+        fresh.workflow.states.fulfillment.terminalFor,
+        ['rail-booking'],
+        `${label}: terminal jobs leaked a caller mutation`,
+      );
+      assert.deepEqual(validateProfile(fresh), { ok: true });
+    } finally {
+      adapter.workflow = sourceSnapshot;
+    }
+  }
+
+  assert.deepEqual(listAdapterWorkflowProfilesFx(), listAdapterWorkflowProfiles());
+});
+
 test('finance adapters take precedence in order — stripe before generic', () => {
   // Stripe URL should match stripe, not the generic finance pattern.
   const a = getActiveAdapter('https://dashboard.stripe.com/');

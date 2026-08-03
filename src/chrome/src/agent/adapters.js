@@ -17074,16 +17074,35 @@ export function listAdapters() {
  * adapter matching and notes injection remain unaffected.
  */
 export function listAdapterWorkflowProfiles() {
-  return ADAPTERS.filter(a => a.workflow).map((adapter) => {
+  const profiles = [];
+  for (const adapter of ADAPTERS) {
+    const hasProfile = adapter.regions !== undefined
+      || adapter.jobs !== undefined
+      || adapter.workflow !== undefined;
+    if (!hasProfile) continue;
+
     const validation = validateAdapterWorkflowProfile(adapter);
     if (!validation.ok) {
       throw new Error(`Invalid workflow profile for adapter \`${adapter.name}\`: ${validation.error}`);
     }
-    return {
+    profiles.push({
       name: adapter.name,
       regions: [...adapter.regions],
       jobs: [...adapter.jobs],
-      workflow: adapter.workflow,
-    };
-  });
+      workflow: {
+        schema: adapter.workflow.schema,
+        states: Object.fromEntries(
+          Object.entries(adapter.workflow.states).map(([stateName, state]) => [
+            stateName,
+            {
+              ...state,
+              evidence: [...state.evidence],
+              ...(state.terminalFor === undefined ? {} : { terminalFor: [...state.terminalFor] }),
+            },
+          ]),
+        ),
+      },
+    });
+  }
+  return profiles;
 }
