@@ -2633,22 +2633,19 @@ export class Agent extends LoopDetector {
       blockedSelectors: selector ? [selector] : [],
       blockedRegionRefs: candidate?.regionRef ? [candidate.regionRef] : [],
     };
-    const obligationKey = entry => {
-      const stableEditorIdentity = Agent._richTextToolbarEditorIdentityRecoverable(entry.associatedEditorIdentity);
-      return JSON.stringify([
-        entry.blockedAttemptedText,
-        entry.blockedClear,
-        stableEditorIdentity ? entry.associatedEditorIdentity : null,
-        stableEditorIdentity ? '' : (entry.associatedEditorRef || ''),
-        entry.recoveryTargetUnknown === true,
-        stableEditorIdentity ? '' : (entry.documentToken || ''),
-        stableEditorIdentity ? '' : (entry.pageUrl || ''),
-        stableEditorIdentity ? null : (Number.isInteger(entry.frameId) ? entry.frameId : null),
-        stableEditorIdentity ? '' : (entry.blockedToolbarRef || ''),
-        stableEditorIdentity ? '' : (entry.blockedToolbarSelector || ''),
-        stableEditorIdentity ? '' : (entry.regionRef || ''),
-      ]);
-    };
+    const obligationKey = entry => JSON.stringify([
+      entry.blockedAttemptedText,
+      entry.blockedClear,
+      entry.associatedEditorRef || '',
+      entry.associatedEditorIdentity || null,
+      entry.recoveryTargetUnknown === true,
+      entry.documentToken || '',
+      entry.pageUrl || '',
+      Number.isInteger(entry.frameId) ? entry.frameId : null,
+      entry.blockedToolbarRef || '',
+      entry.blockedToolbarSelector || '',
+      entry.regionRef || '',
+    ]);
     const obligations = priorObligations.some(entry => obligationKey(entry) === obligationKey(obligation))
       ? priorObligations
       : [...priorObligations, obligation];

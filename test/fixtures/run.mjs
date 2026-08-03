@@ -4359,6 +4359,27 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     agent._resetRichTextToolbarAudit(tabId);
 
+    for (const [frameId, documentToken] of [[7, 'sibling-frame-doc-a'], [8, 'sibling-frame-doc-b']]) {
+      agent._applyRichTextToolbarWrongTarget(
+        tabId,
+        'iframe_type',
+        { selector: '#font-size', text: 'Shared iframe edit', clear: true },
+        {},
+        candidate,
+        familyDecision,
+        familyAudit,
+        { frameId, documentToken, refScopeUrl: 'https://frame.example.test/editor' },
+      );
+    }
+    const siblingFrameState = agent._richTextToolbarStates.get(tabId);
+    if (
+      siblingFrameState?.recoveryObligations?.length !== 2
+      || new Set(siblingFrameState.recoveryObligations.map(obligation => obligation.frameId)).size !== 2
+    ) {
+      throw new Error('identical editor templates in sibling frames must retain separate recovery obligations');
+    }
+    agent._resetRichTextToolbarAudit(tabId);
+
     const refLessIdentityRecoveryResult = {};
     agent._applyRichTextToolbarWrongTarget(
       tabId,
@@ -4806,6 +4827,9 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!navigatedToolbarPreflight.block?.wrongTarget || navigatedToolbarPreflight.block.dispatched !== false) {
       throw new Error('recovery-only debt must still block a newly scoped toolbar candidate');
     }
+    if (agent._richTextToolbarStates.get(tabId)?.recoveryObligations?.length !== 2) {
+      throw new Error('a newly scoped toolbar mistake after navigation must retain both recovery obligations');
+    }
     agent._effectiveRunMode = () => 'act';
     const navigatedDoneBlock = agent._completionDoneBlock(tabId, 'done', { outcome: 'success' });
     if (navigatedDoneBlock?.reason !== 'rich_text_toolbar_target_unresolved') {
@@ -4841,7 +4865,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
-      refId: 'ref_77',
+      refId: 'ref_99',
       documentToken: 'doc-b',
       refScopeUrl: 'https://example.test/next',
       rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
@@ -4852,11 +4876,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const navigatedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
       tabId,
       'set_field',
-      { ref_id: 'ref_77', text: 'Document prose' },
+      { ref_id: 'ref_99', text: 'Document prose' },
       { success: true, verified: true, method: 'set_field' },
     );
-    if (navigatedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
-      throw new Error('a same-shaped editor on another same-origin route must not clear toolbar debt');
+    if (
+      !navigatedRecovery
+      || !agent._richTextToolbarDebts.has(tabId)
+      || agent._richTextToolbarStates.get(tabId)?.recoveryObligations?.length !== 1
+    ) {
+      throw new Error('the current-route edit must clear only the newly scoped obligation and retain the original route debt');
     }
     const originalRouteProbe = {
       resolved: true,
