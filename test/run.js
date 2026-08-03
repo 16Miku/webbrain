@@ -18566,6 +18566,14 @@ test('chat history text serialization preserves rendered line structure', () => 
     element('DIV', element('PRE', textNode('line 1\nline 2\n'))),
     textNode('Closing'),
   );
+  const renderedCodeWrapper = element('DIV', element('PRE', element('CODE', textNode('line 1\n'))));
+  renderedCodeWrapper.classList = { contains: (name) => name === 'code-block-wrapper' };
+  const renderedCodeFollowedByText = element(
+    'DIV',
+    renderedCodeWrapper,
+    element('BR'),
+    textNode('Closing'),
+  );
 
   for (const [label, serialize] of [
     ['chrome', historyTextFromElement],
@@ -18585,6 +18593,11 @@ test('chat history text serialization preserves rendered line structure', () => 
       serialize(structuredReply, { markdown: false }).trim(),
       'Suggested reply\n\nOpening: Hello\nline 1\nline 2\nClosing',
       `${label}: plain user and system roles should not gain visible Markdown markers`,
+    );
+    assert.equal(
+      serialize(renderedCodeFollowedByText),
+      '```\nline 1\n```\nClosing',
+      `${label}: the source <br> after a rendered code wrapper should provide the only post-fence newline`,
     );
   }
 });

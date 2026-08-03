@@ -74,7 +74,6 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
       for (const child of Array.from(node.childNodes || [])) visit(child, false, true);
       ensureBreak();
       output += '```';
-      ensureBreak();
       return;
     }
     if (markdown && tagName === 'CODE' && !inPre) {
@@ -104,9 +103,12 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
     }
 
     const isBlock = !isRoot && BLOCK_TAGS.has(tagName);
+    const isRenderedCodeBlock = markdown && node.classList?.contains?.('code-block-wrapper');
     if (isBlock) ensureBreak();
     for (const child of Array.from(node.childNodes || [])) visit(child, false, inPre);
-    if (isBlock) ensureBreak();
+    // formatMarkdown leaves the source newline after a fenced block as a
+    // sibling <br>. Do not also synthesize a block-boundary newline here.
+    if (isBlock && !isRenderedCodeBlock) ensureBreak();
   };
 
   visit(root, true);
