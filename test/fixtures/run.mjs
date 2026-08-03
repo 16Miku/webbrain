@@ -380,6 +380,37 @@ test('exact iframe rect handshake distinguishes same-URL sibling frames', async 
 });
 
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
+  test(`${label}: type_text verifies after controlled field reconciliation`, async (page) => {
+    await setupContentHtml(page, `<!doctype html>
+      <input id="controlled" value="requested content already">
+      <textarea id="accepted"></textarea>
+      <script>
+        const controlled = document.getElementById('controlled');
+        const controlledInitialValue = controlled.value;
+        controlled.addEventListener('input', () => {
+          setTimeout(() => { controlled.value = controlledInitialValue; }, 0);
+        });
+      </script>`, browserKind);
+    const rejected = await call(page, 'type', {
+      selector: '#controlled',
+      text: 'requested content',
+      clear: false,
+    });
+    if (rejected?.success !== true || rejected?.verified !== false) {
+      throw new Error(`controlled rollback must not be verified: ${JSON.stringify(rejected)}`);
+    }
+    const accepted = await call(page, 'type', {
+      selector: '#accepted',
+      text: 'requested content',
+      clear: true,
+    });
+    if (accepted?.success !== true || accepted?.verified !== true) {
+      throw new Error(`persisted text must be verified: ${JSON.stringify(accepted)}`);
+    }
+  });
+}
+
+for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
     await setupContentFixture(page, 'nyt-registration-gate.html', browserKind);
     const result = await call(page, 'get_page_info_cdp', {});
@@ -3493,6 +3524,31 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!structuralProseDecision.wrongTarget || structuralProseDecision.source !== 'structural_fallback') {
       throw new Error(`no-vision structural fallback must reject prose-like toolbar values: ${JSON.stringify(structuralProseDecision)}`);
     }
+    const numericCandidate = {
+      ...candidate,
+      reasons: [...candidate.reasons, 'numeric_preset_value'],
+      availablePresetValues: ['11', '14'],
+    };
+    for (const value of ['red', 'serif', 'h1', 'https://example.test/docs']) {
+      const crossKindDecision = AgentClass._richTextToolbarDecision({
+        ...numericCandidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(value),
+        attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch(value, numericCandidate.availablePresetValues),
+      }, null);
+      if (!crossKindDecision.wrongTarget || crossKindDecision.source !== 'structural_fallback') {
+        throw new Error(`numeric toolbar candidate accepted a cross-kind formatting value: ${JSON.stringify({ value, crossKindDecision })}`);
+      }
+    }
+    for (const value of ['14', '16']) {
+      const numericFallbackDecision = AgentClass._richTextToolbarDecision({
+        ...numericCandidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(value),
+        attemptedPresetMatch: AgentClass._richTextToolbarPresetMatch(value, numericCandidate.availablePresetValues),
+      }, null);
+      if (numericFallbackDecision.wrongTarget) {
+        throw new Error(`numeric toolbar candidate rejected a numeric value: ${JSON.stringify({ value, numericFallbackDecision })}`);
+      }
+    }
 
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 77;
@@ -3737,6 +3793,13 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarContext: false,
       toolbarRegionRef: '',
     });
+    const unverifiedRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
+      success: true,
+      method: 'contenteditable',
+    });
+    if (unverifiedRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('an unverified editor dispatch must retain toolbar completion debt');
+    }
     const exactRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, 'type_text', {}, {
       success: true,
       verified: true,

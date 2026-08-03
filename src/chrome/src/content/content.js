@@ -1688,7 +1688,7 @@
     return _typeTextInner(params);
   }
 
-  function _typeTextInner(params) {
+  async function _typeTextInner(params) {
     const noDispatchFailure = (error, extra = {}) => ({
       success: false,
       error,
@@ -1696,6 +1696,29 @@
       dispatched: false,
       noDispatch: true,
     });
+    const valueSignature = target => {
+      if (!target?.isConnected) return null;
+      const value = String(target.isContentEditable ? (target.textContent || '') : (target.value || ''));
+      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+      let hash = 2166136261;
+      for (let i = 0; i < sampled.length; i += 1) {
+        hash ^= sampled.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `${value.length}:${hash >>> 0}`;
+    };
+    const verifyValue = async (target, expected, clear, beforeSignature) => {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (!target?.isConnected) return false;
+      const value = String(target.isContentEditable ? (target.textContent || '') : (target.value || ''));
+      return clear
+        ? value === expected
+        : expected.length > 0
+          && !!beforeSignature
+          && valueSignature(target) !== beforeSignature
+          && value.includes(expected);
+    };
+    const typedText = String(params.text || '');
     let el;
     if (params.selector) {
       el = safeQuerySelector(params.selector);
@@ -1738,6 +1761,7 @@
 
     el.focus();
     showAgentWorkingTarget(el, 'type_text');
+    const beforeSignature = valueSignature(el);
 
     if (el.isContentEditable) {
       if (params.clear) el.textContent = '';
@@ -1747,7 +1771,8 @@
       el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, method: 'contenteditable', value: el.textContent.slice(0, 100) };
+      const verified = await verifyValue(el, typedText, params.clear === true, beforeSignature);
+      return { success: true, verified, method: 'contenteditable', value: el.textContent.slice(0, 100) };
     }
 
     // <select>: match by value, then by visible option text.
@@ -1766,7 +1791,8 @@
       else el.value = match.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, method: 'select', value: el.value };
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return { success: true, verified: el.isConnected && el.value === match.value, method: 'select', value: el.value };
     }
 
     if (params.clear) {
@@ -1786,6 +1812,7 @@
 
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    const verified = await verifyValue(el, typedText, params.clear === true, beforeSignature);
 
     // Duplicate-field detection
     const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
@@ -1795,7 +1822,7 @@
     }
     _lastTypeFieldIdent = fieldIdent;
 
-    return { success: true, value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
+    return { success: true, verified, value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
 
   /**

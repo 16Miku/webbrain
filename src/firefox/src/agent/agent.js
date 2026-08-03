@@ -1960,15 +1960,22 @@ export class Agent extends LoopDetector {
     // disabled even though this safety preflight still has a strong toolbar
     // candidate. Without usable vision, fail closed for prose-like values but
     // preserve values that are locally plausible for any formatting control.
-    const structurallyCompatible = !!shape && (
-      shape.chars === 0
-      || candidate?.attemptedPresetMatch === true
-      || shape.numericPreset === true
-      || shape.genericFontFamily === true
-      || shape.semanticStylePreset === true
-      || shape.colorLike === true
-      || shape.urlLike === true
-    );
+    const numericCandidate = reasons.has('numeric_preset_value');
+    const structurallyCompatible = !!shape && (numericCandidate
+      ? (
+          shape.chars === 0
+          || shape.numericPreset === true
+          || candidate?.attemptedPresetMatch === true
+        )
+      : (
+          shape.chars === 0
+          || candidate?.attemptedPresetMatch === true
+          || shape.numericPreset === true
+          || shape.genericFontFamily === true
+          || shape.semanticStylePreset === true
+          || shape.colorLike === true
+          || shape.urlLike === true
+        ));
     const strongStructural = score >= 4
       && !!shape
       && !structurallyCompatible
@@ -2374,7 +2381,7 @@ export class Agent extends LoopDetector {
   }
 
   async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe = null) {
-    if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified === false) return false;
+    if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified !== true) return false;
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
     const state = this._richTextToolbarStates.get(tabId);
     if (
@@ -15548,11 +15555,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (!el) return { ok: false, url: location.href, reason: 'not-found' };
               targetDispatched = true;
               el.focus();
+              const valueSignature = value => {
+                const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+                let hash = 2166136261;
+                for (let i = 0; i < sampled.length; i += 1) {
+                  hash ^= sampled.charCodeAt(i);
+                  hash = Math.imul(hash, 16777619);
+                }
+                return value.length + ':' + (hash >>> 0);
+              };
+              const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+              const beforeSignature = valueSignature(beforeValue);
               if (el.isContentEditable) {
                 if (${clear}) el.textContent = '';
                 el.textContent += ${JSON.stringify(text)};
                 el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(text)} }));
-                return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
+                return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), beforeSignature, dispatched: true };
               }
               const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
               const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
@@ -15560,14 +15578,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (setter) setter.call(el, newVal); else el.value = newVal;
               el.dispatchEvent(new Event('input', { bubbles: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
-              return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
+              return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), beforeSignature, dispatched: true };
             } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
           })()
         `;
         dispatched = true;
         const results = await browser.tabs.executeScript(tabId, { code, frameId: targetFrameId });
         const successes = (results || []).filter(r => r && r.ok);
-        if (successes.length > 0) return { success: true, dispatched: true, frameId: targetFrameId, frame: successes[0] };
+        if (successes.length > 0) {
+          const { beforeSignature, ...frame } = successes[0];
+          await new Promise(resolve => setTimeout(resolve, 30));
+          const verificationCode = `
+            (() => {
+              const el = document.querySelector(${JSON.stringify(selector)});
+              if (!el || !el.isConnected) return { verified: false };
+              const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+              const expected = ${JSON.stringify(text)};
+              const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+              let hash = 2166136261;
+              for (let i = 0; i < sampled.length; i += 1) {
+                hash ^= sampled.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+              }
+              const after = value.length + ':' + (hash >>> 0);
+              const before = ${JSON.stringify(beforeSignature || '')};
+              return {
+                verified: ${clear}
+                  ? value === expected
+                  : expected.length > 0 && !!before && after !== before && value.includes(expected),
+              };
+            })()
+          `;
+          const verification = await browser.tabs.executeScript(tabId, {
+            code: verificationCode,
+            frameId: targetFrameId,
+          }).catch(() => []);
+          const verified = (verification || []).some(item => item?.verified === true);
+          return { success: true, verified, dispatched: true, frameId: targetFrameId, frame };
+        }
         const candidates = (results || []).filter(r => r && !r.skipped);
         const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
         return {

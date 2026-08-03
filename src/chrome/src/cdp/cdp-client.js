@@ -3813,6 +3813,185 @@ export class CDPClient {
     return fallbackResult;
   }
 
+  async textEntrySignature(tabId, { selector = '', nodeId = null, focused = false } = {}) {
+    const signatureFunction = `function () {
+      const el = this;
+      if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+      let hash = 2166136261;
+      for (let i = 0; i < sampled.length; i += 1) {
+        hash ^= sampled.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return value.length + ':' + (hash >>> 0);
+    }`;
+    if (Number.isInteger(nodeId) && nodeId > 0) {
+      let objectId = null;
+      try {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        objectId = resolved?.object?.objectId || null;
+        if (!objectId) return null;
+        const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: signatureFunction,
+        });
+        return typeof result?.result?.value === 'string' ? result.result.value : null;
+      } catch {
+        return null;
+      } finally {
+        if (objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+    const selectorJSON = JSON.stringify(String(selector || ''));
+    const result = await this.evaluate(tabId, `
+      (() => {
+        const selector = ${selectorJSON};
+        const queryDeep = (root) => {
+          try { const match = root.querySelector(selector); if (match) return match; } catch (e) { return null; }
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node = walker.currentNode;
+          while (node) {
+            if (node.shadowRoot) {
+              const inner = queryDeep(node.shadowRoot);
+              if (inner) return inner;
+            }
+            node = walker.nextNode();
+          }
+          return null;
+        };
+        const activeDeep = () => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          return active;
+        };
+        const el = ${focused === true} ? activeDeep() : (selector ? queryDeep(document) : null);
+        if (!el || !el.isConnected) return null;
+        const tag = String(el.tagName || '').toUpperCase();
+        if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
+        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+        let hash = 2166136261;
+        for (let i = 0; i < sampled.length; i += 1) {
+          hash ^= sampled.charCodeAt(i);
+          hash = Math.imul(hash, 16777619);
+        }
+        return value.length + ':' + (hash >>> 0);
+      })()
+    `).catch(() => null);
+    return typeof result?.result?.value === 'string' ? result.result.value : null;
+  }
+
+  async verifyTextEntry(tabId, {
+    selector = '', nodeId = null, text = '', clear = false, focused = false, beforeSignature = null,
+  } = {}) {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const expected = String(text || '');
+    const verifyFunction = `function (expected, shouldClear, beforeSignature) {
+      const el = this;
+      if (!el || el.nodeType !== 1 || !el.isConnected) return { found: false, verified: false };
+      const tag = String(el.tagName || '').toUpperCase();
+      const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
+      if (!typeable) return { found: true, verified: false };
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+      let hash = 2166136261;
+      for (let i = 0; i < sampled.length; i += 1) {
+        hash ^= sampled.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      const afterSignature = value.length + ':' + (hash >>> 0);
+      return {
+        found: true,
+        verified: shouldClear
+          ? value === expected
+          : expected.length > 0 && !!beforeSignature && afterSignature !== beforeSignature && value.includes(expected),
+      };
+    }`;
+
+    if (Number.isInteger(nodeId) && nodeId > 0) {
+      let objectId = null;
+      try {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        objectId = resolved?.object?.objectId || null;
+        if (!objectId) return false;
+        const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: verifyFunction,
+          arguments: [
+            { value: expected },
+            { value: clear === true },
+            { value: typeof beforeSignature === 'string' ? beforeSignature : '' },
+          ],
+        });
+        return result?.result?.value?.verified === true;
+      } catch {
+        return false;
+      } finally {
+        if (objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+
+    const selectorJSON = JSON.stringify(String(selector || ''));
+    const expectedJSON = JSON.stringify(expected);
+    const result = await this.evaluate(tabId, `
+      (() => {
+        const selector = ${selectorJSON};
+        const expected = ${expectedJSON};
+        const shouldClear = ${clear === true};
+        const beforeSignature = ${JSON.stringify(typeof beforeSignature === 'string' ? beforeSignature : '')};
+        const queryDeep = (root) => {
+          try { const match = root.querySelector(selector); if (match) return match; } catch (e) { return null; }
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node = walker.currentNode;
+          while (node) {
+            if (node.shadowRoot) {
+              const inner = queryDeep(node.shadowRoot);
+              if (inner) return inner;
+            }
+            node = walker.nextNode();
+          }
+          return null;
+        };
+        const activeDeep = () => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          return active;
+        };
+        const el = ${focused === true} ? activeDeep() : (selector ? queryDeep(document) : null);
+        if (!el || !el.isConnected) return { found: false, verified: false };
+        const tag = String(el.tagName || '').toUpperCase();
+        const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
+        if (!typeable) return { found: true, verified: false };
+        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
+        let hash = 2166136261;
+        for (let i = 0; i < sampled.length; i += 1) {
+          hash ^= sampled.charCodeAt(i);
+          hash = Math.imul(hash, 16777619);
+        }
+        const afterSignature = value.length + ':' + (hash >>> 0);
+        return {
+          found: true,
+          verified: shouldClear
+            ? value === expected
+            : expected.length > 0 && !!beforeSignature && afterSignature !== beforeSignature && value.includes(expected),
+        };
+      })()
+    `).catch(() => null);
+    return result?.result?.value?.verified === true;
+  }
+
   /**
    * Type text into an element.
    *
@@ -3903,8 +4082,35 @@ export class CDPClient {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
       }
+      const selectorJSONAfter = JSON.stringify(selector);
+      const verifiedResult = await this.evaluate(tabId, `
+        (() => {
+          const sel = ${selectorJSONAfter};
+          const queryDeep = (root) => {
+            try { const match = root.querySelector(sel); if (match) return match; } catch (e) { return null; }
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+            let node = walker.currentNode;
+            while (node) {
+              if (node.shadowRoot) {
+                const inner = queryDeep(node.shadowRoot);
+                if (inner) return inner;
+              }
+              node = walker.nextNode();
+            }
+            return null;
+          };
+          const el = queryDeep(document);
+          if (!el || el.tagName !== 'SELECT') return { verified: false };
+          const option = el.options[el.selectedIndex];
+          return {
+            verified: el.value === ${JSON.stringify(sInfo.targetValue)}
+              || String(option?.text || '').trim() === ${JSON.stringify(sInfo.targetText)},
+          };
+        })()
+      `).catch(() => null);
       return {
         success: true,
+        verified: verifiedResult?.result?.value?.verified === true,
         method: 'select-keyboard',
         selectedText: sInfo.targetText,
         selectedValue: sInfo.targetValue,
@@ -3912,6 +4118,10 @@ export class CDPClient {
       };
     }
 
+    const beforeSignature = await this.textEntrySignature(tabId, {
+      selector,
+      nodeId: info.nodeId,
+    });
     let focused = false;
     let dispatched = false;
 
@@ -4044,11 +4254,28 @@ export class CDPClient {
       if (fallbackResult.success === false && fallbackResult.dispatched == null) {
         fallbackResult.dispatched = dispatched;
       }
+      if (fallbackResult.success === true) {
+        fallbackResult.verified = await this.verifyTextEntry(tabId, {
+          selector,
+          nodeId: info.nodeId,
+          text,
+          clear,
+          beforeSignature,
+        });
+      }
       return fallbackResult;
     }
 
+    const verified = await this.verifyTextEntry(tabId, {
+      selector,
+      nodeId: info.nodeId,
+      text,
+      clear,
+      beforeSignature,
+    });
     return {
       success: true,
+      verified,
       method: 'cdp-insert-text',
       tag: info.tag,
       rect: {

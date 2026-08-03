@@ -27461,6 +27461,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   let frameContainerOffscreen = false;
   let frameContainerScrolled = false;
   let frameScrollParentId = null;
+  let chromeIframeExecutionCalls = 0;
   const messageResult = (message, options) => {
     if (message.target === 'content') {
       if (message.params?.args?.selector === '#shared-field') {
@@ -27518,7 +27519,15 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       scripting: {
         executeScript: async ({ target }) => {
           chromeIframeExecutionTarget = target;
-          return [{ result: { ok: true, url: 'https://frame.example.test/editor', dispatched: true } }];
+          chromeIframeExecutionCalls += 1;
+          return chromeIframeExecutionCalls === 1
+            ? [{ result: {
+                ok: true,
+                url: 'https://frame.example.test/editor',
+                dispatched: true,
+                beforeSignature: '0:2166136261',
+              } }]
+            : [{ result: { verified: true } }];
         },
       },
     };
@@ -27563,16 +27572,27 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       text: '14',
     });
     assert.equal(chromeType.success, true);
+    assert.equal(chromeType.verified, true);
+    assert.equal(chromeType.frame.beforeSignature, undefined, 'Chrome must not expose the pre-edit signature');
     assert.deepEqual(chromeIframeExecutionTarget, { tabId: 42, frameIds: [7] });
 
     let firefoxIframeExecutionDetails = null;
+    let firefoxIframeExecutionCalls = 0;
     globalThis.browser = {
       webNavigation: { getAllFrames: async () => frames },
       tabs: {
         sendMessage: async (_tabId, message, options) => messageResult(message, options),
         executeScript: async (_tabId, details) => {
           firefoxIframeExecutionDetails = details;
-          return [{ ok: true, url: 'https://frame.example.test/editor', dispatched: true }];
+          firefoxIframeExecutionCalls += 1;
+          return firefoxIframeExecutionCalls === 1
+            ? [{
+                ok: true,
+                url: 'https://frame.example.test/editor',
+                dispatched: true,
+                beforeSignature: '0:2166136261',
+              }]
+            : [{ verified: true }];
         },
       },
     };
@@ -27617,6 +27637,8 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       text: '14',
     });
     assert.equal(firefoxType.success, true);
+    assert.equal(firefoxType.verified, true);
+    assert.equal(firefoxType.frame.beforeSignature, undefined, 'Firefox must not expose the pre-edit signature');
     assert.equal(firefoxIframeExecutionDetails.frameId, 7);
     assert.equal(firefoxIframeExecutionDetails.allFrames, undefined);
   } finally {
@@ -27904,6 +27926,31 @@ test('Chrome selector type distinguishes pre-dispatch failure from uncertain dis
   assert.equal(uncertain.dispatched, true, 'an Input.insertText attempt must fail closed when fallback also fails');
 });
 
+test('Chrome selector type reports post-edit value verification', async () => {
+  const client = new CDPClient();
+  client.resolveSelector = async () => ({
+    inViewport: false,
+    hitOk: false,
+    nodeId: null,
+    tag: 'INPUT',
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+  });
+  client.sendCommand = async () => ({});
+  client.evaluate = async () => ({ result: { value: null } });
+  client.verifyTextEntry = async () => false;
+  const reverted = await client.typeText(42, '#field', 'hello', true);
+  assert.equal(reverted.success, true);
+  assert.equal(reverted.verified, false, 'a reverted selector edit must remain unverified');
+
+  client.verifyTextEntry = async () => true;
+  const persisted = await client.typeText(42, '#field', 'hello', true);
+  assert.equal(persisted.success, true);
+  assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
+});
+
 test('Chrome focused type_text marks missing focus as a pre-dispatch failure', async () => {
   const originalAttach = cdpClientCh.attach;
   const originalEvaluate = cdpClientCh.evaluate;
@@ -27919,6 +27966,46 @@ test('Chrome focused type_text marks missing focus as a pre-dispatch failure', a
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.evaluate = originalEvaluate;
+  }
+});
+
+test('Chrome focused type_text propagates post-edit verification', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalEvaluate = cdpClientCh.evaluate;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const originalVerifyTextEntry = cdpClientCh.verifyTextEntry;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.evaluate = async () => ({
+      result: {
+        value: {
+          focused: true,
+          editable: true,
+          contentEditable: false,
+          tag: 'INPUT',
+          type: 'text',
+          name: 'answer',
+          value: '',
+          rect: { x: 10, y: 20, w: 100, h: 24 },
+        },
+      },
+    });
+    cdpClientCh.sendCommand = async () => ({});
+    cdpClientCh.verifyTextEntry = async () => false;
+    const agent = new AgentCh({});
+    const reverted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
+    assert.equal(reverted.success, true);
+    assert.equal(reverted.verified, false, 'a reverted focused edit must remain unverified');
+
+    cdpClientCh.verifyTextEntry = async () => true;
+    const persisted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
+    assert.equal(persisted.success, true);
+    assert.equal(persisted.verified, true, 'a persisted focused edit must be verified');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.evaluate = originalEvaluate;
+    cdpClientCh.sendCommand = originalSendCommand;
+    cdpClientCh.verifyTextEntry = originalVerifyTextEntry;
   }
 });
 
