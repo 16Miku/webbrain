@@ -68,8 +68,8 @@ packaged skill; only the defaults below are seeded enabled.
 
 ### Enabled by default
 
-Both can be removed from Settings → Skills. A removed default is not silently
-restored.
+All three can be removed from Settings → Skills. A removed default is not
+silently restored, including by preactivation.
 
 #### FreeSkillz.xyz
 
@@ -91,6 +91,23 @@ request to your configured LLM provider. If **Record traces** is enabled, raw
 tool results and model responses are also stored locally until those traces are
 deleted.
 
+#### Humanizer
+
+Rewrites prose WebBrain composes for you, such as an email reply or a post, so
+it reads as human writing. It declares no network tool and adds no tools.
+
+On webmail tabs (Gmail, Outlook, Yahoo, Proton, Fastmail, Zoho, Yandex) it is
+preactivated for the current run, so a reply is humanized without spending a
+`load_skill` hop. Preactivation rides on the site-adapter match, so it does
+nothing when **Site adapters** is turned off in Settings; the skill then loads
+through the catalog like anywhere else. Elsewhere it loads through the normal
+catalog when the request is about drafting or rewriting text. It returns only
+the final text; it does not report what it changed unless you ask.
+
+It rewrites only prose being composed for a human reader. Quoted material,
+addresses, codes, prices, form-field values, and wording you supplied verbatim
+are left alone.
+
 ### Opt-in packaged skills
 
 These ship in the extension and appear under Settings → Skills as available to
@@ -103,6 +120,7 @@ enable. They are not seeded on by default.
 | Open-Meteo weather | Ask, Act, Dev | Geocoding + forecast HTTPS |
 | Open Library | Ask, Act, Dev | Open Library search HTTPS |
 | Wikipedia | Ask, Act, Dev | Wikipedia REST search + Action API summary HTTPS |
+| Turkish deasciifier | Ask, Act, Dev | Instruction-only; uses ordinary verbatim form-entry tools |
 
 Enable a skill only when you want its tools and instructions available for
 `load_skill` on eligible runs.
