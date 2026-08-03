@@ -931,4 +931,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "تخمینی هزینه خواندن حافظه پنهان ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_cost_per_million': "تخمینی هزینه نوشتن 5 دقیقه ای کش ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_1h_cost_per_million': "تخمینی هزینه نوشتن حافظه پنهان 1 ساعته ($ / 1 میلیون توکن)",
+  'sp.run_progress_replay_gap': 'بخشی از پیشرفت پیشین اجرا قابل بازپخش نبود',
 };

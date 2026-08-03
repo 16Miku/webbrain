@@ -910,4 +910,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Tahmini önbellek okuma maliyeti ($ / 1M token)",
   'st.provider.field.cache_write_cost_per_million': "Tahmini 5 dakikalık önbellek yazma maliyeti ($ / 1M token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Tahmini 1 saatlik önbellek yazma maliyeti ($ / 1M token)",
+  'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
 };

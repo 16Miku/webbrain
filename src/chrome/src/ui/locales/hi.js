@@ -936,4 +936,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "अनुमानित कैश पढ़ने की लागत ($ / 1M टोकन)",
   'st.provider.field.cache_write_cost_per_million': "अनुमानित 5-मिनट कैश लिखने की लागत ($ / 1M टोकन)",
   'st.provider.field.cache_write_1h_cost_per_million': "अनुमानित 1-घंटे कैश लिखने की लागत ($ / 1M टोकन)",
+  'sp.run_progress_replay_gap': 'पहले की कुछ रन प्रगति दोबारा नहीं दिखाई जा सकी',
 };

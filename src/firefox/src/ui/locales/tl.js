@@ -911,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Tinatayang gastos sa pagbasa ng cache ($ / 1M token)",
   'st.provider.field.cache_write_cost_per_million': "Tinatayang gastos sa 5 minutong pagsulat ng cache ($ / 1M token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Tinatayang gastos sa 1 oras na pagsulat ng cache ($ / 1M token)",
+  'sp.run_progress_replay_gap': 'Hindi maipakita muli ang ilang naunang progreso ng run',
 };

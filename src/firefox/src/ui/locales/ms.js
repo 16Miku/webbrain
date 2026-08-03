@@ -911,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Anggaran kos bacaan cache ($ / 1 juta token)",
   'st.provider.field.cache_write_cost_per_million': "Anggaran kos tulis cache 5 minit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Anggaran kos tulis cache 1 jam ($ / 1 juta token)",
+  'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
 };

@@ -904,4 +904,5 @@ export default {
   'tr.event.args': 'Argumente',
   'tr.event.result': 'Ergebnis',
   'tr.event.step': 'Schritt {step}',
+  'sp.run_progress_replay_gap': 'Ein Teil des früheren Ausführungsverlaufs konnte nicht erneut angezeigt werden',
 };

@@ -911,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "캐시 읽기 예상 비용($ / 100만 토큰)",
   'st.provider.field.cache_write_cost_per_million': "5분 캐시 쓰기 예상 비용($ / 100만 토큰)",
   'st.provider.field.cache_write_1h_cost_per_million': "1시간 캐시 쓰기 예상 비용($ / 100만 토큰)",
+  'sp.run_progress_replay_gap': '이전 실행 진행 상황 일부를 다시 표시할 수 없습니다',
 };

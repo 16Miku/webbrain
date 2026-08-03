@@ -936,4 +936,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Chi phí đọc bộ nhớ đệm ước tính ($ / 1 triệu token)",
   'st.provider.field.cache_write_cost_per_million': "Ước tính chi phí ghi vào bộ nhớ đệm trong 5 phút ($ / 1 triệu token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Chi phí ghi bộ nhớ đệm trong 1 giờ ước tính ($ / 1 triệu token)",
+  'sp.run_progress_replay_gap': 'Không thể hiển thị lại một phần tiến trình chạy trước đó',
 };

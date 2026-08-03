@@ -884,4 +884,5 @@ export default {
   'st.skills.cws.package_cleared': 'Geselecteerde release-ZIP verwijderd uit lokale opslag.',
   'st.skills.cws.package_zip_only': 'Kies een .zip release-pakket.',
   'st.skills.cws.package_too_large': 'De ZIP moet tussen 1 byte en 100 MB zijn.',
+  'sp.run_progress_replay_gap': 'Een deel van de eerdere uitvoeringsvoortgang kon niet opnieuw worden weergegeven',
 };

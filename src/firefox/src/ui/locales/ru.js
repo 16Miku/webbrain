@@ -911,4 +911,5 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Расчётная стоимость чтения из кэша ($ / 1 млн токенов)",
   'st.provider.field.cache_write_cost_per_million': "Расчётная стоимость записи в кэш на 5 минут ($ / 1 млн токенов)",
   'st.provider.field.cache_write_1h_cost_per_million': "Расчётная стоимость записи в кэш на 1 час ($ / 1 млн токенов)",
+  'sp.run_progress_replay_gap': 'Не удалось повторно показать часть предыдущего хода выполнения',
 };
