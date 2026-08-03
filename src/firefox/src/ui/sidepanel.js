@@ -6529,6 +6529,12 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
+  if ((command.value === '/screenshot' || command.value === '/record')
+      && isSelectionGroundedForTab(tabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return '';
+  }
+
   if (command.value === '/schedule' && action === 'list') {
     const jobs = await refreshScheduledJobs({ tabId });
     if (currentTabId !== tabId) return '';
