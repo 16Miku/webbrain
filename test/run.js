@@ -49794,7 +49794,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
   }
 });
 
-test('upload_file prefers downloadId over a supplied stale filePath (chrome)', async () => {
+test('upload_file prefers a valid downloadId and falls back to filePath for an invalid id (chrome)', async () => {
   const originalChrome = globalThis.chrome;
   const originalCdp = {
     attach: cdpClientCh.attach,
@@ -49806,18 +49806,21 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
   };
   const realPath = '/Users/x/Downloads/real.zip';
   const stalePath = '/Users/Shared/made-up.zip';
+  const exactPath = '/root/Downloads/github-avatar-carloslopez.jpg';
   const uploaded = [];
   const releasedGroups = [];
   let queryCount = 0;
   let selectorMatches = ['input-501'];
+  let expectedPath = realPath;
 
   try {
     globalThis.chrome = {
       runtime: { lastError: null },
       downloads: {
         search(query, cb) {
-          assert.deepEqual(query, { id: 9123 });
-          cb([{ id: 9123, state: 'complete', filename: realPath }]);
+          if (query.id === 9123) cb([{ id: 9123, state: 'complete', filename: realPath }]);
+          else if (query.id === 0) cb([]);
+          else assert.fail(`unexpected download id ${query.id}`);
         },
       },
     };
@@ -49830,14 +49833,14 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
       releasedGroups.push(objectGroup);
     };
     cdpClientCh.probeLocalFile = async (_tabId, filePath) => {
-      assert.equal(filePath, realPath, 'downloadId-resolved path should override stale filePath before probing');
+      assert.equal(filePath, expectedPath);
       return { exists: true, readable: true, size: 123 };
     };
     cdpClientCh.setFileInputFiles = async (_tabId, objectId, files) => {
       assert.equal(objectId, 'input-501');
       uploaded.push(files);
     };
-    cdpClientCh.getFileInputFiles = async () => [{ name: 'real.zip', size: 123, readable: true }];
+    cdpClientCh.getFileInputFiles = async () => [{ name: expectedPath.split('/').pop(), size: 123, readable: true }];
 
     const agent = new AgentCh({});
     const args = { selector: 'input[type=file]', downloadId: 9123, filePath: stalePath };
@@ -49849,6 +49852,15 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
     assert.deepEqual(uploaded, [[realPath]]);
     assert.deepEqual(releasedGroups, ['upload-query-1'], 'successful uploads must release selector handles');
 
+    expectedPath = exactPath;
+    const fallbackArgs = { selector: 'input[type=file]', downloadId: 0, filePath: exactPath };
+    const fallback = await agent.executeTool(42, 'upload_file', fallbackArgs);
+    assert.equal(fallback.success, true);
+    assert.equal(fallback.file, exactPath);
+    assert.equal(fallbackArgs.filePath, exactPath, 'an unresolved downloadId must not replace a supplied absolute path');
+    assert.deepEqual(uploaded, [[realPath], [exactPath]]);
+
+    expectedPath = realPath;
     selectorMatches = ['input-501', 'input-502'];
     const ambiguous = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
@@ -49857,10 +49869,10 @@ test('upload_file prefers downloadId over a supplied stale filePath (chrome)', a
     assert.equal(ambiguous.success, false);
     assert.match(ambiguous.error, /matched 2 elements/);
     assert.match(ambiguous.error, /exact, unique selector/);
-    assert.deepEqual(uploaded, [[realPath]], 'ambiguous selectors must fail before attaching the file');
+    assert.deepEqual(uploaded, [[realPath], [exactPath]], 'ambiguous selectors must fail before attaching the file');
     assert.deepEqual(
       releasedGroups,
-      ['upload-query-1', 'upload-query-2'],
+      ['upload-query-1', 'upload-query-2', 'upload-query-3'],
       'early upload failures must release selector handles',
     );
   } finally {
