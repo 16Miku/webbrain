@@ -3773,6 +3773,8 @@
       const formattingLabel = [
         'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
         'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+        'text color', 'font color', 'foreground color', 'background color', 'highlight color',
+        'text colour', 'font colour', 'foreground colour', 'background colour', 'highlight colour',
         'link', 'hyperlink',
         'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
         'フォント', '字体', '字體', '글꼴', 'шрифт',
@@ -3816,6 +3818,7 @@
         if (region.height > 160 || region.width < rect.width) continue;
         const controls = Array.from(node.querySelectorAll(interactiveSelector))
           .filter(candidate => candidate === el || (!candidate.isContentEditable && _visibleFieldContextNode(candidate)));
+        if (!controls.includes(el)) controls.unshift(el);
         if (controls.length < 2 || controls.length > 40) continue;
         const area = region.width * region.height;
         if (!cluster || area < cluster.area) cluster = { node, controls, region, area };

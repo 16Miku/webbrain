@@ -3302,6 +3302,8 @@ export class CDPClient {
             const formattingLabel = [
               'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
               'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
+              'text color', 'font color', 'foreground color', 'background color', 'highlight color',
+              'text colour', 'font colour', 'foreground colour', 'background colour', 'highlight colour',
               'link', 'hyperlink',
               'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
               'フォント', '字体', '字體', '글꼴', 'шрифт',
@@ -3336,6 +3338,7 @@ export class CDPClient {
                 controls = Array.from(node.querySelectorAll(interactiveSelector))
                   .filter(control => control === el || (!control.isContentEditable && visible(control)));
               } catch {}
+              if (!controls.includes(el)) controls.unshift(el);
               if (controls.length < 2 || controls.length > 40) continue;
               const area = region.width * region.height;
               if (!cluster || area < cluster.area) cluster = { node, region, area };

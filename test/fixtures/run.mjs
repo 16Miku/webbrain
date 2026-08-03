@@ -1144,7 +1144,6 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     <div id="formatting-row">
       <button type="button">Bold</button>
       <span id="family-host"></span>
-      <button type="button">Italic</button>
     </div>
     <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>
     <script>
@@ -1166,6 +1165,27 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || candidate?.associatedEditorIdentity?.id !== 'editor-body'
   ) {
     throw new Error(`shadow-host dense toolbar cluster was not audited by the CDP selector probe: ${JSON.stringify(probe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <style>
+      #color-row { display:flex; align-items:center; gap:6px; width:420px; height:44px; }
+      #editor-body { width:420px; height:160px; }
+    </style>
+    <div id="color-row">
+      <button type="button">Bold</button>
+      <input id="text-color" aria-label="Text color" value="#111111" style="width:118px;height:22px">
+    </div>
+    <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>`);
+  const colorProbe = await client.probeRichTextToolbarSelector(42, '#text-color');
+  if (
+    !colorProbe?.resolved
+    || !colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+    || !colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('dense_control_cluster')
+    || colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || colorProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+  ) {
+    throw new Error(`conventional text-color control was not audited by the CDP selector probe: ${JSON.stringify(colorProbe)}`);
   }
 
   await page.setContent(`<!doctype html>
@@ -3120,11 +3140,30 @@ for (const browserKind of ['chrome', 'firefox']) {
           <button type="button">B</button>
           <input id="conventional-toolbar-family" aria-label="Font family" value="Default"
             style="width:118px;height:22px">
+          <input id="conventional-text-color" aria-label="Text color" value="#111111"
+            style="width:118px;height:22px">
           <button type="button">I</button>
         </div>
         <div id="conventional-toolbar-editor-body" contenteditable="true"
           style="width:400px;height:180px">Enter text</div>`;
       document.body.appendChild(conventionalToolbarEditor);
+
+      const conventionalShadowEditor = document.createElement('div');
+      conventionalShadowEditor.className = 'editor';
+      conventionalShadowEditor.innerHTML = `
+        <div style="height:42px;display:flex;align-items:center;gap:6px">
+          <button type="button">B</button>
+          <span id="conventional-shadow-family-host"></span>
+        </div>
+        <div id="conventional-shadow-editor-body" contenteditable="true"
+          style="width:400px;height:180px">Enter text</div>`;
+      const conventionalShadowRoot = conventionalShadowEditor
+        .querySelector('#conventional-shadow-family-host')
+        .attachShadow({ mode: 'open' });
+      conventionalShadowRoot.innerHTML = `
+        <input id="conventional-shadow-family" aria-label="Font family" value="Default"
+          style="width:118px;height:22px">`;
+      document.body.appendChild(conventionalShadowEditor);
 
       const slottedToolbarEditor = document.createElement('div');
       slottedToolbarEditor.className = 'editor';
@@ -3174,6 +3213,8 @@ for (const browserKind of ['chrome', 'firefox']) {
         descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
         descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
         conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
+        conventionalTextColor: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-text-color')),
+        conventionalShadowFamily: window.__wb_ax_ref(conventionalShadowRoot.getElementById('conventional-shadow-family')),
         slottedToolbarFamilyInput: window.__wb_ax_ref(slottedToolbarInput),
         iframeToolbarFamilyInput: window.__wb_ax_ref(iframeBackedEditor.querySelector('#iframe-toolbar-family-input')),
         title: window.__wb_ax_ref(document.getElementById('title-size')),
@@ -3338,6 +3379,32 @@ for (const browserKind of ['chrome', 'firefox']) {
       || conventionalToolbarProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'conventional-toolbar-editor-body'
     ) {
       throw new Error(`labelled formatting control in a conventional toolbar must enter the audit: ${JSON.stringify(conventionalToolbarProbe)}`);
+    }
+    const conventionalColorProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.conventionalTextColor, text: 'red' },
+    });
+    if (
+      Number(conventionalColorProbe?.fieldMeta?.toolbarCandidate?.score) < 4
+      || !conventionalColorProbe.fieldMeta.toolbarCandidate.reasons?.includes('formatting_control_label')
+      || !conventionalColorProbe.fieldMeta.toolbarCandidate.reasons?.includes('dense_control_cluster')
+      || conventionalColorProbe.fieldMeta.toolbarCandidate.reasons?.includes('semantic_toolbar')
+      || conventionalColorProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'conventional-toolbar-editor-body'
+    ) {
+      throw new Error(`text-color control in a conventional toolbar must enter the audit: ${JSON.stringify(conventionalColorProbe)}`);
+    }
+    const conventionalShadowProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.conventionalShadowFamily, text: 'Inter Display' },
+    });
+    if (
+      Number(conventionalShadowProbe?.fieldMeta?.toolbarCandidate?.score) < 4
+      || !conventionalShadowProbe.fieldMeta.toolbarCandidate.reasons?.includes('formatting_control_label')
+      || !conventionalShadowProbe.fieldMeta.toolbarCandidate.reasons?.includes('dense_control_cluster')
+      || conventionalShadowProbe.fieldMeta.toolbarCandidate.reasons?.includes('semantic_toolbar')
+      || conventionalShadowProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'conventional-shadow-editor-body'
+    ) {
+      throw new Error(`shadow-root target must count in its outer conventional toolbar: ${JSON.stringify(conventionalShadowProbe)}`);
     }
     const linkProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
