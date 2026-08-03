@@ -3306,6 +3306,30 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (ordinaryDecision.wrongTarget) {
       throw new Error(`ordinary field visual classification must override weak structure: ${JSON.stringify(ordinaryDecision)}`);
     }
+    for (const [value, preset] of [
+      ['14', false],
+      ['Inter Display', true],
+      ['h2', false],
+      ['red', false],
+      ['https://example.test/docs', false],
+    ]) {
+      const structuralFormattingDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(value),
+        attemptedPresetMatch: preset,
+      }, null);
+      if (structuralFormattingDecision.wrongTarget) {
+        throw new Error(`plausible formatting value must survive no-vision structural fallback: ${JSON.stringify({ value, structuralFormattingDecision })}`);
+      }
+    }
+    const structuralProseDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Paris'),
+      attemptedPresetMatch: false,
+    }, null);
+    if (!structuralProseDecision.wrongTarget || structuralProseDecision.source !== 'structural_fallback') {
+      throw new Error(`no-vision structural fallback must reject prose-like toolbar values: ${JSON.stringify(structuralProseDecision)}`);
+    }
 
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 77;
@@ -3968,6 +3992,32 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._captureAutoScreenshot = async () => {
       throw new Error('navigation-only auto-screenshot must suppress non-navigation field capture');
     };
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 10, y: 10, w: 120, h: 24 },
+      fieldMeta: { toolbarCandidate: candidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const noScreenshotFamilyPreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'Paris' },
+      { supportsVision: true },
+    );
+    if (
+      !noScreenshotFamilyPreflight.block?.wrongTarget
+      || noScreenshotFamilyPreflight.block.visualTargetAudit?.source !== 'structural_fallback'
+      || noScreenshotFamilyPreflight.block.dispatched !== false
+      || noScreenshotFamilyPreflight.shot
+    ) {
+      throw new Error(`expected no-screenshot nonnumeric toolbar preflight to fail closed: ${JSON.stringify(noScreenshotFamilyPreflight)}`);
+    }
+    agent._resetRichTextToolbarAudit(tabId);
+
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_20',

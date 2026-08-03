@@ -1925,15 +1925,27 @@ export class Agent extends LoopDetector {
         return { wrongTarget: false, source: 'vision', targetKind: audit.targetKind };
       }
     }
-    // Without a usable visual classification, fail closed only for the
-    // especially strong font-size shape: a numeric preset in a dense/semantic
-    // toolbar receiving non-numeric content. A short legitimate "14" edit is
-    // intentionally allowed.
-    const strongStructural = score >= 6
-      && reasons.has('numeric_preset_value')
-      && (reasons.has('semantic_toolbar') || reasons.has('dense_control_cluster'))
-      && shape?.chars > 0
-      && shape.numericPreset !== true;
+    // Auto-screenshot is a user-facing model-context preference, so it may be
+    // disabled even though this safety preflight still has a strong toolbar
+    // candidate. Without usable vision, fail closed for prose-like values but
+    // preserve values that are locally plausible for any formatting control.
+    const structurallyCompatible = !!shape && (
+      shape.chars === 0
+      || candidate?.attemptedPresetMatch === true
+      || shape.numericPreset === true
+      || shape.genericFontFamily === true
+      || shape.semanticStylePreset === true
+      || shape.colorLike === true
+      || shape.urlLike === true
+    );
+    const strongStructural = score >= 4
+      && !!shape
+      && !structurallyCompatible
+      && (
+        reasons.has('numeric_preset_value')
+        || reasons.has('semantic_toolbar')
+        || reasons.has('dense_control_cluster')
+      );
     return {
       wrongTarget: strongStructural,
       source: strongStructural ? 'structural_fallback' : 'uncertain',

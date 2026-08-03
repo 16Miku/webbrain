@@ -204,7 +204,7 @@ function mimeForPath(filePath) {
 
 function isCompactUnlabelledInputAttempt(event) {
   const data = event?.data || event || {};
-  if (!['set_field', 'type_ax', 'type_text'].includes(data.name)) return false;
+  if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(data.name)) return false;
   const result = data.result || {};
   const meta = result.fieldMeta || {};
   const rect = result.rect || {};
@@ -250,8 +250,8 @@ async function loadTraceCase(options) {
   if (options.eventIndex != null) {
     const event = events[options.eventIndex];
     if (!event) throw new Error(`trace has no events[${options.eventIndex}]`);
-    if (!['set_field', 'type_ax', 'type_text'].includes(event?.data?.name)) {
-      throw new Error(`events[${options.eventIndex}] is not set_field/type_ax/type_text`);
+    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(event?.data?.name)) {
+      throw new Error(`events[${options.eventIndex}] is not set_field/type_ax/type_text/iframe_type`);
     }
     selected = { event, index: options.eventIndex };
   } else {
