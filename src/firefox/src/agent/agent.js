@@ -1,4 +1,5 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
+import crypto from 'crypto';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { LoopDetector } from './loop-detector.js';
@@ -12147,7 +12148,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _wrapUntrusted(name, content) {
     if (!this._isUntrustedTool(name)) return content;
-    const nonce = Math.random().toString(36).slice(2, 10);
+    const nonce = crypto.randomBytes(6).toString('base64url').slice(0, 8);
     const safe = String(content).replace(/<\/?untrusted_page_content\b[^>]*>/gi, '[markup stripped]');
     return `<untrusted_page_content id="${nonce}">\n${safe}\n</untrusted_page_content id="${nonce}">`;
   }
