@@ -76,6 +76,22 @@ import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+const CSS_NAMED_COLOR_KEYWORDS = new Set(`
+  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood
+  cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
+  darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+  darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
+  firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew
+  hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+  lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray
+  lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid
+  mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
+  mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen
+  paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown
+  royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow
+  springgreen steelblue tan teal thistle tomato transparent turquoise violet wheat white whitesmoke yellow yellowgreen
+  currentcolor
+`.trim().split(/\s+/));
 
 function secureRandomBase36Token(length = 8) {
   const size = Math.max(1, Math.floor(Number(length) || 0));
@@ -1804,7 +1820,8 @@ export class Agent extends LoopDetector {
       lines: value ? value.split(/\r?\n/).length : 0,
       numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(value),
       urlLike,
-      colorLike: /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(value),
+      colorLike: CSS_NAMED_COLOR_KEYWORDS.has(normalized)
+        || /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(value),
       genericFontFamily: genericFontFamilies.has(normalized),
       semanticStylePreset: /^(?:p|h[1-6]|pre|blockquote|code)$/i.test(trimmed),
     };
@@ -1863,7 +1880,7 @@ export class Agent extends LoopDetector {
       const validShape = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
       return validShape && (shape.semanticStylePreset === true || candidate.attemptedPresetMatch === true);
     }
-    if (targetKind === 'color') return shape.colorLike === true;
+    if (targetKind === 'color') return shape.colorLike === true || candidate.attemptedPresetMatch === true;
     if (targetKind === 'link') return shape.urlLike === true;
     if (targetKind === 'other_formatting') {
       const validShape = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
@@ -1946,7 +1963,117 @@ export class Agent extends LoopDetector {
     };
   }
 
+  async _richTextToolbarFrameRectToTop(tabId, navigationFrames, frameId, rect) {
+    if (!rect || !Number.isInteger(frameId)) return null;
+    if (frameId === 0) return rect;
+    const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
+    if (!frames.some(frame => frame?.frameId === 0) || !frames.some(frame => frame?.frameId === frameId)) return null;
+    const snapshots = (await Promise.all(frames.map(async frame => {
+      const collect = () => browser.tabs.sendMessage(tabId, {
+        target: 'redaction-content',
+        action: 'get_redaction_regions',
+        params: { coordinateSpace: 'viewport' },
+      }, { frameId: frame.frameId });
+      let payload;
+      try {
+        payload = await collect();
+      } catch {
+        try {
+          await browser.tabs.executeScript(tabId, {
+            frameId: frame.frameId,
+            file: 'src/content/redaction-regions.js',
+          });
+          payload = await collect();
+        } catch {
+          return null;
+        }
+      }
+      return {
+        ...payload,
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        url: frame.url || '',
+        elements: frame.frameId === frameId
+          ? [{ kind: 'input', type: 'text', rect }]
+          : [],
+      };
+    }))).filter(Boolean);
+    const mapped = mergeRedactionFrameRegions(snapshots, { maxRegions: 1 })[0]?.rect;
+    return mapped ? {
+      x: Math.round(mapped.x),
+      y: Math.round(mapped.y),
+      w: Math.round(mapped.w),
+      h: Math.round(mapped.h),
+    } : null;
+  }
+
+  async _probeRichTextToolbarIframeTarget(tabId, args = {}) {
+    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
+    if (!selector) return null;
+    let navigationFrames;
+    try { navigationFrames = await browser.webNavigation.getAllFrames({ tabId }); } catch { return null; }
+    if (!Array.isArray(navigationFrames) || !navigationFrames.length) return null;
+    const urlFilter = String(args?.urlFilter || '');
+    const matchingFrames = navigationFrames.filter(frame => {
+      const url = String(frame?.url || '');
+      return !urlFilter || (frameHostMatches(url, urlFilter) && url.includes(urlFilter));
+    });
+    const probes = (await Promise.all(matchingFrames.map(async frame => {
+      const request = () => browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'probe_rich_text_toolbar_retry_target',
+        params: {
+          toolName: 'type_text',
+          args: { selector, text: args?.text || '' },
+        },
+      }, { frameId: frame.frameId });
+      let probe;
+      try {
+        probe = await request();
+      } catch {
+        try {
+          await browser.tabs.executeScript(tabId, {
+            frameId: frame.frameId,
+            file: 'src/content/accessibility-tree.js',
+          });
+          await browser.tabs.executeScript(tabId, {
+            frameId: frame.frameId,
+            file: 'src/content/content.js',
+          });
+          probe = await request();
+        } catch {
+          return null;
+        }
+      }
+      return probe?.resolved ? {
+        ...probe,
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        frameUrl: frame.url || '',
+      } : null;
+    }))).filter(Boolean);
+    if (!probes.length) return null;
+    const preferredFrameId = this._richTextToolbarStates.get(tabId)?.frameId;
+    const preferred = Number.isInteger(preferredFrameId)
+      ? probes.find(probe => probe.frameId === preferredFrameId)
+      : null;
+    const selected = preferred || probes
+      .filter(probe => probe.fieldMeta?.toolbarCandidate)
+      .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
+      || probes[0];
+    const annotationRect = await this._richTextToolbarFrameRectToTop(
+      tabId,
+      navigationFrames,
+      selected.frameId,
+      selected.rect,
+    );
+    return { ...selected, annotationRect };
+  }
+
   async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}) {
+    if (toolName === 'iframe_type') {
+      return this._probeRichTextToolbarIframeTarget(tabId, args);
+    }
     try {
       return await browser.tabs.sendMessage(tabId, {
         target: 'content',
@@ -1970,7 +2097,7 @@ export class Agent extends LoopDetector {
   async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
-    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field'].includes(toolName)) return null;
+    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_type'].includes(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return null;
     const liveDocument = String(probe.documentToken || '');
@@ -1980,14 +2107,21 @@ export class Agent extends LoopDetector {
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
       this._clearRichTextToolbarDocumentState(tabId);
-      if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
+      if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
+        this._rememberAxScope(tabId, liveDocument, livePageUrl);
+      }
       return null;
     }
-    if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
+    if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
+      this._rememberAxScope(tabId, liveDocument, livePageUrl);
+    }
     const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
     if (refBlock) return refBlock;
-    const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
-    const sameToolbarContext = probe.toolbarContext === true
+    const sameFrame = !Number.isInteger(state.frameId)
+      || !Number.isInteger(probe.frameId)
+      || state.frameId === probe.frameId;
+    const blockedRef = sameFrame && typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
+    const sameToolbarContext = sameFrame && probe.toolbarContext === true
       && typeof probe.toolbarRegionRef === 'string'
       && !!probe.toolbarRegionRef
       && probe.toolbarRegionRef === state.regionRef;
@@ -1998,7 +2132,7 @@ export class Agent extends LoopDetector {
 
   async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result) {
     if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified === false) return false;
-    if (!['set_field', 'type_ax', 'type_text'].includes(toolName)) return false;
+    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
     const state = this._richTextToolbarStates.get(tabId);
     if (!state?.associatedEditorRef) return false;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
@@ -2010,13 +2144,15 @@ export class Agent extends LoopDetector {
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
       this._clearRichTextToolbarDocumentState(tabId);
-      if (liveDocument || livePageUrl) this._rememberAxScope(tabId, liveDocument, livePageUrl);
+      if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
+        this._rememberAxScope(tabId, liveDocument, livePageUrl);
+      }
       return false;
     }
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
     const isEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
     const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
-    const exactSelector = toolName === 'type_text'
+    const exactSelector = ['type_text', 'iframe_type'].includes(toolName)
       && typeof args?.selector === 'string'
       && !!args.selector.trim()
       && Agent._richTextToolbarEditorIdentityMatches(
@@ -2024,7 +2160,10 @@ export class Agent extends LoopDetector {
         fieldMeta,
         probe.rect || {},
       );
-    if (!isEditor || (!exactRef && !exactSelector)) return false;
+    const sameFrame = !Number.isInteger(state.frameId)
+      || !Number.isInteger(probe.frameId)
+      || state.frameId === probe.frameId;
+    if (!isEditor || !sameFrame || (!exactRef && !exactSelector)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
@@ -2052,6 +2191,7 @@ export class Agent extends LoopDetector {
     state.regionRef = candidate?.regionRef || state.regionRef || '';
     state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
     state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
+    state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
     const hasExactRecoveryTarget = !!state.associatedEditorRef;
     if (hasExactRecoveryTarget) {
       if (refId) state.blockedRefs.add(refId);
@@ -2156,12 +2296,12 @@ export class Agent extends LoopDetector {
   }
 
   async _preflightRichTextToolbarTarget(tabId, toolName, args, provider, captureOptions = {}) {
-    if (!['set_field', 'type_ax', 'type_text'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
+    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || this._richTextToolbarDebts.has(tabId)) {
       return { block: null, shot: null };
     }
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) return { block: null, shot: null };
-    if (probe.documentToken || probe.refScopeUrl) {
+    if (toolName !== 'iframe_type' && (probe.documentToken || probe.refScopeUrl)) {
       this._rememberAxScope(tabId, probe.documentToken || '', probe.refScopeUrl || '');
     }
     const candidate = probe.fieldMeta?.toolbarCandidate;
@@ -2169,12 +2309,15 @@ export class Agent extends LoopDetector {
     let shot = null;
     let audit = null;
     let traceCapture = null;
+    const annotationRect = probe.annotationRect
+      || (!Number.isInteger(probe.frameId) || probe.frameId === 0 ? probe.rect : null);
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
     if (
       this._shouldAutoScreenshot(toolName)
       && (dedicatedVision || provider?.supportsVision)
       && this._canTakeAutoScreenshot(tabId)
+      && annotationRect
     ) {
       await new Promise(resolve => setTimeout(resolve, 120));
       // This image is consumed only by the internal target classifier. Keep
@@ -2189,7 +2332,7 @@ export class Agent extends LoopDetector {
           width: shot.cssWidth || shot.width,
           height: shot.cssHeight || shot.height,
         };
-        const annotated = await this._annotateScreenshot(shot.dataUrl, probe.rect, cssViewport);
+        const annotated = await this._annotateScreenshot(shot.dataUrl, annotationRect, cssViewport);
         traceCapture = annotated ? {
           dataUrl: annotated,
           caption: 'rich-text toolbar target preflight',

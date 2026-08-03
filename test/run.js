@@ -27239,6 +27239,76 @@ test('Chrome Agent routes selector type_text toolbar preflight through CDP befor
   }
 });
 
+test('iframe_type toolbar probes use the matching frame and map its target into the top viewport', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frames = [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+  ];
+  const toolbarProbe = {
+    resolved: true,
+    refId: 'ref_12',
+    documentToken: 'frame-doc-a',
+    refScopeUrl: 'https://frame.example.test/editor',
+    rect: { x: 10, y: 20, w: 80, h: 24 },
+    fieldMeta: { toolbarCandidate: { score: 8 } },
+    toolbarContext: true,
+    toolbarRegionRef: 'ref_10',
+  };
+  const messageResult = (message, options) => {
+    if (message.target === 'content') return options.frameId === 7 ? toolbarProbe : { resolved: false };
+    if (message.target === 'redaction-content' && options.frameId === 0) {
+      return {
+        viewport: { width: 1000, height: 800 },
+        childFrames: [{
+          url: 'https://frame.example.test/editor',
+          rect: { x: 100, y: 200, w: 500, h: 400 },
+        }],
+      };
+    }
+    if (message.target === 'redaction-content' && options.frameId === 7) {
+      return { viewport: { width: 500, height: 400 }, childFrames: [] };
+    }
+    throw new Error('unexpected frame message');
+  };
+
+  try {
+    globalThis.chrome = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: { sendMessage: async (_tabId, message, options) => messageResult(message, options) },
+      scripting: { executeScript: async () => { throw new Error('probe scripts should already be injected'); } },
+    };
+    const chromeProbe = await new AgentCh({})._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.equal(chromeProbe.frameId, 7);
+    assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+
+    globalThis.browser = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: {
+        sendMessage: async (_tabId, message, options) => messageResult(message, options),
+        executeScript: async () => { throw new Error('probe scripts should already be injected'); },
+      },
+    };
+    const firefoxProbe = await new AgentFx({})._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.equal(firefoxProbe.frameId, 7);
+    assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
 test('rich-text toolbar debt survives a paused run and trusted continuation only', async () => {
   for (const [label, AgentClass] of [
     ['chrome', AgentCh],

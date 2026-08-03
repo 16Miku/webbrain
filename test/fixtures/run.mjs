@@ -3027,6 +3027,36 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (semanticStyleDecision.wrongTarget) {
       throw new Error(`semantic style token must remain allowed: ${JSON.stringify(semanticStyleDecision)}`);
     }
+    const colorAudit = {
+      ...familyAudit,
+      targetKind: 'color',
+    };
+    for (const color of ['red', 'transparent', 'rebeccapurple']) {
+      const colorDecision = AgentClass._richTextToolbarDecision({
+        ...candidate,
+        attemptedTextShape: AgentClass._richTextToolbarTextShape(color),
+        attemptedPresetMatch: false,
+      }, colorAudit);
+      if (colorDecision.wrongTarget) {
+        throw new Error(`CSS named color must remain allowed: ${JSON.stringify({ color, colorDecision })}`);
+      }
+    }
+    const presetColorDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Brand Accent'),
+      attemptedPresetMatch: true,
+    }, colorAudit);
+    if (presetColorDecision.wrongTarget) {
+      throw new Error(`control-owned color preset must remain allowed: ${JSON.stringify(presetColorDecision)}`);
+    }
+    const proseColorDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Quarterly roadmap'),
+      attemptedPresetMatch: false,
+    }, colorAudit);
+    if (!proseColorDecision.wrongTarget) {
+      throw new Error(`ordinary prose must be rejected for color targets: ${JSON.stringify(proseColorDecision)}`);
+    }
     const linkAudit = {
       ...familyAudit,
       targetKind: 'link',
@@ -3318,6 +3348,57 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     );
     if (!exactSelectorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
       throw new Error('a selector resolving to the associated editor identity should clear toolbar debt');
+    }
+
+    const iframeCandidate = {
+      ...candidate,
+      score: 8,
+      reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+      availablePresetValues: ['11', '14'],
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_12',
+      frameId: 7,
+      documentToken: 'frame-doc-a',
+      refScopeUrl: 'https://frame.example.test/editor',
+      rect: { x: 10, y: 8, w: 60, h: 24 },
+      annotationRect: { x: 110, y: 208, w: 60, h: 24 },
+      fieldMeta: { toolbarCandidate: iframeCandidate },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+    });
+    const iframePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#font-size', text: 'Document prose' },
+      { supportsVision: false },
+    );
+    if (!iframePreflight.block?.wrongTarget || iframePreflight.block.dispatched !== false) {
+      throw new Error(`iframe_type must audit and block toolbar targets before dispatch: ${JSON.stringify(iframePreflight)}`);
+    }
+    if (agent._richTextToolbarStates.get(tabId)?.frameId !== 7) {
+      throw new Error('iframe toolbar debt must retain its frame identity');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: '',
+      frameId: 7,
+      documentToken: 'frame-doc-a',
+      refScopeUrl: 'https://frame.example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const iframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#editor-body' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!iframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('the associated iframe editor edit should clear toolbar debt');
     }
 
     const staleDocumentResult = {};
