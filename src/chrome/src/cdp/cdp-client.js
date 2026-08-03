@@ -3243,7 +3243,9 @@ export class CDPClient {
           const semanticToolbar = composedClosest(el, '[role="toolbar"]');
           const rect = el.getBoundingClientRect();
           const candidate = (() => {
-            if (tag !== 'input' || !['text', 'search', 'number', 'url'].includes(fieldType)) return null;
+            const supportedInput = tag === 'input' && ['text', 'search', 'number', 'url'].includes(fieldType);
+            const editableControl = fieldMeta.contentEditable === true;
+            if (!supportedInput && !editableControl) return null;
             if (rect.width < 1 || rect.height < 1) return null;
             const unlabeled = ![
               fieldMeta.ariaLabel,
@@ -3278,13 +3280,14 @@ export class CDPClient {
             if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
             if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
             const compact = rect.height <= 32 && rect.width <= 220;
-            const value = String(el.value || '').trim();
+            const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
             const numericPreset = value.length > 0 && value.length <= 16
               && /^-?\\d+(?:[.,]\\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
             const interactiveSelector = [
               'input:not([type="hidden"])', 'textarea', 'select', 'button',
-              '[role="button"]', '[role="combobox"]', '[role="listbox"]',
-              '[role="menuitem"]', '[tabindex]',
+              '[role="button"]', '[role="combobox"]', '[role="textbox"]',
+              '[role="searchbox"]', '[role="listbox"]', '[role="menuitem"]',
+              '[contenteditable]:not([contenteditable="false"])', '[tabindex]',
             ].join(',');
             let cluster = null;
             let node = composedParent(el);
@@ -3395,6 +3398,7 @@ export class CDPClient {
               availablePresetValues.push(preset);
             };
             addValue(el.value);
+            if (el.isContentEditable) addValue(el.textContent);
             const optionRoots = [];
             try { if (el.list) optionRoots.push(el.list); } catch {}
             const controlledIds = String(

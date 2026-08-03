@@ -1179,6 +1179,8 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
         <input id="slotted-search" type="search" aria-label="Search" value="" style="width:118px;height:22px">
         <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
         <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
+        <div id="slotted-editable-family" contenteditable="true" role="combobox" aria-label="Font family"
+          style="width:118px;height:22px">Default</div>
       </span>
       <div id="slot-editor-component"></div>
     </div>
@@ -1212,6 +1214,14 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || !linkProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
   ) {
     throw new Error(`URL-typed rich-text link control was not audited by the CDP selector probe: ${JSON.stringify(linkProbe)}`);
+  }
+  const editableProbe = await client.probeRichTextToolbarSelector(42, '#slotted-editable-family');
+  if (
+    !editableProbe?.resolved
+    || editableProbe.fieldMeta?.contentEditable !== true
+    || !editableProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+  ) {
+    throw new Error(`contenteditable rich-text formatting control was not audited by the CDP selector probe: ${JSON.stringify(editableProbe)}`);
   }
 });
 
@@ -3118,6 +3128,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         size: window.__wb_ax_ref(document.getElementById('font-size')),
         family: window.__wb_ax_ref(document.getElementById('font-family')),
         familyInput: window.__wb_ax_ref(document.getElementById('font-family-input')),
+        editableFamily: window.__wb_ax_ref(document.getElementById('editable-font-family')),
         familyText: window.__wb_ax_ref(document.querySelector('#font-family span')),
         editor: window.__wb_ax_ref(document.getElementById('editor-body')),
         labelledBy: window.__wb_ax_ref(document.getElementById('labelled-by-size')),
@@ -3170,6 +3181,27 @@ for (const browserKind of ['chrome', 'firefox']) {
     const availableFamilies = familyProbe?.fieldMeta?.toolbarCandidate?.availablePresetValues || [];
     if (!availableFamilies.includes('Default') || !availableFamilies.includes('Inter Display') || !availableFamilies.includes('Times New Roman')) {
       throw new Error(`expected bounded control-owned font presets, got: ${JSON.stringify(familyProbe)}`);
+    }
+    const editableFamilyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.editableFamily, text: 'Inter Display' },
+    });
+    if (
+      !editableFamilyProbe?.resolved
+      || editableFamilyProbe.fieldMeta?.contentEditable !== true
+      || !editableFamilyProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+      || !editableFamilyProbe.fieldMeta.toolbarCandidate.reasons?.includes('formatting_control_label')
+      || !editableFamilyProbe.fieldMeta.toolbarCandidate.availablePresetValues?.includes('Default')
+      || editableFamilyProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+    ) {
+      throw new Error(`contenteditable rich-text formatting control must enter the toolbar audit: ${JSON.stringify(editableFamilyProbe)}`);
+    }
+    const editorBodyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.editor, text: 'Document prose' },
+    });
+    if (!editorBodyProbe?.resolved || editorBodyProbe.fieldMeta?.toolbarCandidate) {
+      throw new Error(`rich-text editor body must not be classified as its own toolbar control: ${JSON.stringify(editorBodyProbe)}`);
     }
     const shadowFamilyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',

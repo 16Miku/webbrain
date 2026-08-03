@@ -202,18 +202,21 @@ function mimeForPath(filePath) {
   return 'image/png';
 }
 
-function isCompactUnlabelledInputAttempt(event) {
+function isCompactUnlabelledTypeableAttempt(event) {
   const data = event?.data || event || {};
   if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(data.name)) return false;
   const result = data.result || {};
   const meta = result.fieldMeta || {};
   const rect = result.rect || {};
-  const input = meta.tag === 'input' && ['text', 'search', 'number'].includes(String(meta.type || 'text'));
-  // Keep this list identical to the runtime candidate detector: technical
-  // name/autocomplete hints are not visible labels, while aria-labelledby is.
+  const input = meta.tag === 'input' && ['text', 'search', 'number', 'url'].includes(String(meta.type || 'text'));
+  const typeable = input || meta.contentEditable === true;
+  // Keep the typeability allowlist aligned with the runtime detector. This
+  // convenience selector stays intentionally narrower than the runtime audit:
+  // technical name/autocomplete hints are not visible labels, while
+  // aria-labelledby is.
   const unlabelled = ![meta.ariaLabel, meta.ariaLabelledByText, meta.placeholder, meta.title, meta.labelText]
     .some(value => String(value || '').trim());
-  return input && unlabelled
+  return typeable && unlabelled
     && Number(rect.w) > 0 && Number(rect.h) > 0
     && Number(rect.w) <= 220 && Number(rect.h) <= 40;
 }
@@ -245,7 +248,7 @@ async function loadTraceCase(options) {
   const events = Array.isArray(trace.events) ? trace.events : [];
   const candidates = events
     .map((event, index) => ({ event, index }))
-    .filter(({ event }) => isCompactUnlabelledInputAttempt(event));
+    .filter(({ event }) => isCompactUnlabelledTypeableAttempt(event));
   let selected;
   if (options.eventIndex != null) {
     const event = events[options.eventIndex];
@@ -257,7 +260,7 @@ async function loadTraceCase(options) {
   } else {
     selected = candidates[options.attempt - 1];
     if (!selected) {
-      throw new Error(`trace has ${candidates.length} compact/unlabelled input attempt(s), cannot select --attempt ${options.attempt}: ${JSON.stringify(candidates.map(({ event, index }) => traceCandidateSummary(event, index)))}`);
+      throw new Error(`trace has ${candidates.length} compact/unlabelled typeable attempt(s), cannot select --attempt ${options.attempt}: ${JSON.stringify(candidates.map(({ event, index }) => traceCandidateSummary(event, index)))}`);
     }
   }
 

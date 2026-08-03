@@ -3030,6 +3030,7 @@
         values.push(value);
       };
       add(el.value);
+      if (el.isContentEditable) add(el.textContent);
 
       const roots = [];
       if (el.list) roots.push(el.list);
@@ -3058,9 +3059,12 @@
 
   function _richTextToolbarCandidate(el, baseMeta) {
     try {
-      if (!el || el.tagName !== 'INPUT') return null;
-      const inputType = (el.type || 'text').toLowerCase();
-      if (!['text', 'search', 'number', 'url'].includes(inputType)) return null;
+      if (!el) return null;
+      const inputControl = el.tagName === 'INPUT';
+      const inputType = inputControl ? (el.type || 'text').toLowerCase() : '';
+      const supportedInput = inputControl && ['text', 'search', 'number', 'url'].includes(inputType);
+      const editableControl = el.isContentEditable === true;
+      if (!supportedInput && !editableControl) return null;
       const rect = el.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
 
@@ -3095,7 +3099,7 @@
       ].some(token => formattingDescriptor.includes(token));
 
       const compact = rect.height <= 32 && rect.width <= 220;
-      const value = String(el.value || '').trim();
+      const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
       const numericPreset = value.length > 0
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
@@ -3110,8 +3114,11 @@
         'button',
         '[role="button"]',
         '[role="combobox"]',
+        '[role="textbox"]',
+        '[role="searchbox"]',
         '[role="listbox"]',
         '[role="menuitem"]',
+        '[contenteditable]:not([contenteditable="false"])',
         '[tabindex]',
       ].join(',');
 
