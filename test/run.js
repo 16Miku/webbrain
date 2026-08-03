@@ -27239,6 +27239,60 @@ test('Chrome Agent routes selector type_text toolbar preflight through CDP befor
   }
 });
 
+test('rich-text toolbar debt survives a paused run and trusted continuation only', async () => {
+  for (const [label, AgentClass] of [
+    ['chrome', AgentCh],
+    ['firefox', AgentFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 4201 : 4202;
+    const state = {
+      associatedEditorRef: 'ref_99',
+      blockedRefs: new Set(['ref_12']),
+      documentToken: 'doc-a',
+      pageUrl: 'https://example.test/editor',
+    };
+    const debt = { tool: 'set_field', ref_id: 'ref_12', targetKind: 'font_size' };
+    if (label === 'chrome') {
+      agent._configureCapturePolicyForRun = () => null;
+      agent._restoreCapturePolicyAfterRun = async () => {};
+    }
+    agent._storeContinuationExecutionEvidence = () => {};
+    agent._processMessageStreamInner = async () => {
+      assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: ordinary run must start clean`);
+      agent._richTextToolbarStates.set(tabId, state);
+      agent._richTextToolbarDebts.set(tabId, debt);
+      return 'Paused at max steps.';
+    };
+
+    await agent.processMessageStream(tabId, 'fill the editor', () => {}, 'act');
+    assert.equal(agent._richTextToolbarStates.get(tabId), state, `${label}: paused run lost toolbar state`);
+    assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: paused run lost toolbar debt`);
+
+    agent._processMessageInner = async () => {
+      assert.equal(agent._richTextToolbarStates.get(tabId), state, `${label}: trusted continuation lost toolbar state`);
+      assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: trusted continuation lost toolbar debt`);
+      return 'Still requires editor recovery.';
+    };
+    await agent.processMessage(
+      tabId,
+      'continue',
+      () => {},
+      'act',
+      [],
+      { trustedContinuation: true },
+    );
+    assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: continuation finally cleared toolbar debt`);
+
+    agent._processMessageInner = async () => {
+      assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: new user turn retained toolbar state`);
+      assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: new user turn retained toolbar debt`);
+      return 'Fresh turn.';
+    };
+    await agent.processMessage(tabId, 'new task', () => {}, 'act');
+  }
+});
+
 test('Rich-text toolbar vision probe consumes the dedicated preflight trace capture and runtime label fields', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webbrain-toolbar-probe-'));
   try {

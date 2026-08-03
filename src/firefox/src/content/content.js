@@ -2922,6 +2922,16 @@
           w: Math.round(best.rect.width),
           h: Math.round(best.rect.height),
         },
+        identity: {
+          tag: String(best.editor.tagName || '').toLowerCase(),
+          id: best.editor.id || null,
+          name: best.editor.getAttribute?.('name') || null,
+          role: best.editor.getAttribute?.('role') || null,
+          pageX: Math.round(best.rect.x + window.scrollX),
+          pageY: Math.round(best.rect.y + window.scrollY),
+          w: Math.round(best.rect.width),
+          h: Math.round(best.rect.height),
+        },
       };
     } catch { return null; }
   }
@@ -3074,6 +3084,7 @@
         relatedRefs,
         associatedEditorRef: associatedEditor?.ref || '',
         associatedEditorRect: associatedEditor?.rect || null,
+        associatedEditorIdentity: associatedEditor?.identity || null,
       };
     } catch { return null; }
   }
@@ -3103,6 +3114,7 @@
         contentEditable: !!el.isContentEditable,
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
+        role: el.getAttribute ? el.getAttribute('role') : null,
         autocomplete: el.getAttribute ? el.getAttribute('autocomplete') : null,
         ariaLabel: el.getAttribute ? el.getAttribute('aria-label') : null,
         ariaLabelledByText: _ariaLabelledByText(el),

@@ -1787,6 +1787,37 @@ export class Agent extends LoopDetector {
     return availableValues.slice(0, 40).some(value => normalize(value) === attempted);
   }
 
+  static _richTextToolbarEditorIdentityMatches(expected, fieldMeta = {}, rect = {}) {
+    if (!expected || typeof expected !== 'object') return false;
+    const expectedTag = String(expected.tag || '').toLowerCase();
+    const actualTag = String(fieldMeta.tag || '').toLowerCase();
+    if (!expectedTag || expectedTag !== actualTag) return false;
+
+    const expectedRole = String(expected.role || '').toLowerCase();
+    const actualRole = String(fieldMeta.role || '').toLowerCase();
+    if ((expectedRole || actualRole) && expectedRole !== actualRole) return false;
+
+    const expectedId = String(expected.id || '');
+    const actualId = String(fieldMeta.id || '');
+    if (expectedId || actualId) return !!expectedId && expectedId === actualId;
+
+    const expectedName = String(expected.name || '');
+    const actualName = String(fieldMeta.name || '');
+    if ((expectedName || actualName) && expectedName !== actualName) return false;
+
+    const values = [
+      expected.pageX, expected.pageY, expected.w, expected.h,
+      rect.pageX, rect.pageY, rect.w, rect.h,
+    ].map(Number);
+    if (!values.every(Number.isFinite)) return false;
+    const [expectedX, expectedY, expectedW, expectedH, actualX, actualY, actualW, actualH] = values;
+    const sizeTolerance = Math.max(8, Math.round(Math.max(expectedW, expectedH, actualW, actualH) * 0.1));
+    return Math.abs(expectedX - actualX) <= 8
+      && Math.abs(expectedY - actualY) <= 8
+      && Math.abs(expectedW - actualW) <= sizeTolerance
+      && Math.abs(expectedH - actualH) <= sizeTolerance;
+  }
+
   static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
     if (!shape) return false;
     // An explicit empty value is a formatting reset, not document prose. It
@@ -1963,12 +1994,22 @@ export class Agent extends LoopDetector {
     }
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
     const isEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
-    if (!isEditor || probe.refId !== state.associatedEditorRef) return false;
+    const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
+    const exactSelector = toolName === 'type_text'
+      && typeof args?.selector === 'string'
+      && !!args.selector.trim()
+      && Agent._richTextToolbarEditorIdentityMatches(
+        state.associatedEditorIdentity,
+        fieldMeta,
+        probe.rect || {},
+      );
+    if (!isEditor || (!exactRef && !exactSelector)) return false;
     this._resetRichTextToolbarAudit(tabId);
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
       toolName,
-      refId: probe.refId,
+      refId: probe.refId || null,
+      selectorRecovery: exactSelector,
     });
     return true;
   }
@@ -1989,6 +2030,7 @@ export class Agent extends LoopDetector {
     state.detectedAt = Date.now();
     state.regionRef = candidate?.regionRef || state.regionRef || '';
     state.associatedEditorRef = candidate?.associatedEditorRef || state.associatedEditorRef || '';
+    state.associatedEditorIdentity = candidate?.associatedEditorIdentity || state.associatedEditorIdentity || null;
     const hasExactRecoveryTarget = !!state.associatedEditorRef;
     if (hasExactRecoveryTarget) {
       if (refId) state.blockedRefs.add(refId);
@@ -20147,7 +20189,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
@@ -20174,7 +20216,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
-      this._resetRichTextToolbarAudit(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
     }
@@ -21003,7 +21044,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
@@ -21030,7 +21071,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
-      this._resetRichTextToolbarAudit(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
     }

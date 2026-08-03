@@ -2863,6 +2863,9 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (candidate.associatedEditorRef !== refs.editor) {
       throw new Error(`expected exact associated editor ref, got: ${JSON.stringify(candidate)}`);
     }
+    if (candidate.associatedEditorIdentity?.id !== 'editor-body' || candidate.associatedEditorIdentity?.tag !== 'div') {
+      throw new Error(`expected stable associated editor identity, got: ${JSON.stringify(candidate)}`);
+    }
     const familyProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
       args: { ref_id: refs.familyInput, text: 'Inter Display' },
@@ -2946,6 +2949,16 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       availablePresetValues: ['Default', 'Inter Display', 'Arial', 'Times New Roman'],
       regionRef: 'ref_10',
       associatedEditorRef: 'ref_99',
+      associatedEditorIdentity: {
+        tag: 'div',
+        id: 'editor-body',
+        name: null,
+        role: 'textbox',
+        pageX: 20,
+        pageY: 160,
+        w: 400,
+        h: 180,
+      },
       regionRect: { x: 0, y: 0, w: 320, h: 48 },
       attemptedTextShape: {
         chars: 86,
@@ -3255,6 +3268,56 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     if (agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a')) {
       throw new Error('toolbar refs must be released after exact editor recovery');
+    }
+
+    const selectorRecoveryResult = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12' },
+      selectorRecoveryResult,
+      candidate,
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: '',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'other-editor', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const unrelatedSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_text',
+      { selector: '#other-editor' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (unrelatedSelectorRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a selector resolving to a different editor must not clear toolbar completion debt');
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: '',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, pageX: 20, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const exactSelectorRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_text',
+      { selector: '#editor-body' },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!exactSelectorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('a selector resolving to the associated editor identity should clear toolbar debt');
     }
 
     const staleDocumentResult = {};

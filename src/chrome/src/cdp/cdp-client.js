@@ -3225,6 +3225,7 @@ export class CDPClient {
             contentEditable: el.isContentEditable === true,
             name: el.getAttribute?.('name') || null,
             id: el.id || null,
+            role: el.getAttribute?.('role') || null,
             autocomplete: el.getAttribute?.('autocomplete') || null,
             ariaLabel: el.getAttribute?.('aria-label') || null,
             ariaLabelledByText: labelledByText,
@@ -3331,6 +3332,8 @@ export class CDPClient {
             rect: {
               x: Math.round(rect.x), y: Math.round(rect.y),
               w: Math.round(rect.width), h: Math.round(rect.height),
+              pageX: Math.round(rect.x + window.scrollX),
+              pageY: Math.round(rect.y + window.scrollY),
             },
             fieldMeta,
             toolbarContext: !!semanticToolbar,
