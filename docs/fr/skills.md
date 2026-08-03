@@ -137,6 +137,7 @@ Compétences comme disponibles. Elles ne sont pas activées par défaut.
 | Météo Open-Meteo | Ask, Act, Dev | Géocodage + prévisions HTTPS |
 | Open Library | Ask, Act, Dev | Recherche Open Library HTTPS |
 | Wikipédia | Ask, Act, Dev | Recherche REST + résumé Action API HTTPS |
+| Restauration des caractères turcs | Ask, Act, Dev | Instructions uniquement ; utilise les outils ordinaires de saisie textuelle |
 
 N'activez une compétence que si vous voulez ses outils et instructions
 disponibles pour `load_skill` sur les exécutions éligibles.

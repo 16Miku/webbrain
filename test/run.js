@@ -169,6 +169,17 @@ function packagedFrankfurterRecord(prefix) {
   };
 }
 
+function packagedTurkishDeasciifierRecord(prefix) {
+  return {
+    id: 'turkish-deasciifier',
+    name: 'Turkish deasciifier',
+    sourceType: 'built-in',
+    sourceUrl: 'skills/turkish-deasciifier.md',
+    content: fs.readFileSync(path.join(ROOT, prefix, 'skills/turkish-deasciifier.md'), 'utf8'),
+    createdAt: 0,
+  };
+}
+
 function packagedChromeWebStoreRecord(prefix) {
   return {
     id: 'chrome-web-store-release',
@@ -12520,9 +12531,23 @@ test('field tool contracts advertise settled verification and recovery', () => {
     const tools = getTools('act');
     const typeAx = tools.find(tool => tool.function.name === 'type_ax');
     const setField = tools.find(tool => tool.function.name === 'set_field');
+    const typeText = tools.find(tool => tool.function.name === 'type_text');
     assert.match(typeAx.function.description, /settle[\s\S]*verified:true/i, `${label}: type_ax verification contract missing`);
     assert.match(setField.function.description, /verify the exact settled value/i, `${label}: set_field exact verification contract missing`);
     assert.match(setField.function.description, /recoveryRequired:"fresh_tree"/, `${label}: set_field recovery contract missing`);
+    for (const tool of [typeAx, setField, typeText]) {
+      assert.equal(tool.function.parameters.properties.lang, undefined, `${label}: ${tool.function.name} still exposes a hidden language transform`);
+    }
+  }
+});
+
+test('form entry has no built-in language transform path', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const manifest = fs.readFileSync(path.join(ROOT, prefix, 'manifest.json'), 'utf8');
+    assert.doesNotMatch(content, /tr-deasciify|_loadDeasciifier|_applyLangTransform/, `${label}: content script still mutates text by locale`);
+    assert.doesNotMatch(manifest, /turkish-deasciifier-patterns/, `${label}: retired transform asset remains web-accessible`);
+    assert.equal(fs.existsSync(path.join(ROOT, prefix, 'vendor/turkish-deasciifier-patterns.json')), false, `${label}: retired transform asset still exists`);
   }
 });
 
@@ -15211,6 +15236,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'open-library-books': ['book_search', 'book_metadata', 'isbn_lookup', 'author_lookup'],
     'wikipedia': ['wikipedia_search', 'encyclopedia_lookup', 'topic_summary', 'definition_lookup'],
     'frankfurter-fx': ['currency_conversion', 'exchange_rate', 'fx_lookup', 'currency_list'],
+    'turkish-deasciifier': ['turkish_deasciify', 'restore_turkish_diacritics', 'fix_turkish_characters', 'ascii_turkish_conversion'],
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
   };
@@ -15274,6 +15300,24 @@ test('packaged Mail.tm skill is opt-in before prompt injection', () => {
     const enabled = normalizeSkills([...defaults, packagedMailTmRecord(prefix)]);
     assert.doesNotMatch(buildPrompt(enabled, { mode: 'act', tier: 'full' }), /Disposable email \(Mail\.tm\)/, `${label}: available Mail.tm skill should not be preloaded`);
     assert.match(buildPrompt(enabled, { mode: 'act', tier: 'full', activeSkillIds: new Set(['disposable-email-mailtm']) }), /Disposable email \(Mail\.tm\)/, `${label}: activated Mail.tm skill missing from prompt`);
+  }
+});
+
+test('packaged Turkish deasciifier is available, opt-in, and instruction-only', () => {
+  for (const [label, prefix, normalizeSkills, buildPrompt, getCatalog, buildDefs] of [
+    ['chrome', 'src/chrome', normalizeCustomSkillsCh, buildCustomSkillsPromptCh, getEligibleSkillCatalogCh, buildSkillToolDefinitionsCh],
+    ['firefox', 'src/firefox', normalizeCustomSkillsFx, buildCustomSkillsPromptFx, getEligibleSkillCatalogFx, buildSkillToolDefinitionsFx],
+  ]) {
+    const enabled = normalizeSkills([packagedTurkishDeasciifierRecord(prefix)]);
+    const catalog = getCatalog(enabled, { mode: 'act', tier: 'full' });
+    assert.deepEqual(catalog.map((skill) => skill.id), ['turkish-deasciifier'], `${label}: opt-in skill missing from the enabled catalog`);
+    assert.doesNotMatch(buildPrompt(enabled, { mode: 'act', tier: 'full' }), /Convert ASCII Turkish text/, `${label}: unloaded skill leaked full instructions`);
+    assert.match(
+      buildPrompt(enabled, { mode: 'act', tier: 'full', activeSkillIds: new Set(['turkish-deasciifier']) }),
+      /Convert ASCII Turkish text/,
+      `${label}: activated skill instructions missing`,
+    );
+    assert.deepEqual(buildDefs(enabled, { mode: 'act', tier: 'full' }), [], `${label}: instruction-only skill added a tool schema`);
   }
 });
 
@@ -52406,6 +52450,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'wikipedia',
     'frankfurter-fx',
     'humanizer',
+    'turkish-deasciifier',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -52417,6 +52462,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'wikipedia',
     'frankfurter-fx',
     'humanizer',
+    'turkish-deasciifier',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -52428,6 +52474,8 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'otp-verification-code-helper',
     'humanizer',
   ]);
+  assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
+  assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');
   assert.equal(PACKAGED_SKILL_SOURCES_CH.some((skill) => skill.id === 'chrome-web-store-release'), false, 'chrome: release workflow must not appear in available packaged skills');
   assert.equal(PACKAGED_SKILL_SOURCES_FX.some((skill) => skill.id === 'chrome-web-store-release'), false, 'firefox: release workflow must not appear in available packaged skills');
 
@@ -52635,6 +52683,11 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(wikipedia, /"name": "get_wikipedia_summary"/, `${label}: Wikipedia summary tool missing`);
     assert.match(wikipedia, /"endpoint": "https:\/\/en\.wikipedia\.org\/w\/api\.php"/, `${label}: Wikipedia summary endpoint missing`);
     assert.match(wikipedia, /Powered by \[Wikipedia\]\(https:\/\/www\.wikipedia\.org\)/, `${label}: Wikipedia skill should include visible attribution`);
+    const turkishDeasciifier = fs.readFileSync(path.join(ROOT, prefix, 'skills/turkish-deasciifier.md'), 'utf8');
+    assert.match(turkishDeasciifier, /only when the user explicitly requests this transformation/i, `${label}: Turkish deasciifier must require explicit user intent`);
+    assert.match(turkishDeasciifier, /Never infer permission from the user's language, locale, page language, or destination field/i, `${label}: Turkish deasciifier must not infer locale permission`);
+    assert.match(turkishDeasciifier, /Form-entry tools always type their `text` argument verbatim/i, `${label}: Turkish deasciifier must preserve the verbatim base-tool contract`);
+    assert.doesNotMatch(turkishDeasciifier, /```webbrain-tools/i, `${label}: Turkish deasciifier should not add a tool schema`);
     const fileShare = fs.readFileSync(path.join(ROOT, prefix, 'skills/temporary-file-share-litterbox.md'), 'utf8');
     assert.match(fileShare, /https:\/\/litterbox\.catbox\.moe/, `${label}: file-share skill should use Litterbox by default`);
     assert.match(fileShare, /No account, no API key, and no sign-in are required/i, `${label}: file-share skill should document the no-auth provider requirement`);

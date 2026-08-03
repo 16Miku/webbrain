@@ -103,6 +103,7 @@ Markdown 正文前会移除 frontmatter。在设置中输入的名称及 `webbra
 | Open-Meteo 天气 | Ask, Act, Dev | 地理编码 + 预报 HTTPS |
 | Open Library | Ask, Act, Dev | Open Library 搜索 HTTPS |
 | Wikipedia | Ask, Act, Dev | Wikipedia REST 搜索 + Action API 摘要 HTTPS |
+| 土耳其语字符恢复 | Ask, Act, Dev | 仅指令；使用普通的逐字文本输入工具 |
 
 仅在你希望其工具与指令可用于符合条件的运行的 `load_skill` 时再启用。
 

@@ -120,6 +120,7 @@ enable. They are not seeded on by default.
 | Open-Meteo weather | Ask, Act, Dev | Geocoding + forecast HTTPS |
 | Open Library | Ask, Act, Dev | Open Library search HTTPS |
 | Wikipedia | Ask, Act, Dev | Wikipedia REST search + Action API summary HTTPS |
+| Turkish deasciifier | Ask, Act, Dev | Instruction-only; uses ordinary verbatim form-entry tools |
 
 Enable a skill only when you want its tools and instructions available for
 `load_skill` on eligible runs.
