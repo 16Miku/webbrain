@@ -508,6 +508,8 @@ const appEl = document.getElementById('app');
 const newConversationConfirmEl = document.getElementById('new-conversation-confirm');
 const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
 const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
+const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
+const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 const historyBtn = document.getElementById('btn-history');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
@@ -979,6 +981,7 @@ const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
 const clearingConversationTabs = new Set();
+const selectionGroundedTabs = new Set();
 let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
@@ -1024,6 +1027,62 @@ function setConversationClearInProgress(tabId, clearing) {
 function isConversationClearInProgress(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) && clearingConversationTabs.has(numericTabId);
+}
+
+function isSelectionGroundedForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId) && selectionGroundedTabs.has(numericTabId);
+}
+
+function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding = null) {
+  if (mode !== 'act' && mode !== 'dev') return false;
+  if (sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+      && !isSelectionGroundedForTab(tabId)) return false;
+  showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+  return true;
+}
+
+function syncSelectionScopeUi() {
+  const scoped = isSelectionGroundedForTab(currentTabId);
+  selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  for (const button of [modeActBtn, modeDevBtn]) {
+    if (!button) continue;
+    button.classList.toggle('selection-scope-unavailable', scoped);
+    button.setAttribute('aria-disabled', scoped ? 'true' : 'false');
+    button.title = scoped
+      ? t('sp.selection_scope.description')
+      : t(button === modeActBtn ? 'sp.mode.act.title' : 'sp.mode.dev.title');
+  }
+  if (scoped && agentMode !== 'ask') setMode('ask');
+  else resetInputPlaceholderRotation();
+}
+
+function setSelectionGroundedForTab(tabId, grounded) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const changed = grounded
+    ? !selectionGroundedTabs.has(numericTabId)
+    : selectionGroundedTabs.has(numericTabId);
+  if (grounded) selectionGroundedTabs.add(numericTabId);
+  else selectionGroundedTabs.delete(numericTabId);
+  if (changed && sameTabId(currentTabId, numericTabId)) syncSelectionScopeUi();
+}
+
+function applyConversationScopeState(tabId, state) {
+  if (!state || !Object.prototype.hasOwnProperty.call(state, 'sourceGrounding')) return;
+  setSelectionGroundedForTab(
+    tabId,
+    state.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING,
+  );
+}
+
+function reconcileFailedSelectionGroundedStart(tabId, {
+  sourceGrounding,
+  selectionGroundedBeforeSend,
+  accepted,
+}) {
+  if (accepted || (!sourceGrounding && !selectionGroundedBeforeSend)) return;
+  void restoreActiveRunState(tabId);
 }
 
 function settleNewConversationConfirmation(confirmed, { restoreFocus = true } = {}) {
@@ -2106,6 +2165,7 @@ function drainQueuedComposerMessageForCurrentTab() {
 }
 
 async function renderClearedConversationForTab(tabId) {
+  setSelectionGroundedForTab(tabId, false);
   const clearResult = await clearCachedTabChat(tabId);
   if (!clearResult?.ok || clearResult?.skipped) {
     throw new Error(clearResult?.error || 'Unable to clear tab chat.');
@@ -2296,6 +2356,7 @@ async function hydrateChatHistoryIdentity(tabId, mode = agentMode, { allowFallba
   } else if (allowFallback && !chatHistoryRecordIdsByTab.has(numericTabId)) {
     fallbackHistoryRecordId(numericTabId);
   }
+  applyConversationScopeState(numericTabId, identity);
   if (tabInfo) chatHistoryTabInfoByTab.set(numericTabId, tabInfo);
   return chatHistoryConversationIdsByTab.get(numericTabId) || null;
 }
@@ -2767,6 +2828,13 @@ async function handleScheduledJobEvent(data, tabId) {
     watchPollEvent
   );
   if (!sameTab && !crossPanelScheduledEvent) return;
+  const scopeChangingScheduledEvent = event === 'running'
+    || terminalScheduledEvent
+    || watchPollEvent
+    || event === 'needs_user_input';
+  if (scopeChangingScheduledEvent && runTabId != null) {
+    await refreshConversationScopeState(runTabId);
+  }
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
@@ -3408,7 +3476,7 @@ const boundWorkflowParameterForms = new WeakSet();
 
 async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
   if (!workflow?.id || currentTabId !== tabId) return false;
-  await ensureActMode();
+  if (!(await ensureActMode())) return false;
   inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
   autoResizeInput();
   return sendMessage({
@@ -3776,6 +3844,7 @@ async function switchToTab(newTabId) {
     resetChatNavigation();
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
+    syncSelectionScopeUi();
 
     // Chrome gives each tab-specific side panel its own document. The
     // visibility refresh below coordinates ownership when the destination
@@ -3874,15 +3943,24 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
 }
 
-async function restoreActiveRunState(tabId = currentTabId) {
+async function refreshConversationScopeState(tabId = currentTabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null) return null;
   let state = null;
   try {
     state = await sendToBackground('agent_run_state', { tabId: numericTabId });
   } catch {
-    return;
+    return null;
   }
+  applyConversationScopeState(numericTabId, state);
+  return state;
+}
+
+async function restoreActiveRunState(tabId = currentTabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  const state = await refreshConversationScopeState(numericTabId);
+  if (!state) return;
   await applyActiveRunState(numericTabId, state);
   void adoptRestoredRunState(numericTabId, state);
 }
@@ -5270,6 +5348,7 @@ function resumeAfterSubscription(btn) {
   const mode = ['ask', 'act', 'dev'].includes(btn?.dataset?.resumeMode)
     ? btn.dataset.resumeMode
     : agentMode;
+  if (rejectSelectionScopedMode(mode)) return;
   setMode(mode);
   void continueAgent({
     mode,
@@ -5334,6 +5413,7 @@ function bindErrorRetryButton(btn) {
     }
     const payload = retryPayloadFromButton(btn);
     if (!payload) return;
+    if (rejectSelectionScopedMode(payload.mode, currentTabId, payload.sourceGrounding)) return;
     if (payload.missingAttachments) {
       showComposerToast(t('sp.retry.attachments_unavailable'), { duration: 5000 });
     }
@@ -6624,6 +6704,12 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
+  if ((command.value === '/screenshot' || command.value === '/record')
+      && isSelectionGroundedForTab(tabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return '';
+  }
+
   if (command.value === '/schedule' && action === 'list') {
     const jobs = await refreshScheduledJobs({ tabId });
     if (currentTabId !== tabId) return '';
@@ -7178,6 +7264,10 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
+    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+      return false;
+    }
     runCaptureDirective = parseTrailingRunCaptureDirective(text);
     if (runCaptureDirective?.error) {
       showComposerToast(t('sp.slash.invalid_usage', {
@@ -7185,9 +7275,15 @@ async function sendMessage(extraChatParams = {}) {
       }), { duration: 5000 });
       return false;
     }
+    if (runCaptureDirective
+        && (sourceGrounding || isSelectionGroundedForTab(tabId))) {
+      showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+      return false;
+    }
     if (runCaptureDirective) text = runCaptureDirective.prompt;
   }
   const modeForSend = retryOptions?.mode || modeOverride || modeForMessageText(text);
+  if (rejectSelectionScopedMode(modeForSend, tabId, sourceGrounding)) return false;
   const apiMutationsAllowedForSend = retryOptions
     ? !!retryOptions.apiMutationsAllowed
     : isApiMutationsAllowedForTab(tabId) || /^\/allow-api\b/i.test(text);
@@ -7349,6 +7445,8 @@ async function sendMessage(extraChatParams = {}) {
   let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
+  const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
   try {
     const res = await sendRunWithReconnect('chat_start', {
       tabId,
@@ -7368,6 +7466,7 @@ async function sendMessage(extraChatParams = {}) {
       ...(attachmentsForSend.length ? { attachments: attachmentsForSend } : {}),
       ...chatExtraParams,
     });
+    applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
@@ -7446,6 +7545,11 @@ async function sendMessage(extraChatParams = {}) {
       }
     }
   } catch (e) {
+    reconcileFailedSelectionGroundedStart(tabId, {
+      sourceGrounding,
+      selectionGroundedBeforeSend,
+      accepted,
+    });
     captureStartFailed = !!runCaptureDirective
       && String(e?.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX);
     contextMenuReservationRejected = e?.code === 'context-menu-reservation-rejected';
@@ -7838,6 +7942,10 @@ function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestI
 }
 
 function handleAgentUpdateMessage(msg) {
+  if (msg.type === 'conversation_scope') {
+    applyConversationScopeState(msg.tabId, msg.data);
+    return;
+  }
   if (msg.type === 'scheduled_job') {
     handleScheduledJobEvent(msg.data, msg.tabId).catch((err) => {
       console.warn('[WebBrain] failed to handle scheduled job event:', err);
@@ -9365,8 +9473,9 @@ function showContinueButton(options = {}) {
 
 async function continueAgent(options = {}) {
   const tabId = currentTabId;
-  const requestId = createRunRequestId(tabId);
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
+  const requestId = createRunRequestId(tabId);
   const foregroundForSend = options?.foreground === true;
   clearActiveChatPayloadForTab(tabId);
 
@@ -9404,6 +9513,7 @@ async function continueAgent(options = {}) {
       mode: modeForSend,
       foreground: foregroundForSend,
     });
+    applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
@@ -10024,6 +10134,9 @@ function autoResizeInput() {
 }
 
 function getInputPlaceholderKeys() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    return ['sp.input.selection_placeholder'];
+  }
   let keys;
   if (agentMode === 'ask') keys = ASK_PLACEHOLDER_KEYS;
   else if (agentMode === 'dev') keys = ['sp.input.dev_placeholder'];
@@ -10094,7 +10207,10 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
       requestId: probedRequestId || requestId,
     }),
     isConnectionError: isBackgroundConnectionError,
-    onState: state => applyActiveRunState(tabId, state),
+    onState: state => {
+      applyConversationScopeState(tabId, state);
+      return applyActiveRunState(tabId, state);
+    },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
     onStatus: ({ phase }) => {
@@ -10249,12 +10365,20 @@ function setMode(mode) {
 }
 
 async function ensureActMode() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
+  }
   if (agentMode === 'act') return true;
   setMode('act');
   return true;
 }
 
 async function ensureDevMode() {
+  if (isSelectionGroundedForTab(currentTabId)) {
+    showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
+    return false;
+  }
   if (agentMode === 'dev') return true;
   try {
     const tierInfo = await sendToBackground('get_active_prompt_tier');
@@ -10877,14 +11001,14 @@ inputEl.addEventListener('blur', () => setTimeout(hideSlashCommandAutocomplete, 
 document.addEventListener('wb-locale-changed', () => {
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
+  syncSelectionScopeUi();
   void loadProviders();
 });
 
-clearBtn.addEventListener('click', async () => {
-  const tabId = currentTabId;
-  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return;
-  if (!await requestNewConversationConfirmation(tabId)) return;
-  if (!sameTabId(currentTabId, tabId)) return;
+async function startNewConversationForTab(tabId) {
+  if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
+  if (!await requestNewConversationConfirmation(tabId)) return false;
+  if (!sameTabId(currentTabId, tabId)) return false;
   setConversationClearInProgress(tabId, true);
   try {
     suppressRunUpdatesForClearedConversation(tabId);
@@ -10894,9 +11018,18 @@ clearBtn.addEventListener('click', async () => {
     if (isTabProcessing(tabId)) await abortRun(tabId);
     await sendToBackground('clear_conversation', { tabId });
     await renderClearedConversationForTab(tabId);
+    return true;
   } finally {
     setConversationClearInProgress(tabId, false);
   }
+}
+
+clearBtn.addEventListener('click', async () => {
+  await startNewConversationForTab(currentTabId);
+});
+
+selectionScopeNewConversationBtn?.addEventListener('click', async () => {
+  await startNewConversationForTab(currentTabId);
 });
 
 providerSelect.addEventListener('change', async () => {
