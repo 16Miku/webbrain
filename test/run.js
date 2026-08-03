@@ -224,14 +224,34 @@ function binaryResponse(status, body = 'media-bytes', contentType = 'video/mp4',
 // ────────────────────────────────────────────────────────────────────────
 
 // adapters.js is pure ESM with no chrome.* deps — import directly.
-const { getActiveAdapter, getFullPageCapturePolicy, listAdapters } = await import(
+const {
+  getActiveAdapter,
+  getFullPageCapturePolicy,
+  listAdapters,
+  listAdapterWorkflowProfiles,
+} = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/adapters.js').replace(/\\/g, '/')
 );
 const {
   getActiveAdapter: getActiveAdapterFx,
   getFullPageCapturePolicy: getFullPageCapturePolicyFx,
+  listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapters.js').replace(/\\/g, '/')
+);
+const {
+  ADAPTER_WORKFLOW_SCHEMA,
+  ADAPTER_WORKFLOW_STATES,
+  validateAdapterWorkflowProfile,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/adapter-workflow.js').replace(/\\/g, '/')
+);
+const {
+  ADAPTER_WORKFLOW_SCHEMA: ADAPTER_WORKFLOW_SCHEMA_FX,
+  ADAPTER_WORKFLOW_STATES: ADAPTER_WORKFLOW_STATES_FX,
+  validateAdapterWorkflowProfile: validateAdapterWorkflowProfileFx,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow.js').replace(/\\/g, '/')
 );
 
 // trace-export.js is pure ESM — the /export --traces serializer, tested here.
@@ -3986,6 +4006,226 @@ test('every adapter has the required fields', () => {
     assert.ok(a.name, 'name missing');
     assert.ok(a.category === 'general' || a.category === 'finance', `bad category: ${a.category}`);
   }
+});
+
+test('adapter workflow profile accepts read-only and consequential jobs', () => {
+  const readOnly = {
+    regions: ['global'],
+    jobs: ['site-search'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      states: {
+        search: {
+          readOnly: true,
+          evidence: ['The query and result set are visible.'],
+          terminalFor: ['site-search'],
+        },
+      },
+    },
+  };
+  const consequential = {
+    regions: ['US'],
+    jobs: ['purchase'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      states: {
+        review: { readOnly: true, evidence: ['The final item and total are visible.'] },
+        commit: {
+          requiresConfirmation: true,
+          evidence: ['The order submission result is visible.'],
+        },
+        payment: {
+          requiresConfirmation: true,
+          evidence: ['The payment status is visible.'],
+        },
+        fulfillment: {
+          evidence: ['An order number and confirmed status are visible.'],
+          terminalFor: ['purchase'],
+        },
+      },
+    },
+  };
+
+  assert.deepEqual(validateAdapterWorkflowProfile(readOnly), { ok: true });
+  assert.deepEqual(validateAdapterWorkflowProfile(consequential), { ok: true });
+  assert.deepEqual(validateAdapterWorkflowProfileFx(readOnly), { ok: true });
+  assert.deepEqual(validateAdapterWorkflowProfileFx(consequential), { ok: true });
+});
+
+test('adapter workflow profile rejects unsafe or unverifiable state models', () => {
+  const profile = (states, jobs = ['purchase']) => ({
+    regions: ['US'],
+    jobs,
+    workflow: { schema: ADAPTER_WORKFLOW_SCHEMA, states },
+  });
+  const cases = [
+    {
+      value: { ...profile({ search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } }), regions: [] },
+      error: /regions.*non-empty/i,
+    },
+    {
+      value: {
+        ...profile({ search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } }),
+        workflow: {
+          schema: 'webbrain-adapter-workflow/2',
+          states: { search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } },
+        },
+      },
+      error: /workflow\.schema.*webbrain-adapter-workflow\/1/i,
+    },
+    {
+      value: {
+        ...profile({ search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } }),
+        workflow: {
+          schema: ADAPTER_WORKFLOW_SCHEMA,
+          states: { search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } },
+          transitions: [],
+        },
+      },
+      error: /workflow.*unknown field.*transitions/i,
+    },
+    {
+      value: profile(
+        { search: { evidence: ['Results visible.'], terminalFor: ['purchase'] } },
+        ['purchase', 'purchase'],
+      ),
+      error: /jobs.*duplicate/i,
+    },
+    {
+      value: profile({ search: { evidence: [], terminalFor: ['purchase'] } }),
+      error: /search.*evidence.*non-empty/i,
+    },
+    {
+      value: profile({ search: { evidence: ['Results visible.', 'results visible.'], terminalFor: ['purchase'] } }),
+      error: /search.*evidence.*duplicate/i,
+    },
+    {
+      value: profile({ search: {
+        readOnly: true,
+        requiresConfirmation: true,
+        evidence: ['Results visible.'],
+        terminalFor: ['purchase'],
+      } }),
+      error: /search.*cannot be read-only and require confirmation/i,
+    },
+    {
+      value: profile({ commit: { evidence: ['Submission visible.'], terminalFor: ['purchase'] } }),
+      error: /commit.*requiresConfirmation.*true/i,
+    },
+    {
+      value: profile({ search: { evidence: ['Results visible.'], terminalFor: ['unknown-job'] } }),
+      error: /terminalFor.*unknown-job/i,
+    },
+    {
+      value: profile({ selection: { readOnly: true, evidence: ['Selection visible.'] } }),
+      error: /purchase.*successful terminal state/i,
+    },
+    {
+      value: profile({ checkout: { evidence: ['Checkout visible.'], terminalFor: ['purchase'] } }),
+      error: /unknown workflow state.*checkout/i,
+    },
+    {
+      value: profile({ search: { evidence: ['Results visible.'], terminalFor: ['purchase'], selector: '#results' } }),
+      error: /search.*unknown field.*selector/i,
+    },
+  ];
+
+  for (const { value, error } of cases) {
+    const chromeResult = validateAdapterWorkflowProfile(value);
+    const firefoxResult = validateAdapterWorkflowProfileFx(value);
+    assert.equal(chromeResult.ok, false);
+    assert.match(chromeResult.error, error);
+    assert.deepEqual(firefoxResult, chromeResult);
+  }
+});
+
+test('12306 exposes a validated regional workflow profile with browser parity', () => {
+  const chromeAdapter = getActiveAdapter('https://kyfw.12306.cn/otn/confirmPassenger/initDc');
+  const firefoxAdapter = getActiveAdapterFx('https://epay.12306.cn/pay/webBusiness');
+
+  assert.equal(chromeAdapter?.name, 'railway-12306');
+  assert.equal(firefoxAdapter?.name, 'railway-12306');
+  assert.deepEqual(validateAdapterWorkflowProfile(chromeAdapter), { ok: true });
+  assert.deepEqual(validateAdapterWorkflowProfileFx(firefoxAdapter), { ok: true });
+  assert.deepEqual(chromeAdapter?.regions, ['CN']);
+  assert.deepEqual(chromeAdapter?.jobs, ['rail-booking']);
+  assert.deepEqual(firefoxAdapter?.regions, chromeAdapter?.regions);
+  assert.deepEqual(firefoxAdapter?.jobs, chromeAdapter?.jobs);
+  assert.deepEqual(firefoxAdapter?.workflow, chromeAdapter?.workflow);
+  assert.deepEqual(ADAPTER_WORKFLOW_STATES_FX, ADAPTER_WORKFLOW_STATES);
+  assert.equal(ADAPTER_WORKFLOW_SCHEMA_FX, ADAPTER_WORKFLOW_SCHEMA);
+
+  const chromeProfiles = listAdapterWorkflowProfiles();
+  const firefoxProfiles = listAdapterWorkflowProfilesFx();
+  assert.deepEqual(chromeProfiles.map(profile => profile.name), ['railway-12306']);
+  assert.deepEqual(firefoxProfiles, chromeProfiles);
+  assert.deepEqual(validateAdapterWorkflowProfile(chromeProfiles[0]), { ok: true });
+});
+
+test('workflow profile enumeration rejects partial entries and returns detached snapshots', () => {
+  const builds = [
+    {
+      label: 'chrome',
+      getAdapter: getActiveAdapter,
+      listProfiles: listAdapterWorkflowProfiles,
+      validateProfile: validateAdapterWorkflowProfile,
+    },
+    {
+      label: 'firefox',
+      getAdapter: getActiveAdapterFx,
+      listProfiles: listAdapterWorkflowProfilesFx,
+      validateProfile: validateAdapterWorkflowProfileFx,
+    },
+  ];
+
+  for (const { label, getAdapter, listProfiles, validateProfile } of builds) {
+    const adapter = getAdapter('https://www.12306.cn/');
+    assert.ok(adapter?.workflow, `${label}: expected the 12306 workflow profile`);
+
+    const originalWorkflow = adapter.workflow;
+    try {
+      delete adapter.workflow;
+      assert.throws(
+        () => listProfiles(),
+        /`workflow` must be an object/,
+        `${label}: partial profile metadata must fail enumeration`,
+      );
+    } finally {
+      adapter.workflow = originalWorkflow;
+    }
+
+    const sourceSnapshot = structuredClone(adapter.workflow);
+    try {
+      const profile = listProfiles()[0];
+      profile.regions.push('tampered');
+      profile.jobs.push('tampered');
+      profile.workflow.schema = 'tampered';
+      profile.workflow.states.commit.requiresConfirmation = false;
+      profile.workflow.states.fulfillment.evidence.push('Tampered evidence.');
+      profile.workflow.states.fulfillment.terminalFor.push('tampered');
+
+      const fresh = listProfiles()[0];
+      assert.deepEqual(fresh.regions, ['CN'], `${label}: regions leaked a caller mutation`);
+      assert.deepEqual(fresh.jobs, ['rail-booking'], `${label}: jobs leaked a caller mutation`);
+      assert.equal(fresh.workflow.schema, ADAPTER_WORKFLOW_SCHEMA, `${label}: schema leaked a caller mutation`);
+      assert.equal(fresh.workflow.states.commit.requiresConfirmation, true, `${label}: state fields leaked a caller mutation`);
+      assert.deepEqual(
+        fresh.workflow.states.fulfillment.evidence,
+        ['An order number and successful paid or ticket-issued status are visible.'],
+        `${label}: evidence leaked a caller mutation`,
+      );
+      assert.deepEqual(
+        fresh.workflow.states.fulfillment.terminalFor,
+        ['rail-booking'],
+        `${label}: terminal jobs leaked a caller mutation`,
+      );
+      assert.deepEqual(validateProfile(fresh), { ok: true });
+    } finally {
+      adapter.workflow = sourceSnapshot;
+    }
+  }
+
+  assert.deepEqual(listAdapterWorkflowProfilesFx(), listAdapterWorkflowProfiles());
 });
 
 test('finance adapters take precedence in order — stripe before generic', () => {
