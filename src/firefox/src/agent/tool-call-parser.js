@@ -6,6 +6,42 @@
  * Parse common text tool-call formats into OpenAI-style tool call objects.
  * Only names in allowedNames are accepted.
  */
+function extractBalancedJsonObjects(text) {
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (start < 0) {
+      if (char === '{') {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth++;
+    else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
+}
+
 export function parseToolCallsFromText(text, allowedNames) {
   if (!text || text.length > 10000) return [];
 
@@ -78,12 +114,9 @@ export function parseToolCallsFromText(text, allowedNames) {
   }
 
   if (results.length === 0) {
-    const bareRe = /\{[^{}]*"name"\s*:\s*"(\w+)"[^{}]*\}/g;
-    let match;
-    while ((match = bareRe.exec(text)) !== null) {
-      if (!allowedNames.has(match[1])) continue;
+    for (const candidate of extractBalancedJsonObjects(text)) {
       try {
-        const obj = JSON.parse(match[0]);
+        const obj = JSON.parse(candidate);
         if (obj && obj.name && allowedNames.has(obj.name)) {
           results.push(obj);
         }

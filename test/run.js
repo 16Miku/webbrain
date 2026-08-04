@@ -49334,6 +49334,29 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'read_page', args: [] }],
     },
     {
+      label: 'bare JSON with nested arguments and braces in strings',
+      raw: [
+        'I will use the save button now.',
+        JSON.stringify({
+          name: 'click',
+          arguments: { text: 'Save "{draft}"', meta: { source: 'dialog' } },
+        }),
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save "{draft}"', meta: { source: 'dialog' } } }],
+    },
+    {
+      label: 'multiple bare JSON calls preserve order',
+      raw: [
+        '{"name":"read_page","arguments":{"selector":{"role":"main"}}}',
+        'then',
+        '{"name":"click_ax","arguments":{"target":{"ref_id":"ref_7"}}}',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: { selector: { role: 'main' } } },
+        { name: 'click_ax', args: { target: { ref_id: 'ref_7' } } },
+      ],
+    },
+    {
       label: 'XML typed parameters',
       raw: [
         '<tool_call><function=click>',
