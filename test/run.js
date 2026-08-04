@@ -50140,6 +50140,7 @@ test('user attachments expose run-scoped upload handles in both browser agents',
     ], { name: 'vision-test', supportsVision: true }, {
       tabId,
       canUseScratchpadTool: true,
+      canUseUploadTool: true,
     });
 
     assert.equal(result.ok, true, `${label} should accept the user attachment`);
@@ -50187,7 +50188,10 @@ test('user attachment notices expose every registered opaque upload handle', () 
       dataUrl: 'data:image/gif;base64,R0lGODlh',
     }));
     const registered = agent._registerUserAttachments(tabId, attachments);
-    const notice = agent._userAttachmentNotice(registered, { canUseScratchpadTool: true });
+    const notice = agent._userAttachmentNotice(registered, {
+      canUseScratchpadTool: true,
+      canUseUploadTool: true,
+    });
 
     assert.match(notice, /Files: file-1\.gif,[\s\S]*file-8\.gif, \+2 more\./, `${label} should keep the display-name summary bounded`);
     for (let index = 1; index <= attachments.length; index += 1) {
@@ -50201,6 +50205,40 @@ test('user attachment notices expose every registered opaque upload handle', () 
         true,
         `${label} should resolve every handle advertised in the notice`,
       );
+    }
+  }
+});
+
+test('user attachment upload guidance follows the active tier tool catalog', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22041 : 22042;
+    const registered = agent._registerUserAttachments(tabId, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+
+    for (const [mode, tier, shouldAdvertiseUpload] of [
+      ['act', 'compact', false],
+      ['act', 'mid', true],
+      ['act', 'full', true],
+      ['ask', 'full', false],
+    ]) {
+      const toolNames = new Set(
+        getTools(mode, { tier }).map(tool => tool?.function?.name).filter(Boolean),
+      );
+      const notice = agent._userAttachmentNotice(registered, {
+        canUseScratchpadTool: toolNames.has('scratchpad_write'),
+        canUseUploadTool: toolNames.has('upload_file'),
+      });
+      assert.equal(
+        /upload_file with its attachmentId/.test(notice),
+        shouldAdvertiseUpload,
+        `${label} ${mode}/${tier} notice should match upload_file availability`,
+      );
+      assert.match(notice, /Files: demo\.gif/, `${label} ${mode}/${tier} should still identify the attachment`);
     }
   }
 });
@@ -57786,8 +57824,8 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
     );
     assert.match(
       source,
-      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
-      `${label} should gate attachment scratchpad guidance on ask vs action modes`,
+      /const attachmentToolNames = new Set\([\s\S]*?getToolsForMode\(mode, \{ tier: provider\.promptTier \}\)[\s\S]*?const canUseScratchpadTool = attachmentToolNames\.has\('scratchpad_write'\);[\s\S]*?const canUseUploadTool = attachmentToolNames\.has\('upload_file'\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?canUseUploadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
+      `${label} should derive attachment guidance from the active run tool catalog`,
     );
   }
 });

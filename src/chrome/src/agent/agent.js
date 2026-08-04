@@ -13620,13 +13620,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const nameList = names.length
       ? ` Files: ${names.join(', ')}${hiddenNameCount ? `, +${hiddenNameCount} more` : ''}.`
       : '';
-    // Display names stay bounded, but opaque upload IDs cannot be truncated:
-    // every accepted attachment must remain addressable by the model.
+    // Display names stay bounded. When upload_file is actually available,
+    // opaque upload IDs cannot be truncated: every accepted attachment must
+    // remain addressable by the model.
     const uploadHandles = entries
       .filter(entry => entry.attachmentId)
       .map(entry => `${entry.attachmentId} (${entry.name})`);
     const hasUploadHandles = uploadHandles.length > 0;
-    const uploadGuidance = hasUploadHandles && options.canUseScratchpadTool !== false
+    const uploadGuidance = hasUploadHandles && options.canUseUploadTool === true
       ? ` Available upload handles: ${uploadHandles.join(', ')}. To upload one of these exact files to the page, call upload_file with its attachmentId and the file-input selector. Do not open another picker, navigate to a separate upload route, or guess a local path.`
       : '';
     const hasTextAttachment = (attachments || []).some(att => att?.kind === 'text');
@@ -20303,9 +20304,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
-      const canUseScratchpadTool = this._isActionMode(mode);
+      const attachmentToolNames = new Set(
+        getToolsForMode(mode, { tier: provider.promptTier })
+          .map(tool => tool?.function?.name)
+          .filter(Boolean),
+      );
+      const canUseScratchpadTool = attachmentToolNames.has('scratchpad_write');
+      const canUseUploadTool = attachmentToolNames.has('upload_file');
       const attachResult = await this._applyAttachments(enriched, sourceBoundAttachments, provider, {
         canUseScratchpadTool,
+        canUseUploadTool,
         tabId,
         messages,
       });
