@@ -3438,6 +3438,9 @@ export class CDPClient {
                 },
               };
             })();
+            if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor) {
+              return null;
+            }
             const availablePresetValues = [];
             const seenValues = new Set();
             const addValue = raw => {

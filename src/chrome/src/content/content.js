@@ -3876,6 +3876,9 @@
         }
       }
       const associatedEditor = _associatedRichTextEditor(regionNode);
+      if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor) {
+        return null;
+      }
 
       return {
         score,

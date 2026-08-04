@@ -3161,6 +3161,26 @@ test('Firefox: type_text rejects disabled indexed text input fallback', async (p
 });
 
 for (const browserKind of ['chrome', 'firefox']) {
+  test(`${browserKind}: compact native composer stays outside rich-text toolbar audit`, async (page) => {
+    await setupContentHtml(page, `<!doctype html>
+      <div style="display:flex;align-items:center;gap:6px;width:320px;height:44px">
+        <input id="native-composer" type="text" style="width:190px;height:28px">
+        <button type="button">Send</button>
+      </div>`, browserKind);
+    await page.focus('#native-composer');
+    const probe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'type_text',
+      args: { text: 'Quarterly roadmap' },
+    });
+    if (
+      !probe?.resolved
+      || probe.fieldMeta?.type !== 'text'
+      || probe.fieldMeta?.toolbarCandidate
+    ) {
+      throw new Error(`compact native composer must stay outside formatting audit: ${JSON.stringify(probe)}`);
+    }
+  });
+
   test(`${browserKind}: rich-text toolbar metadata covers labelled controls and excludes labelled ordinary fields`, async (page) => {
     await setupContentFixture(page, 'rich-text-toolbar-target.html', browserKind);
 

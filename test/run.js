@@ -27382,6 +27382,11 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       assert.match(params.functionDeclaration, /availablePresetValues/);
       assert.match(params.functionDeclaration, /associatedEditorIdentity/);
       assert.match(params.functionDeclaration, /title: el\.getAttribute/);
+      assert.match(
+        params.functionDeclaration,
+        /supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor/,
+        'CDP toolbar probes must exempt ambiguous native composers without formatting or editor evidence',
+      );
       assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
       return {
         result: {
