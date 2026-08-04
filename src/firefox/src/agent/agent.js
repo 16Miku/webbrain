@@ -1997,6 +1997,10 @@ export class Agent extends LoopDetector {
         && shape.urlLike !== true;
       return validShape && (shape.numericPreset === true || candidate.attemptedPresetMatch === true);
     }
+    if (targetKind === 'uncertain') {
+      return ['font_size', 'font_family', 'style_preset', 'color', 'link', 'other_formatting']
+        .some(kind => Agent._richTextToolbarValueCompatible(kind, shape, candidate));
+    }
     return false;
   }
 
@@ -2053,7 +2057,7 @@ export class Agent extends LoopDetector {
   }
 
   _richTextToolbarRefBlock(tabId, toolName, args = {}, liveDocumentToken = '') {
-    if (!['click_ax', 'type_ax', 'set_field'].includes(toolName)) return null;
+    if (!['click_ax', 'type_ax', 'set_checked', 'set_field'].includes(toolName)) return null;
     if (!this._richTextToolbarDebts.has(tabId)) return null;
     const refId = typeof args?.ref_id === 'string' ? args.ref_id : '';
     if (!refId) return null;
@@ -2443,7 +2447,7 @@ export class Agent extends LoopDetector {
   async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
-    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_click', 'iframe_type'].includes(toolName)) return null;
+    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_checked', 'set_field', 'iframe_click', 'iframe_type'].includes(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
       return toolName === 'iframe_click'
@@ -2456,49 +2460,79 @@ export class Agent extends LoopDetector {
           }
         : null;
     }
-    const sameFrame = state.recoveryOnly === true
-      ? true
-      : Number.isInteger(state.frameId)
-        ? probe.frameId === state.frameId
-        : !Number.isInteger(probe.frameId) || probe.frameId === 0;
-    if (!sameFrame) {
+    const obligations = this._richTextToolbarRecoveryObligations(state);
+    const frameObligations = obligations.filter(obligation => (
+      obligation.recoveryOnly === true
+        ? true
+        : Number.isInteger(obligation.frameId)
+          ? probe.frameId === obligation.frameId
+          : !Number.isInteger(probe.frameId) || probe.frameId === 0
+    ));
+    if (frameObligations.length === 0) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
-    if (
-      (state.documentToken && liveDocument && state.documentToken !== liveDocument)
-      || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
-    ) {
+    const scopedObligations = frameObligations.filter(obligation => !(
+      (obligation.documentToken && liveDocument && obligation.documentToken !== liveDocument)
+      || (obligation.pageUrl && livePageUrl && obligation.pageUrl !== livePageUrl)
+    ));
+    const iframeTool = toolName === 'iframe_click' || toolName === 'iframe_type';
+    if (scopedObligations.length === 0) {
       this._clearRichTextToolbarDocumentState(tabId);
-      if (!['iframe_click', 'iframe_type'].includes(toolName) && (liveDocument || livePageUrl)) {
+      if (!iframeTool && (liveDocument || livePageUrl)) {
         this._rememberAxScope(tabId, liveDocument, livePageUrl);
       }
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
-    if (!['iframe_click', 'iframe_type'].includes(toolName) && (liveDocument || livePageUrl)) {
+    if (!iframeTool && (liveDocument || livePageUrl)) {
       this._rememberAxScope(tabId, liveDocument, livePageUrl);
-    }
-    const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
-    if (refBlock) {
-      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
-      return refBlock;
+      if (this._richTextToolbarStates.get(tabId) !== state) {
+        await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+        return null;
+      }
     }
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
-    const blockedSelector = !!selector && state.blockedSelectors?.has(selector);
-    const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
+    const targetRefs = [args?.ref_id, probe.refId]
+      .filter(value => typeof value === 'string' && !!value);
+    const blockedSelector = !!selector && scopedObligations.some(obligation => (
+      obligation.blockedToolbarSelector === selector
+      || (obligation.blockedSelectors || []).includes(selector)
+    ));
+    const blockedRef = targetRefs.some(refId => scopedObligations.some(obligation => (
+      obligation.blockedToolbarRef === refId
+      || (obligation.blockedRefs || []).includes(refId)
+    )));
     const probeRegionIds = [probe.toolbarRegionRef, probe.toolbarRegionKey]
       .filter(value => typeof value === 'string' && !!value);
-    const primaryRegionIds = new Set([state.regionRef, state.regionKey].filter(Boolean));
     const sameToolbarContext = probe.toolbarContext === true
-      && probeRegionIds.some(regionId => (
-        primaryRegionIds.has(regionId)
-        || state.blockedRegionRefs?.has(regionId)
-      ));
+      && scopedObligations.some(obligation => {
+        const obligationRegionIds = new Set([
+          obligation.regionRef,
+          obligation.regionKey,
+          ...(obligation.blockedRegionRefs || []),
+        ].filter(Boolean));
+        return probeRegionIds.some(regionId => obligationRegionIds.has(regionId));
+      });
+    const matchedObligation = scopedObligations.find(obligation => (
+      (!!selector && (
+        obligation.blockedToolbarSelector === selector
+        || (obligation.blockedSelectors || []).includes(selector)
+      ))
+      || targetRefs.some(refId => (
+        obligation.blockedToolbarRef === refId
+        || (obligation.blockedRefs || []).includes(refId)
+      ))
+      || (probe.toolbarContext === true && [
+        obligation.regionRef,
+        obligation.regionKey,
+        ...(obligation.blockedRegionRefs || []),
+      ].filter(Boolean).some(regionId => probeRegionIds.includes(regionId)))
+    )) || scopedObligations[0];
     const block = blockedSelector || blockedRef || sameToolbarContext
-      ? this._richTextToolbarRetryBlock(state)
+      ? this._richTextToolbarRetryBlock(matchedObligation)
       : null;
     await this._releaseRichTextToolbarProbeTarget(tabId, probe);
     return block;

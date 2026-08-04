@@ -3272,6 +3272,7 @@ for (const browserKind of ['chrome', 'firefox']) {
             style="width:118px;height:22px">
           <input id="descendant-toolbar-filter" type="text" aria-label="Filter" value=""
             style="width:118px;height:22px">
+          <input id="descendant-toolbar-bold" type="checkbox" aria-label="Bold">
         </div>`;
       const descendantBodyHost = document.createElement('div');
       descendantBodyHost.id = 'descendant-editor-component';
@@ -3371,6 +3372,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
         descendantToolbarUnlabelledSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-unlabelled-search')),
         descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
+        descendantToolbarBold: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-bold')),
         compactComposer: window.__wb_ax_ref(compactComposer.querySelector('#compact-composer-body')),
         conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
         conventionalTextColor: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-text-color')),
@@ -3522,8 +3524,20 @@ for (const browserKind of ['chrome', 'firefox']) {
       !descendantShadowProbe?.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
       || descendantShadowProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'descendant-shadow-editor-body'
       || !descendantShadowProbe.fieldMeta.toolbarCandidate.associatedEditorRef
+      || !descendantShadowProbe.fieldMeta.toolbarCandidate.relatedRefs?.includes(refs.descendantToolbarBold)
     ) {
       throw new Error(`expected descendant shadow editor association, got: ${JSON.stringify(descendantShadowProbe)}`);
+    }
+    const descendantBoldProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_checked',
+      args: { ref_id: refs.descendantToolbarBold, checked: true },
+    });
+    if (
+      !descendantBoldProbe?.resolved
+      || !descendantBoldProbe.toolbarContext
+      || descendantBoldProbe.toolbarRegionKey !== descendantShadowProbe.fieldMeta.toolbarCandidate.regionKey
+    ) {
+      throw new Error(`checkbox formatting controls must preserve their toolbar scope: ${JSON.stringify(descendantBoldProbe)}`);
     }
     const descendantSearchProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
@@ -3977,6 +3991,28 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (legitimateStyleDecision.wrongTarget) {
       throw new Error(`control-owned style preset must remain allowed: ${JSON.stringify(legitimateStyleDecision)}`);
     }
+    const uncertainPresetDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Heading 1'),
+      attemptedPresetMatch: true,
+    }, {
+      ...familyAudit,
+      targetKind: 'uncertain',
+    });
+    if (uncertainPresetDecision.wrongTarget) {
+      throw new Error(`control-owned preset must survive an uncertain visual target kind: ${JSON.stringify(uncertainPresetDecision)}`);
+    }
+    const uncertainProseDecision = AgentClass._richTextToolbarDecision({
+      ...candidate,
+      attemptedTextShape: AgentClass._richTextToolbarTextShape('Quarterly roadmap'),
+      attemptedPresetMatch: false,
+    }, {
+      ...familyAudit,
+      targetKind: 'uncertain',
+    });
+    if (!uncertainProseDecision.wrongTarget) {
+      throw new Error(`arbitrary prose must remain blocked for an uncertain visual target kind: ${JSON.stringify(uncertainProseDecision)}`);
+    }
     const mistakenStyleDecision = AgentClass._richTextToolbarDecision({
       ...candidate,
       attemptedTextShape: AgentClass._richTextToolbarTextShape('Quarterly roadmap'),
@@ -4345,6 +4381,25 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
+      refId: 'ref_13',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 80, y: 8, w: 24, h: 24 },
+      fieldMeta: { tag: 'input', type: 'checkbox' },
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+      toolbarRegionKey: candidate.regionKey,
+    });
+    const checkedToolbarBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'set_checked',
+      { ref_id: 'ref_13', checked: true },
+    );
+    if (!checkedToolbarBlock?.wrongTarget || checkedToolbarBlock.dispatched !== false) {
+      throw new Error(`set_checked must not bypass an outstanding toolbar recovery: ${JSON.stringify(checkedToolbarBlock)}`);
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
       refId: 'ref_12',
       documentToken: 'doc-a',
       refScopeUrl: 'https://example.test/editor',
@@ -4605,6 +4660,26 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       || new Set(siblingFrameState.recoveryObligations.map(obligation => obligation.frameId)).size !== 2
     ) {
       throw new Error('identical editor templates in sibling frames must retain separate recovery obligations');
+    }
+    agent._probeRichTextToolbarIframeTarget = async () => ({
+      resolved: true,
+      frameId: 8,
+      documentToken: 'sibling-frame-doc-b',
+      refScopeUrl: 'https://frame.example.test/editor',
+      rect: { x: 10, y: 8, w: 60, h: 24 },
+      fieldMeta: {},
+      toolbarContext: true,
+      toolbarRegionRef: 'ref_10',
+      toolbarRegionKey: candidate.regionKey,
+    });
+    agent._probeRichTextToolbarRetryTarget = AgentClass.prototype._probeRichTextToolbarRetryTarget.bind(agent);
+    const secondaryFrameToolbarBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'iframe_click',
+      { urlFilter: 'frame.example.test', selector: '#bold' },
+    );
+    if (!secondaryFrameToolbarBlock?.wrongTarget || secondaryFrameToolbarBlock.dispatched !== false) {
+      throw new Error(`every accumulated iframe obligation must block its toolbar controls: ${JSON.stringify(secondaryFrameToolbarBlock)}`);
     }
     agent._resetRichTextToolbarAudit(tabId);
 

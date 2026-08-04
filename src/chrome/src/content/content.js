@@ -4216,7 +4216,7 @@
       const args = params.args || {};
       let el = null;
       let coordinateTarget = false;
-      if (['click_ax', 'type_ax', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
+      if (['click_ax', 'type_ax', 'set_checked', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
         el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
       } else if (toolName === 'type_text') {
         // Chrome Agent routes selector-based type_text through the same CDP
