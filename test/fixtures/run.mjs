@@ -4247,6 +4247,32 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (result.success || result.verified || !result.wrongTarget || result.dispatched !== false || result.noDispatch !== true) {
       throw new Error(`wrong target must be blocked before dispatch: ${JSON.stringify(result)}`);
     }
+    const alternateControlBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'type_text',
+      { selector: '#font-size', text: 'Paris', clear: true },
+      alternateControlBlock,
+      {
+        ...candidate,
+        relatedRefs: ['ref_14', 'ref_15'],
+      },
+      familyDecision,
+      familyAudit,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    const deduplicatedState = agent._richTextToolbarStates.get(tabId);
+    const deduplicatedObligation = deduplicatedState?.recoveryObligations?.[0];
+    if (
+      deduplicatedState?.recoveryObligations?.length !== 1
+      || !deduplicatedObligation?.blockedRefs?.includes('ref_12')
+      || !deduplicatedObligation?.blockedRefs?.includes('ref_14')
+      || !deduplicatedObligation?.blockedSelectors?.includes('#font-size')
+      || !deduplicatedState.blockedRefs?.has('ref_14')
+      || !deduplicatedState.blockedSelectors?.has('#font-size')
+    ) {
+      throw new Error(`equivalent editor mutations must merge toolbar targets into one recovery obligation: ${JSON.stringify(deduplicatedState)}`);
+    }
     const siblingBlock = agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a');
     if (!siblingBlock?.blockedToolbarRef || siblingBlock.dispatched !== false) {
       throw new Error(`expected sibling toolbar ref block, got: ${JSON.stringify(siblingBlock)}`);

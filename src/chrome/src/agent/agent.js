@@ -2665,21 +2665,44 @@ export class Agent extends LoopDetector {
       blockedSelectors: selector ? [selector] : [],
       blockedRegionRefs: candidate?.regionRef ? [candidate.regionRef] : [],
     };
-    const obligationKey = entry => JSON.stringify([
-      entry.blockedAttemptedText,
-      entry.blockedClear,
-      entry.associatedEditorRef || '',
-      entry.associatedEditorIdentity || null,
-      entry.recoveryTargetUnknown === true,
-      entry.documentToken || '',
-      entry.pageUrl || '',
-      Number.isInteger(entry.frameId) ? entry.frameId : null,
-      entry.blockedToolbarRef || '',
-      entry.blockedToolbarSelector || '',
-      entry.regionRef || '',
-    ]);
-    const obligations = priorObligations.some(entry => obligationKey(entry) === obligationKey(obligation))
-      ? priorObligations
+    const obligationKey = entry => {
+      const identity = entry.associatedEditorIdentity;
+      const editorKey = entry.associatedEditorRef
+        ? ['ref', entry.associatedEditorRef]
+        : Agent._richTextToolbarEditorIdentityRecoverable(identity)
+          ? [
+              'identity',
+              String(identity.tag || '').toLowerCase(),
+              String(identity.role || '').toLowerCase(),
+              identity.id ? ['id', String(identity.id)] : [
+                'name_rect',
+                String(identity.name || ''),
+                identity.pageX,
+                identity.pageY,
+                identity.w,
+                identity.h,
+              ],
+            ]
+          : ['unknown', entry.regionRef || ''];
+      return JSON.stringify([
+        entry.blockedAttemptedText,
+        entry.blockedClear,
+        editorKey,
+        entry.recoveryTargetUnknown === true,
+        entry.recoveryOnly === true,
+        entry.recoveryOnly === true ? (entry.recoveryPageUrl || '') : (entry.pageUrl || ''),
+        entry.documentToken || '',
+        Number.isInteger(entry.frameId) ? entry.frameId : null,
+      ]);
+    };
+    const duplicateIndex = priorObligations.findIndex(entry => obligationKey(entry) === obligationKey(obligation));
+    const obligations = duplicateIndex >= 0
+      ? priorObligations.map((entry, index) => index === duplicateIndex ? {
+          ...entry,
+          blockedRefs: [...new Set([...(entry.blockedRefs || []), ...obligation.blockedRefs])],
+          blockedSelectors: [...new Set([...(entry.blockedSelectors || []), ...obligation.blockedSelectors])],
+          blockedRegionRefs: [...new Set([...(entry.blockedRegionRefs || []), ...obligation.blockedRegionRefs])],
+        } : entry)
       : [...priorObligations, obligation];
     state.documentToken = documentToken || state.documentToken || '';
     state.pageUrl = pageUrl || state.pageUrl || '';
