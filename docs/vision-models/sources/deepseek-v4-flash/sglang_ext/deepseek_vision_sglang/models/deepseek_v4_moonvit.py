@@ -170,7 +170,11 @@ class DeepseekV4ForCausalLM(nn.Module):
         grid_thws = torch.concat(grid_thws, dim=0)
         pixel_values = self._materialize_image_features(items)
         image_features = self.vision_tower(pixel_values, grid_thws)
-        return mm_projection_auto(self.mm_projector, image_features)
+        # ``mm_projection_auto`` preserves per-image boundaries and therefore
+        # returns a tuple of tensors.  SGLang's embedding cache expects the
+        # data-embedding callback to return one packed tensor and performs its
+        # own split using each item's placeholder span.
+        return torch.cat(mm_projection_auto(self.mm_projector, image_features), dim=0)
 
     def pad_input_ids(self, input_ids: List[int], mm_inputs: MultimodalInputs):
         return MultiModalityDataPaddingPatternMultimodalTokens().pad_input_tokens(

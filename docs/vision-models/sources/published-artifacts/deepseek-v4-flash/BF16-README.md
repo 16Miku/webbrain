@@ -51,6 +51,9 @@ while keeping both the language backbone and vision tower frozen.
 > checkpoint. It contains the genuine BF16 MoonViT tower, trained BF16
 > projector, processor, routing bridge, and SGLang integration source. It does
 > not contain or claim a full-BF16 conversion of the DeepSeek text backbone.
+> When paired with NVIDIA's NVFP4 text backbone, the documented pinned B200
+> runtime has passed full shard loading, server startup, and two live image-response
+> smoke tests. Other text checkpoints and production use remain unvalidated.
 
 | Component | Detail |
 |---|---|
@@ -73,8 +76,10 @@ while keeping both the language backbone and vision tower frozen.
 - [x] Finish the 100,000-example MoonViT projector run.
 - [x] Package the BF16 tower, final projector, routing bridge, and serving glue.
 - [x] Pass reference BF16 image inference and KV-cache/full-prefix token parity.
-- [ ] Run a fresh full-model GPU loader and smoke test for each chosen text
-  checkpoint and SGLang build.
+- [x] Pass a full-model loader/startup gate and two live image-response smoke tests
+  with the pinned NVFP4 text backbone and B200 SGLang build.
+- [ ] Run a fresh full-model loader and smoke test for every other chosen text
+  checkpoint, hardware target, or SGLang build.
 
 ## Included BF16 artifacts
 
@@ -121,6 +126,21 @@ know how to inject MoonViT embeddings into DeepSeek V4 routing. The integration
 requires the checked-in external model/processor package and a narrow,
 version-pinned SGLang source patch.
 
+For the documented NVFP4-on-B200 startup profile:
+
+```bash
+export DEEPSEEK_VISION_MODEL_PATH="$MODEL_DIR"
+export DEEPSEEK_VISION_PYTHONPATH="$MODEL_DIR/sglang_ext"
+export DEEPSEEK_VISION_KERNEL_PROFILE=blackwell-native
+export DEEPSEEK_VISION_TP=4
+scripts/launch_sglang_moonvit.sh
+```
+
+That profile selects the native `flashinfer_trtllm` dense backend and
+`flashinfer_trtllm_routed` MoE backend. The BF16 overlay does not select a
+quantized kernel profile by default because it does not include a text
+checkpoint.
+
 The first supported correctness endpoint is native `/generate` with one literal
 `<image>` marker. OpenAI `/v1/chat/completions` image parts are not yet supported
 by this source package.
@@ -135,8 +155,10 @@ by this source package.
   BF16.
 - The custom SGLang package is a deployment integration, not upstream stock
   support.
-- A fresh full-model GPU loader/smoke test is still required for each chosen
-  text checkpoint and SGLang build.
+- The pinned NVFP4-on-B200 combination has passed full loader/startup gates and
+  two consecutive live image-response smoke tests.
+- Every other text-checkpoint, hardware, or SGLang combination still requires a
+  fresh full-model loader and smoke test.
 
 ## Method credit
 
@@ -174,3 +196,17 @@ Ask your inference provider—such as OpenRouter or another managed inference
 service—to deploy this overlay together with a compatible DeepSeek V4 Flash
 text checkpoint and the included multimodal serving plugin. Deploying only the
 upstream text model will not enable image input.
+
+## Experimental status, roadmap, and get involved
+
+> [!CAUTION]
+> **Experimental vision adapter.** This is a working experimental adapter with
+> basic end-to-end SGLang image generation verified on NVIDIA B200. That bounded
+> smoke test is not a broad quality benchmark: fine-grained OCR, small-object or
+> control identification, GUI grounding, and hallucination calibration remain
+> limited. If community interest warrants further investment, the roadmap is
+> larger and more diverse datasets, higher-resolution OCR/UI examples, and
+> broader parameter-efficient tuning. Do not use this model as the sole decision
+> source for safety-critical automation. Interested in contributing evaluation
+> or training data, sponsoring compute, or working with us as a design partner?
+> [Tell us here](https://forms.gle/bNoeJ6cvLYQ4VgKd7).

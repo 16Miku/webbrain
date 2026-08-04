@@ -19,7 +19,7 @@ base_model:
 
 ![deepseek-v4-vision](deepseek-vision-improved.gif)
 
-**DeepSeek V4 Flash with sight.** A private vision-language development
+**DeepSeek V4 Flash with sight.** A vision-language development
 checkpoint that connects DeepSeek's reasoning and agentic model to the MoonViT
 vision encoder from
 [Kimi-K2.6](https://huggingface.co/moonshotai/Kimi-K2.6) through a trained,
@@ -47,10 +47,12 @@ keeping both the language backbone and vision tower frozen.
 > [!IMPORTANT]
 > The pinned NVFP4 text backbone, frozen MoonViT tower, and trained
 > 100K-example projector are complete and verified. Reference BF16 multimodal
-> inference has passed end-to-end and KV-cache parity checks. The standard
-> NVFP4 SGLang configuration, processor, routing bridge, and managed deployment
-> recipe are still being assembled, so this snapshot is not yet a drop-in
-> vision-language checkpoint for a stock text-only server.
+> inference has passed end-to-end and KV-cache parity checks. The repository now
+> includes a custom, commit-pinned SGLang processor, routing bridge, source patch,
+> and B200 launch recipe. The pinned B200 runtime has passed full NVFP4 loading
+> and server startup plus two live image-generation smoke tests. Broader text-only
+> parity and production validation are still required.
+> This is not a drop-in checkpoint for a stock text-only server.
 
 | Component | Detail |
 |---|---|
@@ -62,7 +64,7 @@ keeping both the language backbone and vision tower frozen.
 | Routing bridge | Text routing IDs preserved; image positions cycle through a deterministic 64-ID expert palette |
 | Training envelope | Up to 512 merged image tokens inside 2,048-token training sequences |
 | Backbone context | 1,048,576 tokens, inherited from DeepSeek V4 Flash |
-| Target hardware | NVIDIA Blackwell multi-GPU; final multimodal serving topology pending validation |
+| Target hardware | NVIDIA B200, 4-way tensor parallel for the verified smoke profile |
 
 ## Build status
 
@@ -74,8 +76,10 @@ keeping both the language backbone and vision tower frozen.
 - [x] Finish the 100,000-example MoonViT projector run.
 - [x] Add and fingerprint-verify the frozen MoonViT tower and final projector checkpoint.
 - [x] Pass reference BF16 image inference and KV-cache/full-prefix token parity.
-- [ ] Assemble multimodal configuration, processor, routing bridge, and serving integration.
-- [ ] Pass final NVFP4 multi-GPU loading, image inference, and regression gates.
+- [x] Assemble multimodal configuration, processor, routing bridge, and serving integration.
+- [x] Pass pinned B200 NVFP4 shard loading and server-startup gates.
+- [x] Pass two live image-response smoke tests on the pinned B200 runtime.
+- [ ] Complete text-only parity and broader production validation.
 
 ## Provenance
 
@@ -91,17 +95,29 @@ the released inference quantization kernels do not provide the input-gradient
 path needed to train through a frozen language model. MoonViT is pinned to
 Kimi-K2.6 revision
 [7eb5002f6aadc958aed6a9177b7ed26bb94011bb](https://huggingface.co/moonshotai/Kimi-K2.6/commit/7eb5002f6aadc958aed6a9177b7ed26bb94011bb).
-The final package will pair the trained projector with the verified NVIDIA
-NVFP4 backbone above; equivalence and end-to-end behavior will be validated
-before this status notice is removed.
+This package pairs the trained projector with the verified NVIDIA NVFP4
+backbone above. Reference BF16 parity and live B200 image generation have been
+validated; broader text-only parity and production behavior are not claimed.
 
 ## Usage
 
-A serving command is intentionally not published yet. The repository now
-contains the complete text backbone, frozen vision tower, and trained
-projector, but stock text-only engines do not know how to combine them. A
-tested quickstart will be added after the multimodal processor, routing bridge,
-and NVFP4 SGLang integration pass the final gates.
+Stock text-only engines do not know how to combine these artifacts. Use the
+custom, version-pinned SGLang package and wrapper in
+[`docs/SGLANG_DEPLOYMENT.md`](docs/SGLANG_DEPLOYMENT.md). The B200 startup
+profile is selected explicitly and keeps the first correctness run conservative:
+
+```bash
+export DEEPSEEK_VISION_MODEL_PATH=/models/deepseek-v4-flash-vision
+export DEEPSEEK_VISION_PYTHONPATH="$DEEPSEEK_VISION_MODEL_PATH/sglang_ext"
+export DEEPSEEK_VISION_KERNEL_PROFILE=blackwell-native
+export DEEPSEEK_VISION_TP=4
+scripts/launch_sglang_moonvit.sh
+```
+
+The wrapper uses the native `flashinfer_trtllm` dense backend and
+`flashinfer_trtllm_routed` MoE backend on the documented B200 image. Two live
+image-response smoke tests passed on this profile; do not treat that bounded
+smoke result as production validation.
 
 ## Method credit
 
@@ -131,7 +147,7 @@ Built on
 and [Moonshot AI's Kimi-K2.6](https://huggingface.co/moonshotai/Kimi-K2.6),
 with the vision-attachment method inspired by
 [Baseten's GLM-5.2-Vision-NVFP4](https://huggingface.co/baseten/GLM-5.2-Vision-NVFP4).
-These teams were not involved in this private development checkpoint; please do
+These teams were not involved in this experimental development checkpoint; please do
 not direct issues with this repository to them.
 
 ## Want this model on your inference provider?
@@ -140,3 +156,17 @@ Ask your inference provider—such as OpenRouter or another OpenAI-compatible
 managed service—to deploy this exact repository with its multimodal processor
 and serving plugin. Deploying only the upstream text backbone will not enable
 image input.
+
+## Experimental status, roadmap, and get involved
+
+> [!CAUTION]
+> **Experimental vision adapter.** This is a working experimental adapter with
+> basic end-to-end SGLang image generation verified on NVIDIA B200. That bounded
+> smoke test is not a broad quality benchmark: fine-grained OCR, small-object or
+> control identification, GUI grounding, and hallucination calibration remain
+> limited. If community interest warrants further investment, the roadmap is
+> larger and more diverse datasets, higher-resolution OCR/UI examples, and
+> broader parameter-efficient tuning. Do not use this model as the sole decision
+> source for safety-critical automation. Interested in contributing evaluation
+> or training data, sponsoring compute, or working with us as a design partner?
+> [Tell us here](https://forms.gle/bNoeJ6cvLYQ4VgKd7).

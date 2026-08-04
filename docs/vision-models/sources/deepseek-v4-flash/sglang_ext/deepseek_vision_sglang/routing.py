@@ -73,6 +73,14 @@ def build_sglang_routing_ids(input_ids: Any, forward_batch: Any, palette: Sequen
     if input_ids is None:
         raise ValueError("input_ids are required to build DeepSeek routing IDs")
     result = input_ids.clone() if hasattr(input_ids, "clone") else list(input_ids)
+    forward_mode = getattr(forward_batch, "forward_mode", None)
+    is_extend = getattr(forward_mode, "is_extend", None)
+    if callable(is_extend) and not is_extend():
+        # Image placeholders are consumed during prefill. SGLang deliberately
+        # keeps ``mm_inputs`` attached to later decode batches, while the
+        # extend-only prefix/length metadata is absent. Generated decode tokens
+        # must therefore retain their ordinary token IDs.
+        return result
     mm_inputs = getattr(forward_batch, "mm_inputs", None)
     if not mm_inputs:
         return result

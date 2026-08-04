@@ -28,7 +28,8 @@ same frozen tower. Laguna's complete private archive records an initial step los
 a final step loss of 0.7318, and a minimum step loss of 0.6835. DeepSeek's full final-run
 telemetry was not retained with equal completeness, so this report makes no final-loss or
 cross-model quality comparison. The main contribution is a reproducible systems recipe,
-artifact provenance, and an explicit account of what remains unvalidated.
+artifact provenance, a bounded DeepSeek NVFP4-on-B200 serving smoke, and an explicit
+account of what remains unvalidated.
 
 ## 1. Motivation and research questions
 
@@ -50,7 +51,8 @@ The experiments addressed four questions:
    independently verifiable hashes?
 
 The experiments did **not** establish benchmark superiority, equivalence between BF16 and
-NVFP4 inference, or production serving readiness.
+NVFP4 inference, or production serving readiness. A later B200 smoke establishes only that
+the pinned DeepSeek package can complete basic end-to-end image requests.
 
 ## 2. Method
 
@@ -218,8 +220,8 @@ and the restart, but that value is diagnostic rather than invoice-grade.
 
 | Component | DeepSeek V4 Flash | Laguna XS 2.1 |
 |---|---|---|
-| Public NVFP4 package | 71 files, 169,215,251,824 bytes | 22 files, 22,491,748,246 bytes |
-| Public BF16 package | 22 files, 915,661,002 bytes; vision overlay only | 34 files, 67,794,841,865 bytes; complete text package |
+| Public NVFP4 package | 74 files, 169,215,268,442 bytes | 22 files, 22,491,749,196 bytes |
+| Public BF16 package | 25 files, 915,678,201 bytes; vision overlay only | 34 files, 67,794,842,815 bytes; complete text package |
 | Tower SHA-256 | `1382c41f1a4afc91791ade630e2b1e1cef68cc5a1e09668a45970a5d5e1b8f15` | `befe801bd7dfe8bf5630fef56a7f53c2235065599ca9eea4d995040e2e6fd183` |
 | Projector SHA-256 | `7024d9d5c9714c7abbc09abda015f083b7d7b107745eb78879f019bf4721577a` | `7837384f18be69a4f875ca44a8ed69ec186501d70896daf4b305fa77547974de` |
 | Private run archive | Partial bring-up/calibration archive | Full 170-file, 14,543,120,986-byte training archive |
@@ -228,6 +230,16 @@ The tower hashes differ even though both originate from the same Kimi revision. 
 must use the component hash associated with each package rather than assume byte identity.
 The exact final repository revisions and URLs are listed in the [index](README.md) and
 machine-readable [artifact manifest](sources/ARTIFACTS.json).
+
+### 4.1 DeepSeek B200 serving smoke
+
+On 2026-08-04, the pinned DeepSeek SGLang integration completed full NVFP4 loading and two
+consecutive image requests on NVIDIA B200 with four-way tensor parallelism. The native
+SGLang `/generate` endpoint produced a taxi-scene answer from 294 image tokens in 6.95
+seconds and a cat/person answer from 532 image tokens in 2.52 seconds; the server remained
+healthy. This demonstrates a working package path through MoonViT, the trained projector,
+DeepSeek embeddings, and routing IDs. It is not a benchmark, text-only parity result,
+production SLA, or validation of the OpenAI multimodal chat route.
 
 ## 5. Interpretation
 
@@ -245,8 +257,8 @@ embedding-scatter design and can use straightforward DDP.
 The results do not support a quality ranking between the two models. Their embedding widths,
 language backbones, hardware, process topologies, telemetry completeness, and serving stacks
 differ. The Laguna loss curve proves optimization occurred, not that the model generalizes.
-The DeepSeek gates prove the routing-aware gradient path and reference inference behavior,
-not final benchmark quality.
+The DeepSeek gates prove the routing-aware gradient path, reference inference behavior, and
+a bounded NVFP4-on-B200 image-serving path, not final benchmark quality.
 
 ## 6. Reproducibility and failure recovery
 
@@ -273,9 +285,12 @@ without duplicating large or licensed model weights in this repository.
   full checkpoint/optimizer/loss history available for Laguna.
 - **Resume-sensitive Laguna metrics.** The final summary combines a cumulative completion
   counter with resumed-session timing. It must not be read as a single uninterrupted run.
-- **Serving gaps.** Laguna has no packaged multimodal processor/server. DeepSeek uses a
-  custom, pinned SGLang source patch whose target-GPU deployment remains to be validated;
-  stock SGLang and OpenAI multimodal chat are not supported by that package.
+- **Serving gaps.** Laguna's main packages have no validated multimodal processor/server;
+  an NVFP4 `sglang-integration` candidate exists at
+  `740a6ccc05441a7ea0426c1d2536d5cd031adb86` but has no loader or image smoke. DeepSeek's
+  pinned B200 image smoke passed, but it still requires a custom SGLang source patch;
+  stock SGLang, OpenAI multimodal chat, text-only parity, and broader production validation
+  remain unsupported or incomplete.
 - **No completed tower ablation.** The Qwen3.6 comparison arm remains a source-level plan.
 - **Quantization equivalence not shown.** BF16 training success does not establish identical
   behavior for the packaged NVFP4 backbones.
@@ -304,5 +319,6 @@ case: routing IDs must remain separate from image embeddings, and training requi
 gradient-compatible BF16 backbone even when deployment targets a quantized checkpoint.
 
 The current artifacts are best viewed as reproducible research checkpoints. Their component
-integrity and training mechanics are documented; their comparative visual quality and final
-production-serving behavior remain open experimental questions.
+integrity, training mechanics, and DeepSeek's bounded B200 image-serving path are
+documented; comparative visual quality and production-serving behavior remain open
+experimental questions.

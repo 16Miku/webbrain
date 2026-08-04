@@ -25,6 +25,11 @@ uncommitted serving, inference, SGLang, and test additions. The snapshot is ther
 described as **base commit plus working-tree changes**, not as the contents of that commit.
 The exact dirty-file inventory is in `SOURCE_SNAPSHOT.json`.
 
+The five packaged SGLang runtime/documentation files and three focused regression tests
+listed in `SOURCE_SNAPSHOT.json` were later synchronized byte-for-byte from the final
+public DeepSeek NVFP4 revision. That bounded sync does not turn the rest of the historical
+snapshot into a clean public-package checkout.
+
 This distinction matters because the local README contains a historical sentence saying
 the 100K run had not started, while the later public model cards and final projectors show
 that it subsequently completed. For final artifact status, prefer `ARTIFACTS.json` and the

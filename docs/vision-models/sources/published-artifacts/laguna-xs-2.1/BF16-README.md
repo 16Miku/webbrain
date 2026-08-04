@@ -30,6 +30,7 @@ parameters are the **30,679,808-parameter projector** that merges each 2x2 group
 of MoonViT patches and maps the resulting 4608-dimensional representation into
 Laguna's 2048-dimensional token space.
 
+
 ## Why vision at WebBrain
 
 At [WebBrain](https://www.webbrain.one), we build browser agents that need to
@@ -135,3 +136,19 @@ Ask your inference provider—such as OpenRouter or another OpenAI-compatible
 managed service—to deploy this exact repository with its multimodal processor
 and serving plugin. Deploying only the upstream text backbone will not enable
 image input.
+
+## Experimental status, roadmap, and get involved
+
+> [!WARNING]
+> **Experimental vision package.** The MoonViT adapter and its serving package
+> are experimental. Live end-to-end validation of the **NVFP4** package on an
+> RTX 5090 is still provisioning: the pinned SGLang container image is being
+> fetched, so neither the text nor image smoke test has passed yet. Fine-grained
+> OCR, small-object and control identification, GUI grounding, and hallucination
+> calibration remain limited. The roadmap is to expand and diversify the
+> training data, add more high-resolution OCR and UI examples, and pursue
+> broader parameter-efficient tuning if community interest warrants the
+> investment. To contribute evaluation or training data, sponsor compute,
+> or explore a design partnership, use the [community interest
+> form](https://forms.gle/bNoeJ6cvLYQ4VgKd7). Do not use this package as
+> the sole decision source for safety-critical automation.
