@@ -12785,10 +12785,54 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
       [...compactNames].sort(),
     );
     assert.ok(compactNamesActual.includes('done'), `[${label}] compact mode must keep done`);
+    assert.ok(compactNamesActual.includes('upload_file'), `[${label}] compact mode must expose upload_file`);
     for (const excluded of ['resize_window', 'download_social_media', 'solve_captcha']) {
       assert.equal(compactNamesActual.includes(excluded), false, `[${label}] compact mode must omit ${excluded}`);
     }
     assert.equal(compactNamesActual.includes('execute_js'), false, `[${label}] compact mode must omit execute_js`);
+  }
+});
+
+test('compact Act exposes a direct-upload-only file workflow in both browsers', () => {
+  for (const [label, getTools, prompt] of [
+    ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ACT_COMPACT_CH],
+    ['firefox', getToolsForModeFx, SYSTEM_PROMPT_ACT_COMPACT_FX],
+  ]) {
+    const askNames = getTools('ask').map(tool => tool.function.name);
+    const compactTools = getTools('act', { tier: 'compact' });
+    const compactNames = compactTools.map(tool => tool.function.name);
+    const upload = compactTools.find(tool => tool.function.name === 'upload_file');
+    const fullUpload = getTools('act').find(tool => tool.function.name === 'upload_file');
+
+    assert.ok(upload, `[${label}] compact Act must expose upload_file`);
+    assert.equal(askNames.includes('upload_file'), false, `[${label}] Ask must remain read-only`);
+    for (const unavailable of [
+      'download_files',
+      'download_resource_from_page',
+      'list_downloads',
+      'read_downloaded_file',
+    ]) {
+      assert.equal(compactNames.includes(unavailable), false, `[${label}] compact Act exposed ${unavailable}`);
+    }
+    assert.match(upload.function.description, /directly to an existing file input/i);
+    assert.match(upload.function.description, /without clicking the page upload control/i);
+    assert.match(upload.function.description, /exact selector/i);
+    assert.match(upload.function.description, /one guarded click/i);
+    assert.doesNotMatch(upload.function.description, /download_files|list_downloads|downloadId/i);
+    assert.ok(upload.function.parameters.properties.attachmentId, `[${label}] compact upload must accept attachmentId`);
+    assert.equal(upload.function.parameters.properties.downloadId, undefined, `[${label}] compact upload must hide downloadId`);
+    assert.ok(fullUpload.function.parameters.properties.downloadId, `[${label}] full upload must retain downloadId`);
+    assert.match(prompt, /upload_file[\s\S]{0,180}do not click the page upload control/i);
+    assert.match(prompt, /upload_file[\s\S]{0,360}exact selector/i);
+    assert.match(prompt, /upload_file[\s\S]{0,420}one guarded initializer click/i);
+    assert.doesNotMatch(prompt, /download_files|list_downloads|downloadId/i);
+
+    if (label === 'chrome') {
+      assert.ok(upload.function.parameters.properties.filePath, 'chrome: compact upload must accept a user-supplied filePath');
+    } else {
+      assert.equal(upload.function.parameters.properties.filePath, undefined, 'firefox: compact upload must not invent filePath support');
+      assert.match(upload.function.description, /WebBrain's file picker/i);
+    }
   }
 });
 
@@ -50221,7 +50265,7 @@ test('user attachment upload guidance follows the active tier tool catalog', () 
     ]);
 
     for (const [mode, tier, shouldAdvertiseUpload] of [
-      ['act', 'compact', false],
+      ['act', 'compact', true],
       ['act', 'mid', true],
       ['act', 'full', true],
       ['ask', 'full', false],

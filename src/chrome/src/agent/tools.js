@@ -1266,6 +1266,25 @@ const WATCH_BEEP_TOOL = {
   },
 };
 
+function compactUploadFileTool(tool) {
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      description: 'Attach a user-provided file directly to an existing file input without clicking the page upload control. Use attachmentId from the current user-attachment notice, or an absolute filePath the user supplied. This proves only local page attachment, not remote upload or submission. Use the exact selector for the intended input; never guess a generic input[type="file"] selector when multiple inputs exist. If the widget creates its input lazily, make one guarded click on its add-files control, then retry upload_file with the exact selector.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Exact CSS selector for the intended file input.' },
+          attachmentId: { type: 'string', description: 'Opaque id from the current user-attachment notice. Never guess an id.' },
+          filePath: { type: 'string', description: 'Absolute local path explicitly supplied by the user. Optional when attachmentId is given.' },
+        },
+        required: ['selector'],
+      },
+    },
+  };
+}
+
 /**
  * Get tools filtered by mode.
  *
@@ -1285,7 +1304,9 @@ export function getToolsForMode(mode, opts = {}) {
   } else if (devCompactBlocked) {
     base = [];
   } else if (tier === 'compact') {
-    base = AGENT_TOOLS.filter(t => COMPACT_TOOL_NAMES.has(t.function.name));
+    base = AGENT_TOOLS
+      .filter(t => COMPACT_TOOL_NAMES.has(t.function.name))
+      .map(t => (t.function.name === 'upload_file' ? compactUploadFileTool(t) : t));
   } else if (tier === 'mid') {
     base = AGENT_TOOLS.filter(t => MID_TOOL_NAMES.has(t.function.name));
   } else {
@@ -1702,6 +1723,7 @@ export const COMPACT_TOOL_NAMES = new Set([
   'click', 'type_text', 'press_keys',
   'navigate', 'new_tab', 'wait_for_element',
   'fetch_url',
+  'upload_file',
   'scratchpad_write', 'progress_update', 'progress_read', 'clarify', 'done',
 ]);
 
@@ -1747,6 +1769,7 @@ TOOLS — use ONLY these:
 - new_tab({url}): Open a URL in a background tab for user reference. It does not activate or retarget the current run, so never use it as a site-permission workaround.
 - wait_for_element({selector}): Wait for an element to appear.
 - fetch_url({url}): Fetch a URL for its content.
+- upload_file({selector, attachmentId|filePath}): Attach a user-provided file directly to an existing file input; do not click the page upload control first. Use the exact selector and never guess generic input[type="file"] when multiple inputs exist. If the widget creates its input lazily, make one guarded initializer click, re-read the page, then retry with the exact selector. Verify the page shows the attachment before submitting.
 - scratchpad_write({text}): Save notes that persist across steps.
 - progress_update({items}) / progress_read({status}): Structured progress ledger for the active repeated item/action task. On GitHub stargazers, only "Follow USER" buttons are follow targets when following is allowed by the task; "Unfollow USER" means skip/already followed unless the ledger shows acted.
 - done({summary, outcome}): Signal success, partial progress, or a failed blocker.
