@@ -4306,6 +4306,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       ) {
         throw new Error(`focused type_text must probe only the handshaken focused frame branch: ${JSON.stringify({ deepFrameProbe, frameMessages })}`);
       }
+      frameMessages.length = 0;
+      const keyboardFrameProbe = await focusAgent._probeRichTextToolbarRetryTarget(
+        tabId,
+        'press_keys',
+        { keys: ['ARROWDOWN', 'ENTER'] },
+        { mapAnnotation: true },
+      );
+      const keyboardProbeMessages = frameMessages.filter(
+        entry => entry.message.action === 'probe_rich_text_toolbar_retry_target',
+      );
+      if (
+        keyboardFrameProbe?.frameId !== 7
+        || keyboardFrameProbe.refId !== 'ref_7'
+        || keyboardFrameProbe.selectorTargetToken !== 'focused-frame-token'
+        || keyboardProbeMessages.map(entry => entry.options.frameId).join(',') !== '0,7'
+      ) {
+        throw new Error(`focused keyboard tools must share the handshaken target probe: ${JSON.stringify({ keyboardFrameProbe, frameMessages })}`);
+      }
     } finally {
       if (originalExtensionApi === undefined) delete globalThis[extensionGlobal];
       else globalThis[extensionGlobal] = originalExtensionApi;
@@ -4413,9 +4431,26 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (!focusedRetryBlock?.wrongTarget || focusedRetryBlock.dispatched !== false) {
       throw new Error(`expected focused type_text toolbar retry block, got: ${JSON.stringify(focusedRetryBlock)}`);
     }
+    const keyboardRetryBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'press_keys',
+      { keys: ['ARROWDOWN', 'ENTER'] },
+    );
+    if (!keyboardRetryBlock?.wrongTarget || keyboardRetryBlock.dispatched !== false) {
+      throw new Error(`focused keyboard input must not bypass toolbar recovery: ${JSON.stringify(keyboardRetryBlock)}`);
+    }
     const coordinateRetryBlock = await agent._richTextToolbarToolBlock(tabId, 'click', { x: 40, y: 20 });
     if (!coordinateRetryBlock?.wrongTarget || coordinateRetryBlock.dispatched !== false) {
       throw new Error(`expected coordinate toolbar retry block, got: ${JSON.stringify(coordinateRetryBlock)}`);
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => ({ resolved: false });
+    const unresolvedKeyboardBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'press_keys',
+      { keys: ['ARROWDOWN', 'ENTER'] },
+    );
+    if (unresolvedKeyboardBlock?.dispatched !== false || !unresolvedKeyboardBlock.retryable) {
+      throw new Error(`unresolved focused keyboard input must fail closed during toolbar recovery: ${JSON.stringify(unresolvedKeyboardBlock)}`);
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,

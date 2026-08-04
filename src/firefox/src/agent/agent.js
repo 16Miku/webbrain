@@ -1975,6 +1975,18 @@ export class Agent extends LoopDetector {
     }
   }
 
+  static RICH_TEXT_TOOLBAR_GUARDED_TOOLS = new Set([
+    'click', 'click_ax', 'type_text', 'type_ax', 'set_checked', 'set_field',
+    'press_keys', 'iframe_click', 'iframe_type',
+  ]);
+
+  static RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS = new Set(['press_keys']);
+
+  static _richTextToolbarUsesFocusedTarget(toolName, args = {}) {
+    return Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      || (toolName === 'type_text' && !args?.selector && args?.index == null);
+  }
+
   static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
     if (!shape) return false;
     // An explicit empty value is a formatting reset, not document prose. It
@@ -2421,7 +2433,7 @@ export class Agent extends LoopDetector {
     if (toolName === 'iframe_type' || toolName === 'iframe_click') {
       return this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
     }
-    if (toolName === 'type_text' && !args?.selector && args?.index == null) {
+    if (Agent._richTextToolbarUsesFocusedTarget(toolName, args)) {
       return this._probeRichTextToolbarFocusedTarget(tabId, args, { mapAnnotation });
     }
     try {
@@ -2447,16 +2459,18 @@ export class Agent extends LoopDetector {
   async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
-    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_checked', 'set_field', 'iframe_click', 'iframe_type'].includes(toolName)) return null;
+    if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
-      return toolName === 'iframe_click'
+      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
         ? {
             success: false,
             dispatched: false,
             noDispatch: true,
             retryable: true,
-            error: 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.',
+            error: toolName === 'iframe_click'
+              ? 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.'
+              : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
           }
         : null;
     }
