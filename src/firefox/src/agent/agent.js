@@ -13237,8 +13237,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const stayedOnPreviousUrl = !!beforeUrl && finalUrl === beforeUrl;
-      const navigationNotCommitted = stayedOnPreviousUrl
-        && (rawUrl !== beforeUrl || !navigationSignalObserved);
+      const navigationNotCommitted = stayedOnPreviousUrl && !navigationSignalObserved;
       if (navigationNotCommitted) {
         const error = 'Navigation was dispatched, but the tab is still on the previous URL. A native leave-page confirmation may be waiting for the user, or the navigation has not committed. Do not report arrival or retry repeatedly; ask the user to confirm/cancel the browser dialog, then inspect the current page again.';
         if (typeof onUpdate === 'function') {

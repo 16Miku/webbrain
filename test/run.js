@@ -51297,6 +51297,18 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(chromeSameUrlCommitted.verified, true);
     assert.equal(chromeListenerRemoved, true, 'Chrome should remove the temporary navigation listener');
 
+    chromeListenerRemoved = false;
+    const chromeRoundTrip = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(chromeRoundTrip.success, true, 'Chrome should accept a committed redirect back to the starting URL');
+    assert.equal(chromeRoundTrip.verified, true);
+    assert.equal(chromeRoundTrip.redirected, true);
+    assert.equal(chromeRoundTrip.url, chromeUrl);
+    assert.equal(chromeRoundTrip.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.equal(chromeListenerRemoved, true, 'Chrome should remove the round-trip navigation listener');
+
     globalThis.chrome.tabs.update = async (_tabId, { url }) => {
       chromeUpdates.push(url);
       chromeUrl = 'https://github.com/login?return_to=%2Fexample%2Frepo%2Fupload%2Fmain';
@@ -51441,6 +51453,18 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(firefoxSameUrlCommitted.success, true, 'Firefox should verify a same-URL reload after a loading signal');
     assert.equal(firefoxSameUrlCommitted.verified, true);
     assert.equal(firefoxListenerRemoved, true, 'Firefox should remove the temporary navigation listener');
+
+    firefoxListenerRemoved = false;
+    const firefoxRoundTrip = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(firefoxRoundTrip.success, true, 'Firefox should accept a committed redirect back to the starting URL');
+    assert.equal(firefoxRoundTrip.verified, true);
+    assert.equal(firefoxRoundTrip.redirected, true);
+    assert.equal(firefoxRoundTrip.url, firefoxUrl);
+    assert.equal(firefoxRoundTrip.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.equal(firefoxListenerRemoved, true, 'Firefox should remove the round-trip navigation listener');
 
     globalThis.browser.tabs.update = async (_tabId, { url }) => {
       firefoxUpdates.push(url);
