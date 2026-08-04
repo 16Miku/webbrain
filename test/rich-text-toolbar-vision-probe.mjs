@@ -481,34 +481,39 @@ function normalizeAudit(raw) {
   };
 }
 
+function valueCompatible(targetKind, shape, attemptedPresetMatch) {
+  if (!shape) return false;
+  if (shape.chars === 0) return true;
+  if (targetKind === 'font_size') return shape.numericPreset === true;
+  if (targetKind === 'font_family') {
+    return shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
+      && shape.numericPreset !== true && shape.urlLike !== true
+      && (shape.genericFontFamily === true || attemptedPresetMatch);
+  }
+  if (targetKind === 'style_preset') {
+    return shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
+      && (shape.semanticStylePreset === true || attemptedPresetMatch);
+  }
+  if (targetKind === 'color') return shape.colorLike === true || attemptedPresetMatch;
+  if (targetKind === 'link') return shape.urlLike === true;
+  if (targetKind === 'other_formatting') {
+    return shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
+      && shape.urlLike !== true
+      && (shape.numericPreset === true || attemptedPresetMatch);
+  }
+  if (targetKind === 'uncertain') {
+    return ['font_size', 'font_family', 'style_preset', 'color', 'link', 'other_formatting']
+      .some(kind => valueCompatible(kind, shape, attemptedPresetMatch));
+  }
+  return false;
+}
+
 function decide(audit, attemptedText, availablePresetValues = [], toolbarCandidate = null) {
   const shape = attemptedTextShape(attemptedText);
   const attemptedPresetMatch = presetMatch(attemptedText, availablePresetValues);
   if (audit?.confidence >= CONFIDENCE_THRESHOLD) {
     if (audit.regionKind === 'rich_text_toolbar') {
-      let compatible = shape.chars === 0;
-      if (!compatible) switch (audit.targetKind) {
-        case 'font_size': compatible = shape.numericPreset === true; break;
-        case 'font_family':
-          compatible = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
-            && shape.numericPreset !== true && shape.urlLike !== true
-            && (shape.genericFontFamily === true || attemptedPresetMatch);
-          break;
-        case 'style_preset':
-          compatible = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true
-            && (shape.semanticStylePreset === true || attemptedPresetMatch);
-          break;
-        case 'color':
-          compatible = shape.colorLike === true || attemptedPresetMatch;
-          break;
-        case 'link': compatible = shape.urlLike === true; break;
-        case 'other_formatting':
-          compatible = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
-            && shape.urlLike !== true
-            && (shape.numericPreset === true || attemptedPresetMatch);
-          break;
-        default: return { decision: 'reject', source: 'vision_shape_mismatch', shape };
-      }
+      const compatible = valueCompatible(audit.targetKind, shape, attemptedPresetMatch);
       return {
         decision: compatible ? 'allow' : 'reject',
         source: compatible ? 'vision_shape_compatible' : 'vision_shape_mismatch',
