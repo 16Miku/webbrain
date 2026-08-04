@@ -16593,7 +16593,23 @@ const ADAPTERS = [
 - "Order Received" can release held purchase funds to the seller and affect guarantee or return timing. Never select it from tracking status alone; require the user's explicit confirmation that the exact goods arrived and were inspected. Report a placed order only from the confirmation or My Purchases page with an order ID; a cart, checkout, payment prompt, or submitted request is incomplete.`,
   },
 
-  // ─── Regional — Flipkart (India) ─────────────────────────────────────
+  // ─── Regional — Lazada (Southeast Asia) ─────────────────────────
+  {
+    name: 'lazada',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m|my|member|pages)\.)?lazada\.(?:co\.id|com\.ph|com\.my|sg|co\.th|vn)\//.test(url),
+    notes: `
+- Observed 2026-08: Lazada uses separate Indonesia, Philippines, Malaysia, Singapore, Thailand, and Vietnam storefronts. Choose the user's market before searching; accounts, language, currency, catalog, stock, delivery addresses, vouchers, and payment methods are region-specific, so one market's offer is not proof another can fulfill it.
+- Catalog or product navigation can redirect to a path containing /_____tmd_____/punish and expose only "Click to feedback >". Stop retries and ask the user to complete the traffic check manually in the current tab, then re-read it; do not bypass the check or report the empty page as no products.
+- Select the exact variation and quantity before comparing price, stock, delivery, warranty, or returns. Lazada product pages can combine color, size, storage, pack count, and seller-specific offers, and changing a variation can change all of those details.
+- LazMall identifies a participating brand or authorized-store program, not a universal guarantee for every offer. Read the selected seller, store rating, item reviews, return policy, shipping origin, delivery estimate, and warranty rather than transferring a product-level badge or review score to every seller.
+- Treat vouchers, free shipping, coins, cashback, flash-sale prices, and payment promotions as conditional. Check product, seller, minimum-spend, user, payment-method, quota, and expiry requirements, and quote the final payable checkout total separately from advertised savings.
+- "Add to Cart" / Indonesian "Tambah ke Troli" preserves a review step; "Buy Now" / "Beli Sekarang" enters checkout directly. Do not use Buy Now for research, and re-read the exact item, variation, seller, quantity, shipping option, and price after adding it.
+- Login or checkout can require password, SMS OTP, QR/app confirmation, CAPTCHA, or trusted-device approval. Ask the user to complete verification manually; never request, read, repeat, or expose a verification code, and continue from the returned page instead of restarting.
+- Before "Place Order" or any payment control, re-read the address, items, variations, sellers, quantities, delivery, returns, vouchers, payment method, and final total, then require the user's explicit confirmation. Report success only from My Orders or a confirmation page with an order number and explicit state; a cart, checkout page, payment redirect, or pending order is incomplete.`,
+  },
+
+  // ─── Regional — Flipkart (India) ────────────────────
   {
     name: 'flipkart',
     category: 'general',
