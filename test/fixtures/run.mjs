@@ -1208,6 +1208,8 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || !colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('dense_control_cluster')
     || colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     || colorProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+    || !colorProbe.toolbarContext
+    || colorProbe.toolbarRegionKey !== colorProbe.fieldMeta.toolbarCandidate.regionKey
   ) {
     throw new Error(`conventional text-color control was not audited by the CDP selector probe: ${JSON.stringify(colorProbe)}`);
   }

@@ -3376,7 +3376,7 @@ export class CDPClient {
             if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
             if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
             if (score < 4) return null;
-            const regionNode = semanticToolbar || cluster?.node || el.parentElement || el;
+            const regionNode = semanticToolbar || cluster?.node || composedParent(el) || el;
             const region = regionNode.getBoundingClientRect();
             const associatedEditor = (() => {
               const candidates = [];
@@ -3516,7 +3516,7 @@ export class CDPClient {
               pageY: Math.round(rect.y + window.scrollY),
             },
             fieldMeta,
-            toolbarContext: !!semanticToolbar,
+            toolbarContext: !!semanticToolbar || !!candidate,
             toolbarRegionKey: semanticToolbar
               ? toolbarRegionKey(semanticToolbar)
               : (candidate?.regionKey || ''),
