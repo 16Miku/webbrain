@@ -51368,14 +51368,23 @@ test('navigate rejects non-web schemes and contains browser API failures', async
       },
     };
     let chromeCommitListener = null;
+    let chromeErrorListener = null;
     let chromeListenerRemoved = false;
-    globalThis.chrome.webNavigation = { onCommitted: {
-      addListener(listener) { chromeCommitListener = listener; },
-      removeListener(listener) {
-        if (chromeCommitListener === listener) chromeCommitListener = null;
-        chromeListenerRemoved = true;
+    globalThis.chrome.webNavigation = {
+      onCommitted: {
+        addListener(listener) { chromeCommitListener = listener; },
+        removeListener(listener) {
+          if (chromeCommitListener === listener) chromeCommitListener = null;
+          chromeListenerRemoved = true;
+        },
       },
-    } };
+      onErrorOccurred: {
+        addListener(listener) { chromeErrorListener = listener; },
+        removeListener(listener) {
+          if (chromeErrorListener === listener) chromeErrorListener = null;
+        },
+      },
+    };
     globalThis.chrome.tabs.update = async (_tabId, { url }) => {
       chromeUpdates.push(url);
       chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
@@ -51472,6 +51481,27 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(chromeRedirect.redirected, true);
     assert.equal(chromeRedirect.url, chromeUrl);
 
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeUrl = url;
+      chromeErrorListener?.({ tabId: 42, frameId: 0, url, error: 'net::ERR_NAME_NOT_RESOLVED' });
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeNavigationError = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://does-not-exist.invalid/',
+      force: true,
+    });
+    assert.equal(chromeNavigationError.success, false, 'Chrome must prioritize a terminal navigation error over a changed URL readback');
+    assert.equal(chromeNavigationError.navigationFailed, true);
+    assert.equal(chromeNavigationError.url, 'https://does-not-exist.invalid/');
+    assert.match(chromeNavigationError.error, /ERR_NAME_NOT_RESOLVED/);
+
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      if (url === 'https://reject.example/') throw new Error('synthetic Chrome rejection');
+      chromeUrl = url;
+      return { id: 42, url };
+    };
     const chromeGet = globalThis.chrome.tabs.get;
     globalThis.chrome.tabs.get = async () => { throw new Error('synthetic readback failure'); };
     const chromeUnknown = await chromeAgent.executeTool(42, 'navigate', {
@@ -51484,12 +51514,6 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(chromeUnknown.verificationFailed, true);
     globalThis.chrome.tabs.get = chromeGet;
 
-    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
-      chromeUpdates.push(url);
-      if (url === 'https://reject.example/') throw new Error('synthetic Chrome rejection');
-      chromeUrl = url;
-      return { id: 42, url };
-    };
     const chromeRejected = await chromeAgent.executeTool(42, 'navigate', {
       url: 'https://reject.example/',
       force: true,
@@ -51590,14 +51614,23 @@ test('navigate rejects non-web schemes and contains browser API failures', async
       },
     };
     let firefoxCommitListener = null;
+    let firefoxErrorListener = null;
     let firefoxListenerRemoved = false;
-    globalThis.browser.webNavigation = { onCommitted: {
-      addListener(listener) { firefoxCommitListener = listener; },
-      removeListener(listener) {
-        if (firefoxCommitListener === listener) firefoxCommitListener = null;
-        firefoxListenerRemoved = true;
+    globalThis.browser.webNavigation = {
+      onCommitted: {
+        addListener(listener) { firefoxCommitListener = listener; },
+        removeListener(listener) {
+          if (firefoxCommitListener === listener) firefoxCommitListener = null;
+          firefoxListenerRemoved = true;
+        },
       },
-    } };
+      onErrorOccurred: {
+        addListener(listener) { firefoxErrorListener = listener; },
+        removeListener(listener) {
+          if (firefoxErrorListener === listener) firefoxErrorListener = null;
+        },
+      },
+    };
     globalThis.browser.tabs.update = async (_tabId, { url }) => {
       firefoxUpdates.push(url);
       firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
@@ -51694,6 +51727,27 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(firefoxRedirect.redirected, true);
     assert.equal(firefoxRedirect.url, firefoxUrl);
 
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxUrl = url;
+      firefoxErrorListener?.({ tabId: 42, frameId: 0, url, error: 'NS_ERROR_UNKNOWN_HOST' });
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxNavigationError = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://does-not-exist.invalid/',
+      force: true,
+    });
+    assert.equal(firefoxNavigationError.success, false, 'Firefox must prioritize a terminal navigation error over a changed URL readback');
+    assert.equal(firefoxNavigationError.navigationFailed, true);
+    assert.equal(firefoxNavigationError.url, 'https://does-not-exist.invalid/');
+    assert.match(firefoxNavigationError.error, /NS_ERROR_UNKNOWN_HOST/);
+
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      if (url === 'https://reject.example/') throw new Error('synthetic Firefox rejection');
+      firefoxUrl = url;
+      return { id: 42, url };
+    };
     const firefoxGet = globalThis.browser.tabs.get;
     globalThis.browser.tabs.get = async () => { throw new Error('synthetic readback failure'); };
     const firefoxUnknown = await firefoxAgent.executeTool(42, 'navigate', {
@@ -51706,12 +51760,6 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(firefoxUnknown.verificationFailed, true);
     globalThis.browser.tabs.get = firefoxGet;
 
-    globalThis.browser.tabs.update = async (_tabId, { url }) => {
-      firefoxUpdates.push(url);
-      if (url === 'https://reject.example/') throw new Error('synthetic Firefox rejection');
-      firefoxUrl = url;
-      return { id: 42, url };
-    };
     const firefoxRejected = await firefoxAgent.executeTool(42, 'navigate', {
       url: 'https://reject.example/',
       force: true,

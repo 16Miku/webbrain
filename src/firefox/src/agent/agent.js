@@ -13320,6 +13320,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           readbackVerified = true;
         }
       } catch {}
+      if (navigationWaitResult.type === 'error') {
+        return {
+          success: false,
+          dispatched: true,
+          navigationFailed: true,
+          url: finalUrl,
+          requestedUrl,
+          resolvedUrl: rawUrl,
+          error: `Navigation failed before committing: ${navigationWaitResult.error}. Inspect the current page before retrying.`,
+        };
+      }
       if (!readbackVerified) {
         return {
           success: false,
@@ -13334,17 +13345,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const stayedOnPreviousUrl = !!beforeUrl && finalUrl === beforeUrl;
       const navigationNotCommitted = stayedOnPreviousUrl && !navigationCommitObserved;
       if (navigationNotCommitted) {
-        if (navigationWaitResult.type === 'error') {
-          return {
-            success: false,
-            dispatched: true,
-            navigationFailed: true,
-            url: finalUrl,
-            requestedUrl,
-            resolvedUrl: rawUrl,
-            error: `Navigation failed before committing: ${navigationWaitResult.error}. Inspect the current page before retrying.`,
-          };
-        }
         const stillLoading = navigationWaitResult.type === 'deadline'
           && (finalStatus === 'loading' || (!finalStatus && navigationLoadingObserved));
         if (stillLoading) {
