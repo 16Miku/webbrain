@@ -1783,12 +1783,19 @@ export class Agent extends LoopDetector {
 
   _clearRichTextToolbarDocumentState(tabId) {
     const state = this._richTextToolbarStates.get(tabId);
+    // An obligation whose only recovery handle was its ref is demoted to
+    // unknown-target recovery, not dropped. Dropping it used to leave the debt
+    // map populated with no state behind it, and the two are read by different
+    // callers: the completion block consults the debt alone, while the tool
+    // guard and this ledger both need the state. That combination switched the
+    // guard off for the rest of the run, blocked completion permanently, and
+    // left no corrected edit able to discharge the debt.
     const obligations = this._richTextToolbarRecoveryObligations(state)
-      .filter(obligation => obligation.recoveryTargetUnknown === true
-        || Agent._richTextToolbarEditorIdentityRecoverable(obligation.associatedEditorIdentity))
       .map(obligation => ({
         ...obligation,
         recoveryOnly: true,
+        recoveryTargetUnknown:
+          !Agent._richTextToolbarEditorIdentityRecoverable(obligation.associatedEditorIdentity),
         associatedEditorRef: '',
         recoveryPageUrl: obligation.recoveryPageUrl || obligation.pageUrl || '',
         documentToken: '',
@@ -1800,7 +1807,12 @@ export class Agent extends LoopDetector {
         blockedSelectors: [],
         blockedRegionRefs: [],
       }));
-    if (!this._richTextToolbarDebts.has(tabId) || obligations.length === 0) {
+    if (obligations.length === 0) {
+      // Nothing left that could ever discharge a debt, so the debt must go too.
+      this._resetRichTextToolbarAudit(tabId);
+      return;
+    }
+    if (!this._richTextToolbarDebts.has(tabId)) {
       this._richTextToolbarStates.delete(tabId);
       return;
     }
@@ -2753,7 +2765,6 @@ export class Agent extends LoopDetector {
         && recoveryClear === obligation.blockedClear);
     if (candidateIndexes.length === 0) return false;
     const liveProbe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
-    if (!liveProbe?.resolved && result.verified !== true) return false;
     const probe = liveProbe?.resolved ? {
       ...liveProbe,
       frameOwnerRect: liveProbe.frameOwnerRect || preDispatchProbe?.frameOwnerRect || null,

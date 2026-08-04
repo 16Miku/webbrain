@@ -27798,6 +27798,110 @@ test('rich-text toolbar recovery contract accepts and rejects exactly these case
   }
 });
 
+for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  test(`${label}: navigation keeps the toolbar debt and its state in agreement`, async () => {
+    // A ref is the one recovery handle that cannot survive a document swap.
+    // An obligation captured by ref whose identity carries no geometry used to
+    // be filtered out entirely, which deleted the state while leaving the debt
+    // behind. The completion block reads the debt alone, so the run could never
+    // finish; the tool guard and the recovery ledger both read the state, so
+    // the guard went quiet and no corrected edit could discharge the debt.
+    const tabId = 63;
+    const blockedText = 'Quarterly roadmap';
+    const pageUrl = 'https://example.test/editor';
+    // Tag only, no pageX/pageY/w/h: not recoverable by geometry.
+    const refOnlyIdentity = { tag: 'div', id: 'editor-body', name: null, role: null };
+    assert.equal(
+      AgentClass._richTextToolbarEditorIdentityRecoverable(refOnlyIdentity),
+      false,
+      `${label}: precondition — this identity must not be geometry-recoverable`,
+    );
+
+    const agent = new AgentClass({});
+    agent._lastAxScopes.set(tabId, { documentToken: 'doc-a', pageUrl });
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: blockedText },
+      {},
+      {
+        score: 8,
+        reasons: ['unlabelled_text_control', 'semantic_toolbar'],
+        regionRef: 'ref_10',
+        regionKey: 'rtb:div:10:8:320:44',
+        relatedRefs: [],
+        associatedEditorRef: 'ref_40',
+        associatedEditorIdentity: refOnlyIdentity,
+      },
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'doc-a', refScopeUrl: pageUrl },
+    );
+    assert.equal(agent._richTextToolbarDebts.has(tabId), true, `${label}: setup must open a debt`);
+
+    // The editor SPA swaps documents, or the user reloads.
+    agent._clearRichTextToolbarDocumentState(tabId);
+
+    assert.equal(
+      agent._richTextToolbarDebts.has(tabId),
+      agent._richTextToolbarStates.has(tabId),
+      `${label}: the debt and state maps must never disagree about an outstanding debt`,
+    );
+    assert.equal(agent._richTextToolbarDebts.has(tabId), true, `${label}: the debt is still owed`);
+
+    const survivors = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
+    assert.equal(survivors.length, 1, `${label}: the obligation must survive the navigation`);
+    assert.equal(survivors[0].associatedEditorRef, '', `${label}: the stale ref must be dropped`);
+    assert.equal(
+      survivors[0].recoveryTargetUnknown,
+      true,
+      `${label}: losing the ref must demote the obligation to unknown-target recovery`,
+    );
+
+    // Demoted, it is still dischargeable: the correct text into a real editor
+    // body on the same page clears it.
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_91',
+      documentToken: 'doc-b',
+      refScopeUrl: pageUrl,
+      frameId: 0,
+      rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
+      fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: null, name: null },
+      toolbarContext: false,
+    });
+    agent._releaseRichTextToolbarProbeTarget = async () => {};
+    const discharged = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_91', text: blockedText },
+      { success: true, verified: true },
+    );
+    assert.equal(discharged, true, `${label}: a corrected edit must still discharge a demoted debt`);
+    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: the debt must be cleared`);
+    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: the state must be cleared with it`);
+  });
+
+  test(`${label}: a debt with no obligation left cannot outlive its state`, async () => {
+    // The other half of the same invariant: if nothing can ever discharge the
+    // debt, keeping it only deadlocks completion.
+    const tabId = 64;
+    const agent = new AgentClass({});
+    agent._richTextToolbarDebts.set(tabId, { tool: 'set_field', targetKind: 'font_size' });
+    agent._richTextToolbarStates.set(tabId, {
+      targetKind: 'font_size',
+      blockedRefs: new Set(['ref_9']),
+      blockedSelectors: new Set(),
+      blockedRegionRefs: new Set(),
+    });
+
+    agent._clearRichTextToolbarDocumentState(tabId);
+
+    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: an undischargeable debt must be dropped`);
+    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: its state must be dropped too`);
+  });
+}
+
 test('the rich-text toolbar heuristic has exactly one implementation', () => {
   // It used to exist three times — chrome content.js, firefox content.js, and
   // an inlined Runtime.callFunctionOn string in cdp-client.js — with nothing
