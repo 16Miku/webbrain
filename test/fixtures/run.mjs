@@ -5229,6 +5229,39 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     agent._resetRichTextToolbarAudit(tabId);
     agent.autoScreenshotCount.delete(tabId);
 
+    let annotationOptions = null;
+    classifierArgCount = 0;
+    agent._annotateScreenshot = async (_dataUrl, _rect, _viewport, options) => {
+      annotationOptions = options;
+      return null;
+    };
+    agent._classifyRichTextToolbarTarget = async (...classifierArgs) => {
+      classifierArgCount = classifierArgs.length;
+      return {
+        regionKind: 'ordinary_form_field',
+        targetKind: 'ordinary_input',
+        confidence: 0.99,
+      };
+    };
+    const annotationFailurePreflight = await agent._preflightRichTextToolbarTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: 'This document sentence must not be typed into a toolbar control.' },
+      { supportsVision: true },
+    );
+    if (
+      !annotationFailurePreflight.block?.wrongTarget
+      || annotationFailurePreflight.block.visualTargetAudit?.source !== 'structural_fallback'
+      || annotationFailurePreflight.traceCapture
+      || classifierArgCount !== 0
+      || annotationOptions?.fallbackToOriginal !== false
+    ) {
+      throw new Error(`failed target annotation must skip vision and use structural toolbar evidence: ${JSON.stringify({ annotationFailurePreflight, classifierArgCount, annotationOptions })}`);
+    }
+    agent._resetRichTextToolbarAudit(tabId);
+
+    agent._annotateScreenshot = async () => 'data:image/png;base64,YW5ub3RhdGVk';
+    agent._classifyRichTextToolbarTarget = async () => familyAudit;
     const shortDocumentPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',

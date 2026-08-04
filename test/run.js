@@ -58713,8 +58713,10 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'import_saved_workflow':/);
     assert.match(source, /agent\.replaySavedWorkflow\(/);
     assert.match(source, /clearUserMemoryTurnContext\(tabId\)/);
-    assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], runOptions\)/);
+    assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }
+  const cloudRunsSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRunsSource, /replay\.prompt, publishUpdate, 'act', \[\], \{\s*cloudRun: true,\s*independentRun: true,\s*preserveRichTextToolbarAudit: true,/);
 });
 
 test('saved workflow compiler skips unsafe coordinates, failed calls, and unsupported tools', () => {
@@ -59232,6 +59234,60 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.match(result.reason, /tool_failed/);
     assert.equal(updates.some((update) => update.type === 'workflow_fallback'), false);
     assert.equal(agent.isRunning(80), false);
+  });
+
+  test(`${browser} saved workflow fallback preserves rich-text toolbar recovery debt`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_toolbar_fallback',
+      name: 'Fill editor',
+      start: { origin: 'https://example.com', pathFamily: '/editor' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'set_field',
+        args: { text: 'Document prose', clear: true },
+        target: { role: 'textbox', name: 'Font size' },
+        expected: { kind: 'tool_verified' },
+      }],
+    };
+    const tabId = 82;
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/editor';
+    agent.executeTool = async () => ({ pageContent: 'textbox "Font size" [ref_20]' });
+    agent._executeToolBatch = async (_tabId, _calls, _messages, onUpdate) => {
+      agent._richTextToolbarDebts.set(tabId, { tool: 'set_field', targetKind: 'font_size' });
+      agent._richTextToolbarStates.set(tabId, {
+        targetKind: 'font_size',
+        blockedRefs: new Set(['ref_20']),
+        recoveryObligations: [{ targetKind: 'font_size', blockedAttemptedText: 'Document prose' }],
+      });
+      onUpdate('tool_result', {
+        name: 'set_field',
+        result: {
+          success: false,
+          verified: false,
+          dispatched: false,
+          noDispatch: true,
+          wrongTarget: true,
+          retryable: false,
+          error: 'toolbar target blocked',
+        },
+      });
+      return { action: 'continue' };
+    };
+
+    const result = await agent.replaySavedWorkflow(tabId, workflow, {});
+
+    assert.equal(result.status, 'fallback');
+    assert.match(result.reason, /tool_failed/);
+    assert.equal(agent._richTextToolbarDebts.has(tabId), true);
+    assert.equal(agent._richTextToolbarStates.has(tabId), true);
+    assert.equal(agent.isRunning(tabId), false);
+    agent._resetRichTextToolbarAudit(tabId);
   });
 
   test(`${browser} saved workflow replay delegates before acting on the wrong page family`, async () => {

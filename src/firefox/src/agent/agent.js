@@ -2914,12 +2914,19 @@ export class Agent extends LoopDetector {
           width: shot.cssWidth || shot.width,
           height: shot.cssHeight || shot.height,
         };
-        const annotated = await this._annotateScreenshot(shot.dataUrl, annotationRect, cssViewport);
-        traceCapture = annotated ? {
-          dataUrl: annotated,
-          caption: 'rich-text toolbar target preflight',
-        } : null;
-        audit = await this._classifyRichTextToolbarTarget(tabId, provider, annotated);
+        const annotated = await this._annotateScreenshot(
+          shot.dataUrl,
+          annotationRect,
+          cssViewport,
+          { fallbackToOriginal: false },
+        );
+        if (annotated) {
+          traceCapture = {
+            dataUrl: annotated,
+            caption: 'rich-text toolbar target preflight',
+          };
+          audit = await this._classifyRichTextToolbarTarget(tabId, provider, annotated);
+        }
       }
     }
     const attemptedTextShape = Agent._richTextToolbarTextShape(args?.text || '');
@@ -5996,9 +6003,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /** Draw the audited CSS-pixel target on a viewport capture for vision. */
-  async _annotateScreenshot(dataUrl, rect, cssViewport) {
+  async _annotateScreenshot(dataUrl, rect, cssViewport, { fallbackToOriginal = true } = {}) {
     try {
-      if (!dataUrl || !rect || !rect.w || !rect.h) return dataUrl;
+      if (!dataUrl || !rect || !rect.w || !rect.h) return fallbackToOriginal ? dataUrl : null;
       const response = await fetch(dataUrl);
       const bitmap = await createImageBitmap(await response.blob());
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -6024,7 +6031,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return `data:image/png;base64,${btoa(binary)}`;
     } catch {
-      return dataUrl;
+      return fallbackToOriginal ? dataUrl : null;
     }
   }
 
@@ -14041,7 +14048,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._resetActiveSkillsForRun(tabId);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
-      this._resetRichTextToolbarAudit(tabId);
+      if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
       this._clickAxCdpFallbacks?.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
     }
@@ -16124,7 +16131,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
+      this._resetRichTextToolbarAudit(tabId);
+    }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);
@@ -16954,7 +16963,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
+      this._resetRichTextToolbarAudit(tabId);
+    }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     this._runningTabs.add(tabId);

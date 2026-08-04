@@ -2889,12 +2889,19 @@ export class Agent extends LoopDetector {
           width: shot.cssWidth || shot.width,
           height: shot.cssHeight || shot.height,
         };
-        const annotated = await this._annotateScreenshot(shot.dataUrl, annotationRect, cssViewport);
-        traceCapture = annotated ? {
-          dataUrl: annotated,
-          caption: 'rich-text toolbar target preflight',
-        } : null;
-        audit = await this._classifyRichTextToolbarTarget(tabId, provider, annotated);
+        const annotated = await this._annotateScreenshot(
+          shot.dataUrl,
+          annotationRect,
+          cssViewport,
+          { fallbackToOriginal: false },
+        );
+        if (annotated) {
+          traceCapture = {
+            dataUrl: annotated,
+            caption: 'rich-text toolbar target preflight',
+          };
+          audit = await this._classifyRichTextToolbarTarget(tabId, provider, annotated);
+        }
       }
     }
     const attemptedTextShape = Agent._richTextToolbarTextShape(args?.text || '');
@@ -7881,12 +7888,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * of whether the capture was taken at scale=1 or native DPR.
    *
    * Runs in the service worker via OffscreenCanvas — no DOM required.
-   * Returns the annotated image as a data URL, or the original dataUrl on
-   * any failure (so callers can treat this as a best-effort enhancement).
+   * Returns the annotated image as a data URL. Ordinary callers receive the
+   * original image on failure; safety classifiers can require proof of an
+   * annotation by setting fallbackToOriginal:false and checking for null.
    */
-  async _annotateScreenshot(dataUrl, rect, cssViewport) {
+  async _annotateScreenshot(dataUrl, rect, cssViewport, { fallbackToOriginal = true } = {}) {
     try {
-      if (!dataUrl || !rect || !rect.w || !rect.h) return dataUrl;
+      if (!dataUrl || !rect || !rect.w || !rect.h) return fallbackToOriginal ? dataUrl : null;
       const resp = await fetch(dataUrl);
       const blob = await resp.blob();
       const bmp = await createImageBitmap(blob);
@@ -7918,7 +7926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return `data:image/png;base64,${btoa(bin)}`;
     } catch {
-      return dataUrl;
+      return fallbackToOriginal ? dataUrl : null;
     }
   }
 
@@ -15750,7 +15758,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
-      this._resetRichTextToolbarAudit(tabId);
+      if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
       this._clickAxCdpFallbacks?.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
     }
@@ -21078,7 +21086,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
+      this._resetRichTextToolbarAudit(tabId);
+    }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
@@ -21933,7 +21943,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
-    if (runOptions?.trustedContinuation !== true) this._resetRichTextToolbarAudit(tabId);
+    if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
+      this._resetRichTextToolbarAudit(tabId);
+    }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
