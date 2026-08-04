@@ -2130,6 +2130,46 @@ export class CDPClient {
     return { success: true };
   }
 
+  /**
+   * Attach in-memory user-selected bytes to an existing file input. Unlike
+   * DOM.setFileInputFiles this needs no local path: the File and DataTransfer
+   * are created in the page realm from a run-scoped attachment handle.
+   */
+  async setFileInputData(tabId, objectId, { base64, filename, mimeType }) {
+    await this.sendCommand(tabId, 'Runtime.enable');
+    const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+      functionDeclaration: `function (base64, filename, mimeType) {
+        if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
+          return { success: false, dispatched: false, error: 'Target is not an <input type=file>.' };
+        }
+        let dispatched = false;
+        try {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const file = new File([bytes], filename, { type: mimeType || 'application/octet-stream' });
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          this.files = transfer.files;
+          dispatched = true;
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+          return { success: true, dispatched: true, name: file.name, size: file.size, type: file.type };
+        } catch (error) {
+          return { success: false, dispatched, error: error?.message || String(error) };
+        }
+      }`,
+      objectId,
+      arguments: [
+        { value: String(base64 ?? '') },
+        { value: String(filename || 'attachment') },
+        { value: String(mimeType || 'application/octet-stream') },
+      ],
+      returnByValue: true,
+    });
+    return res?.result?.value || { success: false, dispatched: false, error: 'The page did not return an upload result.' };
+  }
+
   async _disarmProtocolFileChooserGuard(tabId) {
     const state = this.fileChooserGuards.get(tabId);
     if (!state) return;
