@@ -1056,13 +1056,13 @@ for (const browserKind of ['chrome', 'firefox']) {
     const setupHtml = browserKind === 'firefox' ? setupFirefoxHtml : setupChromeHtml;
     await setupHtml(page, `<!doctype html>
       <style>
-        [data-repository-drop-zone] { display: block; width: 320px; height: 48px; }
+        [data-repository-drop-zone] { display: none; }
       </style>
       <label>Repository files
         <input data-repository-drop-zone type="file" multiple>
       </label>
       <section aria-label="Extended description editor">
-        <input type="file" accept="image/png,image/jpeg" multiple>
+        <input type="file" accept="image/png,image/jpeg" multiple hidden>
       </section>`);
 
     const elements = await call(page, 'get_interactive_elements_cdp', {});
@@ -1531,10 +1531,27 @@ test('Firefox upload_file resolves one open-shadow input and rejects ambiguous p
     ) {
       throw new Error(`upload retry was not blocked pending inspection: ${JSON.stringify(blockedRetry)}`);
     }
+    if (agent._clearUploadSelectorRecoveryAfterInspection(
+      77,
+      'get_interactive_elements',
+      [],
+    )) {
+      throw new Error('empty inspection cleared upload recovery');
+    }
+    if (!agent._uploadSelectorRecoveryRequired.has(77)) {
+      throw new Error('empty inspection removed upload recovery state');
+    }
+    if (agent._clearUploadSelectorRecoveryAfterInspection(
+      77,
+      'get_interactive_elements',
+      [{ tag: 'input', type: 'file' }],
+    )) {
+      throw new Error('selector-less file-input inspection cleared upload recovery');
+    }
     if (!agent._clearUploadSelectorRecoveryAfterInspection(
       77,
       'get_interactive_elements',
-      [{ selector: '#shadow-upload' }],
+      [{ tag: 'input', type: 'file', selector: '#shadow-upload' }],
     )) {
       throw new Error('fresh interactive-element inspection did not clear upload recovery');
     }

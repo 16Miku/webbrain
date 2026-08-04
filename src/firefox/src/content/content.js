@@ -831,6 +831,27 @@
       return a.rect.left - b.rect.left;
     });
 
+    // Upload controls are commonly CSS-hidden behind a styled drop zone. Keep
+    // visible action indices stable by appending any omitted file inputs only
+    // after the visual sort; their records expose selectors for upload_file.
+    const appendOmittedFileInputs = (root) => {
+      try {
+        root.querySelectorAll('input[type="file"]').forEach(el => {
+          if (seen.has(el)) return;
+          seen.add(el);
+          collected.push({
+            el,
+            rect: el.getBoundingClientRect(),
+            inShadow: root !== document,
+          });
+        });
+        root.querySelectorAll('*').forEach(host => {
+          if (host.shadowRoot) appendOmittedFileInputs(host.shadowRoot);
+        });
+      } catch (e) {}
+    };
+    appendOmittedFileInputs(document);
+
     return collected;
   }
 

@@ -50537,7 +50537,22 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
     );
     assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
     assert.equal(
-      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{ selector: 'input[type=file]:not([accept])' }]),
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', []),
+      false,
+      'an inspection without file inputs must not clear upload recovery',
+    );
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{ tag: 'input', type: 'file' }]),
+      false,
+      'a file-input record without a verified selector must not clear upload recovery',
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{
+        tag: 'input',
+        type: 'file',
+        selector: 'input[type=file]:not([accept])',
+      }]),
       true,
     );
     assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false);

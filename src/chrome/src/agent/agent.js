@@ -1679,6 +1679,13 @@ export class Agent extends LoopDetector {
 
   _clearUploadSelectorRecoveryAfterInspection(tabId, name, response) {
     if (name !== 'get_interactive_elements' || !Array.isArray(response)) return false;
+    const hasVerifiedFileInputSelector = response.some(element => (
+      element?.tag === 'input'
+      && String(element.type || '').toLowerCase() === 'file'
+      && typeof element.selector === 'string'
+      && element.selector.trim().length > 0
+    ));
+    if (!hasVerifiedFileInputSelector) return false;
     this._uploadSelectorRecoveryRequired.delete(tabId);
     return true;
   }
