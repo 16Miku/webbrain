@@ -102,11 +102,13 @@ export class CDPClient {
       try {
         const url = chrome.runtime.getURL('src/content/rich-text-toolbar-heuristic.js');
         const response = await fetch(url);
-        return await response.text();
+        if (!response.ok) throw new Error(`Packaged toolbar classifier returned HTTP ${response.status}`);
+        const source = await response.text();
+        if (!source.trim()) throw new Error('Packaged toolbar classifier was empty');
+        return source;
       } catch {
-        // Without the heuristic the probe still returns geometry and field
-        // metadata; it simply reports no toolbar candidate, which fails open
-        // to "not a toolbar" exactly as an unscored element would.
+        // The selector preflight treats a missing packaged classifier as
+        // unresolved and fails closed before any text-entry dispatch.
         CDPClient._heuristicSourcePromise = null;
         return '';
       }
@@ -2179,6 +2181,46 @@ export class CDPClient {
     return { success: true };
   }
 
+  /**
+   * Attach in-memory user-selected bytes to an existing file input. Unlike
+   * DOM.setFileInputFiles this needs no local path: the File and DataTransfer
+   * are created in the page realm from a run-scoped attachment handle.
+   */
+  async setFileInputData(tabId, objectId, { base64, filename, mimeType }) {
+    await this.sendCommand(tabId, 'Runtime.enable');
+    const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+      functionDeclaration: `function (base64, filename, mimeType) {
+        if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
+          return { success: false, dispatched: false, error: 'Target is not an <input type=file>.' };
+        }
+        let dispatched = false;
+        try {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const file = new File([bytes], filename, { type: mimeType || 'application/octet-stream' });
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          this.files = transfer.files;
+          dispatched = true;
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+          return { success: true, dispatched: true, name: file.name, size: file.size, type: file.type };
+        } catch (error) {
+          return { success: false, dispatched, error: error?.message || String(error) };
+        }
+      }`,
+      objectId,
+      arguments: [
+        { value: String(base64 ?? '') },
+        { value: String(filename || 'attachment') },
+        { value: String(mimeType || 'application/octet-stream') },
+      ],
+      returnByValue: true,
+    });
+    return res?.result?.value || { success: false, dispatched: false, error: 'The page did not return an upload result.' };
+  }
+
   async _disarmProtocolFileChooserGuard(tabId) {
     const state = this.fileChooserGuards.get(tabId);
     if (!state) return;
@@ -3209,12 +3251,25 @@ export class CDPClient {
       if (!selectorBackendNodeId) return { resolved: false };
 
       const heuristicSource = await CDPClient._richTextToolbarHeuristicSource();
+      if (!heuristicSource.trim()) {
+        return {
+          resolved: false,
+          error: 'The packaged rich-text toolbar classifier could not be loaded.',
+        };
+      }
+      const heuristicPrelude = heuristicSource
+        ? `
+          const __wbInstallRichTextToolbarHeuristicGlobal = false;
+          ${heuristicSource}
+          const __wbTrustedRichTextToolbarHeuristic = __wbRichTextToolbarHeuristic;
+        `
+        : 'const __wbTrustedRichTextToolbarHeuristic = null;';
       const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
         objectId,
         returnByValue: true,
         awaitPromise: true,
         functionDeclaration: `async function () {
-          ${heuristicSource}
+          ${heuristicPrelude}
           const el = this;
           if (!el || el.nodeType !== 1 || !el.isConnected) return null;
           const settledRect = async () => {
@@ -3354,8 +3409,8 @@ export class CDPClient {
           // about whether an element is a toolbar control. No axRef is passed:
           // the isolated-world ref registry is unreachable from here, so the
           // candidate carries no refs and blocking falls back to regionKey.
-          const candidate = globalThis.__wbRichTextToolbarHeuristic
-            ? globalThis.__wbRichTextToolbarHeuristic.candidate(el, fieldMeta)
+          const candidate = __wbTrustedRichTextToolbarHeuristic
+            ? __wbTrustedRichTextToolbarHeuristic.candidate(el, fieldMeta)
             : null;
           if (candidate) fieldMeta.toolbarCandidate = candidate;
           return {

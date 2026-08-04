@@ -768,6 +768,12 @@ const { buildRecommendedActions: buildRecommendedActionsCh, shouldShowRecommende
 const { buildRecommendedActions: buildRecommendedActionsFx, shouldShowRecommendedActions: shouldShowRecommendedActionsFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/recommended-actions.js').replace(/\\/g, '/')
 );
+const { t: translateRecommendedActionCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/i18n.js').replace(/\\/g, '/')
+);
+const { t: translateRecommendedActionFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/i18n.js').replace(/\\/g, '/')
+);
 const {
   recordSuccessfulTask: recordStoreReviewSuccessCh,
   shouldShowPrompt: shouldShowStoreReviewCh,
@@ -2303,6 +2309,28 @@ test('matches www.github.com', () => {
   assert.equal(a?.name, 'github');
 });
 
+test('matches Hugging Face upload pages with staged-upload guidance and rejects spoofed hosts', () => {
+  const url = 'https://huggingface.co/acme/example-model/upload/main';
+  const chromeAdapter = getActiveAdapter(url);
+  const firefoxAdapter = getActiveAdapterFx(url);
+
+  assert.equal(chromeAdapter?.name, 'huggingface');
+  assert.equal(firefoxAdapter?.name, 'huggingface');
+  assert.equal(firefoxAdapter?.notes, chromeAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /input\[type="file"\]:not\(\[accept\]\)/);
+  assert.match(chromeAdapter?.notes || '', /accept\*="image".*extended-description editor/i);
+  assert.match(chromeAdapter?.notes || '', /filename chip.*commit summary.*enabled "Commit changes".*staged only/is);
+  assert.match(chromeAdapter?.notes || '', /Click "Commit changes".*verify the file under "Files and versions"/is);
+
+  for (const resolveAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.notEqual(
+      resolveAdapter('https://huggingface.co.evil.example/acme/example-model/upload/main')?.name,
+      'huggingface',
+      'lookalike hosts must not activate Hugging Face upload guidance',
+    );
+  }
+});
+
 test('matches Mozilla Add-ons Developer Hub and guides version submission', () => {
   const sourceUrl = 'https://addons.mozilla.org/en-US/developers/addon/example-addon/versions/submit/6358210/source';
   const chromeAdapter = getActiveAdapter(sourceUrl);
@@ -3039,6 +3067,49 @@ test('matches current Shopee regional storefronts with marketplace guidance', ()
   assert.match(adapter?.notes || '', /Add to Cart.*Buy Now.*Place Order/s);
   assert.match(adapter?.notes || '', /OTP.*manually/s);
   assert.match(adapter?.notes || '', /Order Received.*release.*funds.*order ID/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
+test('matches Lazada consumer storefronts and stops at the observed traffic gate', () => {
+  const trustedUrls = [
+    'https://www.lazada.co.id/',
+    'https://www.lazada.com.ph/products/example-item.html',
+    'https://www.lazada.com.my/catalog/?q=phone',
+    'https://www.lazada.sg/shop-mobiles/',
+    'https://m.lazada.co.th/products/example-item.html',
+    'https://www.lazada.vn/',
+    'https://my.lazada.co.id/customer/order/index/',
+    'https://member.lazada.com.ph/user/account#/',
+    'https://pages.lazada.com.my/wow/example',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'lazada');
+    assert.equal(getActiveAdapterFx(url)?.name, 'lazada');
+  }
+
+  const rejectedUrls = [
+    'https://sellercenter.lazada.co.id/apps/register/index',
+    'https://helpcenter.lazada.com.ph/',
+    'https://careers.lazada.sg/',
+    'https://lazada.co.id.phishing.example/products/item',
+    'https://example.com/?next=https://www.lazada.vn/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'lazada');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'lazada');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[0]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls[5]);
+  assert.match(adapter?.notes || '', /2026-08.*separate Indonesia.*Vietnam storefronts/s);
+  assert.match(adapter?.notes || '', /_____tmd_____\/punish.*Click to feedback.*complete the traffic check manually/s);
+  assert.match(adapter?.notes || '', /exact variation.*changing a variation.*change all of those details/s);
+  assert.match(adapter?.notes || '', /LazMall.*selected seller.*return policy/s);
+  assert.match(adapter?.notes || '', /vouchers.*minimum-spend.*final payable checkout total/s);
+  assert.match(adapter?.notes || '', /Add to Cart.*Tambah ke Troli.*Buy Now.*Beli Sekarang/s);
+  assert.match(adapter?.notes || '', /OTP.*verification manually.*never request.*verification code/s);
+  assert.match(adapter?.notes || '', /Place Order.*explicit confirmation.*order number.*explicit state/s);
   assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
@@ -10149,9 +10220,8 @@ for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActio
   });
 }
 
-test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go plans', () => {
-  const exactPost = 'Introducing WebBrain — an open-source AI browser agent that lives in your browser. Chat with any page, automate multi-step workflows, and bring your own LLM. Extensible by design. Try it: https://webbrain.one';
-  const expectedTweetSteps = [
+test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
+  const expectedTweetSteps = (exactPost) => [
     'Open https://x.com/compose/post in the current tab through the visible browser UI.',
     'Wait for the visible X composer to become stable before entering text.',
     `Enter this exact reviewed text in the visible X composer without translating, rewriting, or adding anything: ${JSON.stringify(exactPost)}`,
@@ -10159,7 +10229,7 @@ test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go p
     'Treat an unverified or no-progress Post click as not submitted; keep the composer open and recover instead of dismissing it.',
     'Verify the new tweet appears, then report its URL when available.',
   ];
-  const expectedLinkedInSteps = [
+  const expectedLinkedInSteps = (exactPost) => [
     'Open https://www.linkedin.com/feed/ in the current tab through the visible browser UI.',
     'Select Start a post to open LinkedIn\'s visible composer.',
     `Enter this exact reviewed text without translating, rewriting, or adding anything: ${JSON.stringify(exactPost)}`,
@@ -10172,29 +10242,33 @@ test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go p
     { url: 'https://mail.google.com/mail/u/0/#inbox/FMfc123', title: 'Gmail - Project update', text: 'From Ada Subject Project update Reply' },
   ];
 
-  for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
+  for (const [buildRecommendedActions, translate] of [
+    [buildRecommendedActionsCh, translateRecommendedActionCh],
+    [buildRecommendedActionsFx, translateRecommendedActionFx],
+  ]) {
+    const exactPost = translate('sp.recommended.tweet.text');
     for (const pageInfo of pages) {
       const tweetActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'x' });
       const tweet = tweetActions.find((action) => action.id === 'tweet-webbrain');
-      assert.equal(tweet?.label, 'Tweet about WebBrain');
+      assert.equal(tweet?.label, translate('sp.recommended.tweet.label'));
       assert.equal(tweet?.mode, 'act');
-      assert.match(tweet?.prompt || '', /visible X interface[\s\S]*without changing it/);
-      assert.ok(tweet?.prompt?.includes(exactPost), 'visible action prompt should carry the reviewed English post verbatim');
+      assert.equal(tweet?.prompt, translate('sp.recommended.tweet.prompt', { post: exactPost }));
+      assert.ok(tweet?.prompt?.includes(exactPost), 'visible action prompt should carry the reviewed localized post verbatim');
       assert.equal(tweet?.runOptions?.skipPlanner, true);
       assert.equal(tweet?.runOptions?.tool, 'navigate');
       assert.equal(tweet?.runOptions?.summary, 'Publish the reviewed localized WebBrain post exactly as supplied.');
-      assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps);
+      assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps(exactPost));
 
       const linkedinActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'linkedin' });
       const linkedin = linkedinActions.find((action) => action.id === 'post-webbrain-linkedin');
-      assert.equal(linkedin?.label, 'Post about WebBrain');
+      assert.equal(linkedin?.label, translate('sp.recommended.linkedin.label'));
       assert.equal(linkedin?.mode, 'act');
-      assert.match(linkedin?.prompt || '', /visible LinkedIn interface[\s\S]*without changing it/);
-      assert.ok(linkedin?.prompt?.includes(exactPost), 'LinkedIn prompt should carry the reviewed English post verbatim');
+      assert.equal(linkedin?.prompt, translate('sp.recommended.linkedin.prompt', { post: exactPost }));
+      assert.ok(linkedin?.prompt?.includes(exactPost), 'LinkedIn prompt should carry the reviewed localized post verbatim');
       assert.equal(linkedin?.runOptions?.skipPlanner, true);
       assert.equal(linkedin?.runOptions?.tool, 'navigate');
       assert.equal(linkedin?.runOptions?.summary, 'Publish the reviewed localized WebBrain post on LinkedIn exactly as supplied.');
-      assert.deepEqual(linkedin?.runOptions?.steps, expectedLinkedInSteps);
+      assert.deepEqual(linkedin?.runOptions?.steps, expectedLinkedInSteps(exactPost));
       assert.equal(linkedinActions.some((action) => action.id === 'tweet-webbrain'), false, 'one cohort should render only one promotion');
     }
 
@@ -13324,7 +13398,7 @@ test('NYTimes runs preactivate the adapter-scoped fallback without weakening ski
   }
 });
 
-test('mail runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
+test('mail and selected-text runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
   for (const [label, prefix, AgentClass] of [
     ['chrome', 'src/chrome', AgentCh],
     ['firefox', 'src/firefox', AgentFx],
@@ -13361,16 +13435,150 @@ test('mail runs preactivate the Humanizer skill without widening it to other sit
     agent.lastSeenAdapter.set(tabId, '');
     assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: absent adapter preactivated Humanizer`);
 
+    // Selected-text runs suppress page context, so the adapter is empty or
+    // stale; they route on the shortcut action instead, and their empty tool
+    // list means load_skill can never load the skill afterwards.
+    for (const action of ['humanize']) {
+      assert.equal(
+        agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
+        true,
+        `${label}: ${action} selected-text run did not preactivate Humanizer`
+      );
+      assert.ok(agent.activeSkillIds.get(tabId)?.has('humanizer'), `${label}: ${action} active skill id missing`);
+      agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+    }
+
+    // The free-form question box and canned readers do not establish a writing
+    // request, so they must not pay for the skill body. Neither may an unknown
+    // or absent action.
+    for (const action of ['custom', 'summarize', 'explain', 'quiz', 'translate', 'proofread', 'load_skill', '']) {
+      assert.equal(
+        agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
+        false,
+        `${label}: ${action || '(absent)'} selected-text run preactivated Humanizer`
+      );
+    }
+    assert.equal(agent.activeSkillIds.has(tabId), false, `${label}: non-writing selected-text run retained an active skill`);
+
     // A user who removes the default skill must not get it back through preactivation.
     agent.lastSeenAdapter.set(tabId, 'gmail');
     agent.setCustomSkills([]);
     assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: removed skill was preactivated`);
+    assert.equal(
+      agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: 'humanize' }),
+      false,
+      `${label}: removed skill was preactivated for a selected-text run`
+    );
 
     const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
     compact.setCustomSkills([packagedHumanizerRecord(prefix)]);
     compact.conversationModes.set(tabId, 'act');
     compact.lastSeenAdapter.set(tabId, 'gmail');
     assert.equal(compact._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: Compact preactivated a skill`);
+    assert.equal(
+      compact._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: 'humanize' }),
+      false,
+      `${label}: Compact preactivated a skill for a selected-text run`
+    );
+  }
+});
+
+test('selected-text runs carry the Humanizer body into the tool-free request without the page skill', async () => {
+  for (const [buildIndex, [label, prefix, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', 'src/chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', 'src/firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Rewritten reply.', toolCalls: null };
+        },
+        async *chatStream(messages, options) {
+          requests.push(messages);
+          requestOptions.push(options);
+          yield { type: 'text', content: 'Rewritten reply.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 4960 + (buildIndex * 10) + pathIndex;
+      agent.setCustomSkills([packagedHumanizerRecord(prefix)]);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', tabId) }]);
+      agent.maxSteps = 2;
+      agent._hydrate = async () => {};
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({ role: 'user', content });
+      // The page-scoped skill stays out: a source-bound run cannot call its
+      // fetch tool, while Humanizer only adds prompt text.
+      agent._preactivateNyTimesSkillForRun = () => {
+        throw new Error('selection-only run must not activate a page-specific skill');
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const prompt = buildSelectionPrompt('Circling back to touch base on the deliverable.', 'humanize');
+      const runOptions = { sourceGrounding, selectionAction: 'humanize' };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+      const path = `${label} ${streaming ? 'streaming' : 'non-streaming'}`;
+
+      assert.equal(final, 'Rewritten reply.', `${path}: final mismatch`);
+      assert.equal(requests.length, 1, `${path}: expected one model request`);
+      assert.equal(requestOptions[0]?.tools, undefined, `${path}: selected-text request must stay tool-free`);
+      assert.match(
+        String(requests[0][0]?.content),
+        /Humanizer/,
+        `${path}: preactivated skill body missing from the selected-text request`
+      );
+      assert.equal(agent.activeSkillIds.has(tabId), false, `${path}: run-scoped activation should not outlive the run`);
+
+      // A grounded follow-up ("make it warmer") is the same writing flow.
+      const followUp = streaming
+        ? await agent.processMessageStream(tabId, 'Make it warmer.', () => {}, 'ask')
+        : await agent.processMessage(tabId, 'Make it warmer.', () => {}, 'ask');
+      assert.equal(followUp, 'Rewritten reply.', `${path}: grounded follow-up final mismatch`);
+      assert.equal(requests.length, 2, `${path}: follow-up should make one additional model request`);
+      assert.equal(requestOptions[1]?.tools, undefined, `${path}: grounded follow-up must remain tool-free`);
+      assert.match(
+        String(requests[1][0]?.content),
+        /Humanizer/,
+        `${path}: grounded follow-up lost the skill body`
+      );
+
+      // A canned reader shortcut on the same tab pays nothing for the skill.
+      const readerTabId = tabId + 100;
+      agent.conversationModes.set(readerTabId, 'ask');
+      agent.conversations.set(readerTabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', readerTabId) }]);
+      const readerPrompt = buildSelectionPrompt('Circling back to touch base on the deliverable.', 'summarize');
+      const readerRunOptions = { sourceGrounding, selectionAction: 'summarize' };
+      const readerFinal = streaming
+        ? await agent.processMessageStream(readerTabId, readerPrompt, () => {}, 'ask', readerRunOptions)
+        : await agent.processMessage(readerTabId, readerPrompt, () => {}, 'ask', [], readerRunOptions);
+      assert.equal(readerFinal, 'Rewritten reply.', `${path}: summarize shortcut final mismatch`);
+      assert.equal(requests.length, 3, `${path}: summarize shortcut should make one additional model request`);
+      assert.doesNotMatch(
+        String(requests[2][0]?.content),
+        /Humanizer/,
+        `${path}: summarize shortcut should not carry the skill body`
+      );
+    }
   }
 });
 
@@ -23412,6 +23620,31 @@ test('sidepanel preserves selection-only grounding across retries and attachment
       /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
       `${label}: rendered retry controls should preserve the selection boundary`,
     );
+    assert.match(
+      panel,
+      /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?normalizeSelectionAction\(requestedSelectionAction\)/,
+      `${label}: retries should restore their normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /const retryPayload = \{[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),[\s\S]*?assistantEl\.dataset\.retrySelectionAction = selectionAction;/,
+      `${label}: live and persisted retry state should retain the selection action`,
+    );
+    assert.match(
+      panel,
+      /function configureRetryButton\([\s\S]*?btn\.dataset\.retrySelectionAction = btn\.dataset\.retrySourceGrounding[\s\S]*?normalizeSelectionAction\(retryPayload\.selectionAction\)/,
+      `${label}: retry buttons should retain only a grounded normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadFromButton\([\s\S]*?normalizeSelectionAction\(btn\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: retry button reads should restore the selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadForRunAssistant\([\s\S]*?normalizeSelectionAction\(assistantEl\?\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: reconstructed retries should restore the persisted selection action`,
+    );
 
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(
@@ -23550,6 +23783,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /button\.dataset\.action === 'translate'\) submitSelection\('translate', '', interfaceLanguage\)/, `${label}: floating Translate should submit directly in the plugin language`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
+    assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
     assert.doesNotMatch(content, /M6\.8 8\.5 9\.2 14l2\.8-3\.4 2\.8 3\.4 2\.4-5\.5/, `${label}: discarded WebBrain W outline should be removed`);
     assert.doesNotMatch(content, /M12 2\.8c\.65 3\.78/, `${label}: Claude-like sparkle icon should be removed`);
     assert.match(content, /const MAX_SELECTION_HIGHLIGHT_RECTS = 200;/, `${label}: selection highlights should have a hard DOM-node limit`);
@@ -23569,12 +23803,28 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(settingsJs, new RegExp(`${apiName}\\.storage\\.local\\.set\\(\\{ selectionShortcutEnabled: selectionShortcutToggle\\.checked \\}\\)`), `${label}: settings should persist toggle changes`);
 
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const panelSource = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(background, /title: 'Ask WebBrain about this'[\s\S]*?parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open (side panel|sidebar) to chat'/, `${label}: native Ask item should become an action submenu`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
     assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
-    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?\{ sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING \}/, `${label}: only allowlisted grounding should reach agent run options`);
+    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\?\s*\{\s*sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,/, `${label}: only allowlisted grounding should reach agent run options`);
+    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'Humanize'\]/, `${label}: native submenu should include Humanize`);
+    assert.match(background, /selectionAction = normalizeSelectionAction\(menuItemId\.slice\(CONTEXT_MENU_ACTION_PREFIX\.length\)\)/, `${label}: native action ids should be normalized before travelling with the prompt`);
+    assert.match(background, /normalizeSelectionAction\(msg\.selectionAction\)\s*\?\s*\{ selectionAction: normalizeSelectionAction\(msg\.selectionAction\) \}/, `${label}: only a normalized shortcut action should reach agent run options`);
+    assert.match(content, /data-action="humanize">Humanize<\/button>/, `${label}: floating popup should expose one-click Humanize`);
+
+    // The action travels one hop at a time and every hop re-validates it, so a
+    // page-authored message cannot name a skill route of its own.
+    const prompts = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/context-menu-prompts.js'), 'utf8');
+    assert.match(prompts, /const selectionAction = sourceGrounding \? normalizeSelectionAction\(payload\?\.selectionAction\) : '';/, `${label}: only a source-bound prompt should keep a shortcut action`);
+    assert.match(prompts, /\.\.\.\(payload\.selectionAction \? \{ selectionAction: payload\.selectionAction \} : \{\}\),/, `${label}: the stored action should ride with the prompt it belongs to`);
+    assert.match(panelSource, /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?const selectionAction = sourceGrounding \? normalizeSelectionAction\(requestedSelectionAction\) : '';[\s\S]*?delete chatExtraParams\.selectionAction;/, `${label}: sidepanel should retain retry actions but drop actions without selected-text grounding`);
+    assert.match(agentSource, /action: normalizeSelectionAction\(runOptions\?\.selectionAction\),/, `${label}: the durable scope should record the shortcut action`);
+    assert.match(agentSource, /action: normalizeSelectionAction\(entry\.selectionGroundingScope\.action\),/, `${label}: a restarted worker should restore the shortcut action`);
+    assert.match(agentSource, /selectionAction: normalizeSelectionAction\(scope\?\.action\),/, `${label}: follow-up turns should read the action off the scope, not a resent field`);
   }
 
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
@@ -27377,8 +27627,13 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       getURL: relative => 'file://' + path.join(ROOT, 'src/chrome', relative),
     },
   };
-  globalThis.fetch = async () => ({ text: async () => heuristicSource });
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => heuristicSource });
   CDPClient._heuristicSourcePromise = null;
+  assert.doesNotMatch(
+    heuristicSource,
+    /if \(globalThis\.__wbRichTextToolbarHeuristic\) return/,
+    'the packaged heuristic must not trust a page-owned global as an installation guard',
+  );
   client.resolveSelector = async () => ({
     found: true,
     nodeId: 77,
@@ -27400,6 +27655,16 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       assert.match(params.functionDeclaration, /associatedEditorIdentity/);
       assert.match(params.functionDeclaration, /title: el\.getAttribute/);
       assert.match(params.functionDeclaration, /if \(searchLike\) return null/);
+      assert.match(
+        params.functionDeclaration,
+        /const __wbTrustedRichTextToolbarHeuristic = __wbRichTextToolbarHeuristic/,
+        'the main-world probe must capture the packaged heuristic in a local binding',
+      );
+      assert.doesNotMatch(
+        params.functionDeclaration,
+        /globalThis\.__wbRichTextToolbarHeuristic\.candidate/,
+        'the main-world probe must never dispatch through a page-owned global',
+      );
       assert.match(
         params.functionDeclaration,
         /supportedInput && !formattingLabel && !numericPreset && !semanticToolbar/,
@@ -27458,6 +27723,34 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
   else globalThis.fetch = previousFetch;
 });
 
+test('Chrome toolbar selector preflight fails closed when its packaged classifier is unavailable', async () => {
+  const client = new CDPClient();
+  const commands = [];
+  const previousOverride = CDPClient._heuristicSourceOverride;
+  CDPClient._heuristicSourceOverride = '';
+  client.resolveSelector = async () => ({ found: true, nodeId: 77, inViewport: true });
+  client.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'toolbar-target' } };
+    if (method === 'DOM.describeNode') return { node: { backendNodeId: 177 } };
+    return {};
+  };
+  try {
+    const probe = await client.probeRichTextToolbarSelector(42, '#font-size');
+    assert.equal(probe.resolved, false);
+    assert.match(probe.error, /classifier could not be loaded/);
+    assert.equal(
+      commands.some(command => command.method === 'Runtime.callFunctionOn'),
+      false,
+      'missing trusted source must stop before main-world inspection or text dispatch',
+    );
+    assert.equal(commands.at(-1).method, 'Runtime.releaseObject');
+  } finally {
+    if (previousOverride === undefined) delete CDPClient._heuristicSourceOverride;
+    else CDPClient._heuristicSourceOverride = previousOverride;
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Rich-text toolbar heuristic — false positives
 //
@@ -27482,6 +27775,9 @@ function richTextToolbarHeuristicSandbox() {
     CSS: { escape: value => value },
   };
   context.globalThis = context;
+  vm.runInNewContext(source, context);
+  // Core-script recovery may reinject this module into an existing isolated
+  // world after an extension/service-worker reload. It must be idempotent.
   vm.runInNewContext(source, context);
   return context.__wbRichTextToolbarHeuristic;
 }
@@ -27882,6 +28178,169 @@ for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: the state must be cleared with it`);
   });
 
+  test(`${label}: a live retry replaces its recovered copy instead of duplicating the edit`, async () => {
+    const tabId = 65;
+    const blockedText = 'Append this paragraph once';
+    const pageUrl = 'https://example.test/editor';
+    const editorIdentity = {
+      tag: 'div', id: 'editor-body', name: null, role: 'textbox',
+      pageX: 40, pageY: 200, w: 640, h: 320,
+    };
+    const candidate = associatedEditorRef => ({
+      score: 8,
+      reasons: ['unlabelled_text_control', 'semantic_toolbar'],
+      regionRef: 'ref_10',
+      regionKey: 'rtb:div:10:8:320:44',
+      relatedRefs: [],
+      associatedEditorRef,
+      associatedEditorIdentity: editorIdentity,
+    });
+
+    const agent = new AgentClass({});
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'type_text',
+      { ref_id: 'ref_12', text: blockedText },
+      {},
+      candidate('ref_40'),
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'doc-a', refScopeUrl: pageUrl, frameId: 0 },
+    );
+
+    // Navigation demotes the original obligation and drops its document-bound
+    // ref. Revisiting the route may expose fresh refs for the same editor.
+    agent._clearRichTextToolbarDocumentState(tabId);
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'type_text',
+      { ref_id: 'ref_13', text: blockedText },
+      {},
+      candidate('ref_41'),
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'doc-b', refScopeUrl: pageUrl, frameId: 0 },
+    );
+
+    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
+    assert.equal(obligations.length, 1, `${label}: one semantic editor mutation must produce one obligation`);
+    assert.equal(obligations[0].recoveryOnly, false, `${label}: the live scope must replace the recovered scope`);
+    assert.equal(obligations[0].associatedEditorRef, 'ref_41', `${label}: the fresh editor ref must be retained`);
+    assert.equal(obligations[0].documentToken, 'doc-b', `${label}: the fresh document token must be retained`);
+    assert.equal(obligations[0].recoveryPageUrl, pageUrl, `${label}: the recovery route must remain available`);
+
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_41',
+      documentToken: 'doc-b',
+      refScopeUrl: pageUrl,
+      frameId: 0,
+      rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
+      fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: 'textbox', name: null },
+      toolbarContext: false,
+    });
+    agent._releaseRichTextToolbarProbeTarget = async () => {};
+    const discharged = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'type_text',
+      { ref_id: 'ref_41', text: blockedText },
+      { success: true, verified: true },
+    );
+    assert.equal(discharged, true, `${label}: one verified append must discharge the deduplicated edit`);
+    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: no duplicate debt may remain`);
+    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: no duplicate state may remain`);
+  });
+
+  test(`${label}: a unique recovered child-frame retry keeps one semantic obligation`, () => {
+    const tabId = 67;
+    const blockedText = 'Replace this iframe paragraph once';
+    const pageUrl = 'https://frame.example.test/editor';
+    const editorIdentity = {
+      tag: 'div', id: 'editor-body', name: null, role: 'textbox',
+      pageX: 30, pageY: 160, w: 620, h: 300,
+    };
+    const candidate = associatedEditorRef => ({
+      score: 8,
+      reasons: ['unlabelled_text_control', 'semantic_toolbar'],
+      regionRef: 'ref_10',
+      regionKey: 'rtb:div:10:8:320:44',
+      relatedRefs: [],
+      associatedEditorRef,
+      associatedEditorIdentity: editorIdentity,
+    });
+    const agent = new AgentClass({});
+
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'iframe_type',
+      { selector: '#font-size', text: blockedText, clear: true },
+      {},
+      candidate('ref_40'),
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'frame-doc-a', refScopeUrl: pageUrl, frameId: 7 },
+    );
+    agent._clearRichTextToolbarDocumentState(tabId);
+
+    const recovered = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
+    assert.equal(recovered.length, 1, `${label}: navigation must keep the child-frame obligation`);
+    assert.equal(recovered[0].frameScoped, true, `${label}: child-frame scope must survive the transient frameId`);
+    assert.equal(recovered[0].frameId, null, `${label}: the stale numeric frameId must be released`);
+
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'iframe_type',
+      { selector: '#font-size', text: blockedText, clear: true },
+      {},
+      candidate('ref_41'),
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'frame-doc-b', refScopeUrl: pageUrl, frameId: 19 },
+    );
+
+    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
+    assert.equal(obligations.length, 1, `${label}: the fresh child-frame retry must replace its unique recovered copy`);
+    assert.equal(obligations[0].recoveryOnly, false, `${label}: the live child-frame scope must win`);
+    assert.equal(obligations[0].frameId, 19, `${label}: the fresh numeric frameId must be retained`);
+    assert.equal(obligations[0].associatedEditorRef, 'ref_41', `${label}: the fresh child-frame editor ref must be retained`);
+  });
+
+  test(`${label}: duplicate editor IDs at different geometry remain separate obligations`, () => {
+    const tabId = 66;
+    const pageUrl = 'https://example.test/editor';
+    const blockedText = 'Shared editor text';
+    const agent = new AgentClass({});
+    const blockAt = (toolbarRef, editorRef, pageX) => {
+      agent._applyRichTextToolbarWrongTarget(
+        tabId,
+        'set_field',
+        { ref_id: toolbarRef, text: blockedText },
+        {},
+        {
+          score: 8,
+          reasons: ['unlabelled_text_control', 'semantic_toolbar'],
+          regionRef: `${toolbarRef}-region`,
+          regionKey: `rtb:div:${pageX}:8:320:44`,
+          relatedRefs: [],
+          associatedEditorRef: editorRef,
+          associatedEditorIdentity: {
+            tag: 'div', id: 'editor-body', name: null, role: 'textbox',
+            pageX, pageY: 200, w: 400, h: 180,
+          },
+        },
+        { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+        null,
+        { documentToken: 'doc-a', refScopeUrl: pageUrl, frameId: 0 },
+      );
+    };
+
+    blockAt('ref_12', 'ref_40', 20);
+    blockAt('ref_13', 'ref_41', 520);
+
+    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
+    assert.equal(obligations.length, 2, `${label}: geometry must distinguish duplicate IDs in separate components`);
+  });
+
   test(`${label}: a debt with no obligation left cannot outlive its state`, async () => {
     // The other half of the same invariant: if nothing can ever discharge the
     // debt, keeping it only deadlocks completion.
@@ -27950,6 +28409,35 @@ test('the rich-text toolbar heuristic has exactly one implementation', () => {
     const contentIndex = entry.js.findIndex(file => file.endsWith('/content.js'));
     assert.ok(heuristicIndex >= 0, `${rel} must load the shared heuristic`);
     assert.ok(heuristicIndex < contentIndex, `${rel} must load the heuristic before content.js`);
+  }
+
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  const chromeContentInjections = [...chromeAgent.matchAll(/files:\s*\[([\s\S]*?)\]/g)]
+    .map(match => match[1])
+    .filter(files => files.includes("'src/content/content.js'"));
+  assert.ok(chromeContentInjections.length > 0, 'Chrome must have content-script recovery paths');
+  for (const files of chromeContentInjections) {
+    const heuristicIndex = files.indexOf("'src/content/rich-text-toolbar-heuristic.js'");
+    const contentIndex = files.indexOf("'src/content/content.js'");
+    assert.ok(
+      heuristicIndex >= 0 && heuristicIndex < contentIndex,
+      'every Chrome content-script recovery path must inject the heuristic before content.js',
+    );
+  }
+
+  const firefoxContentInjections = [...firefoxAgent.matchAll(/file: 'src\/content\/content\.js'/g)];
+  assert.ok(firefoxContentInjections.length > 0, 'Firefox must have content-script recovery paths');
+  let previousContentIndex = 0;
+  for (const match of firefoxContentInjections) {
+    const injectionSequence = firefoxAgent.slice(previousContentIndex, match.index);
+    const heuristicIndex = injectionSequence.lastIndexOf("file: 'src/content/rich-text-toolbar-heuristic.js'");
+    const accessibilityIndex = injectionSequence.lastIndexOf("file: 'src/content/accessibility-tree.js'");
+    assert.ok(
+      heuristicIndex >= 0 && accessibilityIndex > heuristicIndex,
+      'every Firefox content-script recovery path must inject the heuristic before accessibility-tree.js and content.js',
+    );
+    previousContentIndex = match.index + match[0].length;
   }
 });
 
@@ -45150,6 +45638,67 @@ test('browser batches keep leading reads, then require fresh evidence after unsa
   }
 });
 
+test('remote-unverified file attachment blocks a queued commit action in every prompt tier', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const tier of ['compact', 'mid', 'full']) {
+      const agent = new AgentClass({
+        getActive: () => ({ promptTier: tier, supportsVision: false }),
+        getVisionProvider: async () => null,
+      });
+      const executed = [];
+      const messages = [];
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._currentUrl = async () => 'https://huggingface.co/acme/model/upload/main';
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      agent.executeTool = async (_tabId, name) => {
+        executed.push(name);
+        if (name === 'upload_file') {
+          return {
+            success: true,
+            attachmentState: 'input_attached',
+            remoteStateVerified: false,
+          };
+        }
+        return { success: true, verified: true };
+      };
+
+      const result = await agent._executeToolBatch(
+        label === 'chrome' ? 815 : 816,
+        [
+          {
+            id: 'attach',
+            function: {
+              name: 'upload_file',
+              arguments: JSON.stringify({ selector: 'input[type="file"]:not([accept])', downloadId: 1 }),
+            },
+          },
+          {
+            id: 'commit',
+            function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_commit' }) },
+          },
+        ],
+        messages,
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['upload_file', 'click_ax']),
+        1,
+      );
+
+      assert.equal(result.action, 'continue', `${label}/${tier}: unverified attachment should start a fresh turn`);
+      assert.deepEqual(executed, ['upload_file'], `${label}/${tier}: queued Commit ran before attachment observation`);
+      const skipped = JSON.parse(messages.find(message => message.tool_call_id === 'commit').content);
+      assert.equal(skipped.skipped, true, `${label}/${tier}: queued Commit was not skipped`);
+      assert.equal(skipped.triggeringTool, 'upload_file', `${label}/${tier}: wrong action triggered the boundary`);
+      assert.equal(skipped.reason, 'action_unverified', `${label}/${tier}: wrong fresh-turn reason`);
+    }
+  }
+});
+
 test('fresh-turn batch interruptions preserve configured auto-screenshots', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const autoScreenshot of ['state_change', 'every_step']) {
@@ -51416,9 +51965,230 @@ test('upload_file schema accepts downloadId and no longer hard-requires filePath
   const up = tools.find(t => t.function?.name === 'upload_file');
   assert.ok(up, 'upload_file not present in act tools');
   assert.ok(up.function.parameters.properties.downloadId, 'downloadId param missing from schema');
+  assert.ok(up.function.parameters.properties.attachmentId, 'attachmentId param missing from schema');
   assert.deepEqual(up.function.parameters.required, ['selector'], 'filePath should no longer be required');
   assert.match(up.function.description, /without opening the page or OS file-picker dialog/i);
   assert.match(up.function.description, /Do NOT click "Choose file", "Select a file"/);
+  assert.match(up.function.description, /does NOT prove a remote upload, form submission, or repository commit/i);
+});
+
+test('user attachments expose run-scoped upload handles in both browser agents', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22001 : 22002;
+    const enriched = { role: 'user', content: 'upload the attached animation' };
+    const result = await agent._applyAttachments(enriched, [
+      { kind: 'image', name: '../demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ], { name: 'vision-test', supportsVision: true }, {
+      tabId,
+      canUseScratchpadTool: true,
+      canUseUploadTool: true,
+    });
+
+    assert.equal(result.ok, true, `${label} should accept the user attachment`);
+    const notice = enriched.content.find(block => block?.text?.startsWith('[UNTRUSTED USER ATTACHMENTS'));
+    const attachmentId = [...agent._userAttachmentHandles.get(tabId).keys()][0];
+    assert.ok(notice, `${label} should add the attachment boundary`);
+    assert.ok(notice.text.includes(`${attachmentId} (../demo.gif)`), `${label} should pair the opaque handle with the visible name`);
+    assert.match(notice.text, /upload_file with its attachmentId/, `${label} should direct the model to reuse the handle`);
+    assert.match(notice.text, /Do not open another picker, navigate to a separate upload route/, `${label} should avoid the J27 workaround`);
+
+    const payload = agent._resolveUserAttachment(tabId, attachmentId);
+    assert.equal(payload.ok, true, `${label} should resolve the active handle`);
+    assert.equal(payload.base64, 'R0lGODlh');
+    assert.equal(payload.filename, 'demo.gif', `${label} should strip path components from upload filenames`);
+    assert.equal(payload.mimeType, 'image/gif');
+    assert.equal(payload.size, 6);
+
+    agent._userAttachmentHandles.delete(tabId);
+    const expired = agent._resolveUserAttachment(tabId, attachmentId);
+    assert.equal(expired.ok, false, `${label} should reject a handle after the run is cleared`);
+    assert.match(expired.error, /Unknown or expired attachmentId/);
+  }
+});
+
+test('user attachment handles enforce the actual-byte upload limit', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22011 : 22012;
+    const registered = agent._registerUserAttachments(tabId, [
+      { kind: 'document', name: 'four.bin', dataUrl: 'data:application/octet-stream;base64,AQIDBA==' },
+    ]);
+    const result = agent._resolveUserAttachment(tabId, registered[0].attachmentId, 3);
+    assert.equal(result.ok, false, `${label} should reject bytes beyond the cap`);
+    assert.match(result.error, /25MB upload limit/);
+  }
+});
+
+test('user attachment notices expose every registered opaque upload handle', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22031 : 22032;
+    const attachments = Array.from({ length: 10 }, (_, index) => ({
+      kind: 'image',
+      name: `file-${index + 1}.gif`,
+      dataUrl: 'data:image/gif;base64,R0lGODlh',
+    }));
+    const registered = agent._registerUserAttachments(tabId, attachments);
+    const notice = agent._userAttachmentNotice(registered, {
+      canUseScratchpadTool: true,
+      canUseUploadTool: true,
+    });
+
+    assert.match(notice, /Files: file-1\.gif,[\s\S]*file-8\.gif, \+2 more\./, `${label} should keep the display-name summary bounded`);
+    for (let index = 1; index <= attachments.length; index += 1) {
+      const attachmentId = registered[index - 1].attachmentId;
+      assert.ok(
+        notice.includes(`${attachmentId} (file-${index}.gif)`),
+        `${label} should expose the handle/name mapping for accepted attachment ${index}`,
+      );
+      assert.equal(
+        agent._resolveUserAttachment(tabId, attachmentId).ok,
+        true,
+        `${label} should resolve every handle advertised in the notice`,
+      );
+    }
+  }
+});
+
+test('user attachment upload guidance follows the active tier tool catalog', () => {
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22041 : 22042;
+    const registered = agent._registerUserAttachments(tabId, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+
+    for (const [mode, tier, shouldAdvertiseUpload] of [
+      ['act', 'compact', false],
+      ['act', 'mid', true],
+      ['act', 'full', true],
+      ['ask', 'full', false],
+    ]) {
+      const toolNames = new Set(
+        getTools(mode, { tier }).map(tool => tool?.function?.name).filter(Boolean),
+      );
+      const notice = agent._userAttachmentNotice(registered, {
+        canUseScratchpadTool: toolNames.has('scratchpad_write'),
+        canUseUploadTool: toolNames.has('upload_file'),
+      });
+      assert.equal(
+        /upload_file with its attachmentId/.test(notice),
+        shouldAdvertiseUpload,
+        `${label} ${mode}/${tier} notice should match upload_file availability`,
+      );
+      assert.match(notice, /Files: demo\.gif/, `${label} ${mode}/${tier} should still identify the attachment`);
+    }
+  }
+});
+
+test('text attachment handles preserve original bytes and MIME while retaining legacy fallback', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22021 : 22022;
+    const firstRun = agent._registerUserAttachments(tabId, [
+      {
+        kind: 'text',
+        name: 'encoded.csv',
+        textContent: 'A',
+        dataUrl: 'data:text/csv;base64,//5BAA==',
+        mimeType: 'text/csv',
+      },
+    ]);
+    const firstAttachmentId = firstRun[0].attachmentId;
+    const exact = agent._resolveUserAttachment(tabId, firstAttachmentId);
+    assert.equal(exact.ok, true, `${label} should resolve text attachment bytes`);
+    assert.equal(exact.base64, '//5BAA==', `${label} should not UTF-8 re-encode the original UTF-16LE+BOM bytes`);
+    assert.equal(exact.mimeType, 'text/csv', `${label} should preserve the original text MIME`);
+    assert.equal(exact.size, 4);
+
+    const secondRun = agent._registerUserAttachments(tabId, [
+      { kind: 'text', name: 'legacy.txt', textContent: 'A' },
+    ]);
+    const secondAttachmentId = secondRun[0].attachmentId;
+    assert.notEqual(secondAttachmentId, firstAttachmentId, `${label} should not reuse opaque ids across attachment turns`);
+    const stale = agent._resolveUserAttachment(tabId, firstAttachmentId);
+    assert.equal(stale.ok, false, `${label} should reject an id from the previous attachment turn instead of aliasing new bytes`);
+    const legacy = agent._resolveUserAttachment(tabId, secondAttachmentId);
+    assert.equal(legacy.ok, true, `${label} should retain old persisted text attachment compatibility`);
+    assert.equal(legacy.base64, 'QQ==');
+    assert.equal(legacy.mimeType, 'text/plain;charset=utf-8');
+  }
+});
+
+test('Chrome upload_file injects the exact user attachment bytes without a path or picker', async () => {
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+    setFileInputData: cdpClientCh.setFileInputData,
+    getFileInputFiles: cdpClientCh.getFileInputFiles,
+  };
+  const injected = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.querySelectorPierce = async () => ({ objectIds: ['input-handle'], objectGroup: 'attachment-query' });
+    cdpClientCh.setFileInputData = async (_tabId, objectId, payload) => {
+      injected.push({ objectId, payload });
+      return { success: true, dispatched: true, name: payload.filename, size: payload.size };
+    };
+    cdpClientCh.getFileInputFiles = async () => [{ name: 'demo.gif', size: 6, readable: true }];
+    cdpClientCh.releaseObjectGroup = async () => {};
+
+    const agent = new AgentCh({});
+    const registered = agent._registerUserAttachments(42, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+    const attachmentId = registered[0].attachmentId;
+    const result = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      attachmentId,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.attachmentId, attachmentId);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
+    assert.deepEqual(injected, [{
+      objectId: 'input-handle',
+      payload: {
+        ok: true,
+        base64: 'R0lGODlh',
+        filename: 'demo.gif',
+        mimeType: 'image/gif',
+        size: 6,
+      },
+    }]);
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+  }
+});
+
+test('CDP in-memory upload builds a File and dispatches input/change', async () => {
+  const client = new CDPClient();
+  let command = null;
+  client.sendCommand = async (_tabId, method, params) => {
+    if (method === 'Runtime.enable') return {};
+    command = { method, params };
+    return { result: { value: { success: true, dispatched: true, name: 'demo.gif', size: 6 } } };
+  };
+  const result = await client.setFileInputData(42, 'input-object', {
+    base64: 'R0lGODlh',
+    filename: 'demo.gif',
+    mimeType: 'image/gif',
+  });
+  assert.equal(result.success, true);
+  assert.equal(command.method, 'Runtime.callFunctionOn');
+  assert.equal(command.params.objectId, 'input-object');
+  assert.match(command.params.functionDeclaration, /new File\(\[bytes\], filename/);
+  assert.match(command.params.functionDeclaration, /new DataTransfer\(\)/);
+  assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('input'/);
+  assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('change'/);
+  assert.deepEqual(command.params.arguments.map(arg => arg.value), ['R0lGODlh', 'demo.gif', 'image/gif']);
 });
 
 test('Chrome click paths suppress native file choosers and redirect to upload_file', async () => {
@@ -51648,6 +52418,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
     await agent._injectCoreContentScripts(43);
     assert.deepEqual(firefoxInjections.map(injection => injection.file), [
       'src/content/file-picker-guard-loader.js',
+      'src/content/rich-text-toolbar-heuristic.js',
       'src/content/accessibility-tree.js',
       'src/content/content.js',
       'src/content/agent-visual-indicator.js',
@@ -51765,6 +52536,9 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
 
     assert.equal(result.success, true);
     assert.equal(result.file, realPath);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
     assert.equal(args.filePath, realPath);
     assert.deepEqual(uploaded, [[realPath]]);
     assert.deepEqual(releasedGroups, ['upload-query-1'], 'successful uploads must release selector handles');
@@ -51774,22 +52548,86 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
     const fallback = await agent.executeTool(42, 'upload_file', fallbackArgs);
     assert.equal(fallback.success, true);
     assert.equal(fallback.file, exactPath);
+    assert.equal(fallback.attachmentState, 'input_attached');
+    assert.equal(fallback.verified, false);
+    assert.equal(fallback.remoteStateVerified, false);
     assert.equal(fallbackArgs.filePath, exactPath, 'an unresolved downloadId must not replace a supplied absolute path');
     assert.deepEqual(uploaded, [[realPath], [exactPath]]);
 
     expectedPath = realPath;
+    cdpClientCh.getFileInputFiles = async () => [];
+    const consumed = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      downloadId: 9123,
+    });
+    assert.equal(consumed.success, true);
+    assert.equal(consumed.attachmentState, 'page_consumed');
+    assert.equal(consumed.verified, false);
+    assert.equal(consumed.remoteStateVerified, false);
+    assert.match(consumed.note, /does not prove a remote upload or form submission/i);
+    cdpClientCh.getFileInputFiles = async () => [{ name: expectedPath.split('/').pop(), size: 123, readable: true }];
+
     selectorMatches = ['input-501', 'input-502'];
     const ambiguous = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
       downloadId: 9123,
     });
     assert.equal(ambiguous.success, false);
+    assert.equal(ambiguous.dispatched, false);
+    assert.equal(ambiguous.noDispatch, true);
+    assert.equal(ambiguous.ambiguous, true);
+    assert.equal(ambiguous.matchCount, 2);
+    assert.equal(ambiguous.recoveryRequired, 'get_interactive_elements');
     assert.match(ambiguous.error, /matched 2 elements/);
     assert.match(ambiguous.error, /exact, unique selector/);
-    assert.deepEqual(uploaded, [[realPath], [exactPath]], 'ambiguous selectors must fail before attaching the file');
+    assert.deepEqual(uploaded, [[realPath], [exactPath], [realPath]], 'ambiguous selectors must fail before attaching the file');
+
+    const queryCountBeforeBlockedRetry = queryCount;
+    const blockedRetry = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]:not([accept])',
+      downloadId: 9123,
+    });
+    assert.equal(blockedRetry.success, false);
+    assert.equal(blockedRetry.noDispatch, true);
+    assert.equal(blockedRetry.matchCount, 2);
+    assert.equal(blockedRetry.recoveryRequired, 'get_interactive_elements');
+    assert.equal(queryCount, queryCountBeforeBlockedRetry, 'retry must not query the DOM before a fresh inspection');
+
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_accessibility_tree', {}),
+      false,
+      'an unrelated observation must not clear upload recovery',
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', []),
+      false,
+      'an inspection without file inputs must not clear upload recovery',
+    );
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{ tag: 'input', type: 'file' }]),
+      false,
+      'a file-input record without a verified selector must not clear upload recovery',
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{
+        tag: 'input',
+        type: 'file',
+        selector: 'input[type=file]:not([accept])',
+      }]),
+      true,
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false);
+    agent._uploadSelectorRecoveryRequired.set(42, 2);
+    agent._clearRunLoopState(42);
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'run cleanup must clear upload recovery');
+    agent._uploadSelectorRecoveryRequired.set(42, 2);
+    agent._clearPageLoopState(42);
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'navigation cleanup must clear upload recovery');
     assert.deepEqual(
       releasedGroups,
-      ['upload-query-1', 'upload-query-2', 'upload-query-3'],
+      ['upload-query-1', 'upload-query-2', 'upload-query-3', 'upload-query-4'],
       'early upload failures must release selector handles',
     );
   } finally {
@@ -51804,9 +52642,81 @@ test('upload_file schema accepts downloadId and no longer hard-requires filePath
   const up = tools.find(t => t.function?.name === 'upload_file');
   assert.ok(up, 'upload_file not present in act tools');
   assert.ok(up.function.parameters.properties.downloadId, 'downloadId param missing from schema');
+  assert.ok(up.function.parameters.properties.attachmentId, 'attachmentId param missing from schema');
   assert.deepEqual(up.function.parameters.required, ['selector'], 'filePath should no longer be required');
   assert.match(up.function.description, /without clicking the page upload control/i);
   assert.match(up.function.description, /Do NOT click "Choose file", "Select a file"/);
+  assert.match(up.function.description, /does NOT prove a remote upload, form submission, or repository commit/i);
+});
+
+test('upload_file digests preserve local attachment and remote-unverified semantics', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const attached = agent._digestToolResult('upload_file', JSON.stringify({
+      success: true,
+      attached: { name: 'asset.bin', size: 12 },
+      verified: false,
+      attachmentState: 'input_attached',
+      remoteStateVerified: false,
+    }));
+    assert.match(attached, /file attached to input.*remote submission unverified/i, `${label}: attached digest lost local-only state`);
+    assert.doesNotMatch(attached, /\buploaded\b/i, `${label}: attached digest claimed remote upload`);
+
+    const consumed = agent._digestToolResult('upload_file', JSON.stringify({
+      success: true,
+      verified: false,
+      attachmentState: 'page_consumed',
+      remoteStateVerified: false,
+    }));
+    assert.match(consumed, /page consumed attachment.*remote submission unverified/i, `${label}: consumed digest lost local-only state`);
+    assert.doesNotMatch(consumed, /\buploaded\b/i, `${label}: consumed digest claimed remote upload`);
+  }
+});
+
+test('Firefox upload_file injects the exact user attachment bytes without re-fetching or opening a picker', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  const scripts = [];
+  try {
+    globalThis.browser = {
+      tabs: {
+        async executeScript(_tabId, details) {
+          scripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment settle probe')) {
+            return [{ attachmentState: 'input_attached' }];
+          }
+          return [{ success: true, dispatched: true, file: 'demo.gif', size: 6, attachmentState: 'input_attached' }];
+        },
+      },
+    };
+    globalThis.fetch = async () => { throw new Error('attachmentId must not re-fetch'); };
+
+    const agent = new AgentFx({});
+    const registered = agent._registerUserAttachments(42, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+    const attachmentId = registered[0].attachmentId;
+    const result = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      attachmentId,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.attachmentId, attachmentId);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
+    assert.equal(scripts.length, 2);
+    assert.match(scripts[0], /const b64 = "R0lGODlh"/);
+    assert.match(scripts[0], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
+    assert.match(scripts[1], /WebBrain file attachment settle probe/);
+    assert.equal(agent._pendingUploadPickers.size, 0, 'attachmentId must not open the WebBrain picker');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+  }
 });
 
 test('upload_file (firefox) rejects non-complete downloads and missing picker base64', async () => {
@@ -51863,6 +52773,7 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
   const originalFetch = globalThis.fetch;
   const executedScripts = [];
   const fetchCalls = [];
+  let injectedAttachmentState = 'input_attached';
   try {
     globalThis.browser = {
       downloads: {
@@ -51877,7 +52788,10 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
         },
         async executeScript(tabId, details) {
           executedScripts.push(details.code);
-          return [{ success: true, file: 'test.zip', size: 4 }];
+          if (details.code.includes('WebBrain file attachment settle probe')) {
+            return [{ attachmentState: injectedAttachmentState }];
+          }
+          return [{ success: true, file: 'test.zip', size: 4, attachmentState: 'input_attached' }];
         },
       },
     };
@@ -51922,13 +52836,16 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
 
     assert.equal(result.success, true);
     assert.equal(result.file, 'test.zip');
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
     assert.equal(fetchCalls.length, 2);
     assert.equal(fetchCalls[0].opts.redirect, 'manual');
     assert.equal(fetchCalls[0].opts.credentials, 'include');
     assert.equal(fetchCalls[1].opts.redirect, 'manual');
     assert.equal(fetchCalls[1].opts.credentials, 'omit');
 
-    assert.equal(executedScripts.length, 1);
+    assert.equal(executedScripts.length, 2);
     assert.ok(executedScripts[0].includes('new DataTransfer()'), 'Script should use DataTransfer');
     assert.ok(executedScripts[0].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
     assert.ok(executedScripts[0].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
@@ -51936,6 +52853,14 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
     assert.ok(executedScripts[0].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
     assert.ok(executedScripts[0].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
     assert.ok(executedScripts[0].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
+    assert.ok(executedScripts[1].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
+
+    injectedAttachmentState = 'page_consumed';
+    const consumed = await agent.executeTool(42, 'upload_file', args);
+    assert.equal(consumed.success, true);
+    assert.equal(consumed.attachmentState, 'page_consumed');
+    assert.equal(consumed.verified, false);
+    assert.equal(consumed.remoteStateVerified, false);
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
@@ -52195,11 +53120,12 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     globalThis.setTimeout = (fn, _delay, ...args) => originalSetTimeout(fn, 0, ...args);
 
     let chromeUrl = 'https://trusted.example/base/page';
+    let chromeStatus = 'complete';
     const chromeUpdates = [];
     globalThis.chrome = {
       tabs: {
         async get() {
-          return { id: 42, url: chromeUrl };
+          return { id: 42, url: chromeUrl, status: chromeStatus };
         },
         async update(_tabId, { url }) {
           chromeUpdates.push(url);
@@ -52249,6 +53175,188 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(chromeBareHost.url, 'https://mastodon.turk/');
     assert.equal(chromeBareHost.requestedUrl, 'https://mastodon.turk');
 
+    chromeUrl = 'https://github.com/example/repo/edit/main/README.md';
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeWarnings = [];
+    const chromePending = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    }, (type, data) => chromeWarnings.push({ type, data }));
+    assert.equal(chromePending.success, false, 'Chrome must not call dispatch verified arrival');
+    assert.equal(chromePending.dispatched, true);
+    assert.equal(chromePending.navigationPending, true);
+    assert.equal(chromePending.confirmationPossible, true);
+    assert.equal(chromePending.recoveryRequired, 'browser_navigation_confirmation');
+    assert.equal(chromePending.url, 'https://github.com/example/repo/edit/main/README.md');
+    assert.equal(chromePending.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.match(chromePending.error, /native leave-page confirmation may be waiting/i);
+    assert.equal(chromeWarnings.at(-1)?.type, 'warning');
+    assert.match(chromeAgent._digestToolResult('navigate', JSON.stringify(chromePending)), /^error:/, 'trimmed context must not say the agent arrived');
+
+    const chromeSameUrlPending = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeSameUrlPending.success, false, 'Chrome must not verify a same-URL dispatch without a commit signal');
+    assert.equal(chromeSameUrlPending.navigationPending, true);
+
+    let chromeLoadingListener = null;
+    globalThis.chrome.tabs.onUpdated = {
+      addListener(listener) { chromeLoadingListener = listener; },
+      removeListener(listener) {
+        if (chromeLoadingListener === listener) chromeLoadingListener = null;
+      },
+    };
+    let chromeCommitListener = null;
+    let chromeErrorListener = null;
+    let chromeListenerRemoved = false;
+    globalThis.chrome.webNavigation = {
+      onCommitted: {
+        addListener(listener) { chromeCommitListener = listener; },
+        removeListener(listener) {
+          if (chromeCommitListener === listener) chromeCommitListener = null;
+          chromeListenerRemoved = true;
+        },
+      },
+      onErrorOccurred: {
+        addListener(listener) { chromeErrorListener = listener; },
+        removeListener(listener) {
+          if (chromeErrorListener === listener) chromeErrorListener = null;
+        },
+      },
+    };
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
+      chromeCommitListener?.({ tabId: 42, frameId: 1, url: chromeUrl });
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeLoadingOnly = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeLoadingOnly.success, false, 'Chrome loading and child-frame events must not prove a top-frame commit');
+    assert.equal(chromeLoadingOnly.navigationPending, true);
+
+    const fastChromeTimers = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay >= 9000 ? 20 : 0, ...args);
+      chromeStatus = 'loading';
+      globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+        chromeUpdates.push(url);
+        chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl, status: chromeStatus });
+        originalSetTimeout(() => {
+          chromeStatus = 'complete';
+          chromeCommitListener?.({ tabId: 42, frameId: 0, url: chromeUrl });
+        }, 5);
+        return { id: 42, url: chromeUrl, status: chromeStatus };
+      };
+      const chromeSlowCommit = await chromeAgent.executeTool(42, 'navigate', {
+        url: chromeUrl,
+        force: true,
+      });
+      assert.equal(chromeSlowCommit.success, true, 'Chrome should keep listening while a slow top-frame navigation is loading');
+      assert.equal(chromeSlowCommit.verified, true);
+    } finally {
+      globalThis.setTimeout = fastChromeTimers;
+      chromeStatus = 'complete';
+    }
+
+    chromeStatus = 'loading';
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl, status: chromeStatus });
+      return { id: 42, url: chromeUrl, status: chromeStatus };
+    };
+    const chromeStillLoading = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeStillLoading.success, false);
+    assert.equal(chromeStillLoading.navigationPending, true);
+    assert.equal(chromeStillLoading.confirmationPossible, false, 'Chrome must not invent a native dialog while the tab is still loading');
+    assert.equal(chromeStillLoading.recoveryRequired, 'wait_for_stable');
+    assert.match(chromeStillLoading.error, /still loading/i);
+    assert.doesNotMatch(chromeAgent._digestToolResult('navigate', JSON.stringify(chromeStillLoading)), /confirmation/i);
+    chromeStatus = 'complete';
+
+    chromeListenerRemoved = false;
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
+      chromeCommitListener?.({ tabId: 42, frameId: 0, url: chromeUrl });
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeSameUrlCommitted = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeSameUrlCommitted.success, true, 'Chrome should verify a same-URL reload after a top-frame commit');
+    assert.equal(chromeSameUrlCommitted.verified, true);
+    assert.equal(chromeListenerRemoved, true, 'Chrome should remove the temporary navigation listener');
+
+    chromeListenerRemoved = false;
+    const chromeRoundTrip = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(chromeRoundTrip.success, true, 'Chrome should accept a committed redirect back to the starting URL');
+    assert.equal(chromeRoundTrip.verified, true);
+    assert.equal(chromeRoundTrip.redirected, true);
+    assert.equal(chromeRoundTrip.url, chromeUrl);
+    assert.equal(chromeRoundTrip.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.equal(chromeListenerRemoved, true, 'Chrome should remove the round-trip navigation listener');
+
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeUrl = 'https://github.com/login?return_to=%2Fexample%2Frepo%2Fupload%2Fmain';
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeRedirect = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(chromeRedirect.success, true);
+    assert.equal(chromeRedirect.verified, true);
+    assert.equal(chromeRedirect.redirected, true);
+    assert.equal(chromeRedirect.url, chromeUrl);
+
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeUrl = url;
+      chromeErrorListener?.({ tabId: 42, frameId: 0, url, error: 'net::ERR_NAME_NOT_RESOLVED' });
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeNavigationError = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://does-not-exist.invalid/',
+      force: true,
+    });
+    assert.equal(chromeNavigationError.success, false, 'Chrome must prioritize a terminal navigation error over a changed URL readback');
+    assert.equal(chromeNavigationError.navigationFailed, true);
+    assert.equal(chromeNavigationError.url, 'https://does-not-exist.invalid/');
+    assert.match(chromeNavigationError.error, /ERR_NAME_NOT_RESOLVED/);
+
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      if (url === 'https://reject.example/') throw new Error('synthetic Chrome rejection');
+      chromeUrl = url;
+      return { id: 42, url };
+    };
+    const chromeGet = globalThis.chrome.tabs.get;
+    globalThis.chrome.tabs.get = async () => { throw new Error('synthetic readback failure'); };
+    const chromeUnknown = await chromeAgent.executeTool(42, 'navigate', {
+      url: 'https://safe.example/unverified',
+      force: true,
+    });
+    assert.equal(chromeUnknown.success, false);
+    assert.equal(chromeUnknown.dispatched, true);
+    assert.equal(chromeUnknown.outcomeUnknown, true);
+    assert.equal(chromeUnknown.verificationFailed, true);
+    globalThis.chrome.tabs.get = chromeGet;
+
     const chromeRejected = await chromeAgent.executeTool(42, 'navigate', {
       url: 'https://reject.example/',
       force: true,
@@ -52259,11 +53367,12 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.match(chromeRejected.error, /synthetic Chrome rejection/);
 
     let firefoxUrl = 'https://trusted.example/base/page';
+    let firefoxStatus = 'complete';
     const firefoxUpdates = [];
     globalThis.browser = {
       tabs: {
         async get() {
-          return { id: 42, url: firefoxUrl };
+          return { id: 42, url: firefoxUrl, status: firefoxStatus };
         },
         async update(_tabId, { url }) {
           firefoxUpdates.push(url);
@@ -52312,6 +53421,187 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     });
     assert.equal(firefoxHttps.success, true);
     assert.equal(firefoxUpdates.at(-1), 'https://safe.example/path');
+
+    firefoxUrl = 'https://github.com/example/repo/edit/main/README.md';
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxWarnings = [];
+    const firefoxPending = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    }, (type, data) => firefoxWarnings.push({ type, data }));
+    assert.equal(firefoxPending.success, false, 'Firefox must read back the actual tab URL');
+    assert.equal(firefoxPending.dispatched, true);
+    assert.equal(firefoxPending.navigationPending, true);
+    assert.equal(firefoxPending.confirmationPossible, true);
+    assert.equal(firefoxPending.recoveryRequired, 'browser_navigation_confirmation');
+    assert.equal(firefoxPending.url, 'https://github.com/example/repo/edit/main/README.md');
+    assert.equal(firefoxPending.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.equal(firefoxWarnings.at(-1)?.type, 'warning');
+    assert.match(firefoxAgent._digestToolResult('navigate', JSON.stringify(firefoxPending)), /^error:/, 'trimmed context must not say the agent arrived');
+
+    const firefoxSameUrlPending = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxSameUrlPending.success, false, 'Firefox must not verify a same-URL dispatch without a commit signal');
+    assert.equal(firefoxSameUrlPending.navigationPending, true);
+
+    let firefoxLoadingListener = null;
+    globalThis.browser.tabs.onUpdated = {
+      addListener(listener) { firefoxLoadingListener = listener; },
+      removeListener(listener) {
+        if (firefoxLoadingListener === listener) firefoxLoadingListener = null;
+      },
+    };
+    let firefoxCommitListener = null;
+    let firefoxErrorListener = null;
+    let firefoxListenerRemoved = false;
+    globalThis.browser.webNavigation = {
+      onCommitted: {
+        addListener(listener) { firefoxCommitListener = listener; },
+        removeListener(listener) {
+          if (firefoxCommitListener === listener) firefoxCommitListener = null;
+          firefoxListenerRemoved = true;
+        },
+      },
+      onErrorOccurred: {
+        addListener(listener) { firefoxErrorListener = listener; },
+        removeListener(listener) {
+          if (firefoxErrorListener === listener) firefoxErrorListener = null;
+        },
+      },
+    };
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
+      firefoxCommitListener?.({ tabId: 42, frameId: 1, url: firefoxUrl });
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxLoadingOnly = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxLoadingOnly.success, false, 'Firefox loading and child-frame events must not prove a top-frame commit');
+    assert.equal(firefoxLoadingOnly.navigationPending, true);
+
+    const fastFirefoxTimers = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay >= 9000 ? 20 : 0, ...args);
+      firefoxStatus = 'loading';
+      globalThis.browser.tabs.update = async (_tabId, { url }) => {
+        firefoxUpdates.push(url);
+        firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl, status: firefoxStatus });
+        originalSetTimeout(() => {
+          firefoxStatus = 'complete';
+          firefoxCommitListener?.({ tabId: 42, frameId: 0, url: firefoxUrl });
+        }, 5);
+        return { id: 42, url: firefoxUrl, status: firefoxStatus };
+      };
+      const firefoxSlowCommit = await firefoxAgent.executeTool(42, 'navigate', {
+        url: firefoxUrl,
+        force: true,
+      });
+      assert.equal(firefoxSlowCommit.success, true, 'Firefox should keep listening while a slow top-frame navigation is loading');
+      assert.equal(firefoxSlowCommit.verified, true);
+    } finally {
+      globalThis.setTimeout = fastFirefoxTimers;
+      firefoxStatus = 'complete';
+    }
+
+    firefoxStatus = 'loading';
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl, status: firefoxStatus });
+      return { id: 42, url: firefoxUrl, status: firefoxStatus };
+    };
+    const firefoxStillLoading = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxStillLoading.success, false);
+    assert.equal(firefoxStillLoading.navigationPending, true);
+    assert.equal(firefoxStillLoading.confirmationPossible, false, 'Firefox must not invent a native dialog while the tab is still loading');
+    assert.equal(firefoxStillLoading.recoveryRequired, 'wait_for_stable');
+    assert.match(firefoxStillLoading.error, /still loading/i);
+    assert.doesNotMatch(firefoxAgent._digestToolResult('navigate', JSON.stringify(firefoxStillLoading)), /confirmation/i);
+    firefoxStatus = 'complete';
+
+    firefoxListenerRemoved = false;
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
+      firefoxCommitListener?.({ tabId: 42, frameId: 0, url: firefoxUrl });
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxSameUrlCommitted = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxSameUrlCommitted.success, true, 'Firefox should verify a same-URL reload after a top-frame commit');
+    assert.equal(firefoxSameUrlCommitted.verified, true);
+    assert.equal(firefoxListenerRemoved, true, 'Firefox should remove the temporary navigation listener');
+
+    firefoxListenerRemoved = false;
+    const firefoxRoundTrip = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(firefoxRoundTrip.success, true, 'Firefox should accept a committed redirect back to the starting URL');
+    assert.equal(firefoxRoundTrip.verified, true);
+    assert.equal(firefoxRoundTrip.redirected, true);
+    assert.equal(firefoxRoundTrip.url, firefoxUrl);
+    assert.equal(firefoxRoundTrip.resolvedUrl, 'https://github.com/example/repo/upload/main');
+    assert.equal(firefoxListenerRemoved, true, 'Firefox should remove the round-trip navigation listener');
+
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxUrl = 'https://github.com/login?return_to=%2Fexample%2Frepo%2Fupload%2Fmain';
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxRedirect = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://github.com/example/repo/upload/main',
+      force: true,
+    });
+    assert.equal(firefoxRedirect.success, true);
+    assert.equal(firefoxRedirect.verified, true);
+    assert.equal(firefoxRedirect.redirected, true);
+    assert.equal(firefoxRedirect.url, firefoxUrl);
+
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxUrl = url;
+      firefoxErrorListener?.({ tabId: 42, frameId: 0, url, error: 'NS_ERROR_UNKNOWN_HOST' });
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxNavigationError = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://does-not-exist.invalid/',
+      force: true,
+    });
+    assert.equal(firefoxNavigationError.success, false, 'Firefox must prioritize a terminal navigation error over a changed URL readback');
+    assert.equal(firefoxNavigationError.navigationFailed, true);
+    assert.equal(firefoxNavigationError.url, 'https://does-not-exist.invalid/');
+    assert.match(firefoxNavigationError.error, /NS_ERROR_UNKNOWN_HOST/);
+
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      if (url === 'https://reject.example/') throw new Error('synthetic Firefox rejection');
+      firefoxUrl = url;
+      return { id: 42, url };
+    };
+    const firefoxGet = globalThis.browser.tabs.get;
+    globalThis.browser.tabs.get = async () => { throw new Error('synthetic readback failure'); };
+    const firefoxUnknown = await firefoxAgent.executeTool(42, 'navigate', {
+      url: 'https://safe.example/unverified',
+      force: true,
+    });
+    assert.equal(firefoxUnknown.success, false);
+    assert.equal(firefoxUnknown.dispatched, true);
+    assert.equal(firefoxUnknown.outcomeUnknown, true);
+    assert.equal(firefoxUnknown.verificationFailed, true);
+    globalThis.browser.tabs.get = firefoxGet;
 
     const firefoxRejected = await firefoxAgent.executeTool(42, 'navigate', {
       url: 'https://reject.example/',
@@ -58433,8 +59723,8 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
     );
     assert.match(
       source,
-      /const canUseScratchpadTool = this\._isActionMode\(mode\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
-      `${label} should gate attachment scratchpad guidance on ask vs action modes`,
+      /const attachmentToolNames = new Set\([\s\S]*?getToolsForMode\(mode, \{ tier: provider\.promptTier \}\)[\s\S]*?const canUseScratchpadTool = attachmentToolNames\.has\('scratchpad_write'\);[\s\S]*?const canUseUploadTool = attachmentToolNames\.has\('upload_file'\);[\s\S]*?(?:await )?this\._applyAttachments\(enriched, sourceBoundAttachments, provider, \{[\s\S]*?canUseScratchpadTool,[\s\S]*?canUseUploadTool,[\s\S]*?tabId,[\s\S]*?messages,[\s\S]*?\}\);[\s\S]*?_pinTextAttachmentMetadata\(tabId, sourceBoundAttachments, \{ canUseScratchpadTool \}\);/,
+      `${label} should derive attachment guidance from the active run tool catalog`,
     );
   }
 });
@@ -58523,6 +59813,11 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
       source,
       /const maxBytes = isTextFile \? MAX_TEXT_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;/,
       `${label} should size-check text attachments against the text cap`,
+    );
+    assert.match(
+      source,
+      /const \[textContent, dataUrl\] = await Promise\.all\(\[[\s\S]*?readFileAsText\(file\),[\s\S]*?readFileAsDataUrl\(file\),[\s\S]*?mimeType: file\.type \|\| ''/,
+      `${label} should retain both decoded text and exact upload bytes/MIME`,
     );
     assert.match(
       source,

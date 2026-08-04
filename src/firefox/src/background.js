@@ -33,6 +33,7 @@ import {
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
   buildSelectionPrompt,
+  normalizeSelectionAction,
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
@@ -183,6 +184,7 @@ function createContextMenus() {
       ['explain', 'Explain'],
       ['quiz', 'Quiz me'],
       ['proofread', 'Proofread'],
+      ['humanize', 'Humanize'],
     ]) {
       createItem({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title, contexts: ['selection'] });
     }
@@ -1074,11 +1076,14 @@ async function handleContextMenuAsk(info, tab) {
   }
 
   let text = '';
+  let selectionAction = '';
   if (menuItemId === CONTEXT_MENU_GENERIC_ASK_ID) {
     text = buildContextMenuPrompt(info.selectionText);
   } else if (menuItemId.startsWith(CONTEXT_MENU_ACTION_PREFIX)) {
-    text = buildSelectionPrompt(info.selectionText, menuItemId.slice(CONTEXT_MENU_ACTION_PREFIX.length));
+    selectionAction = normalizeSelectionAction(menuItemId.slice(CONTEXT_MENU_ACTION_PREFIX.length));
+    text = buildSelectionPrompt(info.selectionText, selectionAction);
   } else if (menuItemId.startsWith(CONTEXT_MENU_TRANSLATE_PREFIX)) {
+    selectionAction = 'translate';
     text = buildSelectionPrompt(info.selectionText, 'translate', '', menuItemId.slice(CONTEXT_MENU_TRANSLATE_PREFIX.length));
   }
   if (!text) return;
@@ -1088,6 +1093,7 @@ async function handleContextMenuAsk(info, tab) {
     tabId: tab.id,
     text,
     sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+    ...(selectionAction ? { selectionAction } : {}),
     createdAt: Date.now(),
   };
 
@@ -1111,6 +1117,7 @@ getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
   const tab = sender?.tab;
+  const selectionAction = normalizeSelectionAction(msg.action);
   const text = buildSelectionPrompt(msg.selectionText, msg.action, msg.question, msg.language);
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
@@ -1122,6 +1129,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     tabId: tab.id,
     text,
     sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+    ...(selectionAction ? { selectionAction } : {}),
     createdAt: Date.now(),
   };
 
@@ -1989,7 +1997,12 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-            ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+            ? {
+              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              ...(normalizeSelectionAction(msg.selectionAction)
+                ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
+                : {}),
+            }
             : {}),
           locale: msg.locale,
           intentFailureMessage: msg.intentFailureMessage,
@@ -2107,7 +2120,12 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-            ? { sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING }
+            ? {
+              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              ...(normalizeSelectionAction(msg.selectionAction)
+                ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
+                : {}),
+            }
             : {}),
           locale: msg.locale,
           intentFailureMessage: msg.intentFailureMessage,

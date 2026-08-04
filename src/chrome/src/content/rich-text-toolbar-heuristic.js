@@ -15,8 +15,8 @@
  *
  *   - Content scripts load it before content.js (manifest content_scripts)
  *     and call it through globalThis.__wbRichTextToolbarHeuristic.
- *   - cdp-client.js fetches this file's source and prepends it to the
- *     function it evaluates in the page's main world.
+ *   - cdp-client.js fetches this file's source and captures the resulting API
+ *     in a function-local binding inside the page's main world.
  *
  * Because the main world has no access to the content script's isolated-world
  * ref registry, ref minting is injected by the caller (`axRef`) rather than
@@ -26,8 +26,7 @@
  * Keep this file free of content.js internals — it must stay evaluable on its
  * own in a bare page context.
  */
-(() => {
-  if (globalThis.__wbRichTextToolbarHeuristic) return;
+var __wbRichTextToolbarHeuristic = (() => {
 
   function _composedParent(node) {
     if (!node) return null;
@@ -424,7 +423,7 @@
     } catch { return null; }
   }
 
-  globalThis.__wbRichTextToolbarHeuristic = {
+  return {
     candidate(el, baseMeta, options = {}) {
       _axRef = typeof options.axRef === 'function' ? options.axRef : null;
       try {
@@ -441,3 +440,14 @@
     availablePresetValues: _richTextToolbarAvailablePresetValues,
   };
 })();
+
+// Content scripts share this isolated-world global with content.js. The CDP
+// probe sets the lexical flag below to false and uses the local binding above
+// directly, so a page-owned global can neither replace nor disable the trusted
+// packaged heuristic.
+if (
+  typeof __wbInstallRichTextToolbarHeuristicGlobal === 'undefined'
+  || __wbInstallRichTextToolbarHeuristicGlobal
+) {
+  globalThis.__wbRichTextToolbarHeuristic = __wbRichTextToolbarHeuristic;
+}

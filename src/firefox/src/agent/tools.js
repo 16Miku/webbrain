@@ -343,7 +343,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'navigate',
-      description: 'Navigate the current tab to a URL. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally.',
+      description: 'Navigate the current tab to a URL and verify that the browser commits the navigation, including same-URL reloads. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally. A native browser leave-page confirmation cannot be accepted automatically: while it is open, this returns navigationPending/confirmationPossible instead of success.',
       parameters: {
         type: 'object',
         properties: {
@@ -769,13 +769,17 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'upload_file',
-      description: 'Attach a file directly to an existing <input type="file"> without clicking the page upload control. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide downloadId (preferred — re-fetches the file from its original URL without an OS dialog), or omit it only when the user must pick a local file through WebBrain\'s own picker. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize the widget; then retry upload_file with the exact selector returned or discovered. NOTE: Firefox cannot set arbitrary local file paths (no CDP); only downloadId and user-picker flows are supported.',
+      description: 'Attach a file directly to an existing <input type="file"> without clicking the page upload control. This proves only that the page input received or consumed the file; it does NOT prove a remote upload, form submission, or repository commit. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide attachmentId from the current user-attachment notice to reuse that exact file, provide downloadId to re-fetch a prior download, or omit both only when the user must pick a new local file through WebBrain\'s own picker. Never guess an id. If the selector is ambiguous, call get_interactive_elements and use the exact selector on the intended file-input record before retrying. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize it; then retry upload_file with the exact selector returned or discovered. NOTE: Firefox cannot set arbitrary local file paths (no CDP).',
       parameters: {
         type: 'object',
         properties: {
           selector: {
             type: 'string',
             description: 'CSS selector for the <input type="file"> element.',
+          },
+          attachmentId: {
+            type: 'string',
+            description: 'Opaque id from the current [UNTRUSTED USER ATTACHMENTS] notice. Reuses that exact user-selected file without another picker. Valid only during the current agent run.',
           },
           downloadId: {
             type: 'number',
@@ -1444,7 +1448,7 @@ CLICKING — read this:
 - For buttons and links you can SEE, click by visible text: \`click({text: "Publish release"})\`. Default matching is EXACT (case-insensitive). If exact fails (no match), the system automatically tries prefix then substring matching — but if multiple elements match at any level, it returns an ambiguity error instead of guessing.
 - If you get an ambiguity error, use a more specific text string, switch to \`click({index: N})\` from \`get_interactive_elements\`, or use a selector.
 - You can explicitly control matching with \`textMatch\`: \`"exact"\` (default), \`"prefix"\`, or \`"contains"\`.
-- FILE UPLOADS: when the page already has an \`<input type="file">\`, do not click "Choose file", "Select a file", "Browse", the upload drop zone, or the input first. If the file is already downloaded, find the exact selector and call \`upload_file({selector, downloadId})\` directly; omit downloadId only when the user must choose a local file through WebBrain's own picker. Exception: if \`upload_file\` reports that no input exists because the widget creates it lazily, make one guarded click on the widget's add-files control to initialize it. A blocked-picker result may return the new exact selector; retry \`upload_file\` with that selector. Never substitute a generic \`input[type="file"]\` selector when multiple file inputs exist.
+- FILE UPLOADS: when the page already has an \`<input type="file">\`, do not click "Choose file", "Select a file", "Browse", the upload drop zone, or the input first. Call \`get_interactive_elements\` when needed and use the exact \`selector\` returned on the intended file-input record, then call \`upload_file\` with the current user-attachment \`attachmentId\` or a prior download's \`downloadId\`; omit both only for WebBrain's picker. \`attachmentState\` proves only local input attachment/page consumption; it does NOT prove a remote upload or submit. Verify the filename/status in the page, then activate and verify the required Submit/Commit control. If the selector is ambiguous, a fresh \`get_interactive_elements\` call is required before retrying; never guess a selector variant or use generic \`input[type="file"]\` when multiple inputs exist. If no input exists because the widget creates it lazily, make one guarded click on its add-files control to initialize it, then retry with the exact returned selector.
 - Order of preference:
   1. \`click({text: "..."})\` — visible text. Most reliable.
   2. \`click({index: N})\` — index from get_interactive_elements MADE THIS SAME TURN.
@@ -1570,7 +1574,7 @@ TOOLS — use only these:
 - schedule_resume({after_seconds|run_at, reason, resume_instruction}): terminal durable pause for this current task.
 - schedule_task({title, prompt, schedule, target, mode}): create one-shot or fixed-minute-interval future work only when explicitly requested by the user. Calendar/cron recurrence is unsupported and must not be approximated. Prefer target.type:"url" for monitors/repeatable automations; use current_tab only for exact current-tab state.
 - iframe_read / iframe_click / iframe_type ({urlFilter, selector, text}): interact inside cross-origin iframes (Stripe, payment widgets, embeds).
-- fetch_url({url}) / research_url({url}): read OTHER URLs (not the active tab). list_downloads, download_files, download_resource_from_page, read_downloaded_file, upload_file({selector, downloadId}): file workflows. Use download_files for direct URLs and download_resource_from_page when the resource is attached to a visible page element or a blob: URL. Successful downloads auto-pin each file's downloadId to the scratchpad as an \`[auto]\` line — attach with upload_file({downloadId, selector}) and re-read with read_downloaded_file({downloadId}); no need to recall the path. Omit downloadId to prompt the user to pick a local file.
+- fetch_url({url}) / research_url({url}): read OTHER URLs (not the active tab). list_downloads, download_files, download_resource_from_page, read_downloaded_file, upload_file({selector, attachmentId}) or upload_file({selector, downloadId}): file workflows. Use attachmentId for a current user-supplied file; use downloadId for a downloaded file. Use download_files for direct URLs and download_resource_from_page when the resource is attached to a visible page element or a blob: URL. Successful downloads auto-pin each file's downloadId to the scratchpad as an \`[auto]\` line — attach with upload_file({downloadId, selector}) and re-read with read_downloaded_file({downloadId}); no need to recall the path. Omit both ids to prompt the user to pick a new local file.
 - download_public_media (if enabled) / download_social_media: one-shot image/video download from supported public social sites; purpose-built download tools should be tried before manual DOM/resource workflows.
 - verify_form: check a form's field values before submitting. scratchpad_write({text}): pin facts that survive context summarization. progress_update/progress_read: track repeated item/action progress.
 - clarify({question, options?}): ask the user only when materially blocked/ambiguous (budget 1-2 per run). Unanswered clarifies auto-select options[0] after timeout (source=timeout is not user approval for high-risk steps; source=auto Instant is intentional auto-approve). solve_captcha: once, only when CapSolver is configured.
