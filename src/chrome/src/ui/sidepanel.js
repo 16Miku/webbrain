@@ -10993,9 +10993,20 @@ async function handleAttachedFiles(fileList, tabId = renderedTabId ?? currentTab
       }
       try {
         if (isTextFile) {
-          const textContent = await readFileAsText(file);
+          // Keep the decoded text for model context and the original bytes for
+          // an exact upload_file replay (encoding/BOM and MIME must survive).
+          const [textContent, dataUrl] = await Promise.all([
+            readFileAsText(file),
+            readFileAsDataUrl(file),
+          ]);
           if (generation !== getAttachmentGeneration(numericTabId)) continue;
-          getPendingAttachmentsForTab(numericTabId).push({ kind: 'text', name: file.name, textContent });
+          getPendingAttachmentsForTab(numericTabId).push({
+            kind: 'text',
+            name: file.name,
+            textContent,
+            dataUrl,
+            mimeType: file.type || '',
+          });
         } else {
           const dataUrl = await readFileAsDataUrl(file);
           if (generation !== getAttachmentGeneration(numericTabId)) continue;
