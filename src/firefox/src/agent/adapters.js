@@ -15781,6 +15781,16 @@ const ADAPTERS = [
 - The sidebar collapses on narrow viewports — scroll horizontally or expand it before clicking sidebar items.`,
   },
   {
+    name: 'huggingface',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?huggingface\.co(?:[/?#]|$)/i.test(url),
+    notes: `
+- Repository upload routes expose two file inputs. Use \`input[type="file"]:not([accept])\` for repository files; \`input[type="file"][accept*="image"]\` belongs to the extended-description editor and does not stage a repository file.
+- When the repository input already exists, call \`upload_file\` directly; do not click "Upload file(s)" or the drop zone first.
+- A filename chip, generated commit summary, and enabled "Commit changes" button mean the file is staged only. Click "Commit changes", wait, and verify the file under "Files and versions" before reporting upload success.
+- For model-card media, commit the asset first, then edit README Markdown to reference it, commit README, and verify the rendered model card.`,
+  },
+  {
     name: 'mozilla-addons-developer',
     category: 'general',
     matches: (url) => /^https?:\/\/addons\.mozilla\.org\/(?:[a-z]{2,3}(?:-[a-z]{2})?\/)?developers(?:\/|$)/i.test(url),

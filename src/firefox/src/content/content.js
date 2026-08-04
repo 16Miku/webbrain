@@ -842,6 +842,69 @@
     return queryInteractiveFull().map(c => c.el);
   }
 
+  function _cssString(value) {
+    return String(value || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\0/g, '\uFFFD')
+      .replace(/[\n\r\f]/g, ch => `\\${ch.codePointAt(0).toString(16)} `);
+  }
+
+  function _deepSelectorMatches(selector) {
+    const matches = [];
+    const visit = (root) => {
+      root.querySelectorAll(selector).forEach(el => matches.push(el));
+      root.querySelectorAll('*').forEach(host => {
+        if (host.shadowRoot) visit(host.shadowRoot);
+      });
+    };
+    try { visit(document); } catch { return []; }
+    return matches;
+  }
+
+  function _fileInputPath(el) {
+    const parts = [];
+    for (let node = el; node && node.nodeType === 1 && parts.length < 10; node = node.parentElement) {
+      let part = String(node.tagName || '').toLowerCase();
+      if (!part) break;
+      if (node.id) {
+        try { part += `#${CSS.escape(node.id)}`; } catch {}
+        parts.unshift(part);
+        break;
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const sameTag = Array.from(parent.children).filter(child => child.tagName === node.tagName);
+        if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(node) + 1})`;
+      }
+      parts.unshift(part);
+    }
+    return parts.join(' > ');
+  }
+
+  function _uniqueFileInputSelector(el) {
+    if (!(el instanceof HTMLInputElement) || el.type !== 'file') return '';
+    const candidates = [];
+    if (el.id) {
+      try { candidates.push(`#${CSS.escape(el.id)}`); } catch {}
+    }
+    if (el.name) candidates.push(`input[type="file"][name="${_cssString(el.name)}"]`);
+    const accept = el.getAttribute('accept');
+    const acceptPart = accept == null
+      ? ':not([accept])'
+      : `[accept="${_cssString(accept)}"]`;
+    const multiplePart = el.hasAttribute('multiple') ? '[multiple]' : ':not([multiple])';
+    candidates.push(`input[type="file"]${acceptPart}${multiplePart}`);
+    candidates.push(`input[type="file"]${acceptPart}`);
+    const path = _fileInputPath(el);
+    if (path) candidates.push(path);
+    for (const selector of candidates) {
+      const matches = _deepSelectorMatches(selector);
+      if (matches.length === 1 && matches[0] === el) return selector;
+    }
+    return '';
+  }
+
   window.__wb_resolve_click_target_for_submit_probe = function resolveClickTargetForSubmitProbe(params = {}) {
     if (params?.index == null) return null;
     const index = Number(params.index);
@@ -852,7 +915,7 @@
   function getInteractiveElementsFull() {
     return queryInteractiveFull().map((c, i) => {
       const el = c.el;
-      return {
+      const result = {
         index: i,
         tag: el.tagName.toLowerCase(),
         type: el.type || '',
@@ -864,6 +927,13 @@
         rect: { x: Math.round(c.rect.x), y: Math.round(c.rect.y), w: Math.round(c.rect.width), h: Math.round(c.rect.height) },
         inShadowDOM: c.inShadow,
       };
+      if (el instanceof HTMLInputElement && el.type === 'file') {
+        const selector = _uniqueFileInputSelector(el);
+        result.accept = el.getAttribute('accept');
+        result.multiple = el.hasAttribute('multiple');
+        if (selector) result.selector = selector;
+      }
+      return result;
     });
   }
 

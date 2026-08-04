@@ -414,6 +414,7 @@ export class Agent extends LoopDetector {
     this._lastClickProgress = new Map(); // tabId -> { ident, snapshot }
     this._clickAxCdpFallbacks = new Map(); // tabId -> Set(documentToken|ref_id), one trusted fallback per document target
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
+    this._uploadSelectorRecoveryRequired = new Map(); // tabId -> prior ambiguous match count; cleared only by inspection/navigation/cleanup
     // Productive browsing often mixes reads and scrolling, so exact-call loop
     // detection cannot tell when the agent already has enough evidence to
     // answer. Track long observation-only streaks and remind it to deliver a
@@ -1664,6 +1665,7 @@ export class Agent extends LoopDetector {
    */
   _clearPageLoopState(tabId) {
     super._clearPageLoopState(tabId);
+    this._uploadSelectorRecoveryRequired.delete(tabId);
     this.deliveryObservationStreaks.delete(tabId);
     this.bulkApiMutationClicks.delete(tabId);
     this.bulkApiMutationHints.delete(tabId);
@@ -1673,6 +1675,12 @@ export class Agent extends LoopDetector {
         this.failedBulkApiReplayShapes.delete(key);
       }
     }
+  }
+
+  _clearUploadSelectorRecoveryAfterInspection(tabId, name, response) {
+    if (name !== 'get_interactive_elements' || !Array.isArray(response)) return false;
+    this._uploadSelectorRecoveryRequired.delete(tabId);
+    return true;
   }
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
@@ -1715,6 +1723,7 @@ export class Agent extends LoopDetector {
       && this._isSuccessfulExecutionEvidence(result)
       && result?.noProgress !== true
       && result?.verified !== false
+      && result?.remoteStateVerified !== false
       && result?.inconclusive !== true;
   }
 
@@ -3588,7 +3597,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ) {
       return 'action_failed';
     }
-    if (toolResult?.inconclusive || toolResult?.verified === false) {
+    if (
+      toolResult?.inconclusive
+      || toolResult?.verified === false
+      || toolResult?.remoteStateVerified === false
+    ) {
       return 'action_unverified';
     }
     if (
@@ -13036,7 +13049,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       case 'upload_file': {
         if (parsed.success === false) return `upload failed: ${this._truncate(parsed.error || '', 110)}`;
-        if (parsed.attached) return `uploaded ${this._truncate(parsed.attached.name || '', 60)} (${parsed.attached.size} bytes)`;
+        if (parsed.remoteStateVerified === false) {
+          const localState = parsed.attachmentState === 'page_consumed'
+            ? 'page consumed attachment'
+            : 'file attached to input';
+          return `${localState} (remote submission unverified)`;
+        }
+        if (parsed.attached) return `attached ${this._truncate(parsed.attached.name || '', 60)} (${parsed.attached.size} bytes)`;
         return parsed.verified === false ? `upload sent (unverified)` : `uploaded ${this._truncate(parsed.file || '', 70)}`;
       }
       case 'new_tab': {
@@ -16650,6 +16669,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'upload_file') {
       args = args || {};
+      if (this._uploadSelectorRecoveryRequired.has(tabId)) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          ambiguous: true,
+          matchCount: Number(this._uploadSelectorRecoveryRequired.get(tabId)) || 0,
+          recoveryRequired: 'get_interactive_elements',
+          error: 'A previous upload selector matched multiple file inputs. Call get_interactive_elements now and use the exact selector returned on the intended file-input record before retrying upload_file; do not guess another selector variant.',
+        };
+      }
       // Accept a downloadId as an alternative to filePath. After context
       // compaction the model often can't recall the exact on-disk path, but the
       // small integer id (returned by download_files/list_downloads and
@@ -16697,9 +16727,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: `File input not found for selector "${args.selector}". Re-inspect the page with get_interactive_elements or get_accessibility_tree to find the real <input type=file> (some upload widgets hide it until you click their "add files" button first).` };
         }
         if (objectIds.length > 1) {
+          this._uploadSelectorRecoveryRequired.set(tabId, objectIds.length);
           return {
             success: false,
-            error: `Selector "${args.selector}" matched ${objectIds.length} elements across the document and open shadow roots. Use an exact, unique selector for the intended <input type=file>; do not use a generic input[type=file] selector when multiple inputs exist.`,
+            dispatched: false,
+            noDispatch: true,
+            ambiguous: true,
+            matchCount: objectIds.length,
+            recoveryRequired: 'get_interactive_elements',
+            error: `Selector "${args.selector}" matched ${objectIds.length} elements across the document and open shadow roots. Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`,
           };
         }
 
@@ -16766,7 +16802,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // success for the model to confirm against the page, NOT a hard
             // failure: the old hard failure made the model loop, re-uploading a
             // file that was already attached and clobbering the page.
-            return { success: true, file: args.filePath, verified: false, note: `The file input is empty after upload — this usually means an async uploader (e.g. a GitHub release attachment) already consumed the file. Confirm "${basename}" now appears attached via get_accessibility_tree before re-uploading; only retry if it is genuinely missing (and if so, re-check the path with list_downloads).` };
+            return {
+              success: true,
+              file: args.filePath,
+              verified: false,
+              attachmentState: 'page_consumed',
+              remoteStateVerified: false,
+              note: `The page consumed the file input, but upload_file does not prove a remote upload or form submission. Confirm "${basename}" appears attached via get_accessibility_tree, then submit/commit the page when the task requires it. Only retry if the file is genuinely missing.`,
+            };
           }
           const attached = files.find(f => f.name === basename) || files[files.length - 1] || null;
           // readable === false means the bytes couldn't be read — the path is
@@ -16777,7 +16820,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (attached.readable === false) {
             return { success: false, dispatched: true, error: `"${args.filePath}" could not be read — it almost certainly does not exist at that path. Confirm the absolute path (use list_downloads to see where files were actually saved) and retry.` };
           }
-          return { success: true, file: args.filePath, attached: { name: attached.name, size: attached.size } };
+          return {
+            success: true,
+            file: args.filePath,
+            attached: { name: attached.name, size: attached.size },
+            verified: false,
+            attachmentState: 'input_attached',
+            remoteStateVerified: false,
+          };
         }
 
         // Could not read the FileList back. If the probe confirmed the path is
@@ -16788,7 +16838,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!pathConfirmed) {
           return { success: false, dispatched: true, error: `Could not confirm "${basename}" uploaded: the input.files list was unreadable and the local path "${args.filePath}" was not validated. Check whether "${basename}" appears attached via get_accessibility_tree — if it does, you're done; if not, re-check the path with list_downloads and the selector, then retry.` };
         }
-        return { success: true, file: args.filePath, verified: false, note: 'Attachment could not be verified (the input.files list was unreadable), but the local path validated as readable. If the file does not appear attached on the page, re-check the selector.' };
+        return {
+          success: true,
+          file: args.filePath,
+          verified: false,
+          attachmentState: 'page_consumed',
+          remoteStateVerified: false,
+          note: 'The local file was readable and the page handled the attachment event, but upload_file could not read the resulting FileList. This does not prove a remote upload or form submission; verify the page state and submit/commit when required.',
+        };
       } catch (e) {
         return { success: false, dispatched: uploadDispatched, error: `Upload failed: ${e.message}` };
       } finally {
@@ -18560,6 +18617,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (name === 'read_page') {
         response = applyReadPageWindow(response, args);
       }
+      this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
       return response;
     } finally {
       clickAxSideEffectWatch?.stop();
