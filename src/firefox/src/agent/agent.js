@@ -12257,11 +12257,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .slice(0, 120) || fallback;
   }
 
+  _newAttachmentHandleNonce() {
+    const cryptoApi = globalThis.crypto;
+    try {
+      if (typeof cryptoApi?.randomUUID === 'function') {
+        const uuid = cryptoApi.randomUUID().replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+        if (uuid) return uuid;
+      }
+      if (typeof cryptoApi?.getRandomValues === 'function') {
+        const bytes = new Uint8Array(12);
+        cryptoApi.getRandomValues(bytes);
+        return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+      }
+    } catch {}
+    this._attachmentHandleSequence = (this._attachmentHandleSequence || 0) + 1;
+    return `${Date.now().toString(36)}${this._attachmentHandleSequence.toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  }
+
   _registerUserAttachments(tabId, attachments = []) {
     if (tabId == null) return attachments;
     const handles = new Map();
+    const runNonce = this._newAttachmentHandleNonce();
     const registered = attachments.map((attachment, index) => {
-      const attachmentId = `attachment_${index + 1}`;
+      const attachmentId = `attachment_${runNonce}_${index + 1}`;
       const entry = { ...attachment, attachmentId };
       handles.set(attachmentId, entry);
       return entry;

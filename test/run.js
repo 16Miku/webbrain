@@ -50144,12 +50144,13 @@ test('user attachments expose run-scoped upload handles in both browser agents',
 
     assert.equal(result.ok, true, `${label} should accept the user attachment`);
     const notice = enriched.content.find(block => block?.text?.startsWith('[UNTRUSTED USER ATTACHMENTS'));
+    const attachmentId = [...agent._userAttachmentHandles.get(tabId).keys()][0];
     assert.ok(notice, `${label} should add the attachment boundary`);
-    assert.match(notice.text, /attachment_1 \(\.\.\/demo\.gif\)/, `${label} should pair the opaque handle with the visible name`);
+    assert.ok(notice.text.includes(`${attachmentId} (../demo.gif)`), `${label} should pair the opaque handle with the visible name`);
     assert.match(notice.text, /upload_file with its attachmentId/, `${label} should direct the model to reuse the handle`);
     assert.match(notice.text, /Do not open another picker, navigate to a separate upload route/, `${label} should avoid the J27 workaround`);
 
-    const payload = agent._resolveUserAttachment(tabId, 'attachment_1');
+    const payload = agent._resolveUserAttachment(tabId, attachmentId);
     assert.equal(payload.ok, true, `${label} should resolve the active handle`);
     assert.equal(payload.base64, 'R0lGODlh');
     assert.equal(payload.filename, 'demo.gif', `${label} should strip path components from upload filenames`);
@@ -50157,7 +50158,7 @@ test('user attachments expose run-scoped upload handles in both browser agents',
     assert.equal(payload.size, 6);
 
     agent._userAttachmentHandles.delete(tabId);
-    const expired = agent._resolveUserAttachment(tabId, 'attachment_1');
+    const expired = agent._resolveUserAttachment(tabId, attachmentId);
     assert.equal(expired.ok, false, `${label} should reject a handle after the run is cleared`);
     assert.match(expired.error, /Unknown or expired attachmentId/);
   }
@@ -50167,10 +50168,10 @@ test('user attachment handles enforce the actual-byte upload limit', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
     const tabId = label === 'chrome' ? 22011 : 22012;
-    agent._registerUserAttachments(tabId, [
+    const registered = agent._registerUserAttachments(tabId, [
       { kind: 'document', name: 'four.bin', dataUrl: 'data:application/octet-stream;base64,AQIDBA==' },
     ]);
-    const result = agent._resolveUserAttachment(tabId, 'attachment_1', 3);
+    const result = agent._resolveUserAttachment(tabId, registered[0].attachmentId, 3);
     assert.equal(result.ok, false, `${label} should reject bytes beyond the cap`);
     assert.match(result.error, /25MB upload limit/);
   }
@@ -50190,12 +50191,13 @@ test('user attachment notices expose every registered opaque upload handle', () 
 
     assert.match(notice, /Files: file-1\.gif,[\s\S]*file-8\.gif, \+2 more\./, `${label} should keep the display-name summary bounded`);
     for (let index = 1; index <= attachments.length; index += 1) {
+      const attachmentId = registered[index - 1].attachmentId;
       assert.ok(
-        notice.includes(`attachment_${index} (file-${index}.gif)`),
+        notice.includes(`${attachmentId} (file-${index}.gif)`),
         `${label} should expose the handle/name mapping for accepted attachment ${index}`,
       );
       assert.equal(
-        agent._resolveUserAttachment(tabId, `attachment_${index}`).ok,
+        agent._resolveUserAttachment(tabId, attachmentId).ok,
         true,
         `${label} should resolve every handle advertised in the notice`,
       );
@@ -50207,7 +50209,7 @@ test('text attachment handles preserve original bytes and MIME while retaining l
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
     const tabId = label === 'chrome' ? 22021 : 22022;
-    agent._registerUserAttachments(tabId, [
+    const firstRun = agent._registerUserAttachments(tabId, [
       {
         kind: 'text',
         name: 'encoded.csv',
@@ -50216,16 +50218,21 @@ test('text attachment handles preserve original bytes and MIME while retaining l
         mimeType: 'text/csv',
       },
     ]);
-    const exact = agent._resolveUserAttachment(tabId, 'attachment_1');
+    const firstAttachmentId = firstRun[0].attachmentId;
+    const exact = agent._resolveUserAttachment(tabId, firstAttachmentId);
     assert.equal(exact.ok, true, `${label} should resolve text attachment bytes`);
     assert.equal(exact.base64, '//5BAA==', `${label} should not UTF-8 re-encode the original UTF-16LE+BOM bytes`);
     assert.equal(exact.mimeType, 'text/csv', `${label} should preserve the original text MIME`);
     assert.equal(exact.size, 4);
 
-    agent._registerUserAttachments(tabId, [
+    const secondRun = agent._registerUserAttachments(tabId, [
       { kind: 'text', name: 'legacy.txt', textContent: 'A' },
     ]);
-    const legacy = agent._resolveUserAttachment(tabId, 'attachment_1');
+    const secondAttachmentId = secondRun[0].attachmentId;
+    assert.notEqual(secondAttachmentId, firstAttachmentId, `${label} should not reuse opaque ids across attachment turns`);
+    const stale = agent._resolveUserAttachment(tabId, firstAttachmentId);
+    assert.equal(stale.ok, false, `${label} should reject an id from the previous attachment turn instead of aliasing new bytes`);
+    const legacy = agent._resolveUserAttachment(tabId, secondAttachmentId);
     assert.equal(legacy.ok, true, `${label} should retain old persisted text attachment compatibility`);
     assert.equal(legacy.base64, 'QQ==');
     assert.equal(legacy.mimeType, 'text/plain;charset=utf-8');
@@ -50252,16 +50259,17 @@ test('Chrome upload_file injects the exact user attachment bytes without a path 
     cdpClientCh.releaseObjectGroup = async () => {};
 
     const agent = new AgentCh({});
-    agent._registerUserAttachments(42, [
+    const registered = agent._registerUserAttachments(42, [
       { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
     ]);
+    const attachmentId = registered[0].attachmentId;
     const result = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
-      attachmentId: 'attachment_1',
+      attachmentId,
     });
 
     assert.equal(result.success, true);
-    assert.equal(result.attachmentId, 'attachment_1');
+    assert.equal(result.attachmentId, attachmentId);
     assert.deepEqual(injected, [{
       objectId: 'input-handle',
       payload: {
@@ -50797,16 +50805,17 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
     globalThis.fetch = async () => { throw new Error('attachmentId must not re-fetch'); };
 
     const agent = new AgentFx({});
-    agent._registerUserAttachments(42, [
+    const registered = agent._registerUserAttachments(42, [
       { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
     ]);
+    const attachmentId = registered[0].attachmentId;
     const result = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
-      attachmentId: 'attachment_1',
+      attachmentId,
     });
 
     assert.equal(result.success, true);
-    assert.equal(result.attachmentId, 'attachment_1');
+    assert.equal(result.attachmentId, attachmentId);
     assert.equal(scripts.length, 1);
     assert.match(scripts[0], /const b64 = "R0lGODlh"/);
     assert.match(scripts[0], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
