@@ -3613,20 +3613,19 @@
     } catch { return null; }
   }
 
-  function _richTextEditorsAcrossOpenShadowRoots(scope) {
-    const selector = 'textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame';
-    const editors = [];
+  function _richTextToolbarQueryAcrossOpenShadowRoots(scope, selector, limit = 200) {
+    const matches = [];
     const roots = [scope];
     const seenRoots = new Set();
     let scannedHosts = 0;
-    while (roots.length && seenRoots.size < 128 && editors.length < 200 && scannedHosts < 5000) {
+    while (roots.length && seenRoots.size < 128 && matches.length < limit && scannedHosts < 5000) {
       const root = roots.shift();
       if (!root || seenRoots.has(root)) continue;
       seenRoots.add(root);
       try {
-        for (const editor of root.querySelectorAll?.(selector) || []) {
-          if (!editors.includes(editor)) editors.push(editor);
-          if (editors.length >= 200) break;
+        for (const match of root.querySelectorAll?.(selector) || []) {
+          if (!matches.includes(match)) matches.push(match);
+          if (matches.length >= limit) break;
         }
         for (const host of root.querySelectorAll?.('*') || []) {
           scannedHosts += 1;
@@ -3635,7 +3634,29 @@
         }
       } catch {}
     }
-    return editors;
+    return matches;
+  }
+
+  function _richTextEditorsAcrossOpenShadowRoots(scope) {
+    return _richTextToolbarQueryAcrossOpenShadowRoots(
+      scope,
+      'textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame',
+    );
+  }
+
+  function _richTextToolbarRegionKey(regionNode) {
+    try {
+      if (!regionNode?.isConnected) return '';
+      const rect = regionNode.getBoundingClientRect();
+      return [
+        'rtb',
+        String(regionNode.tagName || '').toLowerCase(),
+        Math.round(rect.x + window.scrollX),
+        Math.round(rect.y + window.scrollY),
+        Math.round(rect.width),
+        Math.round(rect.height),
+      ].join(':');
+    } catch { return ''; }
   }
 
   function _associatedRichTextEditor(regionNode) {
@@ -3650,7 +3671,7 @@
           const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
           if (
             editor === regionNode
-            || regionNode.contains(editor)
+            || _isComposedAncestor(regionNode, editor)
             || _hasComposedClosest(editor, '[role="toolbar"]')
             || !_visibleFieldContextNode(editor)
           ) continue;
@@ -3800,8 +3821,8 @@
         && value.length <= 16
         && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
       const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
-      if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
-      if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
+      if (searchLike) return null;
+      if (!unlabeled && !formattingLabel && ordinaryFilterLabel) return null;
       if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
       const interactiveSelector = [
         'input:not([type="hidden"])',
@@ -3824,7 +3845,7 @@
         if (!_visibleFieldContextNode(node)) continue;
         const region = node.getBoundingClientRect();
         if (region.height > 160 || region.width < rect.width) continue;
-        const controls = Array.from(node.querySelectorAll(interactiveSelector))
+        const controls = _richTextToolbarQueryAcrossOpenShadowRoots(node, interactiveSelector, 41)
           .filter(candidate => candidate === el || (!candidate.isContentEditable && _visibleFieldContextNode(candidate)));
         if (!controls.includes(el)) controls.unshift(el);
         if (controls.length < 2 || controls.length > 40) continue;
@@ -3843,14 +3864,14 @@
       if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
       if (score < 4) return null;
 
-      const regionNode = semanticToolbar || cluster?.node || el.parentElement || el;
+      const regionNode = semanticToolbar || cluster?.node || _composedParent(el) || el;
       const region = regionNode.getBoundingClientRect();
-      const related = Array.from(regionNode.querySelectorAll?.(interactiveSelector) || [])
+      const related = _richTextToolbarQueryAcrossOpenShadowRoots(regionNode, interactiveSelector, 30)
         .filter(candidate => !candidate.isContentEditable && _visibleFieldContextNode(candidate))
         .slice(0, 30);
-      const compactTextLeaves = Array.from(regionNode.querySelectorAll?.('*') || [])
+      const compactTextLeaves = _richTextToolbarQueryAcrossOpenShadowRoots(regionNode, '*', 200)
         .filter(candidate => {
-          if (candidate.children?.length || candidate.closest?.('[contenteditable]:not([contenteditable="false"])')) return false;
+          if (candidate.children?.length || _hasComposedClosest(candidate, '[contenteditable]:not([contenteditable="false"])')) return false;
           const text = String(candidate.textContent || '').trim();
           if (!text || text.length > 60 || !_visibleFieldContextNode(candidate)) return false;
           const candidateRect = candidate.getBoundingClientRect();
@@ -3859,8 +3880,8 @@
         .slice(0, 30);
       for (const leaf of compactTextLeaves) {
         let candidate = leaf;
-        for (let depth = 0; candidate && candidate !== regionNode && depth < 3; depth++, candidate = candidate.parentElement) {
-          if (!candidate.closest?.('[contenteditable]:not([contenteditable="false"])') && !related.includes(candidate)) related.push(candidate);
+        for (let depth = 0; candidate && candidate !== regionNode && depth < 3; depth++, candidate = _composedParent(candidate)) {
+          if (!_hasComposedClosest(candidate, '[contenteditable]:not([contenteditable="false"])') && !related.includes(candidate)) related.push(candidate);
         }
       }
       if (!related.includes(el)) related.unshift(el);
@@ -3891,6 +3912,7 @@
           h: Math.round(region.height),
         },
         regionRef,
+        regionKey: _richTextToolbarRegionKey(regionNode),
         relatedRefs,
         associatedEditorRef: associatedEditor?.ref || '',
         associatedEditorRect: associatedEditor?.rect || null,
@@ -3940,29 +3962,37 @@
 
   function _richTextToolbarContextForElement(el) {
     try {
-      if (!el || !el.isConnected) return { toolbarContext: false, toolbarRegionRef: '' };
-      const semanticToolbar = el.closest?.('[role="toolbar"]') || null;
+      if (!el || !el.isConnected) return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' };
+      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
       if (semanticToolbar) {
         let toolbarRegionRef = '';
         try { if (typeof window.__wb_ax_ref === 'function') toolbarRegionRef = window.__wb_ax_ref(semanticToolbar) || ''; } catch {}
-        return { toolbarContext: true, toolbarRegionRef };
+        return {
+          toolbarContext: true,
+          toolbarRegionRef,
+          toolbarRegionKey: _richTextToolbarRegionKey(semanticToolbar),
+        };
       }
       const targetRect = el.getBoundingClientRect();
       const cx = targetRect.x + targetRect.width / 2;
       const cy = targetRect.y + targetRect.height / 2;
-      let node = el.parentElement;
-      for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
-        for (const field of node.querySelectorAll?.('input:not([type="hidden"])') || []) {
+      let node = _composedParent(el);
+      for (let depth = 0; node && depth < 6; depth++, node = _composedParent(node)) {
+        for (const field of _richTextToolbarQueryAcrossOpenShadowRoots(node, 'input:not([type="hidden"])', 80)) {
           const candidate = _fieldMeta(field)?.toolbarCandidate;
           const region = candidate?.regionRect;
           if (!region) continue;
           if (cx >= region.x && cx <= region.x + region.w && cy >= region.y && cy <= region.y + region.h) {
-            return { toolbarContext: true, toolbarRegionRef: candidate.regionRef || '' };
+            return {
+              toolbarContext: true,
+              toolbarRegionRef: candidate.regionRef || '',
+              toolbarRegionKey: candidate.regionKey || '',
+            };
           }
         }
       }
-      return { toolbarContext: false, toolbarRegionRef: '' };
-    } catch { return { toolbarContext: false, toolbarRegionRef: '' }; }
+      return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' };
+    } catch { return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' }; }
   }
 
   function _deepActiveElement() {

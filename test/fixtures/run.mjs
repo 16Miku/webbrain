@@ -1219,8 +1219,9 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     </style>
     <div id="slotted-toolbar-editor">
       <span id="slot-toolbar-host">
-        <input id="slotted-family" type="search" aria-label="Font family" value="Default" style="width:118px;height:22px">
+        <input id="slotted-family" type="text" aria-label="Font family" value="Default" style="width:118px;height:22px">
         <input id="slotted-search" type="search" aria-label="Search links" value="" style="width:118px;height:22px">
+        <input id="slotted-unlabelled-search" type="search" value="" style="width:118px;height:22px">
         <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
         <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
         <select id="slotted-style" aria-label="Paragraph style" style="width:118px;height:24px">
@@ -1253,6 +1254,8 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
     || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
     || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
+    || !slottedProbe.toolbarRegionKey
+    || slottedProbe.toolbarRegionKey !== slottedProbe.fieldMeta.toolbarCandidate.regionKey
     || Math.abs(slottedProbe.rect.y - settledSlottedRect.y) > 2
     || slottedProbe.rect.y < 0
     || slottedProbe.rect.y + slottedProbe.rect.h > settledSlottedRect.viewportHeight
@@ -1262,6 +1265,15 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   const ordinarySearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-search');
   if (!ordinarySearchProbe?.resolved || ordinarySearchProbe.fieldMeta?.toolbarCandidate) {
     throw new Error(`ordinary labelled toolbar search was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySearchProbe)}`);
+  }
+  const unlabelledSearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-unlabelled-search');
+  if (
+    !unlabelledSearchProbe?.resolved
+    || unlabelledSearchProbe.fieldMeta?.type !== 'search'
+    || unlabelledSearchProbe.fieldMeta?.toolbarCandidate
+    || unlabelledSearchProbe.toolbarRegionKey !== slottedProbe.toolbarRegionKey
+  ) {
+    throw new Error(`unlabelled native search must remain ordinary while preserving its toolbar region: ${JSON.stringify(unlabelledSearchProbe)}`);
   }
   const ordinaryFilterProbe = await client.probeRichTextToolbarSelector(42, '#slotted-filter');
   if (!ordinaryFilterProbe?.resolved || ordinaryFilterProbe.fieldMeta?.toolbarCandidate) {
@@ -3221,6 +3233,11 @@ for (const browserKind of ['chrome', 'firefox']) {
           <div role="option">Noto Sans</div>
         </div>`;
       composedEditor.querySelector('#composed-toolbar').appendChild(composedHost);
+      const composedSiblingHost = document.createElement('span');
+      composedSiblingHost.id = 'composed-sibling-host';
+      const composedSiblingRoot = composedSiblingHost.attachShadow({ mode: 'open' });
+      composedSiblingRoot.innerHTML = '<button id="composed-shadow-bold" type="button">B</button>';
+      composedEditor.querySelector('#composed-toolbar').appendChild(composedSiblingHost);
       document.body.appendChild(composedEditor);
 
       const shadowToolbarEditor = document.createElement('div');
@@ -3245,9 +3262,11 @@ for (const browserKind of ['chrome', 'firefox']) {
       descendantShadowEditor.className = 'editor';
       descendantShadowEditor.innerHTML = `
         <div role="toolbar" style="height:42px;display:flex;align-items:center">
-          <input id="descendant-shadow-family-input" type="search" aria-label="Font family" value="Default"
+          <input id="descendant-shadow-family-input" type="text" aria-label="Font family" value="Default"
             style="width:118px;height:22px">
           <input id="descendant-toolbar-search" type="search" aria-label="Search links" value=""
+            style="width:118px;height:22px">
+          <input id="descendant-toolbar-unlabelled-search" type="search" value=""
             style="width:118px;height:22px">
           <input id="descendant-toolbar-filter" type="text" aria-label="Filter" value=""
             style="width:118px;height:22px">
@@ -3344,9 +3363,11 @@ for (const browserKind of ['chrome', 'firefox']) {
         shadowExplicitLabel: window.__wb_ax_ref(shadowRoot.getElementById('shadow-explicit-size')),
         shadowFamilyInput: window.__wb_ax_ref(shadowRoot.getElementById('shadow-family-input')),
         composedFamilyInput: window.__wb_ax_ref(composedRoot.getElementById('composed-family-input')),
+        composedShadowBold: window.__wb_ax_ref(composedSiblingRoot.getElementById('composed-shadow-bold')),
         shadowToolbarFamilyInput: window.__wb_ax_ref(shadowToolbarRoot.getElementById('shadow-toolbar-family-input')),
         descendantShadowFamilyInput: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-shadow-family-input')),
         descendantToolbarSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-search')),
+        descendantToolbarUnlabelledSearch: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-unlabelled-search')),
         descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
         compactComposer: window.__wb_ax_ref(compactComposer.querySelector('#compact-composer-body')),
         conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
@@ -3465,8 +3486,21 @@ for (const browserKind of ['chrome', 'firefox']) {
       Number(composedCandidate?.score) < 4
       || !composedCandidate.reasons?.includes('semantic_toolbar')
       || composedCandidate.associatedEditorIdentity?.id !== 'composed-editor-body'
+      || !composedCandidate.regionKey
+      || !composedCandidate.relatedRefs?.includes(refs.composedShadowBold)
     ) {
       throw new Error(`expected toolbar ancestry through the input shadow host, got: ${JSON.stringify(composedFamilyProbe)}`);
+    }
+    const composedSiblingProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'click_ax',
+      args: { ref_id: refs.composedShadowBold },
+    });
+    if (
+      !composedSiblingProbe?.resolved
+      || !composedSiblingProbe.toolbarContext
+      || composedSiblingProbe.toolbarRegionKey !== composedCandidate.regionKey
+    ) {
+      throw new Error(`open-shadow toolbar siblings must share one stable region identity: ${JSON.stringify(composedSiblingProbe)}`);
     }
     const shadowToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
@@ -3499,6 +3533,17 @@ for (const browserKind of ['chrome', 'firefox']) {
       || descendantSearchProbe.fieldMeta?.toolbarCandidate
     ) {
       throw new Error(`ordinary labelled toolbar search must stay outside formatting audit: ${JSON.stringify(descendantSearchProbe)}`);
+    }
+    const descendantUnlabelledSearchProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.descendantToolbarUnlabelledSearch, text: 'Quarterly roadmap' },
+    });
+    if (
+      !descendantUnlabelledSearchProbe?.resolved
+      || descendantUnlabelledSearchProbe.fieldMeta?.type !== 'search'
+      || descendantUnlabelledSearchProbe.fieldMeta?.toolbarCandidate
+    ) {
+      throw new Error(`unlabelled native toolbar search must stay outside formatting audit: ${JSON.stringify(descendantUnlabelledSearchProbe)}`);
     }
     const descendantFilterProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
@@ -3611,7 +3656,7 @@ for (const browserKind of ['chrome', 'firefox']) {
       toolName: 'type_text',
       args: { text: 'Paris' },
     });
-    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.selectorTargetToken || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
+    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.selectorTargetToken || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || focusedProbe.toolbarRegionKey !== candidate.regionKey || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
     await page.evaluate(() => {
@@ -3848,6 +3893,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       relatedRefs: ['ref_12', 'ref_13'],
       availablePresetValues: ['Default', 'Inter Display', 'Arial', 'Times New Roman'],
       regionRef: 'ref_10',
+      regionKey: 'rtb:div:0:0:320:48',
       associatedEditorRef: 'ref_99',
       associatedEditorIdentity: {
         tag: 'div',
@@ -4285,7 +4331,8 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       rect: { x: 10, y: 8, w: 60, h: 24 },
       fieldMeta: {},
       toolbarContext: true,
-      toolbarRegionRef: 'ref_10',
+      toolbarRegionRef: '',
+      toolbarRegionKey: candidate.regionKey,
     });
     const focusedRetryBlock = await agent._richTextToolbarToolBlock(tabId, 'type_text', { text: 'Paris' });
     if (!focusedRetryBlock?.wrongTarget || focusedRetryBlock.dispatched !== false) {

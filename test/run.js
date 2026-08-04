@@ -27382,6 +27382,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       assert.match(params.functionDeclaration, /availablePresetValues/);
       assert.match(params.functionDeclaration, /associatedEditorIdentity/);
       assert.match(params.functionDeclaration, /title: el\.getAttribute/);
+      assert.match(params.functionDeclaration, /if \(searchLike\) return null/);
       assert.match(
         params.functionDeclaration,
         /supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor/,
@@ -27400,6 +27401,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
                 score: 8,
                 reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
                 availablePresetValues: ['11', '14'],
+                regionKey: 'rtb:div:10:8:320:44',
                 associatedEditorRef: '',
                 associatedEditorIdentity: {
                   tag: 'div',
@@ -27413,6 +27415,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
               },
             },
             toolbarContext: true,
+            toolbarRegionKey: 'rtb:div:10:8:320:44',
           },
         },
       };
@@ -27424,6 +27427,7 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
   assert.equal(probe.resolved, true);
   assert.equal(probe.selectorBackendNodeId, 177);
   assert.equal(probe.shadowPierced, true);
+  assert.equal(probe.toolbarRegionKey, 'rtb:div:10:8:320:44');
   assert.equal(probe.fieldMeta.toolbarCandidate.score, 8);
   assert.equal(probe.fieldMeta.toolbarCandidate.associatedEditorIdentity.id, 'editor-body');
   assert.deepEqual(probe.rect, { x: 10, y: 8, w: 80, h: 24 });

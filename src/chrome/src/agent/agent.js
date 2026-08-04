@@ -1757,6 +1757,7 @@ export class Agent extends LoopDetector {
         pageUrl: '',
         frameId: null,
         regionRef: '',
+        regionKey: '',
         blockedRefs: [],
         blockedSelectors: [],
         blockedRegionRefs: [],
@@ -1808,6 +1809,7 @@ export class Agent extends LoopDetector {
       pageUrl: state.pageUrl || '',
       frameId: Number.isInteger(state.frameId) ? state.frameId : null,
       regionRef: state.regionRef || '',
+      regionKey: state.regionKey || '',
       blockedRefs: [...(state.blockedRefs || [])],
       blockedSelectors: [...(state.blockedSelectors || [])],
       blockedRegionRefs: [...(state.blockedRegionRefs || [])],
@@ -1820,7 +1822,7 @@ export class Agent extends LoopDetector {
     for (const key of [
       'recoveryOnly', 'targetKind', 'detectedAt', 'blockedAttemptedText', 'blockedClear',
       'associatedEditorRef', 'associatedEditorIdentity', 'recoveryTargetUnknown',
-      'recoveryPageUrl', 'documentToken', 'pageUrl', 'frameId', 'regionRef',
+      'recoveryPageUrl', 'documentToken', 'pageUrl', 'frameId', 'regionRef', 'regionKey',
     ]) state[key] = primary[key];
     state.recoveryObligations = obligations;
     if (!rebuildBlockedTargets) return;
@@ -2442,13 +2444,14 @@ export class Agent extends LoopDetector {
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     const blockedSelector = !!selector && state.blockedSelectors?.has(selector);
     const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
+    const probeRegionIds = [probe.toolbarRegionRef, probe.toolbarRegionKey]
+      .filter(value => typeof value === 'string' && !!value);
+    const primaryRegionIds = new Set([state.regionRef, state.regionKey].filter(Boolean));
     const sameToolbarContext = probe.toolbarContext === true
-      && typeof probe.toolbarRegionRef === 'string'
-      && !!probe.toolbarRegionRef
-      && (
-        probe.toolbarRegionRef === state.regionRef
-        || state.blockedRegionRefs?.has(probe.toolbarRegionRef)
-      );
+      && probeRegionIds.some(regionId => (
+        primaryRegionIds.has(regionId)
+        || state.blockedRegionRefs?.has(regionId)
+      ));
     const block = blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(state)
       : null;
@@ -2630,6 +2633,7 @@ export class Agent extends LoopDetector {
             pageUrl: '',
             frameId: null,
             regionRef: '',
+            regionKey: '',
             blockedRefs: new Set(),
             blockedSelectors: new Set(),
             blockedRegionRefs: new Set(),
@@ -2661,9 +2665,10 @@ export class Agent extends LoopDetector {
       pageUrl,
       frameId: Number.isInteger(identity.frameId) ? identity.frameId : null,
       regionRef: candidate?.regionRef || '',
+      regionKey: candidate?.regionKey || '',
       blockedRefs: [...new Set([refId, ...relatedRefs].filter(Boolean))],
       blockedSelectors: selector ? [selector] : [],
-      blockedRegionRefs: candidate?.regionRef ? [candidate.regionRef] : [],
+      blockedRegionRefs: [...new Set([candidate?.regionRef, candidate?.regionKey].filter(Boolean))],
     };
     const obligationKey = entry => {
       const identity = entry.associatedEditorIdentity;
@@ -2683,7 +2688,7 @@ export class Agent extends LoopDetector {
                 identity.h,
               ],
             ]
-          : ['unknown', entry.regionRef || ''];
+          : ['unknown', entry.regionKey || entry.regionRef || ''];
       return JSON.stringify([
         entry.blockedAttemptedText,
         entry.blockedClear,
@@ -2708,6 +2713,7 @@ export class Agent extends LoopDetector {
     state.pageUrl = pageUrl || state.pageUrl || '';
     this._syncRichTextToolbarPrimaryObligation(state, obligations);
     state.regionRef = state.regionRef || candidate?.regionRef || '';
+    state.regionKey = state.regionKey || candidate?.regionKey || '';
     if (state.recoveryOnly !== true) {
       state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
     }
@@ -2718,6 +2724,7 @@ export class Agent extends LoopDetector {
     if (refId) state.blockedRefs.add(refId);
     if (selector) state.blockedSelectors.add(selector);
     if (candidate?.regionRef) state.blockedRegionRefs.add(candidate.regionRef);
+    if (candidate?.regionKey) state.blockedRegionRefs.add(candidate.regionKey);
     for (const relatedRef of relatedRefs) state.blockedRefs.add(relatedRef);
     this._richTextToolbarStates.set(tabId, state);
     const debt = {

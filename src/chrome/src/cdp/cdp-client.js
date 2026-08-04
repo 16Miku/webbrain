@@ -3227,6 +3227,20 @@ export class CDPClient {
             if (!node) return null;
             return node.assignedSlot || node.parentElement || node.getRootNode?.()?.host || null;
           };
+          const toolbarRegionKey = node => {
+            try {
+              if (!node?.isConnected) return '';
+              const region = node.getBoundingClientRect();
+              return [
+                'rtb',
+                String(node.tagName || '').toLowerCase(),
+                Math.round(region.x + window.scrollX),
+                Math.round(region.y + window.scrollY),
+                Math.round(region.width),
+                Math.round(region.height),
+              ].join(':');
+            } catch { return ''; }
+          };
           const root = el.getRootNode?.() || document;
           const findById = id => {
             if (!id) return null;
@@ -3325,8 +3339,8 @@ export class CDPClient {
             );
             if (editableControl && !editableFormattingWidget) return null;
             const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
-            if (!unlabeled && searchLike && ordinaryFilterLabel) return null;
-            if (!unlabeled && !formattingLabel && (searchLike || ordinaryFilterLabel)) return null;
+            if (searchLike) return null;
+            if (!unlabeled && !formattingLabel && ordinaryFilterLabel) return null;
             if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
             const compact = rect.height <= 32 && rect.width <= 220;
             const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
@@ -3485,6 +3499,7 @@ export class CDPClient {
                 w: Math.round(region.width), h: Math.round(region.height),
               },
               regionRef: '',
+              regionKey: toolbarRegionKey(regionNode),
               relatedRefs: [],
               associatedEditorRef: '',
               associatedEditorRect: associatedEditor?.rect || null,
@@ -3502,6 +3517,9 @@ export class CDPClient {
             },
             fieldMeta,
             toolbarContext: !!semanticToolbar,
+            toolbarRegionKey: semanticToolbar
+              ? toolbarRegionKey(semanticToolbar)
+              : (candidate?.regionKey || ''),
           };
         }`,
       });
@@ -3516,6 +3534,7 @@ export class CDPClient {
         fieldMeta: value.fieldMeta,
         toolbarContext: value.toolbarContext === true,
         toolbarRegionRef: '',
+        toolbarRegionKey: String(value.toolbarRegionKey || ''),
         shadowPierced: true,
         selectorBackendNodeId,
       };
