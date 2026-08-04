@@ -350,6 +350,12 @@ export class Agent extends LoopDetector {
     // consume the slot that supplies post-action evidence to the main model.
     // Reset when a run starts and on tab cleanup.
     this.autoScreenshotCount = new Map();
+    // tabId -> internal toolbar-classifier captures this turn. These are
+    // gate-checked against maxScreenshotsPerTurn but do not consume the slot
+    // that supplies post-action evidence to the main model, so without a
+    // separate counter their screenshot and vision cost was invisible to a
+    // user who capped the budget precisely to control spend.
+    this.toolbarAuditScreenshotCount = new Map();
     // tabId -> {scaleX, scaleY} image-pixel→CSS-pixel factors for the most
     // recent screenshot shown to the model. Set when maxImageDimension forced
     // a downscale; cleared when the last capture was 1:1. Consumed by
@@ -2060,6 +2066,7 @@ export class Agent extends LoopDetector {
   ]);
 
   static RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS = new Set(['press_keys']);
+  static RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS = new Set(['click', 'press_keys']);
 
   static _richTextToolbarUsesFocusedTarget(toolName, args = {}) {
     return Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
@@ -2322,6 +2329,73 @@ export class Agent extends LoopDetector {
     return geometry?.annotationRect || null;
   }
 
+  /**
+   * Pre-toolbar-guard iframe_type dispatch: inject into every frame, let the
+   * url filter and selector decide, take the first frame that accepts.
+   *
+   * The guard's single-frame resolution is stricter and is what the target
+   * token binds to, but it can only run where the probe resolves exactly one
+   * frame with content.js reachable. Pages with repeated same-origin frames,
+   * or frames the content script cannot enter, used to work through this path
+   * and would otherwise start failing. It stays available only while no
+   * toolbar recovery is pending — once a debt is open, ambiguity must fail
+   * closed rather than type into a frame nobody vetted.
+   */
+  async _legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter }) {
+    const code = `
+      (() => {
+        const filter = ${JSON.stringify(urlFilter || '')};
+        if (filter) {
+          // Require BOTH host match (anti-substring) AND the original
+          // substring (so a caller-supplied path disambiguates same-host
+          // frames).
+          let _w = String(filter).toLowerCase().trim();
+          try { _w = new URL(/^[a-z][a-z0-9+.\\-]*:\\/\\//i.test(_w) ? _w : 'https://' + _w).hostname; } catch (e) {}
+          _w = _w.replace(/^www\\./, '');
+          const _h = location.hostname.toLowerCase().replace(/^www\\./, '');
+          const _hostOk = !_w || _h === _w || _h.endsWith('.' + _w);
+          if (!_hostOk || !location.href.includes(filter)) return { ok: false, skipped: 'url-filter', url: location.href };
+        }
+        let targetDispatched = false;
+        try {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return { ok: false, url: location.href, reason: 'not-found' };
+          targetDispatched = true;
+          el.focus();
+          if (el.isContentEditable) {
+            if (${!!clear}) el.textContent = '';
+            el.textContent += ${JSON.stringify(text)};
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(text)} }));
+            return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
+          }
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          const newVal = (${!!clear} ? '' : (el.value || '')) + ${JSON.stringify(text)};
+          if (setter) setter.call(el, newVal); else el.value = newVal;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
+        } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
+      })()
+    `;
+    const results = await browser.tabs.executeScript(tabId, { code, allFrames: true });
+    const successes = (results || []).filter(r => r && r.ok);
+    if (successes.length > 0) {
+      return { success: true, dispatched: true, frame: successes[0], resolution: 'all-frames' };
+    }
+    const candidates = (results || []).filter(r => r && !r.skipped);
+    const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
+    return {
+      success: false,
+      ...(targetDispatched
+        ? { dispatched: true }
+        : { dispatched: false, noDispatch: true }),
+      error: 'Input not found in any matching iframe',
+      searchedFrames: candidates.length,
+      frameUrls: candidates.map(c => c.url).slice(0, 5),
+    };
+  }
+
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, { mapAnnotation = true } = {}) {
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     if (!selector) return null;
@@ -2376,6 +2450,8 @@ export class Agent extends LoopDetector {
         ambiguous: true,
         matchCount: probes.length,
         matchedFrameIds: probes.map(probe => probe.frameId),
+        // The caller needs to see which frames matched to pick a urlFilter.
+        matchedFrameUrls: probes.map(probe => probe.frameUrl || '').filter(Boolean).slice(0, 5),
       };
     }
     const currentState = this._richTextToolbarStates.get(tabId);
@@ -2541,7 +2617,7 @@ export class Agent extends LoopDetector {
     if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
-      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
         ? {
             success: false,
             dispatched: false,
@@ -2549,7 +2625,9 @@ export class Agent extends LoopDetector {
             retryable: true,
             error: toolName === 'iframe_click'
               ? 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.'
-              : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
+              : toolName === 'click'
+                ? 'Could not resolve the click target safely while a rich-text editor recovery is required. Re-read the page and retry with one specific target.'
+                : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
           }
         : null;
     }
@@ -2629,7 +2707,7 @@ export class Agent extends LoopDetector {
       : null;
     if (
       !block
-      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
       && !probe.selectorTargetToken
     ) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
@@ -2638,15 +2716,15 @@ export class Agent extends LoopDetector {
         dispatched: false,
         noDispatch: true,
         retryable: true,
-        error: 'Could not preserve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and retry.',
+        error: 'Could not preserve the action target safely while a rich-text editor recovery is required. Re-read the page, choose the intended editor target, and retry.',
       };
     }
-    const preserveFocusedTarget = !block
-      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+    const preserveDispatchTarget = !block
+      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
       && !!probe.selectorTargetToken
       && executionContext
       && typeof executionContext === 'object';
-    if (preserveFocusedTarget) {
+    if (preserveDispatchTarget) {
       executionContext.richTextToolbarTargetToken = probe.selectorTargetToken;
       executionContext.richTextToolbarFrameId = probe.frameId;
     } else {
@@ -3100,6 +3178,24 @@ export class Agent extends LoopDetector {
         coordAligned: true,
       });
       if (shot?.dataUrl) {
+        // Counted separately from the model-facing budget, but not silently:
+        // each of these also costs a vision call.
+        const auditCaptures = (this.toolbarAuditScreenshotCount.get(tabId) || 0) + 1;
+        this.toolbarAuditScreenshotCount.set(tabId, auditCaptures);
+        const cap = Number(this.maxScreenshotsPerTurn) || 0;
+        if (cap > 0 && auditCaptures === cap + 1 && typeof captureOptions?.onUpdate === 'function') {
+          captureOptions.onUpdate('warning', {
+            message: `Rich-text toolbar safety checks have now taken ${auditCaptures} extra screenshots and vision calls this turn, beyond the ${cap} you configured for model-facing captures.`,
+          });
+        }
+        const auditRunId = this.currentRunId.get(tabId);
+        if (auditRunId) {
+          trace.recordNote(auditRunId, null, 'rich_text_toolbar_audit_capture', {
+            toolName,
+            auditCaptures,
+            modelFacingCap: cap,
+          });
+        }
         const cssViewport = {
           width: shot.cssWidth || shot.width,
           height: shot.cssHeight || shot.height,
@@ -4673,7 +4769,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}) {
     let didStateChange = false;
-    let reusableAutoScreenshot = null;
     const promptTier = this._resolvePromptTier();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     const navNotices = [];
@@ -5853,11 +5948,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const visionProvider = await this.providerManager.getVisionProvider();
     if (didStateChange && (provider.supportsVision || visionProvider)) {
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
-      if (reusableAutoScreenshot || Date.now() - lastTs >= 500) {
-        if (!reusableAutoScreenshot) await new Promise(r => setTimeout(r, 250));
+      if (Date.now() - lastTs >= 500) {
+        await new Promise(r => setTimeout(r, 250));
         // Pass onUpdate + messages so a maxScreenshotsPerTurn skip is not silent.
-        const shot = reusableAutoScreenshot
-          || await this._captureBudgetedAutoScreenshot(tabId, { onUpdate, messages });
+        // The toolbar preflight's capture is deliberately NOT reused here: it
+        // is taken before dispatch, so it would show the model the page as it
+        // was *before* its own edit.
+        const shot = await this._captureBudgetedAutoScreenshot(tabId, { onUpdate, messages });
         if (shot) {
           this.lastAutoScreenshotTs.set(tabId, Date.now());
           const visible = await this._getVisibleInteractiveElements(tabId);
@@ -10568,6 +10665,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this.screenshotClickScale.delete(tabId);
     this.lastSeenAdapter.delete(tabId);
     this.activeSkillIds.delete(tabId);
@@ -15946,18 +16044,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         let targetFrameId = executionContext?.richTextToolbarFrameId;
         let targetToken = executionContext?.richTextToolbarTargetToken || '';
+        let probe = null;
         if (!Number.isInteger(targetFrameId) || !targetToken) {
-          const probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
           targetFrameId = probe?.frameId;
           targetToken = probe?.selectorTargetToken || '';
         }
         if (!Number.isInteger(targetFrameId) || !targetToken) {
+          // No recovery pending: keep the pre-guard behavior rather than
+          // failing a call that used to work on multi-frame pages.
+          if (!this._richTextToolbarDebts.has(tabId)) {
+            dispatched = true;
+            return this._legacyIframeTypeAllFrames(tabId, {
+              selector,
+              text,
+              clear,
+              urlFilter: args.urlFilter || '',
+            });
+          }
+          const matchedFrameUrls = probe?.matchedFrameUrls || [];
           return {
             success: false,
             dispatched: false,
             noDispatch: true,
             retryable: true,
-            error: 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
+            ...(probe?.ambiguous === true
+              ? { ambiguous: true, searchedFrames: probe.matchCount, frameUrls: matchedFrameUrls }
+              : {}),
+            error: probe?.ambiguous === true
+              ? `Several frames matched this selector (${probe.matchCount}) while a rich-text editor recovery is pending, so none was typed into. Retry with a urlFilter naming exactly one of: ${matchedFrameUrls.join(', ') || 'the intended frame'}.`
+              : 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
           };
         }
         dispatched = true;
@@ -16138,7 +16254,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
     }
-    if ((name === 'type_text' || name === 'press_keys') && richTextToolbarTargetToken) {
+    if ((name === 'type_text' || Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)) && richTextToolbarTargetToken) {
       contentArgs = {
         ...contentArgs,
         richTextToolbarTargetToken,
@@ -16146,7 +16262,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     try {
-      const messageOptions = (name === 'type_text' || name === 'press_keys')
+      const messageOptions = (name === 'type_text' || Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name))
         && richTextToolbarTargetToken
         && Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
         ? { frameId: toolbarExecutionContext.richTextToolbarFrameId }
@@ -16424,6 +16540,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
@@ -17197,6 +17314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);

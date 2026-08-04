@@ -20,12 +20,23 @@ import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
 
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..', '..');
 const accessibilityTreeJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'accessibility-tree.js');
 const firefoxAccessibilityTreeJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'accessibility-tree.js');
 const contentJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'content.js');
 const firefoxContentJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'content.js');
+// content.js delegates the toolbar heuristic to this module, which the
+// manifests load immediately before it. Fixtures must mirror that order or
+// every candidate scores null.
+const toolbarHeuristicJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'rich-text-toolbar-heuristic.js');
+const firefoxToolbarHeuristicJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'rich-text-toolbar-heuristic.js');
+
+// cdp-client normally reads this file through chrome.runtime.getURL, which
+// does not exist here. Feed it the same source the content scripts get so the
+// main-world probe scores identically under test.
+CDPClient._heuristicSourceOverride = await readFile(toolbarHeuristicJsPath, 'utf-8');
 const redactionRegionsJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'redaction-regions.js');
 const firefoxRedactionRegionsJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'redaction-regions.js');
 const filePickerGuardPageJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'file-picker-guard-page.js');
@@ -62,6 +73,7 @@ async function setup(page, fixture) {
   await page.goto(fixtureUrl(fixture));
   const axSrc = await readFile(accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
+  await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   // Ensure handler is registered.
@@ -74,6 +86,7 @@ async function setupContentFixture(page, fixture, browserKind) {
   await page.goto(fixtureUrl(fixture));
   const axSrc = await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
+  await page.addScriptTag({ content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8') });
   const contentSrc = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
   await page.addScriptTag({ content: contentSrc });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -90,6 +103,7 @@ async function setupContentHtml(page, html, browserKind) {
   // Simulate manifest injection followed by extension-reload recovery.
   await page.addScriptTag({ content: pageGuardSrc });
   await page.addScriptTag({ content: firefox ? stubFirefoxBrowser : stubChrome });
+  await page.addScriptTag({ content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -116,9 +130,10 @@ async function setupIsolatedContentHtml(page, html, browserKind) {
   });
   const contextId = isolatedWorld.executionContextId;
   const contentSrc = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
+  const heuristicSrc = await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8');
   const injected = await session.send('Runtime.evaluate', {
     contextId,
-    expression: `${firefox ? stubFirefoxBrowser : stubChrome}\n${contentSrc}`,
+    expression: `${firefox ? stubFirefoxBrowser : stubChrome}\n${heuristicSrc}\n${contentSrc}`,
     awaitPromise: true,
   });
   if (injected.exceptionDetails) {
@@ -170,6 +185,7 @@ async function setupIsolatedContentHtml(page, html, browserKind) {
 async function setupFirefoxHtml(page, html) {
   await page.setContent(html, { waitUntil: 'domcontentloaded' });
   await page.addScriptTag({ content: stubFirefoxBrowser });
+  await page.addScriptTag({ content: await readFile(firefoxToolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(firefoxContentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -178,6 +194,7 @@ async function setupFirefoxHtml(page, html) {
 async function setupChromeHtml(page, html) {
   await page.setContent(html, { waitUntil: 'domcontentloaded' });
   await page.addScriptTag({ content: stubChrome });
+  await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -420,8 +437,12 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
       text: 'requested content',
       clear: false,
     });
-    if (rejected?.success !== true || rejected?.verified !== false) {
-      throw new Error(`controlled normalization without the requested insertion must not be verified: ${JSON.stringify(rejected)}`);
+    // Controlled reformatting is exactly the case that must not be reported as
+    // a failed action: the edit dispatched, the page rewrote the value, so the
+    // exact-match proof cannot pass. Unproven is signalled by omitting
+    // `verified`, never by setting it false.
+    if (rejected?.success !== true || 'verified' in (rejected || {})) {
+      throw new Error(`controlled normalization without the requested insertion must be unproven, not refuted: ${JSON.stringify(rejected)}`);
     }
     const accepted = await call(page, 'type', {
       selector: '#accepted',
@@ -3641,6 +3662,33 @@ for (const browserKind of ['chrome', 'firefox']) {
     ) {
       throw new Error(`text-color control in a conventional toolbar must enter the audit: ${JSON.stringify(conventionalColorProbe)}`);
     }
+    const denseCandidateRefs = await page.evaluate(() => {
+      const makeEditor = (id, control) => {
+        const editor = document.createElement('div');
+        editor.className = 'editor';
+        editor.innerHTML = `
+          <div style="height:42px;display:flex;align-items:center;gap:6px">
+            ${control}
+            <button id="${id}-button" type="button">B</button>
+          </div>
+          <div contenteditable="true" style="width:400px;height:180px">Enter text</div>`;
+        document.body.appendChild(editor);
+        return window.__wb_ax_ref(editor.querySelector(`#${id}-button`));
+      };
+      return {
+        select: makeEditor('dense-select', '<select aria-label="Font family" style="width:118px;height:22px"><option>Default</option><option>Inter</option></select>'),
+        editable: makeEditor('dense-editable', '<div contenteditable="true" role="combobox" aria-label="Font family" style="width:118px;height:22px">Default</div>'),
+      };
+    });
+    for (const [kind, refId] of Object.entries(denseCandidateRefs)) {
+      const contextProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'click_ax',
+        args: { ref_id: refId },
+      });
+      if (contextProbe?.toolbarContext !== true || !contextProbe.toolbarRegionKey) {
+        throw new Error(`dense ${kind} formatting controls must reconstruct their conventional toolbar region: ${JSON.stringify(contextProbe)}`);
+      }
+    }
     const conventionalShadowProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
       args: { ref_id: refs.conventionalShadowFamily, text: 'Inter Display' },
@@ -3823,7 +3871,7 @@ for (const browserKind of ['chrome', 'firefox']) {
       args: editorPoint,
     });
     const coordinateProbeScrolls = await page.evaluate(() => window.__richTextRetryProbeScrolls);
-    if (!coordinateProbe?.resolved || coordinateProbe.refId !== refs.editor || coordinateProbeScrolls !== 0) {
+    if (!coordinateProbe?.resolved || coordinateProbe.refId !== refs.editor || !coordinateProbe.selectorTargetToken || coordinateProbeScrolls !== 0) {
       throw new Error(`coordinate retry probe must preserve viewport coordinates, got: ${JSON.stringify({ coordinateProbe, coordinateProbeScrolls })}`);
     }
     const selectorProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
@@ -3831,8 +3879,43 @@ for (const browserKind of ['chrome', 'firefox']) {
       args: { selector: '#editor-body' },
     });
     const selectorProbeScrolls = await page.evaluate(() => window.__richTextRetryProbeScrolls);
-    if (!selectorProbe?.resolved || selectorProbe.refId !== refs.editor || selectorProbeScrolls !== 1) {
+    if (!selectorProbe?.resolved || selectorProbe.refId !== refs.editor || !selectorProbe.selectorTargetToken || selectorProbeScrolls !== 1) {
       throw new Error(`selector retry probe must retain normal target scrolling, got: ${JSON.stringify({ selectorProbe, selectorProbeScrolls })}`);
+    }
+    await call(page, 'release_rich_text_toolbar_retry_target', { token: coordinateProbe.selectorTargetToken });
+    await call(page, 'release_rich_text_toolbar_retry_target', { token: selectorProbe.selectorTargetToken });
+
+    await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.id = 'guarded-click-target';
+      button.textContent = 'Safe action';
+      document.body.appendChild(button);
+    });
+    const staleClickProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'click',
+      args: { selector: '#guarded-click-target' },
+    });
+    await page.evaluate(() => {
+      const current = document.getElementById('guarded-click-target');
+      current.replaceWith(current.cloneNode(true));
+    });
+    const staleClick = await call(page, 'click', {
+      selector: '#guarded-click-target',
+      richTextToolbarTargetToken: staleClickProbe.selectorTargetToken,
+    });
+    if (staleClick?.success !== false || staleClick?.dispatched !== false || staleClick?.noDispatch !== true) {
+      throw new Error(`guarded click must fail closed after the preflight element is replaced: ${JSON.stringify(staleClick)}`);
+    }
+    const stableClickProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'click',
+      args: { selector: '#guarded-click-target' },
+    });
+    const stableClick = await call(page, 'click', {
+      selector: '#guarded-click-target',
+      richTextToolbarTargetToken: stableClickProbe.selectorTargetToken,
+    });
+    if (stableClick?.success !== true) {
+      throw new Error(`guarded click must dispatch while the approved element identity is stable: ${JSON.stringify(stableClick)}`);
     }
 
     await page.evaluate(() => {
@@ -4577,6 +4660,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     const otherToolbarProbe = {
       resolved: true,
+      selectorTargetToken: 'other-toolbar-click-token',
       refId: 'ref_88',
       documentToken: 'doc-a',
       refScopeUrl: 'https://example.test/editor',
@@ -4600,9 +4684,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       toolbarRegionRef: 'ref_80',
     };
     agent._probeRichTextToolbarRetryTarget = async () => otherToolbarProbe;
-    const otherToolbarBlock = await agent._richTextToolbarToolBlock(tabId, 'click', { selector: '#other-toolbar' });
-    if (otherToolbarBlock) {
-      throw new Error(`an unrelated toolbar must not be blocked: ${JSON.stringify(otherToolbarBlock)}`);
+    const clickExecutionContext = {};
+    const otherToolbarBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'click',
+      { selector: '#other-toolbar' },
+      clickExecutionContext,
+    );
+    if (otherToolbarBlock || clickExecutionContext.richTextToolbarTargetToken !== 'other-toolbar-click-token') {
+      throw new Error(`an unrelated toolbar click must stay allowed and bound to its audited target: ${JSON.stringify({ otherToolbarBlock, clickExecutionContext })}`);
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,

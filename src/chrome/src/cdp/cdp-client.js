@@ -28,6 +28,22 @@ const WEBMCP_IFRAME_TARGET_FILTER = [
   { type: 'iframe', exclude: false },
   { exclude: true },
 ];
+// Text-entry verification proves an edit landed by comparing the field's value
+// before and after. We hash instead of shipping the raw value to the service
+// worker so page content never leaves the tab. 32-bit FNV-1a via Math.imul:
+// the append proof recomputes this once per candidate insertion point, so a
+// BigInt hash made a long contenteditable an O(n*m) freeze inside the page.
+const TEXT_ENTRY_SIGNATURE_SOURCE = `function (value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
+  }
+  return value.length + ':' + hash.toString(16);
+}`;
+// Above this length the per-candidate rescan stops being worth its cost. The
+// edit still succeeds; it is reported unproven, which is not a failure signal.
+const TEXT_ENTRY_PROOF_MAX_CHARS = 65536;
+
 const WEBMCP_CONTEXT_DISCOVERY_EXPRESSION = `
   (async () => {
     const context = document.modelContext;
@@ -63,6 +79,39 @@ export class CDPClient {
     this.webMcpSessions = new Map(); // tabId -> WebMCP tools + pending invocations
     this.runtimeContexts = new Map(); // tabId -> session/context key -> default context
     this.fileChooserGuards = new Map(); // tabId -> temporary protocol interception
+  }
+
+  /**
+   * Source of the shared rich-text toolbar heuristic, read from the packaged
+   * file and cached for the worker's lifetime.
+   *
+   * The main world this gets evaluated in cannot import modules and cannot see
+   * the content script's isolated world, so the scoring has to travel as text.
+   * Reading the same file the content scripts load is what keeps the CDP probe
+   * and the content probe from ever scoring an element differently.
+   */
+  static async _richTextToolbarHeuristicSource() {
+    // Harnesses that drive this client outside an extension (the fixtures
+    // runner) have no chrome.runtime to read packaged files through, so they
+    // supply the same file's text directly.
+    if (typeof CDPClient._heuristicSourceOverride === 'string') {
+      return CDPClient._heuristicSourceOverride;
+    }
+    if (CDPClient._heuristicSourcePromise) return CDPClient._heuristicSourcePromise;
+    CDPClient._heuristicSourcePromise = (async () => {
+      try {
+        const url = chrome.runtime.getURL('src/content/rich-text-toolbar-heuristic.js');
+        const response = await fetch(url);
+        return await response.text();
+      } catch {
+        // Without the heuristic the probe still returns geometry and field
+        // metadata; it simply reports no toolbar candidate, which fails open
+        // to "not a toolbar" exactly as an unscored element would.
+        CDPClient._heuristicSourcePromise = null;
+        return '';
+      }
+    })();
+    return CDPClient._heuristicSourcePromise;
   }
 
   /**
@@ -3159,11 +3208,13 @@ export class CDPClient {
       const selectorBackendNodeId = Number(described?.node?.backendNodeId) || null;
       if (!selectorBackendNodeId) return { resolved: false };
 
+      const heuristicSource = await CDPClient._richTextToolbarHeuristicSource();
       const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
         objectId,
         returnByValue: true,
         awaitPromise: true,
         functionDeclaration: `async function () {
+          ${heuristicSource}
           const el = this;
           if (!el || el.nodeType !== 1 || !el.isConnected) return null;
           const settledRect = async () => {
@@ -3295,217 +3346,17 @@ export class CDPClient {
             title: el.getAttribute?.('title') || null,
             labelText,
           };
+          // Still needed by the payload below, which reports toolbar context
+          // even when the element itself does not score as a candidate.
           const semanticToolbar = composedClosest(el, '[role="toolbar"]');
-          const candidate = (() => {
-            const supportedInput = tag === 'input' && ['text', 'search', 'number', 'url'].includes(fieldType);
-            const selectControl = tag === 'select';
-            const editableControl = fieldMeta.contentEditable === true;
-            if (!supportedInput && !selectControl && !editableControl) return null;
-            if (rect.width < 1 || rect.height < 1) return null;
-            const unlabeled = ![
-              fieldMeta.ariaLabel,
-              fieldMeta.ariaLabelledByText,
-              fieldMeta.placeholder,
-              fieldMeta.title,
-              fieldMeta.labelText,
-            ].some(value => String(value || '').trim());
-            const formattingDescriptor = [
-              fieldMeta.ariaLabel,
-              fieldMeta.ariaLabelledByText,
-              fieldMeta.placeholder,
-              fieldMeta.title,
-              fieldMeta.labelText,
-              fieldMeta.id,
-              fieldMeta.name,
-            ].map(value => String(value || '').normalize('NFKC').toLowerCase()).join(' ');
-            const formattingLabel = [
-              'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
-              'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
-              'text color', 'font color', 'foreground color', 'background color', 'highlight color',
-              'text colour', 'font colour', 'foreground colour', 'background colour', 'highlight colour',
-              'link', 'hyperlink',
-              'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
-              'フォント', '字体', '字體', '글꼴', 'шрифт',
-            ].some(token => formattingDescriptor.includes(token));
-            const ordinaryFilterLabel = [
-              'search', 'filter', 'find', 'query', 'lookup',
-              'arama', 'filtre', 'recherche', 'filtrer', 'suche', 'suchen',
-              'buscar', 'filtro', 'pesquisa', 'cerca',
-              '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
-            ].some(token => formattingDescriptor.includes(token));
-            const editableRole = String(fieldMeta.role || '').toLowerCase();
-            const editableFormattingWidget = formattingLabel && (
-              semanticToolbar || ['combobox', 'listbox', 'spinbutton'].includes(editableRole)
-            );
-            if (editableControl && !editableFormattingWidget) return null;
-            const searchLike = fieldType === 'search' || String(fieldMeta.role || '').toLowerCase() === 'searchbox';
-            if (searchLike) return null;
-            if (!unlabeled && !formattingLabel && ordinaryFilterLabel) return null;
-            if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
-            const compact = rect.height <= 32 && rect.width <= 220;
-            const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
-            const numericPreset = value.length > 0 && value.length <= 16
-              && /^-?\\d+(?:[.,]\\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
-            const interactiveSelector = [
-              'input:not([type="hidden"])', 'textarea', 'select', 'button',
-              '[role="button"]', '[role="combobox"]', '[role="textbox"]',
-              '[role="searchbox"]', '[role="listbox"]', '[role="menuitem"]',
-              '[contenteditable]:not([contenteditable="false"])', '[tabindex]',
-            ].join(',');
-            let cluster = null;
-            let node = composedParent(el);
-            for (let depth = 1; node && depth <= 6; depth += 1, node = composedParent(node)) {
-              if (!visible(node)) continue;
-              const region = node.getBoundingClientRect();
-              if (region.height > 160 || region.width < rect.width) continue;
-              let controls = [];
-              try {
-                controls = Array.from(node.querySelectorAll(interactiveSelector))
-                  .filter(control => control === el || (!control.isContentEditable && visible(control)));
-              } catch {}
-              if (!controls.includes(el)) controls.unshift(el);
-              if (controls.length < 2 || controls.length > 40) continue;
-              const area = region.width * region.height;
-              if (!cluster || area < cluster.area) cluster = { node, region, area };
-            }
-            const reasons = [unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control'];
-            let score = unlabeled ? 1 : 0;
-            if (formattingLabel) { reasons.push('formatting_control_label'); score += 1; }
-            if (compact) { reasons.push('compact_control'); score += 1; }
-            if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
-            if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
-            if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
-            if (score < 4) return null;
-            const regionNode = semanticToolbar || cluster?.node || composedParent(el) || el;
-            const region = regionNode.getBoundingClientRect();
-            const associatedEditor = (() => {
-              const candidates = [];
-              const editorsAcrossOpenShadowRoots = root => {
-                const editors = [];
-                const roots = [root];
-                const seenRoots = new Set();
-                let scannedHosts = 0;
-                while (roots.length && seenRoots.size < 128 && editors.length < 200 && scannedHosts < 5000) {
-                  const current = roots.shift();
-                  if (!current || seenRoots.has(current)) continue;
-                  seenRoots.add(current);
-                  try {
-                    for (const editor of current.querySelectorAll?.('textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame') || []) {
-                      if (!editors.includes(editor)) editors.push(editor);
-                      if (editors.length >= 200) break;
-                    }
-                    for (const host of current.querySelectorAll?.('*') || []) {
-                      scannedHosts += 1;
-                      if (host.shadowRoot && !seenRoots.has(host.shadowRoot)) roots.push(host.shadowRoot);
-                      if (scannedHosts >= 5000) break;
-                    }
-                  } catch {}
-                }
-                return editors;
-              };
-              let scope = composedParent(regionNode);
-              for (let depth = 0; scope && depth < 5; depth += 1, scope = composedParent(scope)) {
-                const editors = editorsAcrossOpenShadowRoots(scope);
-                for (const editor of editors) {
-                  const editorTag = String(editor.tagName || '').toLowerCase();
-                  const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
-                  if (
-                    editor === regionNode
-                    || regionNode.contains?.(editor)
-                    || composedClosest(editor, '[role="toolbar"]')
-                    || !visible(editor)
-                  ) continue;
-                  const editorRect = editor.getBoundingClientRect();
-                  if (iframeBacked && (editorRect.width < 160 || editorRect.height < 80)) continue;
-                  const overlap = Math.max(0, Math.min(region.right, editorRect.right) - Math.max(region.left, editorRect.left));
-                  const horizontalPenalty = overlap > 0
-                    ? 0
-                    : Math.min(Math.abs(editorRect.left - region.right), Math.abs(region.left - editorRect.right));
-                  const verticalPenalty = editorRect.top >= region.bottom - 8
-                    ? Math.max(0, editorRect.top - region.bottom)
-                    : 500 + Math.abs(editorRect.bottom - region.top);
-                  candidates.push({
-                    editor,
-                    rect: editorRect,
-                    score: (depth * 250) + verticalPenalty + horizontalPenalty,
-                  });
-                }
-                if (candidates.length) break;
-              }
-              candidates.sort((a, b) => a.score - b.score);
-              const best = candidates[0];
-              if (!best || (candidates[1] && Math.abs(candidates[1].score - best.score) < 12)) return null;
-              return {
-                rect: {
-                  x: Math.round(best.rect.x), y: Math.round(best.rect.y),
-                  w: Math.round(best.rect.width), h: Math.round(best.rect.height),
-                },
-                identity: {
-                  tag: String(best.editor.tagName || '').toLowerCase(),
-                  id: best.editor.id || null,
-                  name: best.editor.getAttribute?.('name') || null,
-                  role: best.editor.getAttribute?.('role') || null,
-                  pageX: Math.round(best.rect.x + window.scrollX),
-                  pageY: Math.round(best.rect.y + window.scrollY),
-                  w: Math.round(best.rect.width),
-                  h: Math.round(best.rect.height),
-                },
-              };
-            })();
-            if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar) {
-              return null;
-            }
-            const availablePresetValues = [];
-            const seenValues = new Set();
-            const addValue = raw => {
-              const preset = String(raw || '').normalize('NFKC').replace(/\\s+/g, ' ').trim().slice(0, 80);
-              const key = preset.toLowerCase();
-              if (!preset || seenValues.has(key) || availablePresetValues.length >= 40) return;
-              seenValues.add(key);
-              availablePresetValues.push(preset);
-            };
-            addValue(el.value);
-            if (el.isContentEditable) addValue(el.textContent);
-            const optionRoots = [];
-            if (tag === 'select') optionRoots.push(el);
-            try { if (el.list) optionRoots.push(el.list); } catch {}
-            const controlledIds = String(
-              (el.getAttribute?.('aria-controls') || '') + ' ' + (el.getAttribute?.('aria-owns') || ''),
-            ).trim().split(/\\s+/);
-            for (const id of controlledIds) {
-              const optionRoot = findById(id);
-              if (optionRoot && !optionRoots.includes(optionRoot)) optionRoots.push(optionRoot);
-            }
-            const comboRoot = composedClosest(el, '[role="combobox"],[role="listbox"]');
-            if (comboRoot && comboRoot !== el && !optionRoots.includes(comboRoot)) optionRoots.push(comboRoot);
-            for (const optionRoot of optionRoots.slice(0, 6)) {
-              let options = [];
-              try {
-                if (optionRoot.matches?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]')) options.push(optionRoot);
-                options.push(...Array.from(optionRoot.querySelectorAll?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]') || []));
-              } catch {}
-              for (const option of options.slice(0, 40)) {
-                addValue(option.value);
-                addValue(option.getAttribute?.('data-value'));
-                addValue(option.textContent);
-              }
-            }
-            return {
-              score,
-              reasons,
-              availablePresetValues,
-              regionRect: {
-                x: Math.round(region.x), y: Math.round(region.y),
-                w: Math.round(region.width), h: Math.round(region.height),
-              },
-              regionRef: '',
-              regionKey: toolbarRegionKey(regionNode),
-              relatedRefs: [],
-              associatedEditorRef: '',
-              associatedEditorRect: associatedEditor?.rect || null,
-              associatedEditorIdentity: associatedEditor?.identity || null,
-            };
-          })();
+          // Scoring comes from the shared heuristic module, injected above,
+          // so this main-world probe and the content script cannot disagree
+          // about whether an element is a toolbar control. No axRef is passed:
+          // the isolated-world ref registry is unreachable from here, so the
+          // candidate carries no refs and blocking falls back to regionKey.
+          const candidate = globalThis.__wbRichTextToolbarHeuristic
+            ? globalThis.__wbRichTextToolbarHeuristic.candidate(el, fieldMeta)
+            : null;
           if (candidate) fieldMeta.toolbarCandidate = candidate;
           return {
             pageUrl: location.href,
@@ -3953,12 +3804,7 @@ export class CDPClient {
       const tag = String(el.tagName || '').toUpperCase();
       if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
       const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-      let hash = 14695981039346656037n;
-      for (let i = 0; i < value.length; i += 1) {
-        hash ^= BigInt(value.charCodeAt(i));
-        hash = BigInt.asUintN(64, hash * 1099511628211n);
-      }
-      return value.length + ':' + hash.toString(16);
+      return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
     }`;
     if (Number.isInteger(nodeId) && nodeId > 0) {
       let objectId = null;
@@ -4008,17 +3854,24 @@ export class CDPClient {
         const tag = String(el.tagName || '').toUpperCase();
         if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
         const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-        let hash = 14695981039346656037n;
-        for (let i = 0; i < value.length; i += 1) {
-          hash ^= BigInt(value.charCodeAt(i));
-          hash = BigInt.asUintN(64, hash * 1099511628211n);
-        }
-        return value.length + ':' + hash.toString(16);
+        return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
       })()
     `).catch(() => null);
     return typeof result?.result?.value === 'string' ? result.result.value : null;
   }
 
+  /**
+   * Prove a text edit landed. Returns `true` when proven and `null` when it
+   * could not be proven — never `false`.
+   *
+   * The distinction matters well beyond this file: `verified === false` is read
+   * as an action failure by the loop detector, the delivery-progress checkpoint
+   * and the observation boundary. Masked inputs, `maxlength` truncation, React
+   * controlled reformatting and whitespace-normalizing contenteditables all
+   * fail an exact-match proof on edits that actually worked, and a CDP hiccup
+   * fails it too. Reporting those as unproven keeps them out of the failure
+   * path; only a positive `true` is ever asserted.
+   */
   async verifyTextEntry(tabId, {
     selector = '', nodeId = null, text = '', clear = false, focused = false, beforeSignature = null,
   } = {}) {
@@ -4031,15 +3884,9 @@ export class CDPClient {
       const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
       if (!typeable) return { found: true, verified: false };
       const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-      const signatureOf = candidate => {
-        let hash = 14695981039346656037n;
-        for (let i = 0; i < candidate.length; i += 1) {
-          hash ^= BigInt(candidate.charCodeAt(i));
-          hash = BigInt.asUintN(64, hash * 1099511628211n);
-        }
-        return candidate.length + ':' + hash.toString(16);
-      };
+      const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
       const exactInsertion = () => {
+        if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
         const separator = beforeSignature.indexOf(':');
         const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
         if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
@@ -4064,7 +3911,7 @@ export class CDPClient {
         await this.sendCommand(tabId, 'DOM.enable');
         const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
         objectId = resolved?.object?.objectId || null;
-        if (!objectId) return false;
+        if (!objectId) return null;
         const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
           objectId,
           returnByValue: true,
@@ -4075,9 +3922,9 @@ export class CDPClient {
             { value: typeof beforeSignature === 'string' ? beforeSignature : '' },
           ],
         });
-        return result?.result?.value?.verified === true;
+        return result?.result?.value?.verified === true ? true : null;
       } catch {
-        return false;
+        return null;
       } finally {
         if (objectId) {
           try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
@@ -4117,15 +3964,9 @@ export class CDPClient {
         const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
         if (!typeable) return { found: true, verified: false };
         const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-        const signatureOf = candidate => {
-          let hash = 14695981039346656037n;
-          for (let i = 0; i < candidate.length; i += 1) {
-            hash ^= BigInt(candidate.charCodeAt(i));
-            hash = BigInt.asUintN(64, hash * 1099511628211n);
-          }
-          return candidate.length + ':' + hash.toString(16);
-        };
+        const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
         const exactInsertion = () => {
+          if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
           const separator = beforeSignature.indexOf(':');
           const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
           if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
@@ -4144,7 +3985,7 @@ export class CDPClient {
         };
       })()
     `).catch(() => null);
-    return result?.result?.value?.verified === true;
+    return result?.result?.value?.verified === true ? true : null;
   }
 
   async _cleanupRichTextToolbarTargetMarker(tabId, attribute, marker, { includeClosed = false } = {}) {
@@ -4623,13 +4464,15 @@ export class CDPClient {
         fallbackResult.dispatched = dispatched;
       }
       if (fallbackResult.success === true) {
-        fallbackResult.verified = await this.verifyTextEntry(tabId, {
+        // Only ever assert a positive proof — see verifyTextEntry.
+        const fallbackVerified = await this.verifyTextEntry(tabId, {
           selector,
           nodeId: info.nodeId,
           text,
           clear,
           beforeSignature,
         });
+        if (fallbackVerified === true) fallbackResult.verified = true;
       }
       return fallbackResult;
     }
@@ -4643,7 +4486,7 @@ export class CDPClient {
     });
     return {
       success: true,
-      verified,
+      ...(verified === true ? { verified: true } : {}),
       method: 'cdp-insert-text',
       tag: info.tag,
       rect: {

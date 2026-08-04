@@ -1486,6 +1486,16 @@
       el = document.elementFromPoint(params.x, params.y);
     }
 
+    if (!_consumeRichTextToolbarRetryTarget(params.richTextToolbarTargetToken, el)) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+      };
+    }
+
     // ── Auto-select: if click text matches a <select> option, select it ──
     // Runs when text matching resolved NO element, resolved the <select>
     // itself (a select's innerText contains its options, so the contains
@@ -1696,15 +1706,7 @@
       dispatched: false,
       noDispatch: true,
     });
-    const exactInsertion = (before, after, inserted) => {
-      if (!inserted || after.length !== before.length + inserted.length) return false;
-      let index = after.indexOf(inserted);
-      while (index >= 0) {
-        if (after.slice(0, index) + after.slice(index + inserted.length) === before) return true;
-        index = after.indexOf(inserted, index + 1);
-      }
-      return false;
-    };
+    const exactInsertion = (before, after, inserted) => _richTextToolbarExactInsertion(before, after, inserted);
     const verifyValue = async (target, expected, clear, beforeValue) => {
       await new Promise(resolve => setTimeout(resolve, 30));
       if (!target?.isConnected) return false;
@@ -1774,7 +1776,7 @@
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
-      return { success: true, verified, method: 'contenteditable', value: el.textContent.slice(0, 100) };
+      return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100) };
     }
 
     // <select>: match by value, then by visible option text.
@@ -1794,7 +1796,7 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       await new Promise(resolve => setTimeout(resolve, 30));
-      return { success: true, verified: el.isConnected && el.value === match.value, method: 'select', value: el.value };
+      return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
     }
 
     if (params.clear) {
@@ -1824,7 +1826,7 @@
     }
     _lastTypeFieldIdent = fieldIdent;
 
-    return { success: true, verified, value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
+    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
 
   /**
@@ -3579,354 +3581,40 @@
     return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
   }
 
+  // The rich-text toolbar heuristic lives in one file shared by both builds
+  // and by the CDP main-world probe — see
+  // src/content/rich-text-toolbar-heuristic.js. Delegating keeps the scoring
+  // from drifting between the dispatch routes.
+  const _richTextToolbarHeuristic = () => globalThis.__wbRichTextToolbarHeuristic;
+
   function _visibleFieldContextNode(node) {
-    try {
-      if (!node || !node.isConnected) return false;
-      const rect = node.getBoundingClientRect();
-      const style = getComputedStyle(node);
-      return rect.width > 0 && rect.height > 0
-        && style.display !== 'none'
-        && style.visibility !== 'hidden';
-    } catch { return false; }
+    return _richTextToolbarHeuristic()?.visibleFieldContextNode(node) ?? false;
   }
 
   function _ariaLabelledByText(el) {
-    try {
-      const ids = String(el?.getAttribute?.('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
-      if (!ids.length) return null;
-      const root = el?.getRootNode?.() || document;
-      const findById = id => {
-        try {
-          if (typeof root.getElementById === 'function') {
-            const local = root.getElementById(id);
-            if (local) return local;
-          }
-        } catch {}
-        try {
-          const escaped = globalThis.CSS?.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
-          const local = root.querySelector?.(`#${escaped}`);
-          if (local) return local;
-        } catch {}
-        try { return root === document ? null : document.getElementById(id); } catch { return null; }
-      };
-      const text = ids
-        .map(findById)
-        .filter(Boolean)
-        .map(node => String(node.textContent || '').trim())
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return text ? text.slice(0, 120) : null;
-    } catch { return null; }
+    return _richTextToolbarHeuristic()?.ariaLabelledByText(el) ?? null;
   }
 
   function _richTextToolbarQueryAcrossOpenShadowRoots(scope, selector, limit = 200) {
-    const matches = [];
-    const roots = [scope];
-    const seenRoots = new Set();
-    let scannedHosts = 0;
-    while (roots.length && seenRoots.size < 128 && matches.length < limit && scannedHosts < 5000) {
-      const root = roots.shift();
-      if (!root || seenRoots.has(root)) continue;
-      seenRoots.add(root);
-      try {
-        for (const match of root.querySelectorAll?.(selector) || []) {
-          if (!matches.includes(match)) matches.push(match);
-          if (matches.length >= limit) break;
-        }
-        for (const host of root.querySelectorAll?.('*') || []) {
-          scannedHosts += 1;
-          if (host.shadowRoot && !seenRoots.has(host.shadowRoot)) roots.push(host.shadowRoot);
-          if (scannedHosts >= 5000) break;
-        }
-      } catch {}
-    }
-    return matches;
+    return _richTextToolbarHeuristic()?.queryAcrossOpenShadowRoots(scope, selector, limit) ?? [];
   }
 
   function _richTextEditorsAcrossOpenShadowRoots(scope) {
-    return _richTextToolbarQueryAcrossOpenShadowRoots(
-      scope,
-      'textarea,[contenteditable]:not([contenteditable="false"]),iframe,frame',
-    );
+    return _richTextToolbarHeuristic()?.editorsAcrossOpenShadowRoots(scope) ?? [];
   }
 
   function _richTextToolbarRegionKey(regionNode) {
-    try {
-      if (!regionNode?.isConnected) return '';
-      const rect = regionNode.getBoundingClientRect();
-      return [
-        'rtb',
-        String(regionNode.tagName || '').toLowerCase(),
-        Math.round(rect.x + window.scrollX),
-        Math.round(rect.y + window.scrollY),
-        Math.round(rect.width),
-        Math.round(rect.height),
-      ].join(':');
-    } catch { return ''; }
+    return _richTextToolbarHeuristic()?.regionKey(regionNode) ?? '';
   }
 
-  function _associatedRichTextEditor(regionNode) {
-    try {
-      if (!regionNode?.isConnected) return null;
-      const regionRect = regionNode.getBoundingClientRect();
-      const candidates = [];
-      let scope = _composedParent(regionNode);
-      for (let depth = 0; scope && depth < 5; depth += 1, scope = _composedParent(scope)) {
-        for (const editor of _richTextEditorsAcrossOpenShadowRoots(scope)) {
-          const editorTag = String(editor.tagName || '').toLowerCase();
-          const iframeBacked = editorTag === 'iframe' || editorTag === 'frame';
-          if (
-            editor === regionNode
-            || _isComposedAncestor(regionNode, editor)
-            || _hasComposedClosest(editor, '[role="toolbar"]')
-            || !_visibleFieldContextNode(editor)
-          ) continue;
-          const rect = editor.getBoundingClientRect();
-          if (iframeBacked && (rect.width < 160 || rect.height < 80)) continue;
-          const overlap = Math.max(0, Math.min(regionRect.right, rect.right) - Math.max(regionRect.left, rect.left));
-          const horizontalPenalty = overlap > 0
-            ? 0
-            : Math.min(Math.abs(rect.left - regionRect.right), Math.abs(regionRect.left - rect.right));
-          const verticalPenalty = rect.top >= regionRect.bottom - 8
-            ? Math.max(0, rect.top - regionRect.bottom)
-            : 500 + Math.abs(rect.bottom - regionRect.top);
-          candidates.push({ editor, rect, score: (depth * 250) + verticalPenalty + horizontalPenalty });
-        }
-        if (candidates.length) break;
-      }
-      candidates.sort((a, b) => a.score - b.score);
-      const best = candidates[0];
-      if (!best) return null;
-      const second = candidates[1];
-      if (second && Math.abs(second.score - best.score) < 12) return null;
-      let ref = '';
-      try { if (typeof window.__wb_ax_ref === 'function') ref = window.__wb_ax_ref(best.editor) || ''; } catch {}
-      if (!ref) return null;
-      return {
-        ref,
-        rect: {
-          x: Math.round(best.rect.x),
-          y: Math.round(best.rect.y),
-          w: Math.round(best.rect.width),
-          h: Math.round(best.rect.height),
-        },
-        identity: {
-          tag: String(best.editor.tagName || '').toLowerCase(),
-          id: best.editor.id || null,
-          name: best.editor.getAttribute?.('name') || null,
-          role: best.editor.getAttribute?.('role') || null,
-          pageX: Math.round(best.rect.x + window.scrollX),
-          pageY: Math.round(best.rect.y + window.scrollY),
-          w: Math.round(best.rect.width),
-          h: Math.round(best.rect.height),
-        },
-      };
-    } catch { return null; }
-  }
-
-  // Rich-text editors often expose formatting widgets as ordinary textboxes
-  // in the accessibility tree (font size/family/style presets). Report a
-  // language- and site-neutral *candidate* here; the background combines this
-  // structural evidence with a target-annotated screenshot before changing
-  // the tool result. Ordinary labels suppress weak standalone candidates;
-  // recognized formatting labels may participate in dense clusters, while
-  // explicit [role=toolbar] ancestry remains authoritative.
   function _richTextToolbarAvailablePresetValues(el) {
-    try {
-      const values = [];
-      const seen = new Set();
-      const add = raw => {
-        const value = String(raw || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 80);
-        const key = value.toLowerCase();
-        if (!value || seen.has(key) || values.length >= 40) return;
-        seen.add(key);
-        values.push(value);
-      };
-      add(el.value);
-      if (el.isContentEditable) add(el.textContent);
-
-      const roots = [];
-      if (el.tagName === 'SELECT') roots.push(el);
-      if (el.list) roots.push(el.list);
-      const elementRoot = el.getRootNode?.() || document;
-      for (const id of `${el.getAttribute('aria-controls') || ''} ${el.getAttribute('aria-owns') || ''}`.trim().split(/\s+/)) {
-        if (!id) continue;
-        const root = elementRoot.getElementById?.(id) || document.getElementById(id);
-        if (root && !roots.includes(root)) roots.push(root);
-      }
-      const comboRoot = el.closest?.('[role="combobox"],[role="listbox"]') || null;
-      if (comboRoot && comboRoot !== el && !roots.includes(comboRoot)) roots.push(comboRoot);
-
-      for (const root of roots.slice(0, 6)) {
-        const options = [];
-        if (root.matches?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]')) options.push(root);
-        options.push(...Array.from(root.querySelectorAll?.('option,[role="option"],[role="menuitemradio"],[role="menuitemcheckbox"]') || []));
-        for (const option of options.slice(0, 40)) {
-          add(option.value);
-          add(option.getAttribute?.('data-value'));
-          add(option.textContent);
-        }
-      }
-      return values;
-    } catch { return []; }
+    return _richTextToolbarHeuristic()?.availablePresetValues(el) ?? [];
   }
 
   function _richTextToolbarCandidate(el, baseMeta) {
-    try {
-      if (!el) return null;
-      const inputControl = el.tagName === 'INPUT';
-      const inputType = inputControl ? (el.type || 'text').toLowerCase() : '';
-      const supportedInput = inputControl && ['text', 'search', 'number', 'url'].includes(inputType);
-      const selectControl = el.tagName === 'SELECT';
-      const editableControl = el.isContentEditable === true;
-      if (!supportedInput && !selectControl && !editableControl) return null;
-      const rect = el.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return null;
-
-      const unlabeled = ![
-        baseMeta?.ariaLabel,
-        baseMeta?.ariaLabelledByText,
-        baseMeta?.placeholder,
-        baseMeta?.title,
-        baseMeta?.labelText,
-      ].some(value => String(value || '').trim());
-      const formattingDescriptor = [
-        baseMeta?.ariaLabel,
-        baseMeta?.ariaLabelledByText,
-        baseMeta?.placeholder,
-        baseMeta?.title,
-        baseMeta?.labelText,
-        baseMeta?.id,
-        baseMeta?.name,
-      ].map(value => String(value || '').normalize('NFKC').toLowerCase()).join(' ');
-      const formattingLabel = [
-        'font', 'typeface', 'typograph', 'text size', 'text-size', 'text_size',
-        'paragraph style', 'heading level', 'line height', 'letter spacing', 'zoom',
-        'text color', 'font color', 'foreground color', 'background color', 'highlight color',
-        'text colour', 'font colour', 'foreground colour', 'background colour', 'highlight colour',
-        'link', 'hyperlink',
-        'yazı tipi', 'police', 'schrift', 'fuente', 'fonte', 'carattere',
-        'フォント', '字体', '字體', '글꼴', 'шрифт',
-      ].some(token => formattingDescriptor.includes(token));
-      const ordinaryFilterLabel = [
-        'search', 'filter', 'find', 'query', 'lookup',
-        'arama', 'filtre', 'recherche', 'filtrer', 'suche', 'suchen',
-        'buscar', 'filtro', 'pesquisa', 'cerca',
-        '検索', '搜索', '筛选', '篩選', '검색', 'поиск', 'фильтр',
-      ].some(token => formattingDescriptor.includes(token));
-      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
-      const editableRole = String(baseMeta?.role || '').toLowerCase();
-      const editableFormattingWidget = formattingLabel && (
-        semanticToolbar || ['combobox', 'listbox', 'spinbutton'].includes(editableRole)
-      );
-      if (editableControl && !editableFormattingWidget) return null;
-
-      const compact = rect.height <= 32 && rect.width <= 220;
-      const value = String(editableControl ? (el.textContent || '') : (el.value || '')).trim();
-      const numericPreset = value.length > 0
-        && value.length <= 16
-        && /^-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?$/i.test(value);
-      const searchLike = inputType === 'search' || String(baseMeta?.role || '').toLowerCase() === 'searchbox';
-      if (searchLike) return null;
-      if (!unlabeled && !formattingLabel && ordinaryFilterLabel) return null;
-      if (!unlabeled && !semanticToolbar && !formattingLabel) return null;
-      const interactiveSelector = [
-        'input:not([type="hidden"])',
-        'textarea',
-        'select',
-        'button',
-        '[role="button"]',
-        '[role="combobox"]',
-        '[role="textbox"]',
-        '[role="searchbox"]',
-        '[role="listbox"]',
-        '[role="menuitem"]',
-        '[contenteditable]:not([contenteditable="false"])',
-        '[tabindex]',
-      ].join(',');
-
-      let cluster = null;
-      let node = _composedParent(el);
-      for (let depth = 1; node && depth <= 6; depth++, node = _composedParent(node)) {
-        if (!_visibleFieldContextNode(node)) continue;
-        const region = node.getBoundingClientRect();
-        if (region.height > 160 || region.width < rect.width) continue;
-        const controls = _richTextToolbarQueryAcrossOpenShadowRoots(node, interactiveSelector, 41)
-          .filter(candidate => candidate === el || (!candidate.isContentEditable && _visibleFieldContextNode(candidate)));
-        if (!controls.includes(el)) controls.unshift(el);
-        if (controls.length < 2 || controls.length > 40) continue;
-        const area = region.width * region.height;
-        if (!cluster || area < cluster.area) cluster = { node, controls, region, area };
-      }
-
-      const reasons = [];
-      let score = 0;
-      reasons.push(unlabeled ? 'unlabelled_text_control' : 'labelled_toolbar_control');
-      if (unlabeled) score += 1;
-      if (formattingLabel) { reasons.push('formatting_control_label'); score += 1; }
-      if (compact) { reasons.push('compact_control'); score += 1; }
-      if (numericPreset) { reasons.push('numeric_preset_value'); score += 2; }
-      if (cluster) { reasons.push('dense_control_cluster'); score += 2; }
-      if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
-      if (score < 4) return null;
-
-      const regionNode = semanticToolbar || cluster?.node || _composedParent(el) || el;
-      const region = regionNode.getBoundingClientRect();
-      const related = _richTextToolbarQueryAcrossOpenShadowRoots(regionNode, interactiveSelector, 30)
-        .filter(candidate => !candidate.isContentEditable && _visibleFieldContextNode(candidate))
-        .slice(0, 30);
-      const compactTextLeaves = _richTextToolbarQueryAcrossOpenShadowRoots(regionNode, '*', 200)
-        .filter(candidate => {
-          if (candidate.children?.length || _hasComposedClosest(candidate, '[contenteditable]:not([contenteditable="false"])')) return false;
-          const text = String(candidate.textContent || '').trim();
-          if (!text || text.length > 60 || !_visibleFieldContextNode(candidate)) return false;
-          const candidateRect = candidate.getBoundingClientRect();
-          return candidateRect.height <= 48;
-        })
-        .slice(0, 30);
-      for (const leaf of compactTextLeaves) {
-        let candidate = leaf;
-        for (let depth = 0; candidate && candidate !== regionNode && depth < 3; depth++, candidate = _composedParent(candidate)) {
-          if (!_hasComposedClosest(candidate, '[contenteditable]:not([contenteditable="false"])') && !related.includes(candidate)) related.push(candidate);
-        }
-      }
-      if (!related.includes(el)) related.unshift(el);
-      const relatedRefs = [];
-      let regionRef = '';
-      if (typeof window.__wb_ax_ref === 'function') {
-        try { regionRef = window.__wb_ax_ref(regionNode) || ''; } catch {}
-        for (const candidate of related.slice(0, 30)) {
-          try {
-            const ref = window.__wb_ax_ref(candidate);
-            if (ref && !relatedRefs.includes(ref)) relatedRefs.push(ref);
-          } catch {}
-        }
-      }
-      const associatedEditor = _associatedRichTextEditor(regionNode);
-      if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar) {
-        return null;
-      }
-
-      return {
-        score,
-        reasons,
-        availablePresetValues: _richTextToolbarAvailablePresetValues(el),
-        regionRect: {
-          x: Math.round(region.x),
-          y: Math.round(region.y),
-          w: Math.round(region.width),
-          h: Math.round(region.height),
-        },
-        regionRef,
-        regionKey: _richTextToolbarRegionKey(regionNode),
-        relatedRefs,
-        associatedEditorRef: associatedEditor?.ref || '',
-        associatedEditorRect: associatedEditor?.rect || null,
-        associatedEditorIdentity: associatedEditor?.identity || null,
-      };
-    } catch { return null; }
+    return _richTextToolbarHeuristic()?.candidate(el, baseMeta, {
+      axRef: typeof window.__wb_ax_ref === 'function' ? window.__wb_ax_ref : null,
+    }) ?? null;
   }
 
   function _fieldMeta(el) {
@@ -3986,7 +3674,11 @@
       const cy = targetRect.y + targetRect.height / 2;
       let node = _composedParent(el);
       for (let depth = 0; node && depth < 6; depth++, node = _composedParent(node)) {
-        for (const field of _richTextToolbarQueryAcrossOpenShadowRoots(node, 'input:not([type="hidden"])', 80)) {
+        for (const field of _richTextToolbarQueryAcrossOpenShadowRoots(
+          node,
+          'input:not([type="hidden"]),select,[contenteditable]:not([contenteditable="false"])',
+          80,
+        )) {
           const candidate = _fieldMeta(field)?.toolbarCandidate;
           const region = candidate?.regionRect;
           if (!region) continue;
@@ -4066,14 +3758,47 @@
     return { success: true, matched: true };
   }
 
+  // Above this length the per-candidate rescan below stops being worth its
+  // cost. The edit still succeeds; it is reported unproven, which the callers
+  // treat as "no positive proof", not as a failure.
+  const RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS = 65536;
+
+  // 32-bit FNV-1a. The append proof recomputes this once per candidate
+  // insertion point, so a BigInt hash made a long contenteditable an O(n*m)
+  // freeze inside the page.
   function _richTextToolbarValueSignature(value) {
     const text = String(value || '');
-    let hash = 14695981039346656037n;
+    let hash = 2166136261;
     for (let i = 0; i < text.length; i += 1) {
-      hash ^= BigInt(text.charCodeAt(i));
-      hash = BigInt.asUintN(64, hash * 1099511628211n);
+      hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
     }
     return `${text.length}:${hash.toString(16)}`;
+  }
+
+  /**
+   * Prove `after` is exactly `before` with `inserted` spliced in at one point.
+   * Shared by the direct-value path (which still holds `before`) and the
+   * signature path (which only kept a hash of it), so the two cannot drift.
+   */
+  function _richTextToolbarExactInsertion(before, after, inserted, beforeSignature = null) {
+    if (!inserted || after.length > RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS) return false;
+    const expectedLength = typeof before === 'string'
+      ? before.length + inserted.length
+      : (() => {
+          const separator = String(beforeSignature || '').indexOf(':');
+          const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+          return Number.isInteger(beforeLength) ? beforeLength + inserted.length : NaN;
+        })();
+    if (after.length !== expectedLength) return false;
+    const matches = candidate => (typeof before === 'string'
+      ? candidate === before
+      : _richTextToolbarValueSignature(candidate) === beforeSignature);
+    let index = after.indexOf(inserted);
+    while (index >= 0) {
+      if (matches(after.slice(0, index) + after.slice(index + inserted.length))) return true;
+      index = after.indexOf(inserted, index + 1);
+    }
+    return false;
   }
 
   function _prepareRichTextToolbarFocusedType(params = {}) {
@@ -4166,20 +3891,12 @@
       if (params.clear === true) {
         verified = value === expected;
       } else {
-        const beforeSignature = String(params.beforeSignature || '');
-        const separator = beforeSignature.indexOf(':');
-        const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
-        if (expected && Number.isInteger(beforeLength) && value.length === beforeLength + expected.length) {
-          let index = value.indexOf(expected);
-          while (index >= 0) {
-            const withoutInsertion = value.slice(0, index) + value.slice(index + expected.length);
-            if (_richTextToolbarValueSignature(withoutInsertion) === beforeSignature) {
-              verified = true;
-              break;
-            }
-            index = value.indexOf(expected, index + 1);
-          }
-        }
+        verified = _richTextToolbarExactInsertion(
+          null,
+          value,
+          expected,
+          String(params.beforeSignature || ''),
+        );
       }
     }
     const rect = el.getBoundingClientRect();
@@ -4302,8 +4019,9 @@
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
       const toolbarContext = _richTextToolbarContextForElement(el);
       const probedTag = String(el.tagName || '').toLowerCase();
-      const selectorTargetToken = toolName === 'type_text'
-        && args.index == null
+      const selectorTargetToken = (toolName === 'click' || (
+        toolName === 'type_text' && args.index == null
+      ))
         && !['iframe', 'frame'].includes(probedTag)
         ? _rememberRichTextToolbarRetryTarget(el)
         : '';
@@ -4348,7 +4066,12 @@
       };
       const onMessage = event => {
         if (event?.data?.__webbrainFocusedFrameToken !== token) return;
-        finish({ matched: event.source === focusedFrame.contentWindow });
+        // Only the focused frame's own announcement resolves this. Another
+        // frame posting the token could never make the walk select it, but
+        // answering `matched: false` on its behalf would end the wait before
+        // the real child replied. Ignore it and let the timeout decide.
+        if (event.source !== focusedFrame.contentWindow) return;
+        finish({ matched: true });
       };
       window.addEventListener('message', onMessage);
       timer = setTimeout(() => finish({ matched: false }), 750);

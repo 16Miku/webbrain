@@ -341,7 +341,7 @@ Injected before `content.js` via `content_scripts`. Exposes three globals on `wi
 | `get_accessibility_tree` | Text tree + viewport | Primary page read path. |
 | `click_ax({ref_id})` | `{success, method, tag, rect, name, href?, navigates?, hint?, trusted?, verified?, fallback?, observedHints?}` | Scrolls into view → focuses → `el.click()`. Chrome considers one CDP trusted-click fallback only after two stable page/target observations. URL, handler-focus, synchronous target mutation, and delayed semantic target state prove progress; broad page churn and delayed name/class/style/child changes are diagnostic hints only. Nearby mutating XHR/ping requests, new tabs, and downloads make the result inconclusive and veto retry, while background reads and obvious telemetry are ignored. Hidden, pointer-disabled, native, stateful/toggle, form, download, and potentially mutating controls never auto-retry. A silent app-internal success can still receive one trusted second activation; generic-only eligibility, settle time, and the one-shot rule bound but cannot eliminate that tradeoff. |
 | `type_ax({ref_id, text, clear})` | `{success, method, rect}` | React-compatible: uses the native HTMLInputElement/HTMLTextAreaElement value setter. Rejects non-typeable INPUT subtypes (checkbox/radio/submit/file/...) with a clear error pointing at `click_ax`. |
-| `set_field({ref_id, text, clear, submit})` | `{success, verified, ...}` | One-shot focus + clear + type + (optional) submit. **Combobox-aware:** if the element or an ancestor looks like a searchbox/combobox/open listbox, `submit:true` dispatches `ArrowDown` → `Enter` with small delays (Stripe-style virtualized pickers need the first option highlighted before Enter commits it). Bare text inputs still get `Enter` + `form.requestSubmit()`. |
+| `set_field({ref_id, text, clear, submit})` | `{success, verified?, ...}` | One-shot focus + clear + type + (optional) submit. **Combobox-aware:** if the element or an ancestor looks like a searchbox/combobox/open listbox, `submit:true` dispatches `ArrowDown` → `Enter` with small delays (Stripe-style virtualized pickers need the first option highlighted before Enter commits it). Bare text inputs still get `Enter` + `form.requestSubmit()`. |
 
 ---
 
@@ -456,6 +456,16 @@ tier:
 `get_accessibility_tree`, `read_page`, `read_pdf`, `get_window_info`, `get_interactive_elements`, `get_selection`, `extract_data`, `wait_for_stable`
 
 ### Interaction
+
+> **`verified` is a positive proof, not a boolean.** Text-entry tools set it
+> `true` only when the field's final value proves the edit landed, and omit it
+> otherwise. They never set it `false`: the loop detector, the delivery
+> checkpoint, and the observation boundary all read `verified === false` as a
+> failed action, and an exact-match proof legitimately fails on masked inputs,
+> `maxlength` truncation, framework-reformatted fields, and
+> whitespace-normalising rich-text bodies. Only the toolbar recovery contract
+> requires a positive `true`.
+
 `click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
 
 Full Act also adds advanced UI/DOM fallbacks: `resize_window`, `hover` (CDP-trusted, for reveal-on-hover menus), `drag_drop` (CDP-trusted pointer sequence, for Trello/Linear-style reordering), `get_shadow_dom`, `shadow_dom_query`, and `get_frames`. Mid Dev gets the shadow/frame inspection tools as Dev-extended debugging tools, but not hover/drag-drop.
@@ -562,6 +572,58 @@ OpenAI format → Anthropic blocks: system → separate `system` field; `assista
 | Min recurring interval | 1 min |
 | Max recurring interval | 1 year (525 600 min) |
 | Max queue deferrals before failure | 120 (≈ 1 h of retries) |
+
+---
+
+## Rich-Text Toolbar Guard
+
+Rich-text editors expose their formatting controls (font size, font family,
+style preset, colour, link) as ordinary textboxes in the accessibility tree,
+so an agent aiming for the document body can type prose into the font-size
+box instead. The guard stops that before dispatch.
+
+**Detection** — `content/rich-text-toolbar-heuristic.js` scores the target:
+unlabelled (+1), compact (+1), recognised formatting label (+1), numeric
+preset value (+2), dense control cluster (+2), `[role=toolbar]` ancestry (+4).
+Score ≥ 4 escalates. Ordinary fields exit early: search boxes, labelled filter
+fields, and labelled non-formatting inputs are rejected before the expensive
+ancestor walk.
+
+This file is the **only** copy of the heuristic. Both browser builds load it
+ahead of `content.js`, and `cdp-client.js` fetches its source and prepends it
+to the function it evaluates in the page's main world, so an element scores
+the same whichever dispatch route reaches it. `test/run.js` fails if a second
+copy appears. The main world cannot see the isolated world's `__wb_ax_ref`
+registry, so ref minting is passed in by the caller; the CDP path supplies
+none and blocking there falls back to `regionKey`.
+
+**Adjudication** — `_preflightRichTextToolbarTarget` annotates a screenshot
+with the target outlined and asks a vision model to classify only that region.
+The verdict is combined with a shape check on the text being typed (a font
+size accepts `14`, a link accepts a URL, neither accepts a sentence). Without
+vision it falls back to structural scoring and fails closed for prose-like
+values. These classifier captures are counted separately from the model-facing
+screenshot budget and are surfaced once they exceed it, because each one also
+costs a vision call.
+
+**Recovery contract** — a block records a per-tab debt that refuses
+`done(outcome="success")` and plain final text until the edit is redone
+properly. `partial` and `failed` stay reachable, so a run can always end. The
+debt discharges only when all of these hold:
+
+- the tool enters text (`set_field`, `type_ax`, `type_text`, `iframe_type`);
+- the result is `success` **and** positively `verified`;
+- the text matches the blocked text under the same effective replacement mode
+  (`set_field` replaces by default, `type_text` appends by default);
+- the target is an editor body — contenteditable or textarea, not in toolbar
+  context;
+- the target is the editor detection associated with the block: by ref when
+  one was captured, otherwise by tag/role/id/name plus geometry;
+- the document still matches, unless the state was explicitly carried across a
+  navigation as recovery-only.
+
+`test/run.js` pins this as a table. A new page shape belongs in that table as
+a deliberate row rather than as another condition in the matcher.
 
 ---
 

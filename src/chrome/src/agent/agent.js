@@ -375,6 +375,12 @@ export class Agent extends LoopDetector {
     // consume the slot that supplies post-action evidence to the main model.
     // Reset when a run starts and on tab cleanup.
     this.autoScreenshotCount = new Map();
+    // tabId -> internal toolbar-classifier captures this turn. These are
+    // gate-checked against maxScreenshotsPerTurn but do not consume the slot
+    // that supplies post-action evidence to the main model, so without a
+    // separate counter their screenshot and vision cost was invisible to a
+    // user who capped the budget precisely to control spend.
+    this.toolbarAuditScreenshotCount = new Map();
     // tabId -> {scaleX, scaleY} image-pixel→CSS-pixel factors for the most
     // recent screenshot shown to the model. Set when maxImageDimension forced
     // a downscale; cleared when the last capture was 1:1. Consumed by
@@ -2028,6 +2034,7 @@ export class Agent extends LoopDetector {
   ]);
 
   static RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS = new Set(['press_keys']);
+  static RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS = new Set(['click', 'press_keys']);
 
   static _richTextToolbarUsesFocusedTarget(toolName, args = {}) {
     return Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
@@ -2290,6 +2297,80 @@ export class Agent extends LoopDetector {
     return geometry?.annotationRect || null;
   }
 
+  /**
+   * Pre-toolbar-guard iframe_type dispatch: inject into every frame, let the
+   * url filter and selector decide, take the first frame that accepts.
+   *
+   * The guard's single-frame resolution is stricter and is what the target
+   * token binds to, but it can only run where the probe resolves exactly one
+   * frame with content.js reachable. Pages with repeated same-origin frames,
+   * or frames the content script cannot enter, used to work through this path
+   * and would otherwise start failing. It stays available only while no
+   * toolbar recovery is pending — once a debt is open, ambiguity must fail
+   * closed rather than type into a frame nobody vetted.
+   */
+  async _legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter }) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: (sel, txt, clr, filter) => {
+        if (filter) {
+          // Require BOTH: (1) HOST match — so "stripe.com" can't match
+          // https://evil.example/?x=stripe.com (anti-substring), AND (2) the
+          // original substring — so a caller-supplied path still picks one
+          // of several same-host frames.
+          let w = String(filter).toLowerCase().trim();
+          try { w = new URL(/^[a-z][a-z0-9+.\-]*:\/\//i.test(w) ? w : 'https://' + w).hostname; } catch (e) {}
+          w = w.replace(/^www\./, '');
+          const h = location.hostname.toLowerCase().replace(/^www\./, '');
+          const hostOk = !w || h === w || h.endsWith('.' + w);
+          if (!hostOk || !location.href.includes(filter)) {
+            return { ok: false, skipped: 'url-filter', url: location.href };
+          }
+        }
+        let targetDispatched = false;
+        try {
+          const el = document.querySelector(sel);
+          if (!el) return { ok: false, url: location.href, reason: 'not-found' };
+          targetDispatched = true;
+          el.focus();
+          if (el.isContentEditable) {
+            if (clr) el.textContent = '';
+            el.textContent += txt;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
+            return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
+          }
+          const proto = el instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          const newVal = (clr ? '' : (el.value || '')) + txt;
+          if (setter) setter.call(el, newVal); else el.value = newVal;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
+        } catch (e) {
+          return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message };
+        }
+      },
+      args: [selector, text, clear, urlFilter || ''],
+    });
+    const successes = results.map(r => r.result).filter(r => r && r.ok);
+    if (successes.length > 0) {
+      return { success: true, dispatched: true, frame: successes[0], resolution: 'all-frames' };
+    }
+    const candidates = results.map(r => r.result).filter(r => r && !r.skipped);
+    const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
+    return {
+      success: false,
+      ...(targetDispatched
+        ? { dispatched: true }
+        : { dispatched: false, noDispatch: true }),
+      error: 'Input not found in any matching iframe',
+      searchedFrames: candidates.length,
+      frameUrls: candidates.map(c => c.url).slice(0, 5),
+    };
+  }
+
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, { mapAnnotation = true } = {}) {
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     if (!selector) return null;
@@ -2340,6 +2421,8 @@ export class Agent extends LoopDetector {
         ambiguous: true,
         matchCount: probes.length,
         matchedFrameIds: probes.map(probe => probe.frameId),
+        // The caller needs to see which frames matched to pick a urlFilter.
+        matchedFrameUrls: probes.map(probe => probe.frameUrl || '').filter(Boolean).slice(0, 5),
       };
     }
     const currentState = this._richTextToolbarStates.get(tabId);
@@ -2506,7 +2589,7 @@ export class Agent extends LoopDetector {
     if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
-      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
         ? {
             success: false,
             dispatched: false,
@@ -2514,7 +2597,9 @@ export class Agent extends LoopDetector {
             retryable: true,
             error: toolName === 'iframe_click'
               ? 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.'
-              : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
+              : toolName === 'click'
+                ? 'Could not resolve the click target safely while a rich-text editor recovery is required. Re-read the page and retry with one specific target.'
+                : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
           }
         : null;
     }
@@ -2594,7 +2679,7 @@ export class Agent extends LoopDetector {
       : null;
     if (
       !block
-      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
       && !probe.selectorTargetToken
     ) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
@@ -2603,15 +2688,15 @@ export class Agent extends LoopDetector {
         dispatched: false,
         noDispatch: true,
         retryable: true,
-        error: 'Could not preserve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and retry.',
+        error: 'Could not preserve the action target safely while a rich-text editor recovery is required. Re-read the page, choose the intended editor target, and retry.',
       };
     }
-    const preserveFocusedTarget = !block
-      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+    const preserveDispatchTarget = !block
+      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
       && !!probe.selectorTargetToken
       && executionContext
       && typeof executionContext === 'object';
-    if (preserveFocusedTarget) {
+    if (preserveDispatchTarget) {
       executionContext.richTextToolbarTargetToken = probe.selectorTargetToken;
       executionContext.richTextToolbarFrameId = probe.frameId;
     } else {
@@ -3073,6 +3158,24 @@ export class Agent extends LoopDetector {
         coordAligned: true,
       });
       if (shot?.dataUrl) {
+        // Counted separately from the model-facing budget, but not silently:
+        // each of these also costs a vision call.
+        const auditCaptures = (this.toolbarAuditScreenshotCount.get(tabId) || 0) + 1;
+        this.toolbarAuditScreenshotCount.set(tabId, auditCaptures);
+        const cap = Number(this.maxScreenshotsPerTurn) || 0;
+        if (cap > 0 && auditCaptures === cap + 1 && typeof captureOptions?.onUpdate === 'function') {
+          captureOptions.onUpdate('warning', {
+            message: `Rich-text toolbar safety checks have now taken ${auditCaptures} extra screenshots and vision calls this turn, beyond the ${cap} you configured for model-facing captures.`,
+          });
+        }
+        const auditRunId = this.currentRunId.get(tabId);
+        if (auditRunId) {
+          trace.recordNote(auditRunId, null, 'rich_text_toolbar_audit_capture', {
+            toolName,
+            auditCaptures,
+            modelFacingCap: cap,
+          });
+        }
         const cssViewport = {
           width: shot.cssWidth || shot.width,
           height: shot.cssHeight || shot.height,
@@ -5054,7 +5157,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}) {
     let didStateChange = false;
-    let reusableAutoScreenshot = null;
     const promptTier = this._resolvePromptTier();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     // Set of tools whose side effect can navigate the page. We snapshot the
@@ -5853,10 +5955,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       };
       if (!toolResult?.done) {
-        const toolTracePromise = recordFinalToolTrace(toolResult);
+        // Always await: this used to float on the common path, so a trace
+        // entry could land after the next tool call's.
+        await recordFinalToolTrace(toolResult);
         if (_runIdForTool && toolbarPreflight.traceCapture?.dataUrl) {
           try {
-            await toolTracePromise;
             await trace.recordScreenshot(
               _runIdForTool,
               step,
@@ -5887,7 +5990,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tool_call_id: tc.id,
             content: JSON.stringify(blockedResult),
           });
-          recordFinalToolTrace(blockedResult);
+          await recordFinalToolTrace(blockedResult);
           // The remaining calls were generated alongside the invalid done,
           // before the model saw the recovery instruction. Never execute that
           // stale batch; close every tool_call and start a fresh model turn.
@@ -5917,7 +6020,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tool_call_id: tc.id,
             content: JSON.stringify(failedResult),
           });
-          recordFinalToolTrace(failedResult);
+          await recordFinalToolTrace(failedResult);
           this._appendSyntheticToolResults(
             tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
             () => ({ success: false, skipped: true, error: 'skipped: plan-only completion failed' })
@@ -5939,7 +6042,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tool_call_id: tc.id,
             content: JSON.stringify(blockedResult),
           });
-          recordFinalToolTrace(blockedResult);
+          await recordFinalToolTrace(blockedResult);
           this._appendSyntheticToolResults(
             tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
             () => ({ success: false, skipped: true, error: 'skipped: meta-only done summary requires a fresh answer turn' })
@@ -5966,7 +6069,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // are page-derived and get persisted as history for the next turn.
           content: this._wrapUntrusted(fnName, this._limitToolResult(toolResult)),
         });
-        recordFinalToolTrace(toolResult);
+        await recordFinalToolTrace(toolResult);
         // If `done` wasn't the last call in the batch, the remaining tool_calls
         // in this assistant message still need matching tool results — otherwise
         // the persisted conversation has orphaned tool_calls and the provider
@@ -6338,13 +6441,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const visionProvider = await this.providerManager.getVisionProvider();
     if (didStateChange && (provider.supportsVision || visionProvider)) {
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
-      if (reusableAutoScreenshot || Date.now() - lastTs >= 500) {
-        if (!reusableAutoScreenshot) await new Promise(r => setTimeout(r, 250));
+      if (Date.now() - lastTs >= 500) {
+        await new Promise(r => setTimeout(r, 250));
         // Shared budget check+increment (issue #311) — same helper as the
         // initial viewport capture so the configured value is a true max.
         // Pass onUpdate + messages so a budget skip is not silent.
-        const shot = reusableAutoScreenshot
-          || await this._captureBudgetedAutoScreenshot(tabId, { onUpdate, messages });
+        // The toolbar preflight's capture is deliberately NOT reused here: it
+        // is taken before dispatch, so it would show the model the page as it
+        // was *before* its own edit.
+        const shot = await this._captureBudgetedAutoScreenshot(tabId, { onUpdate, messages });
         if (shot) {
           this.lastAutoScreenshotTs.set(tabId, Date.now());
           // Pair the image with a textual list of visible clickables so
@@ -11762,6 +11867,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this.screenshotClickScale.delete(tabId);
     void this._clearBackgroundFocusEmulation(tabId);
     this._foregroundCaptureTabs.delete(tabId);
@@ -15965,10 +16071,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       toolbarExecutionContext,
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
-    const richTextToolbarKeyboardToken = name === 'press_keys'
+    const richTextToolbarDispatchToken = Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
       ? String(toolbarExecutionContext.richTextToolbarTargetToken || '')
       : '';
-    const richTextToolbarKeyboardFrameId = Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
+    const richTextToolbarDispatchFrameId = Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
       ? toolbarExecutionContext.richTextToolbarFrameId
       : null;
     if (name === 'load_skill') {
@@ -16014,10 +16120,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
     if (protectedFailure) {
-      if (richTextToolbarKeyboardToken) {
+      if (richTextToolbarDispatchToken) {
         await this._releaseRichTextToolbarProbeTarget(tabId, {
-          selectorTargetToken: richTextToolbarKeyboardToken,
-          frameId: richTextToolbarKeyboardFrameId,
+          selectorTargetToken: richTextToolbarDispatchToken,
+          frameId: richTextToolbarDispatchFrameId,
         });
       }
       return protectedFailure;
@@ -17793,18 +17899,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         let targetFrameId = executionContext?.richTextToolbarFrameId;
         let targetToken = executionContext?.richTextToolbarTargetToken || '';
+        let probe = null;
         if (!Number.isInteger(targetFrameId) || !targetToken) {
-          const probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
           targetFrameId = probe?.frameId;
           targetToken = probe?.selectorTargetToken || '';
         }
         if (!Number.isInteger(targetFrameId) || !targetToken) {
+          // No recovery pending: keep the pre-guard behavior rather than
+          // failing a call that used to work on multi-frame pages.
+          if (!this._richTextToolbarDebts.has(tabId)) {
+            dispatched = true;
+            return this._legacyIframeTypeAllFrames(tabId, {
+              selector,
+              text,
+              clear,
+              urlFilter: args.urlFilter || '',
+            });
+          }
+          const matchedFrameUrls = probe?.matchedFrameUrls || [];
           return {
             success: false,
             dispatched: false,
             noDispatch: true,
             retryable: true,
-            error: 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
+            ...(probe?.ambiguous === true
+              ? { ambiguous: true, searchedFrames: probe.matchCount, frameUrls: matchedFrameUrls }
+              : {}),
+            error: probe?.ambiguous === true
+              ? `Several frames matched this selector (${probe.matchCount}) while a rich-text editor recovery is pending, so none was typed into. Retry with a urlFilter naming exactly one of: ${matchedFrameUrls.join(', ') || 'the intended frame'}.`
+              : 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
           };
         }
         dispatched = true;
@@ -19478,7 +19602,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               tokenConsumed = true;
               return {
                 success: true,
-                verified: verification?.verified === true,
+                ...(verification?.verified === true ? { verified: true } : {}),
                 method: 'select-keyboard',
                 selectedText: selectInfo.targetText,
                 selectedValue: selectInfo.targetValue,
@@ -19524,7 +19648,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._lastTypeFieldIdent.set(tabId, fieldIdent);
             return {
               success: true,
-              verified: verification?.verified === true,
+              ...(verification?.verified === true ? { verified: true } : {}),
               method: 'cdp-insert-focused',
               text: (args.text || '').slice(0, 100),
               focusedField: {
@@ -19733,7 +19857,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
             return {
               success: true,
-              verified,
+              ...(verified === true ? { verified: true } : {}),
               method: 'select-keyboard',
               selectedText: v?.selectedText || sInfo.targetText,
               selectedValue: v?.selectedValue || sInfo.targetValue,
@@ -19779,7 +19903,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           return {
             success: true,
-            verified,
+            ...(verified === true ? { verified: true } : {}),
             method: 'cdp-insert-focused',
             text: (args.text || '').slice(0, 100),
             focusedField: {
@@ -19815,10 +19939,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
       const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
       if (!SUPPORTED_KEYS.includes(key)) {
-        if (richTextToolbarKeyboardToken) {
+        if (richTextToolbarDispatchToken) {
           await this._releaseRichTextToolbarProbeTarget(tabId, {
-            selectorTargetToken: richTextToolbarKeyboardToken,
-            frameId: richTextToolbarKeyboardFrameId,
+            selectorTargetToken: richTextToolbarDispatchToken,
+            frameId: richTextToolbarDispatchFrameId,
           });
         }
         return {
@@ -19833,13 +19957,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
-        if (richTextToolbarKeyboardToken) {
+        if (richTextToolbarDispatchToken) {
           const validation = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'consume_rich_text_toolbar_focused_target',
-            params: { richTextToolbarTargetToken: richTextToolbarKeyboardToken },
-          }, Number.isInteger(richTextToolbarKeyboardFrameId)
-            ? { frameId: richTextToolbarKeyboardFrameId }
+            params: { richTextToolbarTargetToken: richTextToolbarDispatchToken },
+          }, Number.isInteger(richTextToolbarDispatchFrameId)
+            ? { frameId: richTextToolbarDispatchFrameId }
             : undefined);
           if (validation?.success !== true) {
             return validation || {
@@ -20147,10 +20271,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (name === 'set_checked'
           ? { ...args, probeOnly: true, markForTrustedClick: true }
           : args);
-    if (name === 'press_keys' && richTextToolbarKeyboardToken) {
+    if (Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name) && richTextToolbarDispatchToken) {
       contentArgs = {
         ...contentArgs,
-        richTextToolbarTargetToken: richTextToolbarKeyboardToken,
+        richTextToolbarTargetToken: richTextToolbarDispatchToken,
       };
     }
 
@@ -20162,10 +20286,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           target: 'content',
           action,
           params: contentArgs,
-        }, name === 'press_keys'
-          && richTextToolbarKeyboardToken
-          && Number.isInteger(richTextToolbarKeyboardFrameId)
-          ? { frameId: richTextToolbarKeyboardFrameId }
+        }, Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
+          && richTextToolbarDispatchToken
+          && Number.isInteger(richTextToolbarDispatchFrameId)
+          ? { frameId: richTextToolbarDispatchFrameId }
           : undefined);
       } catch (e) {
         // Content script might not be injected — try injecting it.
@@ -20181,10 +20305,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             target: 'content',
             action,
             params: contentArgs,
-          }, name === 'press_keys'
-            && richTextToolbarKeyboardToken
-            && Number.isInteger(richTextToolbarKeyboardFrameId)
-            ? { frameId: richTextToolbarKeyboardFrameId }
+          }, Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
+            && richTextToolbarDispatchToken
+            && Number.isInteger(richTextToolbarDispatchFrameId)
+            ? { frameId: richTextToolbarDispatchFrameId }
             : undefined);
         } catch (e2) {
           return { error: `Failed to communicate with page: ${e2.message}` };
@@ -21450,6 +21574,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
@@ -22248,6 +22373,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
+    this.toolbarAuditScreenshotCount.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);

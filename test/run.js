@@ -27362,6 +27362,23 @@ test('CDP querySelectorPierce keeps open-shadow Runtime object handles alive unt
 test('Chrome toolbar preflight probes closed-shadow type_text selectors through the dispatch resolver', async () => {
   const client = new CDPClient();
   const commands = [];
+  // The scoring is no longer inlined here: cdp-client injects the shared
+  // heuristic module's own source so the main-world probe and the content
+  // script cannot disagree. Serve the real file so the assertions below still
+  // check the scoring that actually ships.
+  const heuristicPath = path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js');
+  const heuristicSource = fs.readFileSync(heuristicPath, 'utf8');
+  const previousChromeForHeuristic = globalThis.chrome;
+  const previousFetch = globalThis.fetch;
+  globalThis.chrome = {
+    ...(previousChromeForHeuristic || {}),
+    runtime: {
+      ...(previousChromeForHeuristic?.runtime || {}),
+      getURL: relative => 'file://' + path.join(ROOT, 'src/chrome', relative),
+    },
+  };
+  globalThis.fetch = async () => ({ text: async () => heuristicSource });
+  CDPClient._heuristicSourcePromise = null;
   client.resolveSelector = async () => ({
     found: true,
     nodeId: 77,
@@ -27433,6 +27450,403 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
   assert.deepEqual(probe.rect, { x: 10, y: 8, w: 80, h: 24 });
   assert.equal(commands.some(command => command.method.startsWith('Input.')), false, 'preflight must not dispatch input');
   assert.equal(commands.at(-1).method, 'Runtime.releaseObject');
+
+  CDPClient._heuristicSourcePromise = null;
+  if (previousChromeForHeuristic === undefined) delete globalThis.chrome;
+  else globalThis.chrome = previousChromeForHeuristic;
+  if (previousFetch === undefined) delete globalThis.fetch;
+  else globalThis.fetch = previousFetch;
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Rich-text toolbar heuristic — false positives
+//
+// The guard's downside risk is blocking legitimate typing: a false positive
+// costs the user a wedged edit and a run that cannot report success until it
+// proves a correction. That coverage used to live only in the Playwright
+// fixtures, which neither `npm test` nor any workflow runs. The heuristic is a
+// standalone module now, so the rules can be pinned here against a DOM stub.
+// ────────────────────────────────────────────────────────────────────────
+
+function richTextToolbarHeuristicSandbox() {
+  const source = fs.readFileSync(
+    path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js'),
+    'utf8',
+  );
+  const context = {
+    globalThis: null,
+    window: { scrollX: 0, scrollY: 0, innerWidth: 1280, innerHeight: 800 },
+    document: { querySelectorAll: () => [], getElementById: () => null },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    ShadowRoot: class ShadowRoot {},
+    CSS: { escape: value => value },
+  };
+  context.globalThis = context;
+  vm.runInNewContext(source, context);
+  return context.__wbRichTextToolbarHeuristic;
+}
+
+function richTextToolbarElement({
+  tag = 'input',
+  type = 'text',
+  attrs = {},
+  rect = { x: 10, y: 10, width: 90, height: 22 },
+  value = '',
+  contentEditable = false,
+  parent = null,
+  children = [],
+} = {}) {
+  const element = {
+    tagName: tag.toUpperCase(),
+    type,
+    value,
+    textContent: value,
+    isContentEditable: contentEditable,
+    isConnected: true,
+    id: attrs.id || '',
+    children,
+    parentNode: parent,
+    assignedSlot: null,
+    shadowRoot: null,
+    list: null,
+    options: null,
+    getAttribute: name => (name in attrs ? attrs[name] : null),
+    getBoundingClientRect: () => ({
+      ...rect,
+      left: rect.x,
+      top: rect.y,
+      right: rect.x + rect.width,
+      bottom: rect.y + rect.height,
+    }),
+    matches: selector => (attrs.role ? selector.includes(`[role="${attrs.role}"]`) : false),
+    querySelectorAll: () => [],
+    getRootNode: () => ({ getElementById: () => null, querySelector: () => null }),
+    closest: () => null,
+  };
+  for (const child of children) child.parentNode = element;
+  return element;
+}
+
+function richTextToolbarBaseMeta(element, overrides = {}) {
+  return {
+    tag: element.tagName.toLowerCase(),
+    type: element.type,
+    contentEditable: element.isContentEditable,
+    name: element.getAttribute('name'),
+    id: element.id || null,
+    role: element.getAttribute('role'),
+    ariaLabel: element.getAttribute('aria-label'),
+    ariaLabelledByText: null,
+    placeholder: element.getAttribute('placeholder'),
+    title: element.getAttribute('title'),
+    labelText: null,
+    ...overrides,
+  };
+}
+
+test('rich-text toolbar heuristic leaves ordinary fields alone', () => {
+  const heuristic = richTextToolbarHeuristicSandbox();
+  const score = (element, metaOverrides) => heuristic.candidate(
+    element,
+    richTextToolbarBaseMeta(element, metaOverrides),
+  );
+
+  const cases = [
+    {
+      label: 'a search box',
+      element: richTextToolbarElement({ type: 'search', attrs: { 'aria-label': 'Search' } }),
+    },
+    {
+      label: 'a labelled filter field',
+      element: richTextToolbarElement({ attrs: { 'aria-label': 'Filter results' } }),
+    },
+    {
+      label: 'a labelled ordinary form field',
+      element: richTextToolbarElement({ attrs: { 'aria-label': 'Email address' } }),
+    },
+    {
+      label: 'a labelled login field',
+      element: richTextToolbarElement({ attrs: { placeholder: 'Username' } }),
+    },
+    {
+      label: 'a compact native composer',
+      element: richTextToolbarElement({ tag: 'textarea', type: 'textarea', rect: { x: 0, y: 0, width: 420, height: 90 } }),
+    },
+    {
+      label: 'a plain contenteditable body without formatting affordances',
+      element: richTextToolbarElement({ tag: 'div', type: 'div', contentEditable: true, rect: { x: 0, y: 0, width: 600, height: 300 } }),
+    },
+    {
+      label: 'a zero-size control',
+      element: richTextToolbarElement({ rect: { x: 0, y: 0, width: 0, height: 0 } }),
+    },
+  ];
+
+  for (const { label, element } of cases) {
+    assert.equal(score(element), null, `${label} must not be treated as a toolbar control`);
+  }
+});
+
+test('rich-text toolbar heuristic still catches an unlabelled preset control', () => {
+  const heuristic = richTextToolbarHeuristicSandbox();
+  // Unlabelled, compact, holding a numeric preset: the shape a font-size box
+  // takes when it exposes nothing an ordinary field would. This is the
+  // positive control for the suite above — without it, a heuristic that
+  // returned null for everything would pass every false-positive case.
+  const fontSize = richTextToolbarElement({
+    value: '14',
+    rect: { x: 12, y: 8, width: 64, height: 22 },
+  });
+  const candidate = heuristic.candidate(fontSize, richTextToolbarBaseMeta(fontSize));
+  assert.ok(candidate, 'an unlabelled compact numeric preset control must still score');
+  assert.ok(candidate.score >= 4, `expected an escalating score, got ${candidate?.score}`);
+  assert.ok(
+    candidate.reasons.includes('numeric_preset_value'),
+    `expected the numeric preset reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
+  assert.ok(
+    candidate.reasons.includes('unlabelled_text_control'),
+    `expected the unlabelled reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
+});
+
+test('rich-text toolbar recovery contract accepts and rejects exactly these cases', async () => {
+  // The recovery ledger decides when a later edit counts as the agent
+  // correcting its blocked one. It grew a boolean per page shape, so pin the
+  // contract as a table: a new page shape should be a deliberate row here,
+  // not another flag nobody can review.
+  const tabId = 61;
+  const blockedText = 'Document prose';
+  const editorIdentity = {
+    tag: 'div', id: 'editor-body', name: null, role: null,
+    pageX: 40, pageY: 200, w: 640, h: 320,
+  };
+
+  // When detection captured a ref for the editor, recovery is bound to that
+  // ref; geometry identity only stands in when no ref was available.
+  const buildAgent = ({ associatedEditorRef = 'ref_40' } = {}) => {
+    const agent = new AgentCh({});
+    agent._lastAxScopes.set(tabId, { documentToken: 'doc-a', pageUrl: 'https://example.test/editor' });
+    const blocked = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_12', text: blockedText },
+      blocked,
+      {
+        score: 8,
+        reasons: ['unlabelled_text_control', 'semantic_toolbar'],
+        regionRef: 'ref_10',
+        regionKey: 'rtb:div:10:8:320:44',
+        relatedRefs: [],
+        associatedEditorRef,
+        associatedEditorIdentity: editorIdentity,
+      },
+      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
+      null,
+      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
+    );
+    assert.equal(agent._richTextToolbarDebts.has(tabId), true, 'setup must leave an open debt');
+    return agent;
+  };
+
+  const editorProbe = {
+    resolved: true,
+    refId: 'ref_40',
+    documentToken: 'doc-a',
+    refScopeUrl: 'https://example.test/editor',
+    frameId: 0,
+    rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
+    fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: null, name: null },
+    toolbarContext: false,
+  };
+
+  const rows = [
+    {
+      label: 'the same text into the associated editor body',
+      probe: editorProbe,
+      tool: 'set_field',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: true,
+    },
+    {
+      label: 'a different ref for the same geometry when detection captured a ref',
+      probe: { ...editorProbe, refId: 'ref_99' },
+      tool: 'set_field',
+      args: { ref_id: 'ref_99', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'the editor body matched by geometry when detection captured no ref',
+      agentOptions: { associatedEditorRef: '' },
+      probe: { ...editorProbe, refId: 'ref_99' },
+      tool: 'set_field',
+      args: { ref_id: 'ref_99', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: true,
+    },
+    {
+      label: 'geometry that does not match the recorded editor when no ref was captured',
+      agentOptions: { associatedEditorRef: '' },
+      probe: {
+        ...editorProbe,
+        refId: 'ref_99',
+        rect: { pageX: 900, pageY: 900, w: 120, h: 40 },
+        fieldMeta: { tag: 'div', contentEditable: true, id: 'other-editor', role: null, name: null },
+      },
+      tool: 'set_field',
+      args: { ref_id: 'ref_99', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'different text into the right editor',
+      probe: editorProbe,
+      tool: 'set_field',
+      args: { ref_id: 'ref_40', text: 'something else' },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      // set_field replaces unless told otherwise; type_text appends unless
+      // told otherwise. The blocked call was a replace, so an append of the
+      // same text is a different edit and must not discharge it.
+      label: 'the right text appended when the blocked edit replaced',
+      probe: editorProbe,
+      tool: 'type_text',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'the right text replaced through a different tool with the same effective mode',
+      probe: editorProbe,
+      tool: 'type_text',
+      args: { ref_id: 'ref_40', text: blockedText, clear: true },
+      result: { success: true, verified: true },
+      discharges: true,
+    },
+    {
+      label: 'an unverified edit',
+      probe: editorProbe,
+      tool: 'set_field',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: true },
+      discharges: false,
+    },
+    {
+      label: 'a failed edit',
+      probe: editorProbe,
+      tool: 'set_field',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: false, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'the right text into another toolbar control',
+      probe: { ...editorProbe, fieldMeta: { tag: 'input', contentEditable: false }, toolbarContext: true },
+      tool: 'set_field',
+      args: { ref_id: 'ref_41', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'the right text into an ordinary input that is not an editor body',
+      probe: { ...editorProbe, refId: 'ref_77', fieldMeta: { tag: 'input', contentEditable: false } },
+      tool: 'set_field',
+      args: { ref_id: 'ref_77', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'the right text into a different document',
+      probe: { ...editorProbe, documentToken: 'doc-b', refScopeUrl: 'https://example.test/other' },
+      tool: 'set_field',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+    {
+      label: 'a tool that cannot enter text',
+      probe: editorProbe,
+      tool: 'click_ax',
+      args: { ref_id: 'ref_40', text: blockedText },
+      result: { success: true, verified: true },
+      discharges: false,
+    },
+  ];
+
+  for (const row of rows) {
+    const agent = buildAgent(row.agentOptions);
+    agent._probeRichTextToolbarRetryTarget = async () => row.probe;
+    agent._releaseRichTextToolbarProbeTarget = async () => {};
+    await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      row.tool,
+      row.args,
+      row.result,
+    );
+    assert.equal(
+      agent._richTextToolbarDebts.has(tabId),
+      !row.discharges,
+      row.discharges
+        ? `recovery must accept: ${row.label}`
+        : `recovery must reject: ${row.label}`,
+    );
+  }
+});
+
+test('the rich-text toolbar heuristic has exactly one implementation', () => {
+  // It used to exist three times — chrome content.js, firefox content.js, and
+  // an inlined Runtime.callFunctionOn string in cdp-client.js — with nothing
+  // catching divergence, so the same element could score differently depending
+  // on which dispatch route reached it.
+  const chromeModule = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js'), 'utf8');
+  const firefoxModule = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/rich-text-toolbar-heuristic.js'), 'utf8');
+  assert.equal(chromeModule, firefoxModule, 'chrome and firefox heuristic copies must remain byte-identical');
+
+  // The scoring weights and the rejection ladder live in the module and
+  // nowhere else.
+  const scoringMarkers = [
+    "reasons.push('semantic_toolbar'); score += 4",
+    "reasons.push('dense_control_cluster'); score += 2",
+    "reasons.push('numeric_preset_value'); score += 2",
+    'if (score < 4) return null',
+  ];
+  for (const marker of scoringMarkers) {
+    assert.ok(chromeModule.includes(marker), `the shared module must own the scoring rule: ${marker}`);
+  }
+
+  for (const [label, rel] of [
+    ['chrome content.js', 'src/chrome/src/content/content.js'],
+    ['firefox content.js', 'src/firefox/src/content/content.js'],
+    ['cdp-client.js', 'src/chrome/src/cdp/cdp-client.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    for (const marker of scoringMarkers) {
+      assert.ok(
+        !source.includes(marker),
+        `${label} must delegate to the shared heuristic instead of carrying its own copy of: ${marker}`,
+      );
+    }
+    assert.ok(
+      source.includes('__wbRichTextToolbarHeuristic'),
+      `${label} must reach the heuristic through the shared global`,
+    );
+  }
+
+  // Both builds must actually load the module, ahead of content.js.
+  for (const rel of ['src/chrome/manifest.json', 'src/firefox/manifest.json']) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    const entry = manifest.content_scripts.find(script => script.js?.some(file => file.endsWith('/content.js')));
+    assert.ok(entry, `${rel} must register content.js`);
+    const heuristicIndex = entry.js.indexOf('src/content/rich-text-toolbar-heuristic.js');
+    const contentIndex = entry.js.findIndex(file => file.endsWith('/content.js'));
+    assert.ok(heuristicIndex >= 0, `${rel} must load the shared heuristic`);
+    assert.ok(heuristicIndex < contentIndex, `${rel} must load the heuristic before content.js`);
+  }
 });
 
 test('Chrome Agent routes selector type_text toolbar preflight through CDP before content fallback', async () => {
@@ -27715,6 +28129,94 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     else globalThis.chrome = previousChrome;
     if (previousBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = previousBrowser;
+  }
+});
+
+test('iframe_type falls back to all-frames dispatch until a toolbar recovery is pending', async () => {
+  // Single-frame resolution is stricter than the pre-guard behavior and is
+  // what the target token binds to, but it cannot resolve pages with repeated
+  // same-origin frames or frames content.js cannot enter. Those calls used to
+  // work, so they keep working until a debt makes ambiguity unsafe.
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frames = [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+    { frameId: 9, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+  ];
+  const ambiguousProbe = {
+    resolved: true,
+    selectorTargetToken: 'ambiguous-token',
+    rect: { x: 20, y: 30, w: 180, h: 32 },
+    fieldMeta: { tag: 'input', type: 'text' },
+    toolbarContext: false,
+  };
+
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    let legacyArgs = null;
+    const api = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: {
+        sendMessage: async (_tabId, message) => {
+          // Every frame matches, so the probe can never pick just one.
+          if (message.action === 'probe_rich_text_toolbar_retry_target') return ambiguousProbe;
+          if (message.action === 'release_rich_text_toolbar_retry_target') return { released: true };
+          return { resolved: false };
+        },
+        executeScript: async (...callArgs) => {
+          legacyArgs = callArgs;
+          return [{ ok: true, url: 'https://frame.example.test/editor', method: 'native-setter', value: 'hello', dispatched: true }];
+        },
+      },
+      scripting: {
+        executeScript: async (params) => {
+          legacyArgs = [params];
+          return [{ result: { ok: true, url: 'https://frame.example.test/editor', method: 'native-setter', value: 'hello', dispatched: true } }];
+        },
+      },
+    };
+    globalThis[globalKey] = api;
+    try {
+      const agent = new AgentClass({});
+
+      const fallback = await agent.executeTool(42, 'iframe_type', {
+        urlFilter: 'frame.example.test',
+        selector: '#shared-field',
+        text: 'hello',
+      });
+      assert.equal(fallback.success, true, `${label}: ambiguous frames with no debt must still type`);
+      assert.equal(fallback.resolution, 'all-frames', `${label}: the fallback path must be identifiable in the result`);
+      assert.ok(legacyArgs, `${label}: the legacy all-frames dispatch must have run`);
+
+      // Once a recovery is pending, ambiguity must fail closed and say which
+      // frames matched so the agent can pick a urlFilter instead of guessing.
+      legacyArgs = null;
+      agent._richTextToolbarDebts.set(42, { tool: 'type_ax', targetKind: 'font_size' });
+      const blocked = await agent.executeTool(42, 'iframe_type', {
+        urlFilter: 'frame.example.test',
+        selector: '#shared-field',
+        text: 'hello',
+      });
+      assert.equal(blocked.success, false, `${label}: a pending recovery must not type into an unvetted frame`);
+      assert.equal(blocked.noDispatch, true, `${label}: the blocked call must not dispatch`);
+      assert.equal(blocked.ambiguous, true, `${label}: the blocked call must report ambiguity`);
+      assert.deepEqual(
+        blocked.frameUrls,
+        ['https://frame.example.test/editor', 'https://frame.example.test/editor'],
+        `${label}: the blocked call must name the candidate frames`,
+      );
+      assert.match(blocked.error, /urlFilter/, `${label}: the error must tell the agent how to disambiguate`);
+      assert.equal(legacyArgs, null, `${label}: the legacy path must stay unreachable while a debt is open`);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
   }
 });
 
@@ -28151,10 +28653,15 @@ test('Chrome selector type reports post-edit value verification', async () => {
   });
   client.sendCommand = async () => ({});
   client.evaluate = async () => ({ result: { value: null } });
-  client.verifyTextEntry = async () => false;
+  // Unproven is reported by omitting `verified`, never by setting it false:
+  // `verified === false` is read as an action failure by the loop detector,
+  // the delivery checkpoint and the observation boundary, and an exact-match
+  // proof legitimately fails on masked, truncated or reformatted fields.
+  client.verifyTextEntry = async () => null;
   const reverted = await client.typeText(42, '#field', 'hello', true);
   assert.equal(reverted.success, true);
-  assert.equal(reverted.verified, false, 'a reverted selector edit must remain unverified');
+  assert.equal(reverted.verified, undefined, 'a reverted selector edit must not claim verification');
+  assert.ok(!('verified' in reverted), 'an unproven selector edit must omit verified entirely');
 
   client.verifyTextEntry = async () => true;
   const persisted = await client.typeText(42, '#field', 'hello', true);
@@ -28185,11 +28692,13 @@ test('Chrome append verification proves the requested insertion delta', async ()
     }
     throw new Error(`unexpected command: ${command}`);
   };
+  // 32-bit FNV-1a, matching TEXT_ENTRY_SIGNATURE_SOURCE. The append proof
+  // rehashes once per candidate insertion point, so BigInt made this O(n*m)
+  // on a long contenteditable.
   const signatureFor = value => {
-    let hash = 14695981039346656037n;
+    let hash = 2166136261;
     for (let i = 0; i < value.length; i += 1) {
-      hash ^= BigInt(value.charCodeAt(i));
-      hash = BigInt.asUintN(64, hash * 1099511628211n);
+      hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
     }
     return `${value.length}:${hash.toString(16)}`;
   };
@@ -28199,7 +28708,7 @@ test('Chrome append verification proves the requested insertion delta', async ()
     text: 'requested content',
     clear: false,
     beforeSignature: beforeSnapshot,
-  }), false, 'changing unrelated characters must not verify text that was already present');
+  }), null, 'changing unrelated characters must not verify text that was already present');
 
   afterValue = 'requested content alreadyrequested content';
   assert.equal(await client.verifyTextEntry(42, {
@@ -28334,11 +28843,12 @@ test('Chrome focused type_text propagates post-edit verification', async () => {
       },
     });
     cdpClientCh.sendCommand = async () => ({});
-    cdpClientCh.verifyTextEntry = async () => false;
+    cdpClientCh.verifyTextEntry = async () => null;
     const agent = new AgentCh({});
     const reverted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
     assert.equal(reverted.success, true);
-    assert.equal(reverted.verified, false, 'a reverted focused edit must remain unverified');
+    assert.equal(reverted.verified, undefined, 'a reverted focused edit must not claim verification');
+    assert.ok(!('verified' in reverted), 'an unproven focused edit must omit verified entirely');
 
     cdpClientCh.verifyTextEntry = async () => true;
     const persisted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
@@ -28350,6 +28860,81 @@ test('Chrome focused type_text propagates post-edit verification', async () => {
     cdpClientCh.sendCommand = originalSendCommand;
     cdpClientCh.verifyTextEntry = originalVerifyTextEntry;
   }
+});
+
+test('unproven text entry never reaches the gates that read verified === false', () => {
+  // An exact-match proof legitimately fails on fields the page rewrites:
+  // maxlength truncation, input masks, React controlled reformatting, and
+  // whitespace-normalizing contenteditables. Those edits worked. Emitting
+  // verified:false for them would mark a real success as a failed action.
+  const unproven = { success: true, method: 'cdp-insert-focused' };
+  const proven = { success: true, verified: true, method: 'cdp-insert-focused' };
+  const refuted = { success: true, verified: false, method: 'cdp-insert-focused' };
+
+  // loop-detector.js: only `verified === false` blocks a success from clearing
+  // the failed-action scopes, so an unproven edit must clear them like any
+  // other success or a second legitimate attempt draws a FAILED ACTION LOOP.
+  const clearsFailureScopes = result => result?.success === true && result?.verified !== false;
+  assert.equal(clearsFailureScopes(unproven), true, 'unproven text entry must still clear failure scopes');
+  assert.equal(clearsFailureScopes(proven), true);
+  assert.equal(clearsFailureScopes(refuted), false, 'an explicit refutation must still count as failure');
+
+  // agent.js `_deliveryCheckpointMadeMeaningfulProgress`
+  const countsAsProgress = result => result?.verified !== false && result?.inconclusive !== true;
+  assert.equal(countsAsProgress(unproven), true, 'unproven text entry must still count as progress');
+
+  // agent.js observation boundary
+  const isUnverifiedBoundary = result => !!(result?.inconclusive || result?.verified === false);
+  assert.equal(isUnverifiedBoundary(unproven), false, 'unproven text entry must not force an unverified boundary');
+
+  // The toolbar recovery debt is the one consumer that requires a positive
+  // proof, and it is unchanged by the tri-state: it tests `!== true`.
+  const dischargesToolbarDebt = result => result?.success === true && result?.verified === true;
+  assert.equal(dischargesToolbarDebt(unproven), false, 'unproven text entry must not discharge a toolbar debt');
+  assert.equal(dischargesToolbarDebt(proven), true, 'a proven corrected edit must discharge the toolbar debt');
+});
+
+test('text-entry signature and insertion proof stay linear and bounded', () => {
+  const signatureFor = value => {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
+    }
+    return `${value.length}:${hash.toString(16)}`;
+  };
+  // The pathological shape: a long value where the inserted text recurs, so
+  // the proof rescans at every occurrence. With BigInt this was O(n*m) inside
+  // the page's content script.
+  const before = 'ab'.repeat(40000);
+  const inserted = 'ab';
+  const after = before + inserted;
+  const started = Date.now();
+  const beforeSignature = signatureFor(before);
+  let proved = false;
+  if (after.length <= 65536) {
+    let index = after.indexOf(inserted);
+    while (index >= 0) {
+      if (signatureFor(after.slice(0, index) + after.slice(index + inserted.length)) === beforeSignature) {
+        proved = true;
+        break;
+      }
+      index = after.indexOf(inserted, index + 1);
+    }
+  }
+  assert.equal(proved, false, 'values past the cap must report unproven rather than rescan');
+  assert.ok(Date.now() - started < 1000, 'the capped proof must not block the content script');
+
+  const shortBefore = 'hello world';
+  assert.equal(
+    signatureFor(shortBefore),
+    signatureFor('hello world'),
+    'the signature must be stable for equal values',
+  );
+  assert.notEqual(
+    signatureFor(shortBefore),
+    signatureFor('hello worlds'),
+    'the signature must separate different values',
+  );
 });
 
 function stubChromeCdpFileInputClickGuard(blocked = null) {

@@ -4,6 +4,25 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [26.0.10] - 2026-08-04
+
+### Added
+- Added a rich-text toolbar safety preflight that stops the agent from typing document text into an editor's formatting controls (font size, font family, style preset, colour, link). The target is scored structurally, confirmed against an annotated screenshot where a vision model is available, and blocked before dispatch; the run cannot report success until the edit is redone in the editor body and verified.
+
+### Changed
+- Text-entry tools now report verification as a positive proof only. `type_text`, `set_field`, and `iframe_type` mark an edit `verified` when the field's final value proves it landed and stay silent otherwise, instead of reporting an unproven edit as refuted. Masked inputs, `maxlength` truncation, framework-reformatted fields, and whitespace-normalising rich-text bodies no longer register as failed actions.
+- `iframe_type` now binds its dispatch to a single resolved frame when a toolbar recovery is pending, and reports the candidate frame URLs so a `urlFilter` can disambiguate them. Ordinary calls keep the previous all-frames behaviour, so pages with repeated same-origin frames continue to work unchanged.
+- Moved the toolbar heuristic into one shared module used by both browser builds and by the DevTools Protocol probe, so an element scores the same whichever dispatch route reaches it.
+
+### Fixed
+- Fixed the toolbar preflight taking a screenshot that was then discarded, which cost an extra capture and vision call on every guarded edit.
+- Fixed the append verification rescanning a field's full contents at every candidate position with arbitrary-precision arithmetic, which could stall a page holding a large rich-text document.
+- Fixed the cross-frame geometry handshake accepting whichever frame answered first; a second frame claiming the same exchange now fails it closed.
+- Fixed toolbar classifier screenshots being invisible in the per-turn screenshot budget, so their added screenshot and vision cost is now recorded and surfaced.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for the verification contract, the `iframe_type` fallback, the toolbar heuristic's false positives, and the recovery contract, and pinned the heuristic to a single implementation across both builds and the DevTools Protocol probe.
+
 ## [26.0.0] - 2026-07-26
 
 ### Added

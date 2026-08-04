@@ -114,12 +114,19 @@
     const token = String(params?.token || '');
     if (!token) return Promise.resolve({ found: false });
     return new Promise(resolve => {
+      // A single claim is answered after this quiet window so a second frame
+      // racing the same token is seen before the geometry is trusted.
+      const CLAIM_CONTENTION_MS = 30;
       let settled = false;
       let timer = null;
+      let contentionTimer = null;
+      let claimant = null;
+      let claimedFrame = null;
       const finish = value => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(contentionTimer);
         window.removeEventListener('message', onMessage);
         resolve(value);
       };
@@ -151,6 +158,28 @@
         const frame = reachableFrames()
           .find(candidate => candidate.contentWindow === event.source);
         if (!frame) return;
+        // The agent announces this token to exactly one child frame, so a
+        // second distinct claimant is a frame answering for a token that was
+        // never sent to it. Resolving the first arrival would let it decide
+        // which iframe the geometry describes, so contention fails closed.
+        if (claimant && claimant !== event.source) {
+          finish({ found: false, contended: true });
+          return;
+        }
+        if (!claimant) {
+          claimant = event.source;
+          claimedFrame = frame;
+          contentionTimer = setTimeout(() => resolveClaim(), CLAIM_CONTENTION_MS);
+          return;
+        }
+        resolveClaim();
+      };
+      const resolveClaim = () => {
+        const frame = claimedFrame;
+        if (!frame || !frame.isConnected) {
+          finish({ found: false });
+          return;
+        }
         let outer = frame.getBoundingClientRect();
         const offscreen = outer.right <= 0 || outer.bottom <= 0
           || outer.left >= window.innerWidth || outer.top >= window.innerHeight;
