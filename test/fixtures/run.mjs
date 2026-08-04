@@ -3916,6 +3916,24 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
         urlLike: false,
       },
     };
+    if (
+      AgentClass._richTextToolbarEditorIdentityMatches(
+        candidate.associatedEditorIdentity,
+        { tag: 'div', id: 'editor-body', role: 'textbox' },
+        { pageX: 520, pageY: 160, w: 400, h: 180 },
+      )
+    ) {
+      throw new Error('matching editor IDs in separate component geometry must remain distinct');
+    }
+    if (
+      !AgentClass._richTextToolbarEditorIdentityMatches(
+        candidate.associatedEditorIdentity,
+        { tag: 'div', id: 'editor-body', role: 'textbox' },
+        { pageX: 20, pageY: 160, w: 400, h: 180 },
+      )
+    ) {
+      throw new Error('matching editor identity and geometry must remain recoverable');
+    }
     const familyDecision = AgentClass._richTextToolbarDecision(candidate, familyAudit);
     if (!familyDecision.wrongTarget || familyDecision.targetKind !== 'font_family') {
       throw new Error(`expected visual font-family rejection, got: ${JSON.stringify(familyDecision)}`);
@@ -4776,6 +4794,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (agent._richTextToolbarStates.get(tabId)?.frameId !== 7) {
       throw new Error('iframe toolbar debt must retain its frame identity');
     }
+    agent._probeRichTextToolbarRetryTarget = AgentClass.prototype._probeRichTextToolbarRetryTarget.bind(agent);
+    const iframeToolbarClickBlock = await agent._richTextToolbarToolBlock(
+      tabId,
+      'iframe_click',
+      { urlFilter: 'frame.example.test', selector: '#bold' },
+    );
+    if (!iframeToolbarClickBlock?.wrongTarget || iframeToolbarClickBlock.dispatched !== false) {
+      throw new Error(`iframe toolbar clicks must remain blocked while editor recovery debt is open: ${JSON.stringify(iframeToolbarClickBlock)}`);
+    }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_12',
@@ -4991,6 +5018,25 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       familyAudit,
       { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
     );
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_201',
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 520, y: 160, pageX: 520, pageY: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const duplicateShadowIdRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'set_field',
+      { ref_id: 'ref_201', text: 'Document prose', clear: true },
+      { success: true, verified: true, method: 'set_field' },
+    );
+    if (duplicateShadowIdRecovery || !agent._richTextToolbarDebts.has(tabId)) {
+      throw new Error('a matching editor ID at another component geometry must retain toolbar debt');
+    }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
       refId: 'ref_12',

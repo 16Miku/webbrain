@@ -1907,7 +1907,7 @@ export class Agent extends LoopDetector {
 
     const expectedId = String(expected.id || '');
     const actualId = String(fieldMeta.id || '');
-    if (expectedId || actualId) return !!expectedId && expectedId === actualId;
+    if ((expectedId || actualId) && (!expectedId || expectedId !== actualId)) return false;
 
     const expectedName = String(expected.name || '');
     const actualName = String(fieldMeta.name || '');
@@ -1928,7 +1928,6 @@ export class Agent extends LoopDetector {
 
   static _richTextToolbarEditorIdentityRecoverable(expected) {
     if (!expected || typeof expected !== 'object' || !String(expected.tag || '').trim()) return false;
-    if (String(expected.id || '').trim() || String(expected.name || '').trim()) return true;
     return [expected.pageX, expected.pageY, expected.w, expected.h]
       .map(Number)
       .every(Number.isFinite);
@@ -2373,7 +2372,7 @@ export class Agent extends LoopDetector {
   }
 
   async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}, { mapAnnotation = false } = {}) {
-    if (toolName === 'iframe_type') {
+    if (toolName === 'iframe_type' || toolName === 'iframe_click') {
       return this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
     }
     if (toolName === 'type_text' && !args?.selector && args?.index == null) {
@@ -2411,15 +2410,28 @@ export class Agent extends LoopDetector {
   async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
-    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_type'].includes(toolName)) return null;
+    if (!['click', 'click_ax', 'type_text', 'type_ax', 'set_field', 'iframe_click', 'iframe_type'].includes(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
-    if (!probe?.resolved) return null;
+    if (!probe?.resolved) {
+      return toolName === 'iframe_click'
+        ? {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.',
+          }
+        : null;
+    }
     const sameFrame = state.recoveryOnly === true
       ? true
       : Number.isInteger(state.frameId)
         ? probe.frameId === state.frameId
         : !Number.isInteger(probe.frameId) || probe.frameId === 0;
-    if (!sameFrame) return null;
+    if (!sameFrame) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return null;
+    }
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
     if (
@@ -2427,13 +2439,13 @@ export class Agent extends LoopDetector {
       || (state.pageUrl && livePageUrl && state.pageUrl !== livePageUrl)
     ) {
       this._clearRichTextToolbarDocumentState(tabId);
-      if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
+      if (!['iframe_click', 'iframe_type'].includes(toolName) && (liveDocument || livePageUrl)) {
         this._rememberAxScope(tabId, liveDocument, livePageUrl);
       }
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
-    if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
+    if (!['iframe_click', 'iframe_type'].includes(toolName) && (liveDocument || livePageUrl)) {
       this._rememberAxScope(tabId, liveDocument, livePageUrl);
     }
     const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
@@ -2679,14 +2691,12 @@ export class Agent extends LoopDetector {
               'identity',
               String(identity.tag || '').toLowerCase(),
               String(identity.role || '').toLowerCase(),
-              identity.id ? ['id', String(identity.id)] : [
-                'name_rect',
-                String(identity.name || ''),
-                identity.pageX,
-                identity.pageY,
-                identity.w,
-                identity.h,
-              ],
+              String(identity.id || ''),
+              String(identity.name || ''),
+              identity.pageX,
+              identity.pageY,
+              identity.w,
+              identity.h,
             ]
           : ['unknown', entry.regionKey || entry.regionRef || ''];
       return JSON.stringify([
