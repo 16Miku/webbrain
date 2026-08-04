@@ -51239,11 +51239,12 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     globalThis.setTimeout = (fn, _delay, ...args) => originalSetTimeout(fn, 0, ...args);
 
     let chromeUrl = 'https://trusted.example/base/page';
+    let chromeStatus = 'complete';
     const chromeUpdates = [];
     globalThis.chrome = {
       tabs: {
         async get() {
-          return { id: 42, url: chromeUrl };
+          return { id: 42, url: chromeUrl, status: chromeStatus };
         },
         async update(_tabId, { url }) {
           chromeUpdates.push(url);
@@ -51350,6 +51351,48 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.equal(chromeLoadingOnly.success, false, 'Chrome loading and child-frame events must not prove a top-frame commit');
     assert.equal(chromeLoadingOnly.navigationPending, true);
 
+    const fastChromeTimers = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay >= 9000 ? 20 : 0, ...args);
+      chromeStatus = 'loading';
+      globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+        chromeUpdates.push(url);
+        chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl, status: chromeStatus });
+        originalSetTimeout(() => {
+          chromeStatus = 'complete';
+          chromeCommitListener?.({ tabId: 42, frameId: 0, url: chromeUrl });
+        }, 5);
+        return { id: 42, url: chromeUrl, status: chromeStatus };
+      };
+      const chromeSlowCommit = await chromeAgent.executeTool(42, 'navigate', {
+        url: chromeUrl,
+        force: true,
+      });
+      assert.equal(chromeSlowCommit.success, true, 'Chrome should keep listening while a slow top-frame navigation is loading');
+      assert.equal(chromeSlowCommit.verified, true);
+    } finally {
+      globalThis.setTimeout = fastChromeTimers;
+      chromeStatus = 'complete';
+    }
+
+    chromeStatus = 'loading';
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl, status: chromeStatus });
+      return { id: 42, url: chromeUrl, status: chromeStatus };
+    };
+    const chromeStillLoading = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeStillLoading.success, false);
+    assert.equal(chromeStillLoading.navigationPending, true);
+    assert.equal(chromeStillLoading.confirmationPossible, false, 'Chrome must not invent a native dialog while the tab is still loading');
+    assert.equal(chromeStillLoading.recoveryRequired, 'wait_for_stable');
+    assert.match(chromeStillLoading.error, /still loading/i);
+    assert.doesNotMatch(chromeAgent._digestToolResult('navigate', JSON.stringify(chromeStillLoading)), /confirmation/i);
+    chromeStatus = 'complete';
+
     chromeListenerRemoved = false;
     globalThis.chrome.tabs.update = async (_tabId, { url }) => {
       chromeUpdates.push(url);
@@ -51419,11 +51462,12 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     assert.match(chromeRejected.error, /synthetic Chrome rejection/);
 
     let firefoxUrl = 'https://trusted.example/base/page';
+    let firefoxStatus = 'complete';
     const firefoxUpdates = [];
     globalThis.browser = {
       tabs: {
         async get() {
-          return { id: 42, url: firefoxUrl };
+          return { id: 42, url: firefoxUrl, status: firefoxStatus };
         },
         async update(_tabId, { url }) {
           firefoxUpdates.push(url);
@@ -51528,6 +51572,48 @@ test('navigate rejects non-web schemes and contains browser API failures', async
     });
     assert.equal(firefoxLoadingOnly.success, false, 'Firefox loading and child-frame events must not prove a top-frame commit');
     assert.equal(firefoxLoadingOnly.navigationPending, true);
+
+    const fastFirefoxTimers = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay >= 9000 ? 20 : 0, ...args);
+      firefoxStatus = 'loading';
+      globalThis.browser.tabs.update = async (_tabId, { url }) => {
+        firefoxUpdates.push(url);
+        firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl, status: firefoxStatus });
+        originalSetTimeout(() => {
+          firefoxStatus = 'complete';
+          firefoxCommitListener?.({ tabId: 42, frameId: 0, url: firefoxUrl });
+        }, 5);
+        return { id: 42, url: firefoxUrl, status: firefoxStatus };
+      };
+      const firefoxSlowCommit = await firefoxAgent.executeTool(42, 'navigate', {
+        url: firefoxUrl,
+        force: true,
+      });
+      assert.equal(firefoxSlowCommit.success, true, 'Firefox should keep listening while a slow top-frame navigation is loading');
+      assert.equal(firefoxSlowCommit.verified, true);
+    } finally {
+      globalThis.setTimeout = fastFirefoxTimers;
+      firefoxStatus = 'complete';
+    }
+
+    firefoxStatus = 'loading';
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl, status: firefoxStatus });
+      return { id: 42, url: firefoxUrl, status: firefoxStatus };
+    };
+    const firefoxStillLoading = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxStillLoading.success, false);
+    assert.equal(firefoxStillLoading.navigationPending, true);
+    assert.equal(firefoxStillLoading.confirmationPossible, false, 'Firefox must not invent a native dialog while the tab is still loading');
+    assert.equal(firefoxStillLoading.recoveryRequired, 'wait_for_stable');
+    assert.match(firefoxStillLoading.error, /still loading/i);
+    assert.doesNotMatch(firefoxAgent._digestToolResult('navigate', JSON.stringify(firefoxStillLoading)), /confirmation/i);
+    firefoxStatus = 'complete';
 
     firefoxListenerRemoved = false;
     globalThis.browser.tabs.update = async (_tabId, { url }) => {

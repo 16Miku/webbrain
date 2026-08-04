@@ -13049,6 +13049,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       case 'navigate': {
         if (parsed.blockedUnsavedChanges) return `navigation blocked: unsaved changes on current page (use force:true to discard)`;
+        if (parsed.navigationPending && parsed.confirmationPossible === false) return `navigation pending: tab is still loading; wait for stability and inspect the page`;
         if (parsed.navigationPending) return `navigation pending: still on previous page; browser confirmation may require the user`;
         if (parsed.success === false) return `navigation failed: ${this._truncate(parsed.error || '', 110)}`;
         if (parsed.url) return `now on ${this._truncate(parsed.url, 110)}`;
@@ -15055,12 +15056,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // redirect, require a real top-frame document commit before claiming
       // success over the unchanged URL readback.
       let navigationCommitObserved = false;
+      let navigationLoadingObserved = false;
+      let navigationTerminalResult = null;
+      let resolveNavigationTerminal;
+      const navigationTerminal = new Promise(resolve => { resolveNavigationTerminal = resolve; });
+      const finishNavigationTerminal = (result) => {
+        if (navigationTerminalResult) return;
+        navigationTerminalResult = result;
+        resolveNavigationTerminal(result);
+      };
+      const waitForNavigationTerminal = (timeoutMs, timeoutType) => {
+        if (navigationTerminalResult) return Promise.resolve(navigationTerminalResult);
+        return new Promise(resolve => {
+          const timer = setTimeout(() => resolve({ type: timeoutType }), timeoutMs);
+          navigationTerminal.then(result => {
+            clearTimeout(timer);
+            resolve(result);
+          });
+        });
+      };
       let navigationCommitListener = null;
+      let navigationErrorListener = null;
+      let navigationTabListener = null;
       const navigationEvent = chrome.webNavigation?.onCommitted;
       if (navigationEvent?.addListener && navigationEvent?.removeListener) {
         navigationCommitListener = (details = {}) => {
           if (details.tabId !== tabId || details.frameId !== 0) return;
           navigationCommitObserved = true;
+          finishNavigationTerminal({ type: 'committed', url: details.url || '' });
         };
         try {
           navigationEvent.addListener(navigationCommitListener);
@@ -15068,10 +15091,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           navigationCommitListener = null;
         }
       }
+      const navigationErrorEvent = chrome.webNavigation?.onErrorOccurred;
+      if (navigationErrorEvent?.addListener && navigationErrorEvent?.removeListener) {
+        navigationErrorListener = (details = {}) => {
+          if (details.tabId !== tabId || details.frameId !== 0) return;
+          finishNavigationTerminal({ type: 'error', error: details.error || 'navigation failed' });
+        };
+        try {
+          navigationErrorEvent.addListener(navigationErrorListener);
+        } catch {
+          navigationErrorListener = null;
+        }
+      }
+      const tabUpdateEvent = chrome.tabs?.onUpdated;
+      if (tabUpdateEvent?.addListener && tabUpdateEvent?.removeListener) {
+        navigationTabListener = (updatedTabId, changeInfo = {}) => {
+          if (updatedTabId !== tabId) return;
+          if (changeInfo.status === 'loading') navigationLoadingObserved = true;
+          if (changeInfo.status === 'complete' && navigationLoadingObserved) {
+            finishNavigationTerminal({ type: 'complete' });
+          }
+        };
+        try {
+          tabUpdateEvent.addListener(navigationTabListener);
+        } catch {
+          navigationTabListener = null;
+        }
+      }
       const removeNavigationListener = () => {
-        if (!navigationCommitListener) return;
-        try { navigationEvent.removeListener(navigationCommitListener); } catch {}
+        if (navigationCommitListener) {
+          try { navigationEvent.removeListener(navigationCommitListener); } catch {}
+        }
+        if (navigationErrorListener) {
+          try { navigationErrorEvent.removeListener(navigationErrorListener); } catch {}
+        }
+        if (navigationTabListener) {
+          try { tabUpdateEvent.removeListener(navigationTabListener); } catch {}
+        }
         navigationCommitListener = null;
+        navigationErrorListener = null;
+        navigationTabListener = null;
       };
 
       try {
@@ -15085,16 +15144,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: `navigate: browser rejected the navigation: ${e?.message || String(e)}`,
         };
       }
-      // Wait for navigation to commit so we can report the real final URL
-      // (which may differ from rawUrl after redirects or auth walls).
-      await new Promise(r => setTimeout(r, 2000));
+      // Give fast commits a short window, but do not drop the listeners while
+      // the tab still reports loading. Slow DNS/TLS and redirect chains can
+      // leave tabs.get() on the previous committed URL for several seconds.
+      // Keep waiting for a top-frame commit, completion, or navigation error;
+      // the bounded deadline only prevents a permanently hung dispatch from
+      // holding the agent forever.
+      let navigationWaitResult = await waitForNavigationTerminal(250, 'probe_timeout');
+      if (navigationWaitResult.type === 'probe_timeout') {
+        let interimStatus = '';
+        try { interimStatus = (await chrome.tabs.get(tabId))?.status || ''; } catch {}
+        if (navigationLoadingObserved || interimStatus === 'loading') {
+          navigationWaitResult = await waitForNavigationTerminal(9750, 'deadline');
+        }
+      }
       removeNavigationListener();
       let finalUrl = rawUrl;
+      let finalStatus = '';
       let readbackVerified = false;
       try {
         const tab = await chrome.tabs.get(tabId);
         if (tab && tab.url) {
           finalUrl = tab.url;
+          finalStatus = tab.status || '';
           readbackVerified = true;
         }
       } catch {}
@@ -15112,6 +15184,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const stayedOnPreviousUrl = !!beforeUrl && finalUrl === beforeUrl;
       const navigationNotCommitted = stayedOnPreviousUrl && !navigationCommitObserved;
       if (navigationNotCommitted) {
+        if (navigationWaitResult.type === 'error') {
+          return {
+            success: false,
+            dispatched: true,
+            navigationFailed: true,
+            url: finalUrl,
+            requestedUrl,
+            resolvedUrl: rawUrl,
+            error: `Navigation failed before committing: ${navigationWaitResult.error}. Inspect the current page before retrying.`,
+          };
+        }
+        const stillLoading = navigationWaitResult.type === 'deadline'
+          && (finalStatus === 'loading' || (!finalStatus && navigationLoadingObserved));
+        if (stillLoading) {
+          const error = 'Navigation was dispatched and the tab is still loading the requested page. Do not report arrival or ask about a browser dialog; call wait_for_stable, then inspect the current page.';
+          if (typeof onUpdate === 'function') {
+            try { onUpdate('warning', { message: error, navigationPending: true, confirmationPossible: false }); } catch {}
+          }
+          return {
+            success: false,
+            dispatched: true,
+            navigationPending: true,
+            confirmationPossible: false,
+            recoveryRequired: 'wait_for_stable',
+            url: finalUrl,
+            requestedUrl,
+            resolvedUrl: rawUrl,
+            error,
+          };
+        }
         const error = 'Navigation was dispatched, but the tab is still on the previous URL. A native leave-page confirmation may be waiting for the user, or the navigation has not committed. Do not report arrival or retry repeatedly; ask the user to confirm/cancel the browser dialog, then inspect the current page again.';
         if (typeof onUpdate === 'function') {
           try { onUpdate('warning', { message: error, navigationPending: true, confirmationPossible: true }); } catch {}
