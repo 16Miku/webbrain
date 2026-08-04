@@ -4118,10 +4118,10 @@ export class CDPClient {
       let objectId = null;
       let objectGroup = null;
       let releaseObject = false;
-      const markerAttribute = 'data-webbrain-rich-text-preflight-target';
+      const markerAttribute = 'data-webbrain-dispatch-binding';
       const entropy = new Uint32Array(3);
       globalThis.crypto.getRandomValues(entropy);
-      const marker = `wbrtt_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+      const marker = `wbdb_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
       try {
         if (currentInfo.nodeId) {
           await this.sendCommand(tabId, 'DOM.enable');
@@ -4147,7 +4147,7 @@ export class CDPClient {
           returnByValue: true,
           functionDeclaration: `function (attribute, marker) {
             if (!this || this.nodeType !== 1 || !this.isConnected) return false;
-            const tokenKey = Symbol.for('webbrain.richTextPreflightTarget');
+            const tokenKey = Symbol.for('webbrain.dispatchBinding');
             try {
               Object.defineProperty(this, tokenKey, { value: marker, configurable: true });
             } catch {
@@ -4164,7 +4164,7 @@ export class CDPClient {
         const trustedSelector = `[${markerAttribute}="${marker}"]`;
         return await this.typeText(tabId, trustedSelector, text, clear, null, {
           requireUnique: true,
-          richTextToolbarTargetToken: marker,
+          dispatchBindingToken: marker,
         });
       } finally {
         if (objectId) {
@@ -4172,7 +4172,7 @@ export class CDPClient {
             objectId,
             returnByValue: true,
             functionDeclaration: `function (attribute, marker) {
-              const tokenKey = Symbol.for('webbrain.richTextPreflightTarget');
+              const tokenKey = Symbol.for('webbrain.dispatchBinding');
               if (this?.getAttribute?.(attribute) === marker) this.removeAttribute(attribute);
               if (this?.[tokenKey] === marker) {
                 try { delete this[tokenKey]; } catch {}
@@ -4195,7 +4195,7 @@ export class CDPClient {
     const info = await this.resolveSelector(tabId, selector, resolveOptions);
     if (!info) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, noDispatch: true, error: info.error };
-    const richTextToolbarTargetToken = String(resolveOptions?.richTextToolbarTargetToken || '');
+    const dispatchBindingToken = String(resolveOptions?.dispatchBindingToken || '');
 
     // ── <select> fast-path ──────────────────────────────────────────────
     // Native <select> elements CANNOT be typed into via Input.insertText.
@@ -4206,7 +4206,7 @@ export class CDPClient {
     if (info.tag === 'SELECT') {
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify((text || '').trim());
-      const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
+      const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
@@ -4221,7 +4221,7 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el || el.tagName !== 'SELECT') return { success: false, error: 'Select element not found' };
-          if (targetToken && el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) {
+          if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
             return { success: false, targetChanged: true, error: 'The selector target changed after safety preflight' };
           }
           el.focus();
@@ -4315,7 +4315,7 @@ export class CDPClient {
     let focused = false;
     let dispatched = false;
 
-    if (richTextToolbarTargetToken) {
+    if (dispatchBindingToken) {
       let guardedFocus = null;
       if (Number.isInteger(info.nodeId) && info.nodeId > 0) {
         let objectId = null;
@@ -4327,12 +4327,12 @@ export class CDPClient {
               objectId,
               returnByValue: true,
               functionDeclaration: `function (targetToken) {
-                if (!this || !this.isConnected || this[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) return false;
+                if (!this || !this.isConnected || this[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
                 try { this.focus(); } catch { return false; }
                 const root = this.getRootNode?.();
                 return root?.activeElement === this || document.activeElement === this;
               }`,
-              arguments: [{ value: richTextToolbarTargetToken }],
+              arguments: [{ value: dispatchBindingToken }],
             }).catch(() => null);
           }
         } finally {
@@ -4342,7 +4342,7 @@ export class CDPClient {
         }
       } else {
         const selectorJSON = JSON.stringify(selector);
-        const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
+        const targetTokenJSON = JSON.stringify(dispatchBindingToken);
         guardedFocus = await this.evaluate(tabId, `
           (() => {
             const sel = ${selectorJSON};
@@ -4366,7 +4366,7 @@ export class CDPClient {
               return active;
             };
             const el = queryDeep(document);
-            if (!el || !el.isConnected || el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) return false;
+            if (!el || !el.isConnected || el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
             try { el.focus(); } catch { return false; }
             return activeDeep() === el;
           })()
@@ -4462,7 +4462,7 @@ export class CDPClient {
       // JS fallback using native setter. Properly escape via JSON.
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify(text);
-      const targetTokenJSON = JSON.stringify(richTextToolbarTargetToken);
+      const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       dispatched = true;
       const result = await this.evaluate(tabId, `
         (() => {
@@ -4478,7 +4478,7 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el) return { success: false, error: 'Element not found (fallback)' };
-          if (targetToken && el[Symbol.for('webbrain.richTextPreflightTarget')] !== targetToken) {
+          if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
             return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after safety preflight' };
           }
           try { el.focus(); } catch (e) {}

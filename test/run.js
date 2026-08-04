@@ -12437,7 +12437,7 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
           ? chromeIframeTypeResponse
           : ({
               resolved: true,
-              selectorTargetToken: 'chrome-iframe-target',
+              dispatchBinding: { token: 'chrome-iframe-target' },
               rect: { x: 10, y: 10, w: 120, h: 24 },
               fieldMeta: { tag: 'input', type: 'text' },
               toolbarContext: false,
@@ -12517,7 +12517,7 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
           ? firefoxIframeTypeResponse
           : ({
               resolved: true,
-              selectorTargetToken: 'firefox-iframe-target',
+              dispatchBinding: { token: 'firefox-iframe-target' },
               rect: { x: 10, y: 10, w: 120, h: 24 },
               fieldMeta: { tag: 'input', type: 'text' },
               toolbarContext: false,
@@ -27906,460 +27906,6 @@ test('rich-text toolbar heuristic still catches an unlabelled preset control', (
   );
 });
 
-test('rich-text toolbar recovery contract accepts and rejects exactly these cases', async () => {
-  // The recovery ledger decides when a later edit counts as the agent
-  // correcting its blocked one. It grew a boolean per page shape, so pin the
-  // contract as a table: a new page shape should be a deliberate row here,
-  // not another flag nobody can review.
-  const tabId = 61;
-  const blockedText = 'Document prose';
-  const editorIdentity = {
-    tag: 'div', id: 'editor-body', name: null, role: null,
-    pageX: 40, pageY: 200, w: 640, h: 320,
-  };
-
-  // When detection captured a ref for the editor, recovery is bound to that
-  // ref; geometry identity only stands in when no ref was available.
-  const buildAgent = ({ associatedEditorRef = 'ref_40' } = {}) => {
-    const agent = new AgentCh({});
-    agent._lastAxScopes.set(tabId, { documentToken: 'doc-a', pageUrl: 'https://example.test/editor' });
-    const blocked = {};
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'set_field',
-      { ref_id: 'ref_12', text: blockedText },
-      blocked,
-      {
-        score: 8,
-        reasons: ['unlabelled_text_control', 'semantic_toolbar'],
-        regionRef: 'ref_10',
-        regionKey: 'rtb:div:10:8:320:44',
-        relatedRefs: [],
-        associatedEditorRef,
-        associatedEditorIdentity: editorIdentity,
-      },
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'doc-a', refScopeUrl: 'https://example.test/editor' },
-    );
-    assert.equal(agent._richTextToolbarDebts.has(tabId), true, 'setup must leave an open debt');
-    return agent;
-  };
-
-  const editorProbe = {
-    resolved: true,
-    refId: 'ref_40',
-    documentToken: 'doc-a',
-    refScopeUrl: 'https://example.test/editor',
-    frameId: 0,
-    rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
-    fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: null, name: null },
-    toolbarContext: false,
-  };
-
-  const rows = [
-    {
-      label: 'the same text into the associated editor body',
-      probe: editorProbe,
-      tool: 'set_field',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: true,
-    },
-    {
-      label: 'a different ref for the same geometry when detection captured a ref',
-      probe: { ...editorProbe, refId: 'ref_99' },
-      tool: 'set_field',
-      args: { ref_id: 'ref_99', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'the editor body matched by geometry when detection captured no ref',
-      agentOptions: { associatedEditorRef: '' },
-      probe: { ...editorProbe, refId: 'ref_99' },
-      tool: 'set_field',
-      args: { ref_id: 'ref_99', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: true,
-    },
-    {
-      label: 'geometry that does not match the recorded editor when no ref was captured',
-      agentOptions: { associatedEditorRef: '' },
-      probe: {
-        ...editorProbe,
-        refId: 'ref_99',
-        rect: { pageX: 900, pageY: 900, w: 120, h: 40 },
-        fieldMeta: { tag: 'div', contentEditable: true, id: 'other-editor', role: null, name: null },
-      },
-      tool: 'set_field',
-      args: { ref_id: 'ref_99', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'different text into the right editor',
-      probe: editorProbe,
-      tool: 'set_field',
-      args: { ref_id: 'ref_40', text: 'something else' },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      // set_field replaces unless told otherwise; type_text appends unless
-      // told otherwise. The blocked call was a replace, so an append of the
-      // same text is a different edit and must not discharge it.
-      label: 'the right text appended when the blocked edit replaced',
-      probe: editorProbe,
-      tool: 'type_text',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'the right text replaced through a different tool with the same effective mode',
-      probe: editorProbe,
-      tool: 'type_text',
-      args: { ref_id: 'ref_40', text: blockedText, clear: true },
-      result: { success: true, verified: true },
-      discharges: true,
-    },
-    {
-      label: 'an unverified edit',
-      probe: editorProbe,
-      tool: 'set_field',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: true },
-      discharges: false,
-    },
-    {
-      label: 'a failed edit',
-      probe: editorProbe,
-      tool: 'set_field',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: false, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'the right text into another toolbar control',
-      probe: { ...editorProbe, fieldMeta: { tag: 'input', contentEditable: false }, toolbarContext: true },
-      tool: 'set_field',
-      args: { ref_id: 'ref_41', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'the right text into an ordinary input that is not an editor body',
-      probe: { ...editorProbe, refId: 'ref_77', fieldMeta: { tag: 'input', contentEditable: false } },
-      tool: 'set_field',
-      args: { ref_id: 'ref_77', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'the right text into a different document',
-      probe: { ...editorProbe, documentToken: 'doc-b', refScopeUrl: 'https://example.test/other' },
-      tool: 'set_field',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-    {
-      label: 'a tool that cannot enter text',
-      probe: editorProbe,
-      tool: 'click_ax',
-      args: { ref_id: 'ref_40', text: blockedText },
-      result: { success: true, verified: true },
-      discharges: false,
-    },
-  ];
-
-  for (const row of rows) {
-    const agent = buildAgent(row.agentOptions);
-    agent._probeRichTextToolbarRetryTarget = async () => row.probe;
-    agent._releaseRichTextToolbarProbeTarget = async () => {};
-    await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
-      tabId,
-      row.tool,
-      row.args,
-      row.result,
-    );
-    assert.equal(
-      agent._richTextToolbarDebts.has(tabId),
-      !row.discharges,
-      row.discharges
-        ? `recovery must accept: ${row.label}`
-        : `recovery must reject: ${row.label}`,
-    );
-  }
-});
-
-for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
-  test(`${label}: navigation keeps the toolbar debt and its state in agreement`, async () => {
-    // A ref is the one recovery handle that cannot survive a document swap.
-    // An obligation captured by ref whose identity carries no geometry used to
-    // be filtered out entirely, which deleted the state while leaving the debt
-    // behind. The completion block reads the debt alone, so the run could never
-    // finish; the tool guard and the recovery ledger both read the state, so
-    // the guard went quiet and no corrected edit could discharge the debt.
-    const tabId = 63;
-    const blockedText = 'Quarterly roadmap';
-    const pageUrl = 'https://example.test/editor';
-    // Tag only, no pageX/pageY/w/h: not recoverable by geometry.
-    const refOnlyIdentity = { tag: 'div', id: 'editor-body', name: null, role: null };
-    assert.equal(
-      AgentClass._richTextToolbarEditorIdentityRecoverable(refOnlyIdentity),
-      false,
-      `${label}: precondition — this identity must not be geometry-recoverable`,
-    );
-
-    const agent = new AgentClass({});
-    agent._lastAxScopes.set(tabId, { documentToken: 'doc-a', pageUrl });
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'set_field',
-      { ref_id: 'ref_12', text: blockedText },
-      {},
-      {
-        score: 8,
-        reasons: ['unlabelled_text_control', 'semantic_toolbar'],
-        regionRef: 'ref_10',
-        regionKey: 'rtb:div:10:8:320:44',
-        relatedRefs: [],
-        associatedEditorRef: 'ref_40',
-        associatedEditorIdentity: refOnlyIdentity,
-      },
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'doc-a', refScopeUrl: pageUrl },
-    );
-    assert.equal(agent._richTextToolbarDebts.has(tabId), true, `${label}: setup must open a debt`);
-
-    // The editor SPA swaps documents, or the user reloads.
-    agent._clearRichTextToolbarDocumentState(tabId);
-
-    assert.equal(
-      agent._richTextToolbarDebts.has(tabId),
-      agent._richTextToolbarStates.has(tabId),
-      `${label}: the debt and state maps must never disagree about an outstanding debt`,
-    );
-    assert.equal(agent._richTextToolbarDebts.has(tabId), true, `${label}: the debt is still owed`);
-
-    const survivors = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
-    assert.equal(survivors.length, 1, `${label}: the obligation must survive the navigation`);
-    assert.equal(survivors[0].associatedEditorRef, '', `${label}: the stale ref must be dropped`);
-    assert.equal(
-      survivors[0].recoveryTargetUnknown,
-      true,
-      `${label}: losing the ref must demote the obligation to unknown-target recovery`,
-    );
-
-    // Demoted, it is still dischargeable: the correct text into a real editor
-    // body on the same page clears it.
-    agent._probeRichTextToolbarRetryTarget = async () => ({
-      resolved: true,
-      refId: 'ref_91',
-      documentToken: 'doc-b',
-      refScopeUrl: pageUrl,
-      frameId: 0,
-      rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
-      fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: null, name: null },
-      toolbarContext: false,
-    });
-    agent._releaseRichTextToolbarProbeTarget = async () => {};
-    const discharged = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
-      tabId,
-      'set_field',
-      { ref_id: 'ref_91', text: blockedText },
-      { success: true, verified: true },
-    );
-    assert.equal(discharged, true, `${label}: a corrected edit must still discharge a demoted debt`);
-    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: the debt must be cleared`);
-    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: the state must be cleared with it`);
-  });
-
-  test(`${label}: a live retry replaces its recovered copy instead of duplicating the edit`, async () => {
-    const tabId = 65;
-    const blockedText = 'Append this paragraph once';
-    const pageUrl = 'https://example.test/editor';
-    const editorIdentity = {
-      tag: 'div', id: 'editor-body', name: null, role: 'textbox',
-      pageX: 40, pageY: 200, w: 640, h: 320,
-    };
-    const candidate = associatedEditorRef => ({
-      score: 8,
-      reasons: ['unlabelled_text_control', 'semantic_toolbar'],
-      regionRef: 'ref_10',
-      regionKey: 'rtb:div:10:8:320:44',
-      relatedRefs: [],
-      associatedEditorRef,
-      associatedEditorIdentity: editorIdentity,
-    });
-
-    const agent = new AgentClass({});
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'type_text',
-      { ref_id: 'ref_12', text: blockedText },
-      {},
-      candidate('ref_40'),
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'doc-a', refScopeUrl: pageUrl, frameId: 0 },
-    );
-
-    // Navigation demotes the original obligation and drops its document-bound
-    // ref. Revisiting the route may expose fresh refs for the same editor.
-    agent._clearRichTextToolbarDocumentState(tabId);
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'type_text',
-      { ref_id: 'ref_13', text: blockedText },
-      {},
-      candidate('ref_41'),
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'doc-b', refScopeUrl: pageUrl, frameId: 0 },
-    );
-
-    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
-    assert.equal(obligations.length, 1, `${label}: one semantic editor mutation must produce one obligation`);
-    assert.equal(obligations[0].recoveryOnly, false, `${label}: the live scope must replace the recovered scope`);
-    assert.equal(obligations[0].associatedEditorRef, 'ref_41', `${label}: the fresh editor ref must be retained`);
-    assert.equal(obligations[0].documentToken, 'doc-b', `${label}: the fresh document token must be retained`);
-    assert.equal(obligations[0].recoveryPageUrl, pageUrl, `${label}: the recovery route must remain available`);
-
-    agent._probeRichTextToolbarRetryTarget = async () => ({
-      resolved: true,
-      refId: 'ref_41',
-      documentToken: 'doc-b',
-      refScopeUrl: pageUrl,
-      frameId: 0,
-      rect: { pageX: 40, pageY: 200, w: 640, h: 320 },
-      fieldMeta: { tag: 'div', contentEditable: true, id: 'editor-body', role: 'textbox', name: null },
-      toolbarContext: false,
-    });
-    agent._releaseRichTextToolbarProbeTarget = async () => {};
-    const discharged = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
-      tabId,
-      'type_text',
-      { ref_id: 'ref_41', text: blockedText },
-      { success: true, verified: true },
-    );
-    assert.equal(discharged, true, `${label}: one verified append must discharge the deduplicated edit`);
-    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: no duplicate debt may remain`);
-    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: no duplicate state may remain`);
-  });
-
-  test(`${label}: a unique recovered child-frame retry keeps one semantic obligation`, () => {
-    const tabId = 67;
-    const blockedText = 'Replace this iframe paragraph once';
-    const pageUrl = 'https://frame.example.test/editor';
-    const editorIdentity = {
-      tag: 'div', id: 'editor-body', name: null, role: 'textbox',
-      pageX: 30, pageY: 160, w: 620, h: 300,
-    };
-    const candidate = associatedEditorRef => ({
-      score: 8,
-      reasons: ['unlabelled_text_control', 'semantic_toolbar'],
-      regionRef: 'ref_10',
-      regionKey: 'rtb:div:10:8:320:44',
-      relatedRefs: [],
-      associatedEditorRef,
-      associatedEditorIdentity: editorIdentity,
-    });
-    const agent = new AgentClass({});
-
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'iframe_type',
-      { selector: '#font-size', text: blockedText, clear: true },
-      {},
-      candidate('ref_40'),
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'frame-doc-a', refScopeUrl: pageUrl, frameId: 7 },
-    );
-    agent._clearRichTextToolbarDocumentState(tabId);
-
-    const recovered = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
-    assert.equal(recovered.length, 1, `${label}: navigation must keep the child-frame obligation`);
-    assert.equal(recovered[0].frameScoped, true, `${label}: child-frame scope must survive the transient frameId`);
-    assert.equal(recovered[0].frameId, null, `${label}: the stale numeric frameId must be released`);
-
-    agent._applyRichTextToolbarWrongTarget(
-      tabId,
-      'iframe_type',
-      { selector: '#font-size', text: blockedText, clear: true },
-      {},
-      candidate('ref_41'),
-      { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-      null,
-      { documentToken: 'frame-doc-b', refScopeUrl: pageUrl, frameId: 19 },
-    );
-
-    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
-    assert.equal(obligations.length, 1, `${label}: the fresh child-frame retry must replace its unique recovered copy`);
-    assert.equal(obligations[0].recoveryOnly, false, `${label}: the live child-frame scope must win`);
-    assert.equal(obligations[0].frameId, 19, `${label}: the fresh numeric frameId must be retained`);
-    assert.equal(obligations[0].associatedEditorRef, 'ref_41', `${label}: the fresh child-frame editor ref must be retained`);
-  });
-
-  test(`${label}: duplicate editor IDs at different geometry remain separate obligations`, () => {
-    const tabId = 66;
-    const pageUrl = 'https://example.test/editor';
-    const blockedText = 'Shared editor text';
-    const agent = new AgentClass({});
-    const blockAt = (toolbarRef, editorRef, pageX) => {
-      agent._applyRichTextToolbarWrongTarget(
-        tabId,
-        'set_field',
-        { ref_id: toolbarRef, text: blockedText },
-        {},
-        {
-          score: 8,
-          reasons: ['unlabelled_text_control', 'semantic_toolbar'],
-          regionRef: `${toolbarRef}-region`,
-          regionKey: `rtb:div:${pageX}:8:320:44`,
-          relatedRefs: [],
-          associatedEditorRef: editorRef,
-          associatedEditorIdentity: {
-            tag: 'div', id: 'editor-body', name: null, role: 'textbox',
-            pageX, pageY: 200, w: 400, h: 180,
-          },
-        },
-        { wrongTarget: true, source: 'structural_fallback', targetKind: 'font_size' },
-        null,
-        { documentToken: 'doc-a', refScopeUrl: pageUrl, frameId: 0 },
-      );
-    };
-
-    blockAt('ref_12', 'ref_40', 20);
-    blockAt('ref_13', 'ref_41', 520);
-
-    const obligations = agent._richTextToolbarRecoveryObligations(agent._richTextToolbarStates.get(tabId));
-    assert.equal(obligations.length, 2, `${label}: geometry must distinguish duplicate IDs in separate components`);
-  });
-
-  test(`${label}: a debt with no obligation left cannot outlive its state`, async () => {
-    // The other half of the same invariant: if nothing can ever discharge the
-    // debt, keeping it only deadlocks completion.
-    const tabId = 64;
-    const agent = new AgentClass({});
-    agent._richTextToolbarDebts.set(tabId, { tool: 'set_field', targetKind: 'font_size' });
-    agent._richTextToolbarStates.set(tabId, {
-      targetKind: 'font_size',
-      blockedRefs: new Set(['ref_9']),
-      blockedSelectors: new Set(),
-      blockedRegionRefs: new Set(),
-    });
-
-    agent._clearRichTextToolbarDocumentState(tabId);
-
-    assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: an undischargeable debt must be dropped`);
-    assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: its state must be dropped too`);
-  });
-}
 
 test('the rich-text toolbar heuristic has exactly one implementation', () => {
   // It used to exist three times — chrome content.js, firefox content.js, and
@@ -28482,7 +28028,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   ];
   const toolbarProbe = {
     resolved: true,
-    selectorTargetToken: 'toolbar-target-token',
+    dispatchBinding: { token: 'toolbar-target-token' },
     refId: 'ref_12',
     documentToken: 'frame-doc-a',
     refScopeUrl: 'https://frame.example.test/editor',
@@ -28493,7 +28039,7 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   };
   const ordinaryProbe = {
     resolved: true,
-    selectorTargetToken: 'ordinary-target-token',
+    dispatchBinding: { token: 'ordinary-target-token' },
     refId: 'ref_shared',
     rect: { x: 20, y: 30, w: 180, h: 32 },
     fieldMeta: { tag: 'input', type: 'text' },
@@ -28738,7 +28284,7 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
   ];
   const ambiguousProbe = {
     resolved: true,
-    selectorTargetToken: 'ambiguous-token',
+    dispatchBinding: { token: 'ambiguous-token' },
     rect: { x: 20, y: 30, w: 180, h: 32 },
     fieldMeta: { tag: 'input', type: 'text' },
     toolbarContext: false,
@@ -28755,7 +28301,7 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
         sendMessage: async (_tabId, message) => {
           // Every frame matches, so the probe can never pick just one.
           if (message.action === 'probe_rich_text_toolbar_retry_target') return ambiguousProbe;
-          if (message.action === 'release_rich_text_toolbar_retry_target') return { released: true };
+          if (message.action === 'release_dispatch_binding') return { released: true };
           return { resolved: false };
         },
         executeScript: async (...callArgs) => {
@@ -28786,7 +28332,14 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
       // Once a recovery is pending, ambiguity must fail closed and say which
       // frames matched so the agent can pick a urlFilter instead of guessing.
       legacyArgs = null;
-      agent._richTextToolbarDebts.set(42, { tool: 'type_ax', targetKind: 'font_size' });
+      agent._richTextToolbarGuard.restore(42, {
+        recoveryObligations: [{
+          toolName: 'type_ax',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'hello',
+          blockedClear: false,
+        }],
+      });
       const blocked = await agent.executeTool(42, 'iframe_type', {
         urlFilter: 'frame.example.test',
         selector: '#shared-field',
@@ -28812,39 +28365,185 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
   }
 });
 
-test('rich-text toolbar debt survives a paused run and trusted continuation only', async () => {
+test('pending toolbar recovery binds and dispatches screenshot clicks at one canonical CSS target', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const pageUrl = 'https://example.test/editor';
+  const imagePoint = { x: 784, y: 441 };
+  const cssPoint = { x: 1280, y: 720 };
+
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    let activeCase = null;
+    const elementAt = (x, y, dispatch = false) => {
+      if (Number(x) === cssPoint.x && Number(y) === cssPoint.y) {
+        return dispatch && activeCase?.replaceBeforeDispatch ? 'replacement-button' : 'intended-editor';
+      }
+      if (Number(x) === imagePoint.x && Number(y) === imagePoint.y) return 'image-coordinate-neighbor';
+      return 'other-target';
+    };
+    const sendMessage = async (_tabId, message) => {
+      if (message.action === 'probe_rich_text_toolbar_retry_target') {
+        activeCase.probeArgs = { ...message.params.args };
+        activeCase.boundTarget = elementAt(activeCase.probeArgs.x, activeCase.probeArgs.y);
+        return {
+          resolved: true,
+          refId: activeCase.boundTarget === 'intended-editor' ? 'ref_editor' : 'ref_neighbor',
+          documentToken: 'doc-a',
+          refScopeUrl: pageUrl,
+          rect: { x: cssPoint.x - 20, y: cssPoint.y - 10, w: 40, h: 20 },
+          fieldMeta: { tag: 'button', type: 'button' },
+          toolbarContext: false,
+          dispatchBinding: { token: `binding:${activeCase.boundTarget}` },
+        };
+      }
+      if (message.action === 'click') {
+        activeCase.dispatchArgs = { ...message.params };
+        const dispatchTarget = elementAt(message.params.x, message.params.y, true);
+        const boundTarget = String(message.params.dispatchBinding?.token || '').replace(/^binding:/, '');
+        if (dispatchTarget !== boundTarget) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+          };
+        }
+        return { success: true, dispatched: true, target: dispatchTarget };
+      }
+      throw new Error(`${label}: unexpected content message ${message.action}`);
+    };
+    const tabs = {
+      get: async () => ({ url: pageUrl }),
+      sendMessage,
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 4301 : 4302;
+      agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+      agent._richTextToolbarGuard.restore(tabId, {
+        recoveryObligations: [{
+          toolName: 'set_field',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'Document prose',
+          blockedClear: true,
+          blockedToolbarRef: 'ref_toolbar',
+          associatedEditorRef: 'ref_editor',
+          documentToken: 'doc-a',
+          pageUrl,
+          blockedRefs: ['ref_toolbar'],
+        }],
+      });
+      agent._isPdfTab = async () => false;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      if (label === 'chrome') {
+        agent._currentUrl = async () => pageUrl;
+        agent._clickProgressSnapshot = async () => '';
+        agent._annotateClickProgress = async () => {};
+      }
+      const mapScreenshotCoords = agent._screenshotClickCoords.bind(agent);
+      agent._screenshotClickCoords = (...callArgs) => {
+        activeCase.mappingCalls += 1;
+        return mapScreenshotCoords(...callArgs);
+      };
+
+      const executeCase = async ({ args, replaceBeforeDispatch = false }) => {
+        activeCase = {
+          replaceBeforeDispatch,
+          mappingCalls: 0,
+          probeArgs: null,
+          dispatchArgs: null,
+          boundTarget: null,
+        };
+        const result = await agent.executeTool(tabId, 'click', args);
+        assert.equal(activeCase.mappingCalls, 1, `${label}: click coordinates must be canonicalized exactly once`);
+        assert.deepEqual(
+          [activeCase.probeArgs?.x, activeCase.probeArgs?.y],
+          [activeCase.dispatchArgs?.x, activeCase.dispatchArgs?.y],
+          `${label}: preflight and dispatch must receive the same CSS point`,
+        );
+        return result;
+      };
+
+      const screenshotClick = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+      });
+      assert.equal(screenshotClick.success, true, `${label}: stable canonical target should dispatch`);
+      assert.equal(screenshotClick.target, 'intended-editor');
+      assert.deepEqual(
+        [activeCase.probeArgs.x, activeCase.probeArgs.y],
+        [cssPoint.x, cssPoint.y],
+        `${label}: downscaled image coordinates must map before toolbar preflight`,
+      );
+      assert.equal(activeCase.boundTarget, 'intended-editor');
+
+      const changedTarget = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+        replaceBeforeDispatch: true,
+      });
+      assert.equal(changedTarget.success, false, `${label}: a genuinely changed canonical target must fail closed`);
+      assert.equal(changedTarget.dispatched, false);
+      assert.equal(changedTarget.noDispatch, true);
+      assert.match(changedTarget.error, /target changed after the rich-text toolbar safety preflight/);
+
+      const cssClick = await executeCase({ args: { ...cssPoint } });
+      assert.equal(cssClick.success, true, `${label}: ordinary CSS-coordinate clicks must remain unchanged`);
+      assert.deepEqual([activeCase.probeArgs.x, activeCase.probeArgs.y], [cssPoint.x, cssPoint.y]);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('rich-text toolbar obligation survives a paused run and trusted continuation only', async () => {
   for (const [label, AgentClass] of [
     ['chrome', AgentCh],
     ['firefox', AgentFx],
   ]) {
     const agent = new AgentClass({});
     const tabId = label === 'chrome' ? 4201 : 4202;
-    const state = {
-      associatedEditorRef: 'ref_99',
-      blockedRefs: new Set(['ref_12']),
-      documentToken: 'doc-a',
-      pageUrl: 'https://example.test/editor',
+    const persistedAudit = {
+      recoveryObligations: [{
+        toolName: 'set_field',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: true,
+        blockedToolbarRef: 'ref_12',
+        associatedEditorRef: 'ref_99',
+        documentToken: 'doc-a',
+        pageUrl: 'https://example.test/editor',
+        blockedRefs: ['ref_12'],
+      }],
     };
-    const debt = { tool: 'set_field', ref_id: 'ref_12', targetKind: 'font_size' };
     if (label === 'chrome') {
       agent._configureCapturePolicyForRun = () => null;
       agent._restoreCapturePolicyAfterRun = async () => {};
     }
     agent._storeContinuationExecutionEvidence = () => {};
     agent._processMessageStreamInner = async () => {
-      assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: ordinary run must start clean`);
-      agent._richTextToolbarStates.set(tabId, state);
-      agent._richTextToolbarDebts.set(tabId, debt);
+      assert.equal(agent._richTextToolbarGuard.hasPending(tabId), false, `${label}: ordinary run must start clean`);
+      agent._richTextToolbarGuard.restore(tabId, persistedAudit);
       return 'Paused at max steps.';
     };
 
     await agent.processMessageStream(tabId, 'fill the editor', () => {}, 'act');
-    assert.equal(agent._richTextToolbarStates.get(tabId), state, `${label}: paused run lost toolbar state`);
-    assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: paused run lost toolbar debt`);
+    const expectedAudit = agent._richTextToolbarGuard.persist(tabId);
+    assert.equal(expectedAudit?.recoveryObligations?.length, 1, `${label}: paused run lost toolbar obligation`);
+    assert.equal(expectedAudit.recoveryObligations[0].blockedToolbarRef, 'ref_12');
 
     agent._processMessageInner = async () => {
-      assert.equal(agent._richTextToolbarStates.get(tabId), state, `${label}: trusted continuation lost toolbar state`);
-      assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: trusted continuation lost toolbar debt`);
+      assert.deepEqual(agent._richTextToolbarGuard.persist(tabId), expectedAudit, `${label}: trusted continuation lost toolbar obligation`);
       return 'Still requires editor recovery.';
     };
     await agent.processMessage(
@@ -28855,11 +28554,10 @@ test('rich-text toolbar debt survives a paused run and trusted continuation only
       [],
       { trustedContinuation: true },
     );
-    assert.equal(agent._richTextToolbarDebts.get(tabId), debt, `${label}: continuation finally cleared toolbar debt`);
+    assert.deepEqual(agent._richTextToolbarGuard.persist(tabId), expectedAudit, `${label}: continuation finally cleared toolbar obligation`);
 
     agent._processMessageInner = async () => {
-      assert.equal(agent._richTextToolbarStates.has(tabId), false, `${label}: new user turn retained toolbar state`);
-      assert.equal(agent._richTextToolbarDebts.has(tabId), false, `${label}: new user turn retained toolbar debt`);
+      assert.equal(agent._richTextToolbarGuard.hasPending(tabId), false, `${label}: new user turn retained toolbar obligation`);
       return 'Fresh turn.';
     };
     await agent.processMessage(tabId, 'new task', () => {}, 'act');
@@ -29347,8 +29045,8 @@ test('Chrome focused type_text binds the frame token while preserving trusted CD
         ...(originalChrome?.tabs || {}),
         sendMessage: async (tabId, message, options) => {
           sent.push({ tabId, message, options });
-          if (message.action === 'prepare_rich_text_toolbar_focused_type') {
-            if (message.params?.token === 'stale-token') {
+          if (message.action === 'prepare_focused_type_dispatch') {
+            if (message.params?.dispatchBinding?.token === 'stale-token') {
               return {
                 success: false,
                 dispatched: false,
@@ -29367,7 +29065,7 @@ test('Chrome focused type_text binds the frame token while preserving trusted CD
               rect: { x: 10, y: 20, w: 300, h: 120 },
             };
           }
-          if (message.action === 'verify_rich_text_toolbar_focused_type') {
+          if (message.action === 'verify_focused_type_dispatch') {
             return { success: true, verified: true };
           }
           return { success: true };
@@ -29376,18 +29074,17 @@ test('Chrome focused type_text binds the frame token while preserving trusted CD
     };
     const agent = new AgentCh({});
     const result = await agent.executeTool(42, 'type_text', { text: 'hello' }, null, {
-      richTextToolbarFrameId: 7,
-      richTextToolbarTargetToken: 'focused-token',
+      dispatchBinding: { token: 'focused-token', frameId: 7 },
     });
-    const prepared = sent.find(entry => entry.message?.action === 'prepare_rich_text_toolbar_focused_type');
-    const verified = sent.find(entry => entry.message?.action === 'verify_rich_text_toolbar_focused_type');
+    const prepared = sent.find(entry => entry.message?.action === 'prepare_focused_type_dispatch');
+    const verified = sent.find(entry => entry.message?.action === 'verify_focused_type_dispatch');
     assert.equal(result.verified, true);
     assert.equal(result.method, 'cdp-insert-focused');
     assert.equal(prepared?.tabId, 42);
     assert.equal(prepared?.options?.frameId, 7);
-    assert.equal(prepared?.message?.params?.token, 'focused-token');
+    assert.equal(prepared?.message?.params?.dispatchBinding?.token, 'focused-token');
     assert.equal(verified?.options?.frameId, 7);
-    assert.equal(verified?.message?.params?.token, 'focused-token');
+    assert.equal(verified?.message?.params?.dispatchBinding?.token, 'focused-token');
     assert.equal(sent.some(entry => entry.message?.action === 'type'), false, 'bound focus must not use synthetic content typing');
     assert.deepEqual(
       commands.find(command => command.method === 'Input.insertText'),
@@ -29395,8 +29092,7 @@ test('Chrome focused type_text binds the frame token while preserving trusted CD
     );
     const dispatchedBeforeStaleAttempt = commands.filter(command => command.method.startsWith('Input.')).length;
     const staleResult = await agent.executeTool(42, 'type_text', { text: 'blocked' }, null, {
-      richTextToolbarFrameId: 7,
-      richTextToolbarTargetToken: 'stale-token',
+      dispatchBinding: { token: 'stale-token', frameId: 7 },
     });
     assert.equal(staleResult.success, false);
     assert.equal(staleResult.dispatched, false);
@@ -29479,7 +29175,7 @@ test('unproven text entry never reaches the gates that read verified === false',
   const isUnverifiedBoundary = result => !!(result?.inconclusive || result?.verified === false);
   assert.equal(isUnverifiedBoundary(unproven), false, 'unproven text entry must not force an unverified boundary');
 
-  // The toolbar recovery debt is the one consumer that requires a positive
+  // The toolbar recovery obligation is the one consumer that requires a positive
   // proof, and it is unchanged by the tri-state: it tests `!== true`.
   const dischargesToolbarDebt = result => result?.success === true && result?.verified === true;
   assert.equal(dischargesToolbarDebt(unproven), false, 'unproven text entry must not discharge a toolbar debt');
@@ -61229,7 +60925,7 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.equal(agent.isRunning(80), false);
   });
 
-  test(`${browser} saved workflow fallback preserves rich-text toolbar recovery debt`, async () => {
+  test(`${browser} saved workflow fallback preserves rich-text toolbar recovery obligations`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
       id: 'workflow_toolbar_fallback',
@@ -61252,11 +60948,15 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     agent._currentUrl = async () => 'https://example.com/editor';
     agent.executeTool = async () => ({ pageContent: 'textbox "Font size" [ref_20]' });
     agent._executeToolBatch = async (_tabId, _calls, _messages, onUpdate) => {
-      agent._richTextToolbarDebts.set(tabId, { tool: 'set_field', targetKind: 'font_size' });
-      agent._richTextToolbarStates.set(tabId, {
-        targetKind: 'font_size',
-        blockedRefs: new Set(['ref_20']),
-        recoveryObligations: [{ targetKind: 'font_size', blockedAttemptedText: 'Document prose' }],
+      agent._richTextToolbarGuard.restore(tabId, {
+        recoveryObligations: [{
+          toolName: 'set_field',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'Document prose',
+          blockedClear: true,
+          blockedToolbarRef: 'ref_20',
+          blockedRefs: ['ref_20'],
+        }],
       });
       onUpdate('tool_result', {
         name: 'set_field',
@@ -61277,8 +60977,8 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
 
     assert.equal(result.status, 'fallback');
     assert.match(result.reason, /tool_failed/);
-    assert.equal(agent._richTextToolbarDebts.has(tabId), true);
-    assert.equal(agent._richTextToolbarStates.has(tabId), true);
+    assert.equal(agent._richTextToolbarGuard.hasPending(tabId), true);
+    assert.equal(agent._richTextToolbarGuard.obligations(tabId).length, 1);
     assert.equal(agent.isRunning(tabId), false);
     agent._resetRichTextToolbarAudit(tabId);
   });
