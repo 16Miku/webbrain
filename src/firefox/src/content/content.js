@@ -2165,6 +2165,9 @@
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
     const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
     if (!SUPPORTED_KEYS.includes(key)) {
+      if (params?.richTextToolbarTargetToken) {
+        _releaseRichTextToolbarRetryTarget({ token: params.richTextToolbarTargetToken });
+      }
       return {
         success: false,
         dispatched: false,
@@ -2190,8 +2193,13 @@
       ArrowDown: { code: 'ArrowDown', keyCode: 40 },
       ';': { code: 'Semicolon', keyCode: 59 },
     }[key];
-    const target = (document.activeElement && document.activeElement !== document.body)
-      ? document.activeElement
+    const focusedTarget = _deepActiveElement();
+    if (params?.richTextToolbarTargetToken) {
+      const validation = _consumeRichTextToolbarFocusedTarget(params);
+      if (validation.success !== true) return validation;
+    }
+    const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
+      ? focusedTarget
       : document;
 
     const moveTabFocus = () => {
@@ -3388,6 +3396,27 @@
       && expected.pageUrl === location.href;
   }
 
+  function _consumeRichTextToolbarFocusedTarget(params = {}) {
+    const token = String(params.richTextToolbarTargetToken || params.token || '');
+    const active = _deepActiveElement();
+    if (
+      !token
+      || !active
+      || active === document.body
+      || active === document.documentElement
+      || !_consumeRichTextToolbarRetryTarget(token, active)
+    ) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'The focused target changed after the rich-text toolbar safety preflight. Focus the intended field again and retry.',
+      };
+    }
+    return { success: true, matched: true };
+  }
+
   function _releaseRichTextToolbarRetryTarget(params = {}) {
     const token = String(params.token || '');
     const record = token ? _richTextToolbarRetryTargets.get(token) : null;
@@ -3594,6 +3623,7 @@
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_rich_text_toolbar_retry_target': () => _releaseRichTextToolbarRetryTarget(msg.params || {}),
+      'consume_rich_text_toolbar_focused_target': () => _consumeRichTextToolbarFocusedTarget(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),

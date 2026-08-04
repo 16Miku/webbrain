@@ -2535,7 +2535,7 @@ export class Agent extends LoopDetector {
     }
   }
 
-  async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
+  async _richTextToolbarToolBlock(tabId, toolName, args = {}, executionContext = null) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
     if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
@@ -2627,7 +2627,31 @@ export class Agent extends LoopDetector {
     const block = blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(matchedObligation)
       : null;
-    await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+    if (
+      !block
+      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && !probe.selectorTargetToken
+    ) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'Could not preserve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and retry.',
+      };
+    }
+    const preserveFocusedTarget = !block
+      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && !!probe.selectorTargetToken
+      && executionContext
+      && typeof executionContext === 'object';
+    if (preserveFocusedTarget) {
+      executionContext.richTextToolbarTargetToken = probe.selectorTargetToken;
+      executionContext.richTextToolbarFrameId = probe.frameId;
+    } else {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+    }
     return block;
   }
 
@@ -2678,7 +2702,6 @@ export class Agent extends LoopDetector {
       const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
       const iframeBackedRecovery = toolName === 'iframe_type'
         && ['iframe', 'frame'].includes(expectedEditorTag);
-      const unknownIframeRecovery = recoveryTargetUnknown && toolName === 'iframe_type';
       const sameFrame = iframeBackedRecovery
         ? Number.isInteger(probe.frameId) && probe.frameId !== 0
         : recoveryTargetUnknown
@@ -2689,7 +2712,7 @@ export class Agent extends LoopDetector {
           ? probe.frameId === state.frameId
           : !Number.isInteger(probe.frameId) || probe.frameId === 0;
       if (!sameFrame) continue;
-      const liveRecoveryScopeUrl = iframeBackedRecovery || unknownIframeRecovery
+      const liveRecoveryScopeUrl = iframeBackedRecovery
         ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || livePageUrl)
         : livePageUrl;
       if (
@@ -14222,7 +14245,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
-    const richTextToolbarBlock = await this._richTextToolbarToolBlock(tabId, name, args);
+    const toolbarExecutionContext = executionContext && typeof executionContext === 'object'
+      ? executionContext
+      : {};
+    const richTextToolbarBlock = await this._richTextToolbarToolBlock(
+      tabId,
+      name,
+      args,
+      toolbarExecutionContext,
+    );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
@@ -16093,7 +16124,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(axScope.pageUrl ? { expectedPageUrl: axScope.pageUrl } : {}),
         }
       : args;
-    let richTextToolbarTargetToken = executionContext?.richTextToolbarTargetToken || '';
+    let richTextToolbarTargetToken = toolbarExecutionContext.richTextToolbarTargetToken || '';
     if (name === 'type_text' && args?.selector && !richTextToolbarTargetToken) {
       const probe = await this._probeRichTextToolbarRetryTarget(tabId, name, args, { mapAnnotation: false });
       richTextToolbarTargetToken = probe?.selectorTargetToken || '';
@@ -16107,7 +16138,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
     }
-    if (name === 'type_text' && richTextToolbarTargetToken) {
+    if ((name === 'type_text' || name === 'press_keys') && richTextToolbarTargetToken) {
       contentArgs = {
         ...contentArgs,
         richTextToolbarTargetToken,
@@ -16115,10 +16146,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     try {
-      const messageOptions = name === 'type_text'
+      const messageOptions = (name === 'type_text' || name === 'press_keys')
         && richTextToolbarTargetToken
-        && Number.isInteger(executionContext?.richTextToolbarFrameId)
-        ? { frameId: executionContext.richTextToolbarFrameId }
+        && Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
+        ? { frameId: toolbarExecutionContext.richTextToolbarFrameId }
         : undefined;
       let response = await browser.tabs.sendMessage(tabId, {
         target: 'content',

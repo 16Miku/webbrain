@@ -2500,7 +2500,7 @@ export class Agent extends LoopDetector {
     }
   }
 
-  async _richTextToolbarToolBlock(tabId, toolName, args = {}) {
+  async _richTextToolbarToolBlock(tabId, toolName, args = {}, executionContext = null) {
     const state = this._richTextToolbarStates.get(tabId);
     if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
     if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
@@ -2592,7 +2592,31 @@ export class Agent extends LoopDetector {
     const block = blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(matchedObligation)
       : null;
-    await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+    if (
+      !block
+      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && !probe.selectorTargetToken
+    ) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'Could not preserve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and retry.',
+      };
+    }
+    const preserveFocusedTarget = !block
+      && Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
+      && !!probe.selectorTargetToken
+      && executionContext
+      && typeof executionContext === 'object';
+    if (preserveFocusedTarget) {
+      executionContext.richTextToolbarTargetToken = probe.selectorTargetToken;
+      executionContext.richTextToolbarFrameId = probe.frameId;
+    } else {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+    }
     return block;
   }
 
@@ -2643,7 +2667,6 @@ export class Agent extends LoopDetector {
       const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
       const iframeBackedRecovery = toolName === 'iframe_type'
         && ['iframe', 'frame'].includes(expectedEditorTag);
-      const unknownIframeRecovery = recoveryTargetUnknown && toolName === 'iframe_type';
       const sameFrame = iframeBackedRecovery
         ? Number.isInteger(probe.frameId) && probe.frameId !== 0
         : recoveryTargetUnknown
@@ -2654,7 +2677,7 @@ export class Agent extends LoopDetector {
           ? probe.frameId === state.frameId
           : !Number.isInteger(probe.frameId) || probe.frameId === 0;
       if (!sameFrame) continue;
-      const liveRecoveryScopeUrl = iframeBackedRecovery || unknownIframeRecovery
+      const liveRecoveryScopeUrl = iframeBackedRecovery
         ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || livePageUrl)
         : livePageUrl;
       if (
@@ -15932,8 +15955,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
-    const richTextToolbarBlock = await this._richTextToolbarToolBlock(tabId, name, args);
+    const toolbarExecutionContext = executionContext && typeof executionContext === 'object'
+      ? executionContext
+      : {};
+    const richTextToolbarBlock = await this._richTextToolbarToolBlock(
+      tabId,
+      name,
+      args,
+      toolbarExecutionContext,
+    );
     if (richTextToolbarBlock) return richTextToolbarBlock;
+    const richTextToolbarKeyboardToken = name === 'press_keys'
+      ? String(toolbarExecutionContext.richTextToolbarTargetToken || '')
+      : '';
+    const richTextToolbarKeyboardFrameId = Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
+      ? toolbarExecutionContext.richTextToolbarFrameId
+      : null;
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
@@ -15976,7 +16013,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
-    if (protectedFailure) return protectedFailure;
+    if (protectedFailure) {
+      if (richTextToolbarKeyboardToken) {
+        await this._releaseRichTextToolbarProbeTarget(tabId, {
+          selectorTargetToken: richTextToolbarKeyboardToken,
+          frameId: richTextToolbarKeyboardFrameId,
+        });
+      }
+      return protectedFailure;
+    }
     if (name === 'list_webmcp_tools') {
       if (!this.webMcpEnabled) {
         return {
@@ -19769,6 +19814,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
       const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
       if (!SUPPORTED_KEYS.includes(key)) {
+        if (richTextToolbarKeyboardToken) {
+          await this._releaseRichTextToolbarProbeTarget(tabId, {
+            selectorTargetToken: richTextToolbarKeyboardToken,
+            frameId: richTextToolbarKeyboardFrameId,
+          });
+        }
         return {
           success: false,
           dispatched: false,
@@ -19777,8 +19828,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
 
+      let guardedTargetConsumed = false;
+      let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
+        if (richTextToolbarKeyboardToken) {
+          const validation = await chrome.tabs.sendMessage(tabId, {
+            target: 'content',
+            action: 'consume_rich_text_toolbar_focused_target',
+            params: { richTextToolbarTargetToken: richTextToolbarKeyboardToken },
+          }, Number.isInteger(richTextToolbarKeyboardFrameId)
+            ? { frameId: richTextToolbarKeyboardFrameId }
+            : undefined);
+          if (validation?.success !== true) {
+            return validation || {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              retryable: true,
+              error: 'Could not revalidate the focused editor before keyboard dispatch. Focus the intended field again and retry.',
+            };
+          }
+          guardedTargetConsumed = true;
+        }
         // windowsVirtualKeyCode values below match the same ArrowUp/ArrowDown
         // dispatch already used by the <select> fast-path above — trusted
         // CDP key events are what let native controls (range sliders, native
@@ -19795,6 +19867,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }[key];
 
         for (let i = 0; i < repeat; i++) {
+          keyDispatchAttempted = true;
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown',
             key,
@@ -19811,6 +19884,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         return { success: true, dispatched: true, method: 'cdp-key', key, repeat };
       } catch (e) {
+        if (guardedTargetConsumed) {
+          return {
+            success: false,
+            dispatched: keyDispatchAttempted,
+            ...(keyDispatchAttempted ? {} : { noDispatch: true, retryable: true }),
+            error: keyDispatchAttempted
+              ? `Keyboard dispatch became uncertain after the guarded target was revalidated: ${e.message || e}`
+              : `Keyboard dispatch failed after the guarded target was revalidated: ${e.message || e}`,
+          };
+        }
         // Fall through to content-script path if CDP is unavailable.
       }
     }
@@ -20053,7 +20136,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     const axScope = this._lastAxScopes.get(tabId);
-    const contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
+    let contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
       ? {
           ...args,
           expectedDocumentToken: axScope.documentToken,
@@ -20063,6 +20146,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (name === 'set_checked'
           ? { ...args, probeOnly: true, markForTrustedClick: true }
           : args);
+    if (name === 'press_keys' && richTextToolbarKeyboardToken) {
+      contentArgs = {
+        ...contentArgs,
+        richTextToolbarTargetToken: richTextToolbarKeyboardToken,
+      };
+    }
 
     try {
       let response;
@@ -20072,7 +20161,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           target: 'content',
           action,
           params: contentArgs,
-        });
+        }, name === 'press_keys'
+          && richTextToolbarKeyboardToken
+          && Number.isInteger(richTextToolbarKeyboardFrameId)
+          ? { frameId: richTextToolbarKeyboardFrameId }
+          : undefined);
       } catch (e) {
         // Content script might not be injected — try injecting it.
         // accessibility-tree.js must load first so content.js's
@@ -20087,7 +20180,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             target: 'content',
             action,
             params: contentArgs,
-          });
+          }, name === 'press_keys'
+            && richTextToolbarKeyboardToken
+            && Number.isInteger(richTextToolbarKeyboardFrameId)
+            ? { frameId: richTextToolbarKeyboardFrameId }
+            : undefined);
         } catch (e2) {
           return { error: `Failed to communicate with page: ${e2.message}` };
         }

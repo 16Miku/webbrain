@@ -3707,10 +3707,21 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.selectorTargetToken || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || focusedProbe.toolbarRegionKey !== candidate.regionKey || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
+    const staleKeyboardProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'type_text',
+      args: { text: '' },
+    });
     await page.evaluate(() => {
       document.querySelector('#shadow-toolbar-host').shadowRoot
         .querySelector('#shadow-family-input').focus();
     });
+    const staleKeyboard = await call(page, 'press_keys', {
+      key: 'ArrowDown',
+      richTextToolbarTargetToken: staleKeyboardProbe.selectorTargetToken,
+    });
+    if (staleKeyboard?.success !== false || staleKeyboard?.dispatched !== false || staleKeyboard?.noDispatch !== true) {
+      throw new Error(`guarded keyboard input must fail closed after focus moves from the preflight element: ${JSON.stringify(staleKeyboard)}`);
+    }
     const staleFocusedType = browserKind === 'chrome'
       ? await call(page, 'prepare_rich_text_toolbar_focused_type', {
           token: focusedProbe.selectorTargetToken,
@@ -3734,6 +3745,17 @@ for (const browserKind of ['chrome', 'firefox']) {
       || !shadowFocusedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     ) {
       throw new Error(`expected deeply focused shadow toolbar target, got: ${JSON.stringify(shadowFocusedProbe)}`);
+    }
+    const shadowKeyboardProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'type_text',
+      args: { text: '' },
+    });
+    const guardedKeyboard = await call(page, 'press_keys', {
+      key: 'ArrowDown',
+      richTextToolbarTargetToken: shadowKeyboardProbe.selectorTargetToken,
+    });
+    if (guardedKeyboard?.success !== true || guardedKeyboard?.dispatched !== true) {
+      throw new Error(`guarded keyboard input must dispatch only while the preflight element retains focus: ${JSON.stringify(guardedKeyboard)}`);
     }
     if (browserKind === 'chrome') {
       const preparedFocusedType = await call(page, 'prepare_rich_text_toolbar_focused_type', {
@@ -4539,7 +4561,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     if (unresolvedKeyboardBlock?.dispatched !== false || !unresolvedKeyboardBlock.retryable) {
       throw new Error(`unresolved focused keyboard input must fail closed during toolbar recovery: ${JSON.stringify(unresolvedKeyboardBlock)}`);
     }
-    agent._probeRichTextToolbarRetryTarget = async () => ({
+    const otherToolbarProbe = {
       resolved: true,
       refId: 'ref_88',
       documentToken: 'doc-a',
@@ -4562,11 +4584,76 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       },
       toolbarContext: true,
       toolbarRegionRef: 'ref_80',
-    });
+    };
+    agent._probeRichTextToolbarRetryTarget = async () => otherToolbarProbe;
     const otherToolbarBlock = await agent._richTextToolbarToolBlock(tabId, 'click', { selector: '#other-toolbar' });
     if (otherToolbarBlock) {
       throw new Error(`an unrelated toolbar must not be blocked: ${JSON.stringify(otherToolbarBlock)}`);
     }
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      selectorTargetToken: 'guarded-editor-keyboard-token',
+      refId: 'ref_99',
+      frameId: 0,
+      documentToken: 'doc-a',
+      refScopeUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', id: 'editor-body', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const keyboardExecutionContext = {};
+    const allowedEditorKeyboard = await agent._richTextToolbarToolBlock(
+      tabId,
+      'press_keys',
+      { key: 'ArrowDown' },
+      keyboardExecutionContext,
+    );
+    if (
+      allowedEditorKeyboard
+      || keyboardExecutionContext.richTextToolbarTargetToken !== 'guarded-editor-keyboard-token'
+      || keyboardExecutionContext.richTextToolbarFrameId !== 0
+    ) {
+      throw new Error(`allowed recovery keyboard input must carry its exact focused target into dispatch: ${JSON.stringify({ allowedEditorKeyboard, keyboardExecutionContext })}`);
+    }
+    if (AgentClass === Agent) {
+      const dispatchAgent = new AgentClass({ getVisionProvider: async () => null });
+      const originalChrome = globalThis.chrome;
+      const originalAttach = cdpClient.attach;
+      const originalSendCommand = cdpClient.sendCommand;
+      const dispatchOrder = [];
+      dispatchAgent._richTextToolbarToolBlock = async (_tabId, _toolName, _args, context) => {
+        context.richTextToolbarTargetToken = 'guarded-editor-keyboard-token';
+        context.richTextToolbarFrameId = 7;
+        return null;
+      };
+      globalThis.chrome = {
+        tabs: {
+          get: async () => ({ url: 'https://example.test/editor' }),
+          sendMessage: async (_tabId, message, options) => {
+            dispatchOrder.push(`${message.action}:${options?.frameId ?? 'top'}`);
+            return { success: true, matched: true };
+          },
+        },
+      };
+      cdpClient.attach = async () => { dispatchOrder.push('cdp:attach'); };
+      cdpClient.sendCommand = async (_tabId, method) => { dispatchOrder.push(method); };
+      try {
+        const guardedDispatch = await dispatchAgent.executeTool(tabId, 'press_keys', { key: 'ArrowDown' });
+        if (
+          guardedDispatch?.success !== true
+          || dispatchOrder.join(',') !== 'cdp:attach,consume_rich_text_toolbar_focused_target:7,Input.dispatchKeyEvent,Input.dispatchKeyEvent'
+        ) {
+          throw new Error(`Chrome keyboard dispatch must consume the guarded frame target immediately before CDP input: ${JSON.stringify({ guardedDispatch, dispatchOrder })}`);
+        }
+      } finally {
+        cdpClient.attach = originalAttach;
+        cdpClient.sendCommand = originalSendCommand;
+        if (originalChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = originalChrome;
+      }
+    }
+    agent._probeRichTextToolbarRetryTarget = async () => otherToolbarProbe;
     const otherToolbarPreflight = await agent._preflightRichTextToolbarTarget(
       tabId,
       'set_field',
@@ -5491,6 +5578,46 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     );
     if (!unknownEditorRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
       throw new Error('a verified non-toolbar editor edit must clear ambiguous editor debt');
+    }
+
+    const unknownIframeBlock = {};
+    agent._applyRichTextToolbarWrongTarget(
+      tabId,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#font-size', text: 'Document prose', clear: true },
+      unknownIframeBlock,
+      { ...candidate, associatedEditorRef: '', associatedEditorIdentity: null },
+      familyDecision,
+      familyAudit,
+      {
+        frameId: 7,
+        documentToken: 'frame-doc-a',
+        refScopeUrl: 'https://frame.example.test/editor',
+        rect: { x: 10, y: 8, w: 60, h: 24 },
+      },
+    );
+    agent._probeRichTextToolbarRetryTarget = async () => ({
+      resolved: true,
+      refId: 'ref_unknown_iframe_editor',
+      frameId: 7,
+      parentFrameId: 0,
+      documentToken: 'frame-doc-a',
+      refScopeUrl: 'https://frame.example.test/editor',
+      frameOwnerScopeUrl: 'https://example.test/editor',
+      topFrameUrl: 'https://example.test/editor',
+      rect: { x: 20, y: 160, w: 400, h: 180 },
+      fieldMeta: { tag: 'div', role: 'textbox', contentEditable: true },
+      toolbarContext: false,
+      toolbarRegionRef: '',
+    });
+    const unknownIframeRecovery = await agent._clearRichTextToolbarDebtAfterCorrectedEdit(
+      tabId,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#editor-body', text: 'Document prose', clear: true },
+      { success: true, verified: true, method: 'contenteditable' },
+    );
+    if (!unknownIframeRecovery || agent._richTextToolbarDebts.has(tabId) || agent._richTextToolbarStates.has(tabId)) {
+      throw new Error('unknown iframe editor recovery must compare the child document URL, not its parent frame URL');
     }
 
     let classifierArgCount = 0;
