@@ -37390,6 +37390,11 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
 
     const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     const backgroundSource = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(
+      agentSource,
+      /conversationIds\.set\(tabId, `conv_\$\{tabId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\)/,
+      `${label}: Cloud conversation IDs must use Web Crypto entropy`,
+    );
     for (const generationName of ['main', 'planner', 'compaction', 'intent', 'vision']) {
       assert.match(agentSource, new RegExp(`generationName: '${generationName}'`), `${label}: ${generationName} calls should be labeled`);
     }

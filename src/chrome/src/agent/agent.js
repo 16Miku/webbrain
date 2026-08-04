@@ -11831,7 +11831,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // trace produced from this chat carries the same id and the Traces
       // viewer can group sibling turns.
       if (!this.conversationIds.has(tabId)) {
-        this.conversationIds.set(tabId, `conv_${tabId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+        this.conversationIds.set(tabId, `conv_${tabId}_${Date.now()}_${secureRandomBase36Token(12)}`);
       }
     }
     // Rebuild the system prompt on reuse so hydrated conversations pick up

@@ -3886,10 +3886,12 @@ for (const browserKind of ['chrome', 'firefox']) {
     await call(page, 'release_rich_text_toolbar_retry_target', { token: selectorProbe.selectorTargetToken });
 
     await page.evaluate(() => {
+      const container = document.createElement('div');
       const button = document.createElement('button');
       button.id = 'guarded-click-target';
       button.textContent = 'Safe action';
-      document.body.appendChild(button);
+      container.appendChild(button);
+      document.body.appendChild(container);
     });
     const staleClickProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'click',
@@ -4808,6 +4810,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     }
     agent._probeRichTextToolbarRetryTarget = async () => ({
       resolved: true,
+      selectorTargetToken: 'editor-body-click-token',
       refId: 'ref_99',
       documentToken: 'doc-a',
       refScopeUrl: 'https://example.test/editor',
