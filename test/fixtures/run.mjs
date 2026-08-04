@@ -386,9 +386,8 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
       <textarea id="accepted"></textarea>
       <script>
         const controlled = document.getElementById('controlled');
-        const controlledInitialValue = controlled.value;
         controlled.addEventListener('input', () => {
-          setTimeout(() => { controlled.value = controlledInitialValue; }, 0);
+          setTimeout(() => { controlled.value = 'requested content alreadY'; }, 0);
         });
       </script>`, browserKind);
     const rejected = await call(page, 'type', {
@@ -397,7 +396,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
       clear: false,
     });
     if (rejected?.success !== true || rejected?.verified !== false) {
-      throw new Error(`controlled rollback must not be verified: ${JSON.stringify(rejected)}`);
+      throw new Error(`controlled normalization without the requested insertion must not be verified: ${JSON.stringify(rejected)}`);
     }
     const accepted = await call(page, 'type', {
       selector: '#accepted',
@@ -3567,13 +3566,20 @@ for (const browserKind of ['chrome', 'firefox']) {
       toolName: 'type_text',
       args: { text: 'Paris' },
     });
-    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
+    if (!focusedProbe?.resolved || focusedProbe.refId !== refs.size || !focusedProbe.selectorTargetToken || !focusedProbe.documentToken || !focusedProbe.refScopeUrl || !focusedProbe.toolbarContext || focusedProbe.toolbarRegionRef !== candidate.regionRef || Number(focusedProbe.fieldMeta?.toolbarCandidate?.score) < 4) {
       throw new Error(`expected focused toolbar retry probe, got: ${JSON.stringify(focusedProbe)}`);
     }
     await page.evaluate(() => {
       document.querySelector('#shadow-toolbar-host').shadowRoot
         .querySelector('#shadow-family-input').focus();
     });
+    const staleFocusedType = await call(page, 'type', {
+      text: 'SHOULD_NOT_APPLY',
+      richTextToolbarTargetToken: focusedProbe.selectorTargetToken,
+    });
+    if (staleFocusedType?.success !== false || staleFocusedType?.dispatched !== false || staleFocusedType?.noDispatch !== true) {
+      throw new Error(`focused typing must fail closed after focus moves from the preflight element: ${JSON.stringify(staleFocusedType)}`);
+    }
     const shadowFocusedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'type_text',
       args: { text: 'Paris' },
@@ -3581,6 +3587,7 @@ for (const browserKind of ['chrome', 'firefox']) {
     if (
       !shadowFocusedProbe?.resolved
       || shadowFocusedProbe.refId !== refs.shadowFamilyInput
+      || !shadowFocusedProbe.selectorTargetToken
       || !shadowFocusedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     ) {
       throw new Error(`expected deeply focused shadow toolbar target, got: ${JSON.stringify(shadowFocusedProbe)}`);
@@ -4036,6 +4043,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
             return {
               resolved: true,
               refId: 'ref_7',
+              selectorTargetToken: 'focused-frame-token',
               rect: { x: 12, y: 9, w: 110, h: 24 },
               fieldMeta: {
                 tag: 'input',
@@ -4063,6 +4071,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       if (
         deepFrameProbe?.frameId !== 7
         || deepFrameProbe.refId !== 'ref_7'
+        || deepFrameProbe.selectorTargetToken !== 'focused-frame-token'
         || deepFrameProbe.annotationRect?.x !== 42
         || frameMessages.length !== 3
         || frameMessages.some(entry => entry.message.params.args.selector != null)

@@ -2355,7 +2355,7 @@ export class Agent extends LoopDetector {
       if (!children.length) break;
       const childProbes = (await Promise.all(children.map(probeFrame))).filter(Boolean);
       if (!childProbes.length) break;
-      selected = childProbes
+      const nextSelected = childProbes
         .filter(probe => probe.fieldMeta?.toolbarCandidate)
         .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
         || childProbes.find(probe => {
@@ -2363,6 +2363,10 @@ export class Agent extends LoopDetector {
           return meta.contentEditable === true || ['input', 'textarea', 'select'].includes(String(meta.tag || '').toLowerCase());
         })
         || childProbes[0];
+      await Promise.all(childProbes
+        .filter(probe => probe !== nextSelected)
+        .map(probe => this._releaseRichTextToolbarProbeTarget(tabId, probe)));
+      selected = nextSelected;
     }
     const annotationRect = mapAnnotation
       ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
@@ -2432,13 +2436,17 @@ export class Agent extends LoopDetector {
       if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
         this._rememberAxScope(tabId, liveDocument, livePageUrl);
       }
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
     if (toolName !== 'iframe_type' && (liveDocument || livePageUrl)) {
       this._rememberAxScope(tabId, liveDocument, livePageUrl);
     }
     const refBlock = this._richTextToolbarRefBlock(tabId, toolName, args, liveDocument);
-    if (refBlock) return refBlock;
+    if (refBlock) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return refBlock;
+    }
     const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
     const blockedSelector = !!selector && state.blockedSelectors?.has(selector);
     const blockedRef = typeof probe.refId === 'string' && state.blockedRefs?.has(probe.refId);
@@ -2449,9 +2457,11 @@ export class Agent extends LoopDetector {
         probe.toolbarRegionRef === state.regionRef
         || state.blockedRegionRefs?.has(probe.toolbarRegionRef)
       );
-    return blockedSelector || blockedRef || sameToolbarContext
+    const block = blockedSelector || blockedRef || sameToolbarContext
       ? this._richTextToolbarRetryBlock(state)
       : null;
+    await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+    return block;
   }
 
   async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe = null) {
@@ -2483,6 +2493,7 @@ export class Agent extends LoopDetector {
       topFrameUrl: liveProbe.topFrameUrl || preDispatchProbe?.topFrameUrl || '',
     } : preDispatchProbe;
     if (!probe?.resolved) return false;
+    if (liveProbe?.resolved) await this._releaseRichTextToolbarProbeTarget(tabId, liveProbe);
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
     const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
@@ -2795,11 +2806,12 @@ export class Agent extends LoopDetector {
     const selectorBackedType = toolName === 'type_text'
       && typeof args?.selector === 'string'
       && !!args.selector.trim();
+    const focusedType = toolName === 'type_text' && !selectorBackedType && args?.index == null;
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
-      return toolName === 'iframe_type' || selectorBackedType
+      return toolName === 'iframe_type' || selectorBackedType || focusedType
         ? {
             block: {
               success: false,
@@ -2808,13 +2820,15 @@ export class Agent extends LoopDetector {
               retryable: true,
               error: toolName === 'iframe_type'
                 ? 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.'
-                : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
+                : focusedType
+                  ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
+                  : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
             },
             shot: null,
           }
         : { block: null, shot: null };
     }
-    if ((toolName === 'iframe_type' || selectorBackedType) && !probe.selectorTargetToken) {
+    if ((toolName === 'iframe_type' || selectorBackedType || focusedType) && !probe.selectorTargetToken) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return {
         block: {
@@ -2822,7 +2836,9 @@ export class Agent extends LoopDetector {
           dispatched: false,
           noDispatch: true,
           retryable: true,
-          error: 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
+          error: focusedType
+            ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
+            : 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
         },
         shot: null,
         probe,
@@ -15900,11 +15916,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     try {
+      const messageOptions = name === 'type_text'
+        && richTextToolbarTargetToken
+        && Number.isInteger(executionContext?.richTextToolbarFrameId)
+        ? { frameId: executionContext.richTextToolbarFrameId }
+        : undefined;
       let response = await browser.tabs.sendMessage(tabId, {
         target: 'content',
         action,
         params: contentArgs,
-      });
+      }, messageOptions);
       if (name === 'click' || name === 'click_ax') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }

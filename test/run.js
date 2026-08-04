@@ -28153,6 +28153,54 @@ test('Chrome selector type reports post-edit value verification', async () => {
   assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
 });
 
+test('Chrome append verification proves the requested insertion delta', async () => {
+  const client = new CDPClient();
+  let afterValue = 'requested content alreadY';
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'DOM.enable' || command === 'Runtime.releaseObject') return {};
+    if (command === 'DOM.resolveNode') return { object: { objectId: 'field-object' } };
+    if (command === 'Runtime.callFunctionOn') {
+      const verify = Function(`return (${params.functionDeclaration})`)();
+      const target = {
+        nodeType: 1,
+        isConnected: true,
+        tagName: 'INPUT',
+        isContentEditable: false,
+        value: afterValue,
+      };
+      return {
+        result: {
+          value: verify.call(target, ...(params.arguments || []).map(argument => argument.value)),
+        },
+      };
+    }
+    throw new Error(`unexpected command: ${command}`);
+  };
+  const signatureFor = value => {
+    let hash = 14695981039346656037n;
+    for (let i = 0; i < value.length; i += 1) {
+      hash ^= BigInt(value.charCodeAt(i));
+      hash = BigInt.asUintN(64, hash * 1099511628211n);
+    }
+    return `${value.length}:${hash.toString(16)}`;
+  };
+  const beforeSnapshot = signatureFor('requested content already');
+  assert.equal(await client.verifyTextEntry(42, {
+    nodeId: 7,
+    text: 'requested content',
+    clear: false,
+    beforeSignature: beforeSnapshot,
+  }), false, 'changing unrelated characters must not verify text that was already present');
+
+  afterValue = 'requested content alreadyrequested content';
+  assert.equal(await client.verifyTextEntry(42, {
+    nodeId: 7,
+    text: 'requested content',
+    clear: false,
+    beforeSignature: beforeSnapshot,
+  }), true, 'an exact insertion of the requested text must verify');
+});
+
 test('Chrome focused type_text marks missing focus as a pre-dispatch failure', async () => {
   const originalAttach = cdpClientCh.attach;
   const originalEvaluate = cdpClientCh.evaluate;
@@ -28168,6 +28216,38 @@ test('Chrome focused type_text marks missing focus as a pre-dispatch failure', a
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.evaluate = originalEvaluate;
+  }
+});
+
+test('Chrome focused type_text dispatches only through the preflight-bound frame token', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalChrome = globalThis.chrome;
+  const sent = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        sendMessage: async (tabId, message, options) => {
+          sent.push({ tabId, message, options });
+          return { success: true, verified: true, dispatched: true };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    const result = await agent.executeTool(42, 'type_text', { text: 'hello' }, null, {
+      richTextToolbarFrameId: 7,
+      richTextToolbarTargetToken: 'focused-token',
+    });
+    const typed = sent.find(entry => entry.message?.action === 'type');
+    assert.equal(result.verified, true);
+    assert.equal(typed?.tabId, 42);
+    assert.equal(typed?.options?.frameId, 7);
+    assert.equal(typed?.message?.params?.richTextToolbarTargetToken, 'focused-token');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    globalThis.chrome = originalChrome;
   }
 });
 

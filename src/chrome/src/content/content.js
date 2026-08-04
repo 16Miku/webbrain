@@ -1696,27 +1696,22 @@
       dispatched: false,
       noDispatch: true,
     });
-    const valueSignature = target => {
-      if (!target?.isConnected) return null;
-      const value = String(target.isContentEditable ? (target.textContent || '') : (target.value || ''));
-      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-      let hash = 2166136261;
-      for (let i = 0; i < sampled.length; i += 1) {
-        hash ^= sampled.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
+    const exactInsertion = (before, after, inserted) => {
+      if (!inserted || after.length !== before.length + inserted.length) return false;
+      let index = after.indexOf(inserted);
+      while (index >= 0) {
+        if (after.slice(0, index) + after.slice(index + inserted.length) === before) return true;
+        index = after.indexOf(inserted, index + 1);
       }
-      return `${value.length}:${hash >>> 0}`;
+      return false;
     };
-    const verifyValue = async (target, expected, clear, beforeSignature) => {
+    const verifyValue = async (target, expected, clear, beforeValue) => {
       await new Promise(resolve => setTimeout(resolve, 30));
       if (!target?.isConnected) return false;
       const value = String(target.isContentEditable ? (target.textContent || '') : (target.value || ''));
       return clear
         ? value === expected
-        : expected.length > 0
-          && !!beforeSignature
-          && valueSignature(target) !== beforeSignature
-          && value.includes(expected);
+        : typeof beforeValue === 'string' && exactInsertion(beforeValue, value, expected);
     };
     const typedText = String(params.text || '');
     let el;
@@ -1734,7 +1729,7 @@
       // Fallback path: type into the currently focused element. Used when
       // CDP isn't available or as the secondary path. Usually unreached on
       // chrome because agent.js routes type_text → cdpClient first.
-      el = document.activeElement;
+      el = _deepActiveElement();
       if (!el || el === document.body || el === document.documentElement) {
         return noDispatchFailure('No editable element is currently focused. Click the target input/textarea first, then call type_text again with no selector.');
       }
@@ -1768,7 +1763,7 @@
 
     el.focus();
     showAgentWorkingTarget(el, 'type_text');
-    const beforeSignature = valueSignature(el);
+    const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
 
     if (el.isContentEditable) {
       if (params.clear) el.textContent = '';
@@ -1778,7 +1773,7 @@
       el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      const verified = await verifyValue(el, typedText, params.clear === true, beforeSignature);
+      const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
       return { success: true, verified, method: 'contenteditable', value: el.textContent.slice(0, 100) };
     }
 
@@ -1819,7 +1814,7 @@
 
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    const verified = await verifyValue(el, typedText, params.clear === true, beforeSignature);
+    const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
 
     // Duplicate-field detection
     const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
@@ -4115,7 +4110,10 @@
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
       const toolbarContext = _richTextToolbarContextForElement(el);
-      const selectorTargetToken = toolName === 'type_text' && typeof args.selector === 'string' && args.selector
+      const probedTag = String(el.tagName || '').toLowerCase();
+      const selectorTargetToken = toolName === 'type_text'
+        && args.index == null
+        && !['iframe', 'frame'].includes(probedTag)
         ? _rememberRichTextToolbarRetryTarget(el)
         : '';
       return {

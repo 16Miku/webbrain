@@ -3931,13 +3931,12 @@ export class CDPClient {
       const tag = String(el.tagName || '').toUpperCase();
       if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
       const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-      let hash = 2166136261;
-      for (let i = 0; i < sampled.length; i += 1) {
-        hash ^= sampled.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
+      let hash = 14695981039346656037n;
+      for (let i = 0; i < value.length; i += 1) {
+        hash ^= BigInt(value.charCodeAt(i));
+        hash = BigInt.asUintN(64, hash * 1099511628211n);
       }
-      return value.length + ':' + (hash >>> 0);
+      return value.length + ':' + hash.toString(16);
     }`;
     if (Number.isInteger(nodeId) && nodeId > 0) {
       let objectId = null;
@@ -3987,13 +3986,12 @@ export class CDPClient {
         const tag = String(el.tagName || '').toUpperCase();
         if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
         const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-        const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-        let hash = 2166136261;
-        for (let i = 0; i < sampled.length; i += 1) {
-          hash ^= sampled.charCodeAt(i);
-          hash = Math.imul(hash, 16777619);
+        let hash = 14695981039346656037n;
+        for (let i = 0; i < value.length; i += 1) {
+          hash ^= BigInt(value.charCodeAt(i));
+          hash = BigInt.asUintN(64, hash * 1099511628211n);
         }
-        return value.length + ':' + (hash >>> 0);
+        return value.length + ':' + hash.toString(16);
       })()
     `).catch(() => null);
     return typeof result?.result?.value === 'string' ? result.result.value : null;
@@ -4011,18 +4009,30 @@ export class CDPClient {
       const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
       if (!typeable) return { found: true, verified: false };
       const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-      const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-      let hash = 2166136261;
-      for (let i = 0; i < sampled.length; i += 1) {
-        hash ^= sampled.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-      }
-      const afterSignature = value.length + ':' + (hash >>> 0);
+      const signatureOf = candidate => {
+        let hash = 14695981039346656037n;
+        for (let i = 0; i < candidate.length; i += 1) {
+          hash ^= BigInt(candidate.charCodeAt(i));
+          hash = BigInt.asUintN(64, hash * 1099511628211n);
+        }
+        return candidate.length + ':' + hash.toString(16);
+      };
+      const exactInsertion = () => {
+        const separator = beforeSignature.indexOf(':');
+        const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+        if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
+        let index = value.indexOf(expected);
+        while (index >= 0) {
+          if (signatureOf(value.slice(0, index) + value.slice(index + expected.length)) === beforeSignature) return true;
+          index = value.indexOf(expected, index + 1);
+        }
+        return false;
+      };
       return {
         found: true,
         verified: shouldClear
           ? value === expected
-          : expected.length > 0 && !!beforeSignature && afterSignature !== beforeSignature && value.includes(expected),
+          : !!beforeSignature && exactInsertion(),
       };
     }`;
 
@@ -4085,18 +4095,30 @@ export class CDPClient {
         const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
         if (!typeable) return { found: true, verified: false };
         const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
-        const sampled = value.length > 200000 ? value.slice(0, 100000) + value.slice(-100000) : value;
-        let hash = 2166136261;
-        for (let i = 0; i < sampled.length; i += 1) {
-          hash ^= sampled.charCodeAt(i);
-          hash = Math.imul(hash, 16777619);
-        }
-        const afterSignature = value.length + ':' + (hash >>> 0);
+        const signatureOf = candidate => {
+          let hash = 14695981039346656037n;
+          for (let i = 0; i < candidate.length; i += 1) {
+            hash ^= BigInt(candidate.charCodeAt(i));
+            hash = BigInt.asUintN(64, hash * 1099511628211n);
+          }
+          return candidate.length + ':' + hash.toString(16);
+        };
+        const exactInsertion = () => {
+          const separator = beforeSignature.indexOf(':');
+          const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+          if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
+          let index = value.indexOf(expected);
+          while (index >= 0) {
+            if (signatureOf(value.slice(0, index) + value.slice(index + expected.length)) === beforeSignature) return true;
+            index = value.indexOf(expected, index + 1);
+          }
+          return false;
+        };
         return {
           found: true,
           verified: shouldClear
             ? value === expected
-            : expected.length > 0 && !!beforeSignature && afterSignature !== beforeSignature && value.includes(expected),
+            : !!beforeSignature && exactInsertion(),
         };
       })()
     `).catch(() => null);
