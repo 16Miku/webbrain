@@ -1326,6 +1326,19 @@ test('CDP toolbar selector probe traverses shadow hosts for dense clusters', asy
   if (!compactComposerProbe?.resolved || compactComposerProbe.fieldMeta?.toolbarCandidate) {
     throw new Error(`compact contenteditable composer was audited as formatting by the CDP selector probe: ${JSON.stringify(compactComposerProbe)}`);
   }
+
+  await page.setContent(`<!doctype html>
+    <div style="width:420px">
+      <div style="height:42px;display:flex;align-items:center;gap:6px">
+        <input id="ordinary-document-title" type="text" style="width:180px;height:28px">
+        <button type="button">Save</button>
+      </div>
+      <textarea style="width:400px;height:180px"></textarea>
+    </div>`);
+  const ordinaryTitleProbe = await client.probeRichTextToolbarSelector(42, '#ordinary-document-title');
+  if (!ordinaryTitleProbe?.resolved || ordinaryTitleProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary compact title near an editor was audited by the CDP selector probe: ${JSON.stringify(ordinaryTitleProbe)}`);
+  }
 });
 
 test('CDP type_text binds dispatch to the selector node approved by toolbar preflight', async (page) => {
@@ -3291,6 +3304,17 @@ for (const browserKind of ['chrome', 'firefox']) {
         <button type="button">Send</button>`;
       document.body.appendChild(compactComposer);
 
+      const ordinaryDocumentEditor = document.createElement('div');
+      ordinaryDocumentEditor.className = 'editor';
+      ordinaryDocumentEditor.innerHTML = `
+        <div style="height:42px;display:flex;align-items:center;gap:6px">
+          <input id="ordinary-document-title" type="text" value=""
+            style="width:180px;height:28px">
+          <button type="button">Save</button>
+        </div>
+        <textarea id="ordinary-document-body" style="width:400px;height:180px"></textarea>`;
+      document.body.appendChild(ordinaryDocumentEditor);
+
       const conventionalToolbarEditor = document.createElement('div');
       conventionalToolbarEditor.className = 'editor';
       conventionalToolbarEditor.innerHTML = `
@@ -3374,6 +3398,7 @@ for (const browserKind of ['chrome', 'firefox']) {
         descendantToolbarFilter: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-filter')),
         descendantToolbarBold: window.__wb_ax_ref(descendantShadowEditor.querySelector('#descendant-toolbar-bold')),
         compactComposer: window.__wb_ax_ref(compactComposer.querySelector('#compact-composer-body')),
+        ordinaryDocumentTitle: window.__wb_ax_ref(ordinaryDocumentEditor.querySelector('#ordinary-document-title')),
         conventionalToolbarFamily: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-toolbar-family')),
         conventionalTextColor: window.__wb_ax_ref(conventionalToolbarEditor.querySelector('#conventional-text-color')),
         conventionalShadowFamily: window.__wb_ax_ref(conventionalShadowRoot.getElementById('conventional-shadow-family')),
@@ -3582,6 +3607,13 @@ for (const browserKind of ['chrome', 'firefox']) {
       || compactComposerProbe.fieldMeta?.toolbarCandidate
     ) {
       throw new Error(`compact contenteditable composer must stay outside formatting audit: ${JSON.stringify(compactComposerProbe)}`);
+    }
+    const ordinaryDocumentTitleProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+      toolName: 'set_field',
+      args: { ref_id: refs.ordinaryDocumentTitle, text: 'Quarterly roadmap' },
+    });
+    if (!ordinaryDocumentTitleProbe?.resolved || ordinaryDocumentTitleProbe.fieldMeta?.toolbarCandidate) {
+      throw new Error(`ordinary compact title near an editor must stay outside formatting audit: ${JSON.stringify(ordinaryDocumentTitleProbe)}`);
     }
     const conventionalToolbarProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
       toolName: 'set_field',
@@ -4392,6 +4424,61 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       || !deduplicatedState.blockedSelectors?.has('#font-size')
     ) {
       throw new Error(`equivalent editor mutations must merge toolbar targets into one recovery obligation: ${JSON.stringify(deduplicatedState)}`);
+    }
+    agent.conversations.set(tabId, [{ role: 'system', content: 'test' }]);
+    const persistedToolbarEntry = agent._conversationStorageEntry(tabId);
+    if (
+      persistedToolbarEntry?.richTextToolbarAudit?.recoveryObligations?.length !== 1
+      || !persistedToolbarEntry.richTextToolbarAudit.recoveryObligations[0].blockedRefs.includes('ref_12')
+      || Object.values(persistedToolbarEntry.richTextToolbarAudit).some(value => value instanceof Set)
+    ) {
+      throw new Error(`toolbar recovery must serialize into plain conversation state: ${JSON.stringify(persistedToolbarEntry)}`);
+    }
+    const persistenceApi = AgentClass === Agent ? 'chrome' : 'browser';
+    const priorPersistenceApi = globalThis[persistenceApi];
+    globalThis[persistenceApi] = {
+      storage: {
+        session: {
+          get: async key => ({ [key]: structuredClone(persistedToolbarEntry) }),
+        },
+      },
+    };
+    try {
+      const continued = new AgentClass({ getVisionProvider: async () => null });
+      continued._processMessageInner = async () => ({
+        hasDebt: continued._richTextToolbarDebts.has(tabId),
+        blockedRef: continued._richTextToolbarStates.get(tabId)?.blockedRefs?.has('ref_12'),
+      });
+      const continuedState = await continued.processMessage(
+        tabId,
+        'Please continue from where you left off.',
+        () => {},
+        'act',
+        [],
+        { trustedContinuation: true },
+      );
+      if (!continuedState?.hasDebt || !continuedState.blockedRef) {
+        throw new Error(`trusted continuation lost persisted toolbar recovery: ${JSON.stringify(continuedState)}`);
+      }
+
+      const ordinaryTurn = new AgentClass({ getVisionProvider: async () => null });
+      ordinaryTurn._processMessageInner = async () => ({
+        hasDebt: ordinaryTurn._richTextToolbarDebts.has(tabId),
+      });
+      const ordinaryState = await ordinaryTurn.processMessage(
+        tabId,
+        'Start a different task.',
+        () => {},
+        'act',
+        [],
+        {},
+      );
+      if (ordinaryState?.hasDebt) {
+        throw new Error(`ordinary user turn revived persisted toolbar recovery: ${JSON.stringify(ordinaryState)}`);
+      }
+    } finally {
+      if (priorPersistenceApi === undefined) delete globalThis[persistenceApi];
+      else globalThis[persistenceApi] = priorPersistenceApi;
     }
     const siblingBlock = agent._richTextToolbarRefBlock(tabId, 'click_ax', { ref_id: 'ref_13' }, 'doc-a');
     if (!siblingBlock?.blockedToolbarRef || siblingBlock.dispatched !== false) {

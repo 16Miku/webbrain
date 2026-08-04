@@ -3452,7 +3452,7 @@ export class CDPClient {
                 },
               };
             })();
-            if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor) {
+            if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar) {
               return null;
             }
             const availablePresetValues = [];

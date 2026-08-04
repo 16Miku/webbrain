@@ -885,6 +885,7 @@ export class Agent extends LoopDetector {
             updatedAt: Number(entry.clarificationAuthorizationGuard.updatedAt) || Date.now(),
           });
         }
+        this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
         const captchaGateState = entry.captchaGateState;
         if (
           captchaGateState
@@ -932,6 +933,7 @@ export class Agent extends LoopDetector {
       progressSession: this.progressSessions.get(tabId) || null,
       selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
+      richTextToolbarAudit: this._persistedRichTextToolbarAudit(tabId),
       captchaGateState: this._captchaGateStates.get(tabId) || null,
     };
   }
@@ -1844,6 +1846,83 @@ export class Agent extends LoopDetector {
       blockedSelectors: [...(state.blockedSelectors || [])],
       blockedRegionRefs: [...(state.blockedRegionRefs || [])],
     }];
+  }
+
+  static _normalizePersistedRichTextToolbarObligation(raw) {
+    if (!raw || typeof raw !== 'object' || typeof raw.blockedAttemptedText !== 'string') return null;
+    const cleanString = (value, max = 2048) => typeof value === 'string' ? value.slice(0, max) : '';
+    const cleanStrings = values => Array.isArray(values)
+      ? [...new Set(values.filter(value => typeof value === 'string' && value).map(value => value.slice(0, 2048)))]
+      : [];
+    const rawIdentity = raw.associatedEditorIdentity;
+    const associatedEditorIdentity = rawIdentity && typeof rawIdentity === 'object'
+      ? {
+          tag: cleanString(rawIdentity.tag, 80),
+          id: cleanString(rawIdentity.id, 512) || null,
+          name: cleanString(rawIdentity.name, 512) || null,
+          role: cleanString(rawIdentity.role, 80) || null,
+          pageX: Number(rawIdentity.pageX),
+          pageY: Number(rawIdentity.pageY),
+          w: Number(rawIdentity.w),
+          h: Number(rawIdentity.h),
+        }
+      : null;
+    return {
+      toolName: cleanString(raw.toolName, 80),
+      source: cleanString(raw.source, 80),
+      recoveryOnly: raw.recoveryOnly === true,
+      targetKind: cleanString(raw.targetKind, 80) || 'other_formatting',
+      detectedAt: Number(raw.detectedAt) || Date.now(),
+      blockedAttemptedText: raw.blockedAttemptedText,
+      blockedClear: raw.blockedClear === true,
+      blockedToolbarRef: cleanString(raw.blockedToolbarRef, 512),
+      blockedToolbarSelector: cleanString(raw.blockedToolbarSelector),
+      associatedEditorRef: cleanString(raw.associatedEditorRef, 512),
+      associatedEditorIdentity,
+      recoveryTargetUnknown: raw.recoveryTargetUnknown === true,
+      recoveryPageUrl: cleanString(raw.recoveryPageUrl, 4096),
+      documentToken: cleanString(raw.documentToken, 512),
+      pageUrl: cleanString(raw.pageUrl, 4096),
+      frameId: Number.isInteger(raw.frameId) ? raw.frameId : null,
+      regionRef: cleanString(raw.regionRef, 512),
+      regionKey: cleanString(raw.regionKey, 1024),
+      blockedRefs: cleanStrings(raw.blockedRefs),
+      blockedSelectors: cleanStrings(raw.blockedSelectors),
+      blockedRegionRefs: cleanStrings(raw.blockedRegionRefs),
+    };
+  }
+
+  _persistedRichTextToolbarAudit(tabId) {
+    if (!this._richTextToolbarDebts.has(tabId)) return null;
+    const obligations = this._richTextToolbarRecoveryObligations(this._richTextToolbarStates.get(tabId))
+      .map(Agent._normalizePersistedRichTextToolbarObligation)
+      .filter(Boolean);
+    return obligations.length > 0 ? { recoveryObligations: obligations } : null;
+  }
+
+  _restorePersistedRichTextToolbarAudit(tabId, raw) {
+    const obligations = (Array.isArray(raw?.recoveryObligations) ? raw.recoveryObligations : [])
+      .map(Agent._normalizePersistedRichTextToolbarObligation)
+      .filter(Boolean);
+    if (obligations.length === 0) return false;
+    const state = {
+      recoveryObligations: obligations,
+      blockedRefs: new Set(),
+      blockedSelectors: new Set(),
+      blockedRegionRefs: new Set(),
+    };
+    this._syncRichTextToolbarPrimaryObligation(state, obligations, { rebuildBlockedTargets: true });
+    this._richTextToolbarStates.set(tabId, state);
+    const primary = obligations[0];
+    this._richTextToolbarDebts.set(tabId, {
+      tool: primary.toolName || null,
+      ref_id: primary.blockedToolbarRef || null,
+      targetKind: primary.targetKind || 'other_formatting',
+      source: primary.source || null,
+      detectedAt: primary.detectedAt || Date.now(),
+      recoveryTargetUnknown: primary.recoveryTargetUnknown === true,
+    });
+    return true;
   }
 
   _syncRichTextToolbarPrimaryObligation(state, obligations, { rebuildBlockedTargets = false } = {}) {
@@ -16217,6 +16296,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._runningTabs.has(tabId)) {
       throw new Error('An agent run is already in progress for this tab.');
     }
+    this._runningTabs.add(tabId);
+    await this._hydrate(tabId);
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
@@ -16224,7 +16305,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
@@ -17049,6 +17129,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._runningTabs.has(tabId)) {
       throw new Error('An agent run is already in progress for this tab.');
     }
+    this._runningTabs.add(tabId);
+    await this._hydrate(tabId);
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
@@ -17056,7 +17138,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {

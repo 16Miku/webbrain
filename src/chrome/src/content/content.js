@@ -3897,7 +3897,7 @@
         }
       }
       const associatedEditor = _associatedRichTextEditor(regionNode);
-      if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar && !associatedEditor) {
+      if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar) {
         return null;
       }
 
