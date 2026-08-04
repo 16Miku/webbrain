@@ -3043,6 +3043,49 @@ test('matches current Shopee regional storefronts with marketplace guidance', ()
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Lazada consumer storefronts and stops at the observed traffic gate', () => {
+  const trustedUrls = [
+    'https://www.lazada.co.id/',
+    'https://www.lazada.com.ph/products/example-item.html',
+    'https://www.lazada.com.my/catalog/?q=phone',
+    'https://www.lazada.sg/shop-mobiles/',
+    'https://m.lazada.co.th/products/example-item.html',
+    'https://www.lazada.vn/',
+    'https://my.lazada.co.id/customer/order/index/',
+    'https://member.lazada.com.ph/user/account#/',
+    'https://pages.lazada.com.my/wow/example',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'lazada');
+    assert.equal(getActiveAdapterFx(url)?.name, 'lazada');
+  }
+
+  const rejectedUrls = [
+    'https://sellercenter.lazada.co.id/apps/register/index',
+    'https://helpcenter.lazada.com.ph/',
+    'https://careers.lazada.sg/',
+    'https://lazada.co.id.phishing.example/products/item',
+    'https://example.com/?next=https://www.lazada.vn/',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'lazada');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'lazada');
+  }
+
+  const adapter = getActiveAdapter(trustedUrls[0]);
+  const firefoxAdapter = getActiveAdapterFx(trustedUrls[5]);
+  assert.match(adapter?.notes || '', /2026-08.*separate Indonesia.*Vietnam storefronts/s);
+  assert.match(adapter?.notes || '', /_____tmd_____\/punish.*Click to feedback.*complete the traffic check manually/s);
+  assert.match(adapter?.notes || '', /exact variation.*changing a variation.*change all of those details/s);
+  assert.match(adapter?.notes || '', /LazMall.*selected seller.*return policy/s);
+  assert.match(adapter?.notes || '', /vouchers.*minimum-spend.*final payable checkout total/s);
+  assert.match(adapter?.notes || '', /Add to Cart.*Tambah ke Troli.*Buy Now.*Beli Sekarang/s);
+  assert.match(adapter?.notes || '', /OTP.*verification manually.*never request.*verification code/s);
+  assert.match(adapter?.notes || '', /Place Order.*explicit confirmation.*order number.*explicit state/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches Flipkart shopping surfaces with India marketplace guidance', () => {
   const trustedUrls = [
     'https://flipkart.com/',
