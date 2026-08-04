@@ -1486,7 +1486,7 @@
       el = document.elementFromPoint(params.x, params.y);
     }
 
-    if (!_consumeRichTextToolbarRetryTarget(params.richTextToolbarTargetToken, el)) {
+    if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
       return {
         success: false,
         dispatched: false,
@@ -1744,7 +1744,7 @@
 
     if (!el) return noDispatchFailure('Element not found');
 
-    if (!_consumeRichTextToolbarRetryTarget(params.richTextToolbarTargetToken, el)) {
+    if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
       return noDispatchFailure(
         'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
         { retryable: true },
@@ -1973,8 +1973,8 @@
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
     const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
     if (!SUPPORTED_KEYS.includes(key)) {
-      if (params?.richTextToolbarTargetToken) {
-        _releaseRichTextToolbarRetryTarget({ token: params.richTextToolbarTargetToken });
+      if (params?.dispatchBinding?.token) {
+        _releaseDispatchBinding(params);
       }
       return {
         success: false,
@@ -2001,8 +2001,8 @@
       ';': { code: 'Semicolon', keyCode: 186 },
     }[key];
     const focusedTarget = _deepActiveElement();
-    if (params?.richTextToolbarTargetToken) {
-      const validation = _consumeRichTextToolbarFocusedTarget(params);
+    if (params?.dispatchBinding?.token) {
+      const validation = _consumeFocusedDispatchBinding(params);
       if (validation.success !== true) return validation;
     }
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
@@ -3799,28 +3799,28 @@
     return active;
   }
 
-  const _richTextToolbarRetryTargets = new Map();
+  const _dispatchBindings = new Map();
 
-  function _rememberRichTextToolbarRetryTarget(el) {
+  function _rememberDispatchBinding(el) {
     if (!el?.isConnected) return '';
     const entropy = new Uint32Array(3);
     globalThis.crypto.getRandomValues(entropy);
-    const token = `wbrtt_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const token = `wbdb_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
     const record = { el, pageUrl: location.href, timer: null };
-    _richTextToolbarRetryTargets.set(token, record);
+    _dispatchBindings.set(token, record);
     record.timer = setTimeout(() => {
-      if (_richTextToolbarRetryTargets.get(token) === record) {
-        _richTextToolbarRetryTargets.delete(token);
+      if (_dispatchBindings.get(token) === record) {
+        _dispatchBindings.delete(token);
       }
     }, 60000);
     return token;
   }
 
-  function _consumeRichTextToolbarRetryTarget(token, resolvedTarget) {
+  function _consumeDispatchBinding(token, resolvedTarget) {
     const normalized = String(token || '');
     if (!normalized) return true;
-    const expected = _richTextToolbarRetryTargets.get(normalized);
-    _richTextToolbarRetryTargets.delete(normalized);
+    const expected = _dispatchBindings.get(normalized);
+    _dispatchBindings.delete(normalized);
     if (expected?.timer) clearTimeout(expected.timer);
     return !!expected
       && expected.el === resolvedTarget
@@ -3828,15 +3828,15 @@
       && expected.pageUrl === location.href;
   }
 
-  function _consumeRichTextToolbarFocusedTarget(params = {}) {
-    const token = String(params.richTextToolbarTargetToken || params.token || '');
+  function _consumeFocusedDispatchBinding(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
     const active = _deepActiveElement();
     if (
       !token
       || !active
       || active === document.body
       || active === document.documentElement
-      || !_consumeRichTextToolbarRetryTarget(token, active)
+      || !_consumeDispatchBinding(token, active)
     ) {
       return {
         success: false,
@@ -3892,9 +3892,9 @@
     return false;
   }
 
-  function _prepareRichTextToolbarFocusedType(params = {}) {
-    const token = String(params.token || '');
-    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+  function _prepareFocusedTypeDispatch(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
+    const record = token ? _dispatchBindings.get(token) : null;
     const el = record?.el;
     const active = _deepActiveElement();
     const tag = String(el?.tagName || '').toUpperCase();
@@ -3906,7 +3906,7 @@
       && typeable;
     if (!valid) {
       if (record?.timer) clearTimeout(record.timer);
-      if (token) _richTextToolbarRetryTargets.delete(token);
+      if (token) _dispatchBindings.delete(token);
       return {
         success: false,
         dispatched: false,
@@ -3938,7 +3938,7 @@
         || options.find(option => String(option.text || '').trim().toLowerCase().includes(needle.toLowerCase()));
       if (!match) {
         if (record.timer) clearTimeout(record.timer);
-        _richTextToolbarRetryTargets.delete(token);
+        _dispatchBindings.delete(token);
         return {
           success: false,
           dispatched: false,
@@ -3959,11 +3959,11 @@
     return response;
   }
 
-  async function _verifyRichTextToolbarFocusedType(params = {}) {
-    const token = String(params.token || '');
-    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+  async function _verifyFocusedTypeDispatch(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
+    const record = token ? _dispatchBindings.get(token) : null;
     if (record?.timer) clearTimeout(record.timer);
-    if (token) _richTextToolbarRetryTargets.delete(token);
+    if (token) _dispatchBindings.delete(token);
     const el = record?.el;
     if (!record?.prepared || !el?.isConnected || record.pageUrl !== location.href) {
       return { success: true, verified: false };
@@ -4003,11 +4003,11 @@
     };
   }
 
-  function _releaseRichTextToolbarRetryTarget(params = {}) {
-    const token = String(params.token || '');
-    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+  function _releaseDispatchBinding(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
+    const record = token ? _dispatchBindings.get(token) : null;
     if (record?.timer) clearTimeout(record.timer);
-    if (token) _richTextToolbarRetryTargets.delete(token);
+    if (token) _dispatchBindings.delete(token);
     return { success: true };
   }
 
@@ -4110,11 +4110,11 @@
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
       const toolbarContext = _richTextToolbarContextForElement(el);
       const probedTag = String(el.tagName || '').toLowerCase();
-      const selectorTargetToken = (toolName === 'click' || (
+      const dispatchBindingToken = (toolName === 'click' || (
         toolName === 'type_text' && args.index == null
       ))
         && !['iframe', 'frame'].includes(probedTag)
-        ? _rememberRichTextToolbarRetryTarget(el)
+        ? _rememberDispatchBinding(el)
         : '';
       return {
         resolved: true,
@@ -4130,7 +4130,7 @@
           h: Math.round(rect.height),
         },
         fieldMeta: _fieldMeta(el),
-        ...(selectorTargetToken ? { selectorTargetToken } : {}),
+        ...(dispatchBindingToken ? { dispatchBinding: { token: dispatchBindingToken } } : {}),
         ...toolbarContext,
       };
     } catch {
@@ -4210,10 +4210,10 @@
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
-      'release_rich_text_toolbar_retry_target': () => _releaseRichTextToolbarRetryTarget(msg.params || {}),
-      'consume_rich_text_toolbar_focused_target': () => _consumeRichTextToolbarFocusedTarget(msg.params || {}),
-      'prepare_rich_text_toolbar_focused_type': () => _prepareRichTextToolbarFocusedType(msg.params || {}),
-      'verify_rich_text_toolbar_focused_type': () => _verifyRichTextToolbarFocusedType(msg.params || {}),
+      'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
+      'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
+      'prepare_focused_type_dispatch': () => _prepareFocusedTypeDispatch(msg.params || {}),
+      'verify_focused_type_dispatch': () => _verifyFocusedTypeDispatch(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),

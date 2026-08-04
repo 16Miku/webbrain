@@ -6,6 +6,18 @@ import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { guardRecentSubmitClick } from './submit-click-guard.js';
+import {
+  DISPATCH_BINDING_TOOLS,
+  RICH_TEXT_TOOLBAR_GUARDED_TOOLS,
+  RichTextToolbarGuard,
+  normalizeRichTextToolbarAudit,
+  richTextToolbarDispatchBindingReady,
+  richTextToolbarDecision,
+  richTextToolbarPresetMatch,
+  richTextToolbarTextShape,
+  richTextToolbarUsesFocusedTarget,
+} from './rich-text-toolbar-guard.js';
+import { RichTextToolbarProbe } from './rich-text-toolbar-probe.js';
 import { isCredentialField, CREDENTIAL_NOTE_STRICT, STRICT_SECRET_SYSTEM_NOTE } from './credential-fields.js';
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
@@ -78,22 +90,6 @@ import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
-const CSS_NAMED_COLOR_KEYWORDS = new Set(`
-  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood
-  cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
-  darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
-  darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
-  firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew
-  hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
-  lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray
-  lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid
-  mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
-  mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen
-  paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown
-  royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow
-  springgreen steelblue tan teal thistle tomato transparent turquoise violet wheat white whitesmoke yellow yellowgreen
-  currentcolor
-`.trim().split(/\s+/));
 
 function secureRandomBase36Token(length = 8) {
   const size = Math.max(1, Math.floor(Number(length) || 0));
@@ -448,8 +444,8 @@ export class Agent extends LoopDetector {
     this._lastClickProgress = new Map(); // tabId -> { ident, snapshot }
     this._clickAxCdpFallbacks = new Map(); // tabId -> Set(documentToken|ref_id), one trusted fallback per document target
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
-    this._richTextToolbarStates = new Map(); // tabId -> document-scoped toolbar targets or stable recovery identity
-    this._richTextToolbarDebts = new Map(); // tabId -> unresolved wrong-target text-entry evidence
+    this._richTextToolbarGuard = new RichTextToolbarGuard();
+    this._richTextToolbarProbe = new RichTextToolbarProbe(this);
     this._uploadSelectorRecoveryRequired = new Map(); // tabId -> prior ambiguous match count; cleared only by inspection/navigation/cleanup
     // Productive browsing often mixes reads and scrolling, so exact-call loop
     // detection cannot tell when the agent already has enough evidence to
@@ -701,12 +697,12 @@ export class Agent extends LoopDetector {
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     const outcome = name === 'done_json' ? 'success' : String(args?.outcome || '').trim().toLowerCase();
-    const toolbarDebt = this._richTextToolbarDebts.get(tabId);
-    if (outcome === 'success' && toolbarDebt) {
+    const toolbarObligation = this._richTextToolbarGuard.completionAction(tabId);
+    if (outcome === 'success' && toolbarObligation) {
       return {
         reason: 'rich_text_toolbar_target_unresolved',
         error: 'Success is blocked because the last text-entry attempt targeted a rich-text formatting toolbar. Enter the requested content in the editor body, verify that non-toolbar edit on a fresh turn, then complete; otherwise report a partial or failed outcome.',
-        lastAction: toolbarDebt,
+        lastAction: toolbarObligation,
       };
     }
     const state = this.completionInvariants.get(tabId);
@@ -855,7 +851,7 @@ export class Agent extends LoopDetector {
   _completionPlainFinalBlock(tabId) {
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
-    if (this._richTextToolbarDebts.has(tabId)) {
+    if (this._richTextToolbarGuard.hasPending(tabId)) {
       return '[RUNTIME COMPLETION BLOCK: The last text-entry attempt targeted a rich-text formatting toolbar, so ordinary final text cannot complete this action. Enter the requested content in the associated editor body and verify that edit on a fresh turn. If recovery is impossible, call done with outcome="partial" or outcome="failed" instead of claiming completion.]';
     }
     return completionPlainFinalBlock(this.completionInvariants.get(tabId));
@@ -1772,964 +1768,90 @@ export class Agent extends LoopDetector {
     this._lastAxScopes.set(tabId, next);
   }
 
+
   _clearRichTextToolbarDocumentState(tabId) {
-    const state = this._richTextToolbarStates.get(tabId);
-    // An obligation whose only recovery handle was its ref is demoted to
-    // unknown-target recovery, not dropped. Dropping it used to leave the debt
-    // map populated with no state behind it, and the two are read by different
-    // callers: the completion block consults the debt alone, while the tool
-    // guard and this ledger both need the state. That combination switched the
-    // guard off for the rest of the run, blocked completion permanently, and
-    // left no corrected edit able to discharge the debt.
-    const obligations = this._richTextToolbarRecoveryObligations(state)
-      .map(obligation => ({
-        ...obligation,
-        recoveryOnly: true,
-        recoveryTargetUnknown:
-          !Agent._richTextToolbarEditorIdentityRecoverable(obligation.associatedEditorIdentity),
-        associatedEditorRef: '',
-        recoveryPageUrl: obligation.recoveryPageUrl || obligation.pageUrl || '',
-        documentToken: '',
-        pageUrl: '',
-        frameId: null,
-        regionRef: '',
-        regionKey: '',
-        blockedRefs: [],
-        blockedSelectors: [],
-        blockedRegionRefs: [],
-      }));
-    if (obligations.length === 0) {
-      // Nothing left that could ever discharge a debt, so the debt must go too.
-      this._resetRichTextToolbarAudit(tabId);
-      return;
-    }
-    if (!this._richTextToolbarDebts.has(tabId)) {
-      this._richTextToolbarStates.delete(tabId);
-      return;
-    }
-    // Refs, selectors, region refs, frame ids, and document tokens are scoped
-    // to the replaced page. Keep the stable editor identity, or the explicit
-    // unknown-target marker, needed to prove a corrected edit after a reload
-    // or navigation while the completion debt remains open.
-    const recoveryState = {
-      recoveryObligations: obligations,
-      blockedRefs: new Set(),
-      blockedSelectors: new Set(),
-      blockedRegionRefs: new Set(),
-    };
-    this._syncRichTextToolbarPrimaryObligation(recoveryState, obligations, { rebuildBlockedTargets: true });
-    this._richTextToolbarStates.set(tabId, recoveryState);
+    this._richTextToolbarGuard.navigate(tabId);
   }
 
   _resetRichTextToolbarAudit(tabId) {
-    this._richTextToolbarDebts.delete(tabId);
-    this._richTextToolbarStates.delete(tabId);
-  }
-
-  static _richTextToolbarEffectiveClear(toolName, args = {}) {
-    return toolName === 'set_field' ? args?.clear !== false : args?.clear === true;
-  }
-
-  _richTextToolbarRecoveryObligations(state) {
-    if (!state) return [];
-    if (Array.isArray(state.recoveryObligations) && state.recoveryObligations.length > 0) {
-      return state.recoveryObligations.filter(obligation => obligation && typeof obligation === 'object');
-    }
-    if (typeof state.blockedAttemptedText !== 'string') return [];
-    return [{
-      recoveryOnly: state.recoveryOnly === true,
-      targetKind: state.targetKind || 'other_formatting',
-      detectedAt: state.detectedAt || Date.now(),
-      blockedAttemptedText: state.blockedAttemptedText,
-      blockedClear: state.blockedClear,
-      associatedEditorRef: state.associatedEditorRef || '',
-      associatedEditorIdentity: state.associatedEditorIdentity || null,
-      recoveryTargetUnknown: state.recoveryTargetUnknown === true,
-      recoveryPageUrl: state.recoveryPageUrl || '',
-      documentToken: state.documentToken || '',
-      pageUrl: state.pageUrl || '',
-      frameId: Number.isInteger(state.frameId) ? state.frameId : null,
-      frameScoped: state.frameScoped === true || (Number.isInteger(state.frameId) && state.frameId !== 0),
-      regionRef: state.regionRef || '',
-      regionKey: state.regionKey || '',
-      blockedRefs: [...(state.blockedRefs || [])],
-      blockedSelectors: [...(state.blockedSelectors || [])],
-      blockedRegionRefs: [...(state.blockedRegionRefs || [])],
-    }];
-  }
-
-  static _normalizePersistedRichTextToolbarObligation(raw) {
-    if (!raw || typeof raw !== 'object' || typeof raw.blockedAttemptedText !== 'string') return null;
-    const cleanString = (value, max = 2048) => typeof value === 'string' ? value.slice(0, max) : '';
-    const cleanStrings = values => Array.isArray(values)
-      ? [...new Set(values.filter(value => typeof value === 'string' && value).map(value => value.slice(0, 2048)))]
-      : [];
-    const rawIdentity = raw.associatedEditorIdentity;
-    const associatedEditorIdentity = rawIdentity && typeof rawIdentity === 'object'
-      ? {
-          tag: cleanString(rawIdentity.tag, 80),
-          id: cleanString(rawIdentity.id, 512) || null,
-          name: cleanString(rawIdentity.name, 512) || null,
-          role: cleanString(rawIdentity.role, 80) || null,
-          pageX: Number(rawIdentity.pageX),
-          pageY: Number(rawIdentity.pageY),
-          w: Number(rawIdentity.w),
-          h: Number(rawIdentity.h),
-        }
-      : null;
-    return {
-      toolName: cleanString(raw.toolName, 80),
-      source: cleanString(raw.source, 80),
-      recoveryOnly: raw.recoveryOnly === true,
-      targetKind: cleanString(raw.targetKind, 80) || 'other_formatting',
-      detectedAt: Number(raw.detectedAt) || Date.now(),
-      blockedAttemptedText: raw.blockedAttemptedText,
-      blockedClear: raw.blockedClear === true,
-      blockedToolbarRef: cleanString(raw.blockedToolbarRef, 512),
-      blockedToolbarSelector: cleanString(raw.blockedToolbarSelector),
-      associatedEditorRef: cleanString(raw.associatedEditorRef, 512),
-      associatedEditorIdentity,
-      recoveryTargetUnknown: raw.recoveryTargetUnknown === true,
-      recoveryPageUrl: cleanString(raw.recoveryPageUrl, 4096),
-      documentToken: cleanString(raw.documentToken, 512),
-      pageUrl: cleanString(raw.pageUrl, 4096),
-      frameId: Number.isInteger(raw.frameId) ? raw.frameId : null,
-      frameScoped: raw.frameScoped === true || (Number.isInteger(raw.frameId) && raw.frameId !== 0),
-      regionRef: cleanString(raw.regionRef, 512),
-      regionKey: cleanString(raw.regionKey, 1024),
-      blockedRefs: cleanStrings(raw.blockedRefs),
-      blockedSelectors: cleanStrings(raw.blockedSelectors),
-      blockedRegionRefs: cleanStrings(raw.blockedRegionRefs),
-    };
+    this._richTextToolbarGuard.reset(tabId);
   }
 
   _persistedRichTextToolbarAudit(tabId) {
-    if (!this._richTextToolbarDebts.has(tabId)) return null;
-    const obligations = this._richTextToolbarRecoveryObligations(this._richTextToolbarStates.get(tabId))
-      .map(Agent._normalizePersistedRichTextToolbarObligation)
-      .filter(Boolean);
-    return obligations.length > 0 ? { recoveryObligations: obligations } : null;
+    return this._richTextToolbarGuard.persist(tabId);
   }
 
   _restorePersistedRichTextToolbarAudit(tabId, raw) {
-    const obligations = (Array.isArray(raw?.recoveryObligations) ? raw.recoveryObligations : [])
-      .map(Agent._normalizePersistedRichTextToolbarObligation)
-      .filter(Boolean);
-    if (obligations.length === 0) return false;
-    const state = {
-      recoveryObligations: obligations,
-      blockedRefs: new Set(),
-      blockedSelectors: new Set(),
-      blockedRegionRefs: new Set(),
-    };
-    this._syncRichTextToolbarPrimaryObligation(state, obligations, { rebuildBlockedTargets: true });
-    this._richTextToolbarStates.set(tabId, state);
-    const primary = obligations[0];
-    this._richTextToolbarDebts.set(tabId, {
-      tool: primary.toolName || null,
-      ref_id: primary.blockedToolbarRef || null,
-      targetKind: primary.targetKind || 'other_formatting',
-      source: primary.source || null,
-      detectedAt: primary.detectedAt || Date.now(),
-      recoveryTargetUnknown: primary.recoveryTargetUnknown === true,
-    });
-    return true;
+    return this._richTextToolbarGuard.restore(tabId, raw);
   }
 
-  _syncRichTextToolbarPrimaryObligation(state, obligations, { rebuildBlockedTargets = false } = {}) {
-    const primary = obligations[0];
-    if (!state || !primary) return;
-    for (const key of [
-      'recoveryOnly', 'targetKind', 'detectedAt', 'blockedAttemptedText', 'blockedClear',
-      'associatedEditorRef', 'associatedEditorIdentity', 'recoveryTargetUnknown',
-      'recoveryPageUrl', 'documentToken', 'pageUrl', 'frameId', 'frameScoped', 'regionRef', 'regionKey',
-    ]) state[key] = primary[key];
-    state.recoveryObligations = obligations;
-    if (!rebuildBlockedTargets) return;
-    state.blockedRefs = new Set();
-    state.blockedSelectors = new Set();
-    state.blockedRegionRefs = new Set();
-    for (const obligation of obligations) {
-      const sameScope = obligation.recoveryOnly !== true
-        && (!primary.documentToken || !obligation.documentToken || primary.documentToken === obligation.documentToken)
-        && (!Number.isInteger(primary.frameId) || !Number.isInteger(obligation.frameId) || primary.frameId === obligation.frameId);
-      if (!sameScope) continue;
-      for (const ref of obligation.blockedRefs || []) state.blockedRefs.add(ref);
-      for (const selector of obligation.blockedSelectors || []) state.blockedSelectors.add(selector);
-      for (const regionRef of obligation.blockedRegionRefs || []) state.blockedRegionRefs.add(regionRef);
-    }
+  async _legacyIframeTypeAllFrames(tabId, args) {
+    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args);
   }
 
-  static _normalizeRichTextToolbarAudit(raw) {
-    const value = typeof raw === 'string' ? Agent._extractFirstJsonObject(raw) : raw;
-    if (!value || typeof value !== 'object') return null;
-    const regionKinds = new Set(['rich_text_toolbar', 'editor_body', 'ordinary_form_field', 'uncertain']);
-    const targetKinds = new Set([
-      'font_size', 'font_family', 'style_preset', 'color', 'link',
-      'other_formatting', 'editor_body', 'ordinary_input', 'uncertain',
-    ]);
-    const regionKind = String(value.regionKind || value.region_kind || '').trim().toLowerCase();
-    const targetKind = String(value.targetKind || value.target_kind || '').trim().toLowerCase();
-    const confidence = Math.max(0, Math.min(1, Number(value.confidence)));
-    if (!regionKinds.has(regionKind) || !targetKinds.has(targetKind) || !Number.isFinite(confidence)) return null;
-    return { regionKind, targetKind, confidence };
+  async _probeRichTextToolbarIframeTarget(tabId, args = {}, options = {}) {
+    return this._richTextToolbarProbe.probeIframeTarget(tabId, args, options);
   }
 
-  static _richTextToolbarTextShape(text) {
-    const value = String(text || '');
-    const trimmed = value.trim();
-    const normalized = trimmed.replace(/\s+/g, ' ').toLowerCase();
-    const genericFontFamilies = new Set([
-      'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
-      'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
-    ]);
-    const urlLike = !!trimmed && !/\s/.test(trimmed) && (
-      /^https?:\/\/[^/?#\s]+(?:[/?#]\S*)?$/i.test(trimmed)
-      || /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(trimmed)
-      || /^tel:\+?[\d().-]{3,}$/i.test(trimmed)
-      || /^www\.[^\s.]+\.[^\s]+$/i.test(trimmed)
-      || /^\/(?!\/)\S*$/.test(trimmed)
-      || /^\.\.?\/\S+$/.test(trimmed)
-      || /^\?\S+$/.test(trimmed)
-      || /^#\S*$/.test(trimmed)
-      || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)
-      || /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#]\S*)?$/i.test(trimmed)
-    );
-    return {
-      chars: value.length,
-      words: trimmed ? trimmed.split(/\s+/).length : 0,
-      lines: value ? value.split(/\r?\n/).length : 0,
-      numericPreset: /^\s*-?\d+(?:[.,]\d+)?(?:px|pt|em|rem|%)?\s*$/i.test(value),
-      urlLike,
-      colorLike: CSS_NAMED_COLOR_KEYWORDS.has(normalized)
-        || /^\s*(?:#[0-9a-f]{3,8}|(?:rgb|hsl|hwb)a?\([^)]{1,80}\)|var\(--[\w-]+\))\s*$/i.test(value),
-      genericFontFamily: genericFontFamilies.has(normalized),
-      semanticStylePreset: /^(?:p|h[1-6]|pre|blockquote|code)$/i.test(trimmed),
-    };
+  async _probeRichTextToolbarFocusedTarget(tabId, args = {}, options = {}) {
+    return this._richTextToolbarProbe.probeFocusedTarget(tabId, args, options);
   }
 
-  static _richTextToolbarPresetMatch(text, availableValues) {
-    const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
-    const attempted = normalize(text);
-    if (!attempted || !Array.isArray(availableValues)) return false;
-    return availableValues.slice(0, 40).some(value => normalize(value) === attempted);
+  async _releaseRichTextToolbarProbeTarget(tabId, probeOrBinding) {
+    return this._richTextToolbarProbe.release(tabId, probeOrBinding);
   }
 
-  static _richTextToolbarEditorIdentityMatches(expected, fieldMeta = {}, rect = {}) {
-    if (!expected || typeof expected !== 'object') return false;
-    const expectedTag = String(expected.tag || '').toLowerCase();
-    const actualTag = String(fieldMeta.tag || '').toLowerCase();
-    if (!expectedTag || expectedTag !== actualTag) return false;
-
-    const expectedRole = String(expected.role || '').toLowerCase();
-    const actualRole = String(fieldMeta.role || '').toLowerCase();
-    if ((expectedRole || actualRole) && expectedRole !== actualRole) return false;
-
-    const expectedId = String(expected.id || '');
-    const actualId = String(fieldMeta.id || '');
-    if ((expectedId || actualId) && (!expectedId || expectedId !== actualId)) return false;
-
-    const expectedName = String(expected.name || '');
-    const actualName = String(fieldMeta.name || '');
-    if ((expectedName || actualName) && expectedName !== actualName) return false;
-
-    const values = [
-      expected.pageX, expected.pageY, expected.w, expected.h,
-      rect.pageX, rect.pageY, rect.w, rect.h,
-    ].map(Number);
-    if (!values.every(Number.isFinite)) return false;
-    const [expectedX, expectedY, expectedW, expectedH, actualX, actualY, actualW, actualH] = values;
-    const sizeTolerance = Math.max(8, Math.round(Math.max(expectedW, expectedH, actualW, actualH) * 0.1));
-    return Math.abs(expectedX - actualX) <= 8
-      && Math.abs(expectedY - actualY) <= 8
-      && Math.abs(expectedW - actualW) <= sizeTolerance
-      && Math.abs(expectedH - actualH) <= sizeTolerance;
-  }
-
-  static _richTextToolbarEditorIdentityRecoverable(expected) {
-    if (!expected || typeof expected !== 'object' || !String(expected.tag || '').trim()) return false;
-    return [expected.pageX, expected.pageY, expected.w, expected.h]
-      .map(Number)
-      .every(Number.isFinite);
-  }
-
-  static _richTextToolbarRecoveryScopeMatches(expectedUrl, actualUrl) {
-    const expected = String(expectedUrl || '');
-    const actual = String(actualUrl || '');
-    if (!expected || !actual) return false;
-    try {
-      const normalize = raw => new URL(raw).href;
-      return normalize(expected) === normalize(actual);
-    } catch {
-      return expected === actual;
-    }
-  }
-
-  static RICH_TEXT_TOOLBAR_GUARDED_TOOLS = new Set([
-    'click', 'click_ax', 'type_text', 'type_ax', 'set_checked', 'set_field',
-    'press_keys', 'iframe_click', 'iframe_type',
-  ]);
-
-  static RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS = new Set(['press_keys']);
-  static RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS = new Set(['click', 'press_keys']);
-
-  static _richTextToolbarUsesFocusedTarget(toolName, args = {}) {
-    return Agent.RICH_TEXT_TOOLBAR_FOCUSED_TARGET_TOOLS.has(toolName)
-      || (toolName === 'type_text' && !args?.selector && args?.index == null);
-  }
-
-  static _richTextToolbarValueCompatible(targetKind, shape, candidate = {}) {
-    if (!shape) return false;
-    // An explicit empty value is a formatting reset, not document prose. It
-    // is valid for link, color, font, style, and other toolbar controls.
-    if (shape.chars === 0) return true;
-    if (targetKind === 'font_size') return shape.numericPreset === true;
-    if (targetKind === 'font_family') {
-      const validShape = shape.lines === 1 && shape.words <= 8 && shape.chars <= 80
-        && shape.numericPreset !== true && shape.urlLike !== true;
-      return validShape && (shape.genericFontFamily === true || candidate.attemptedPresetMatch === true);
-    }
-    if (targetKind === 'style_preset') {
-      const validShape = shape.lines === 1 && shape.words <= 6 && shape.chars <= 60 && shape.urlLike !== true;
-      return validShape && (shape.semanticStylePreset === true || candidate.attemptedPresetMatch === true);
-    }
-    if (targetKind === 'color') return shape.colorLike === true || candidate.attemptedPresetMatch === true;
-    if (targetKind === 'link') return shape.urlLike === true;
-    if (targetKind === 'other_formatting') {
-      const validShape = shape.lines === 1 && shape.words <= 4 && shape.chars <= 40
-        && shape.urlLike !== true;
-      return validShape && (shape.numericPreset === true || candidate.attemptedPresetMatch === true);
-    }
-    if (targetKind === 'uncertain') {
-      return ['font_size', 'font_family', 'style_preset', 'color', 'link', 'other_formatting']
-        .some(kind => Agent._richTextToolbarValueCompatible(kind, shape, candidate));
-    }
-    return false;
-  }
-
-  static _richTextToolbarDecision(candidate, audit) {
-    const score = Number(candidate?.score) || 0;
-    const reasons = new Set(Array.isArray(candidate?.reasons) ? candidate.reasons : []);
-    const shape = candidate?.attemptedTextShape || null;
-    if (audit?.confidence >= 0.7) {
-      if (audit.regionKind === 'rich_text_toolbar') {
-        const compatible = Agent._richTextToolbarValueCompatible(audit.targetKind, shape, candidate);
-        return {
-          wrongTarget: !compatible,
-          source: compatible ? 'vision_shape_compatible' : 'vision_shape_mismatch',
-          targetKind: audit.targetKind,
-        };
-      }
-      if (audit.regionKind === 'editor_body' || audit.regionKind === 'ordinary_form_field') {
-        return { wrongTarget: false, source: 'vision', targetKind: audit.targetKind };
-      }
-    }
-    // Auto-screenshot is a user-facing model-context preference, so it may be
-    // disabled even though this safety preflight still has a strong toolbar
-    // candidate. Without usable vision, fail closed for prose-like values but
-    // preserve values that are locally plausible for any formatting control.
-    const numericCandidate = reasons.has('numeric_preset_value');
-    const structurallyCompatible = !!shape && (numericCandidate
-      ? (
-          shape.chars === 0
-          || shape.numericPreset === true
-          || candidate?.attemptedPresetMatch === true
-        )
-      : (
-          shape.chars === 0
-          || candidate?.attemptedPresetMatch === true
-          || shape.numericPreset === true
-          || shape.genericFontFamily === true
-          || shape.semanticStylePreset === true
-          || shape.colorLike === true
-          || shape.urlLike === true
-        ));
-    const strongStructural = score >= 4
-      && !!shape
-      && !structurallyCompatible
-      && (
-        reasons.has('numeric_preset_value')
-        || reasons.has('semantic_toolbar')
-        || reasons.has('dense_control_cluster')
-      );
-    return {
-      wrongTarget: strongStructural,
-      source: strongStructural ? 'structural_fallback' : 'uncertain',
-      targetKind: audit?.targetKind || 'uncertain',
-    };
-  }
-
-  _richTextToolbarRefBlock(tabId, toolName, args = {}, liveDocumentToken = '') {
-    if (!['click_ax', 'type_ax', 'set_checked', 'set_field'].includes(toolName)) return null;
-    if (!this._richTextToolbarDebts.has(tabId)) return null;
-    const refId = typeof args?.ref_id === 'string' ? args.ref_id : '';
-    if (!refId) return null;
-    const state = this._richTextToolbarStates.get(tabId);
-    if (!state?.blockedRefs?.has(refId)) return null;
-    const currentDocument = String(liveDocumentToken || '');
-    if (!currentDocument) return null;
-    if (state.documentToken && state.documentToken !== currentDocument) {
-      this._clearRichTextToolbarDocumentState(tabId);
-      return null;
-    }
-    return {
-      success: false,
-      dispatched: false,
-      noDispatch: true,
-      wrongTarget: true,
-      blockedToolbarRef: true,
-      targetKind: state.targetKind || 'other_formatting',
-      recoveryRequired: 'editor_body',
-      retryable: false,
-      error: 'This ref belongs to the rich-text formatting toolbar detected during the previous text-entry attempt. Do not switch to another font, size, style, color, or link control in that toolbar. Re-read the tree and click or focus the editor body, then enter the requested content there.',
-    };
-  }
-
-  _richTextToolbarRetryBlock(state) {
-    return {
-      success: false,
-      dispatched: false,
-      noDispatch: true,
-      wrongTarget: true,
-      blockedToolbarRef: true,
-      targetKind: state?.targetKind || 'other_formatting',
-      recoveryRequired: 'editor_body',
-      retryable: false,
-      error: 'This target is inside the rich-text formatting toolbar detected during the previous text-entry attempt. Do not retry it through focus, coordinates, selectors, or toolbar text. Re-read the tree and click or focus the editor body, then enter the requested content there.',
-    };
-  }
-
-  async _richTextToolbarFrameGeometryToTop(tabId, navigationFrames, frameId, rect) {
-    if (!rect || !Number.isInteger(frameId)) return null;
-    if (frameId === 0) return { annotationRect: rect, frameOwnerRect: null, frameOwnerMeta: null };
-    const frames = Array.isArray(navigationFrames) ? navigationFrames : [];
-    if (!frames.some(frame => frame?.frameId === 0) || !frames.some(frame => frame?.frameId === frameId)) return null;
-    const collectSnapshots = async () => (await Promise.all(frames.map(async frame => {
-      const collect = () => chrome.tabs.sendMessage(tabId, {
-        target: 'redaction-content',
-        action: 'get_redaction_regions',
-        params: { coordinateSpace: 'viewport' },
-      }, { frameId: frame.frameId });
-      let payload;
-      try {
-        payload = await collect();
-      } catch {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId, frameIds: [frame.frameId] },
-            files: ['src/content/redaction-regions.js'],
-          });
-          payload = await collect();
-        } catch {
-          return null;
-        }
-      }
-      return {
-        ...payload,
-        frameId: frame.frameId,
-        parentFrameId: frame.parentFrameId,
-        url: frame.url || '',
-      };
-    }))).filter(Boolean);
-    const snapshots = await collectSnapshots();
-    const navigationById = new Map(frames.map(frame => [frame.frameId, frame]));
-    const snapshotById = new Map(snapshots.map(frame => [frame.frameId, frame]));
-    const edges = [];
-    const seen = new Set();
-    let child = navigationById.get(frameId);
-    while (child && child.frameId !== 0 && !seen.has(child.frameId)) {
-      seen.add(child.frameId);
-      const parent = navigationById.get(child.parentFrameId);
-      if (!parent) return null;
-      edges.unshift({ parent, child });
-      child = parent;
-    }
-    if (!child || child.frameId !== 0) return null;
-    const exactChildRect = async edge => {
-      const token = `wb-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
-      const parentResponse = chrome.tabs.sendMessage(tabId, {
-        target: 'redaction-content',
-        action: 'wait_for_exact_child_frame_rect',
-        params: { token, scrollIntoView: true },
-      }, { frameId: edge.parent.frameId }).catch(() => null);
-      await new Promise(resolve => setTimeout(resolve, 0));
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          target: 'redaction-content',
-          action: 'announce_exact_child_frame',
-          params: { token },
-        }, { frameId: edge.child.frameId });
-      } catch {}
-      return parentResponse;
-    };
-    const transforms = new Map([[0, { x: 0, y: 0, scaleX: 1, scaleY: 1 }]]);
-    let frameOwnerRect = null;
-    let frameOwnerMeta = null;
-    for (const edge of edges) {
-      const exact = await exactChildRect(edge);
-      const parentTransform = transforms.get(edge.parent.frameId);
-      const childSnapshot = snapshotById.get(edge.child.frameId);
-      const childWidth = Number(childSnapshot?.viewport?.width);
-      const childHeight = Number(childSnapshot?.viewport?.height);
-      const content = exact?.contentRect;
-      const outer = exact?.outerRect;
-      if (
-        !exact?.found || !parentTransform || !content || !outer
-        || !(content.w > 0 && content.h > 0) || !(childWidth > 0 && childHeight > 0)
-      ) return null;
-      if (exact.scrolled) await new Promise(resolve => setTimeout(resolve, 50));
-      const mappedContent = {
-        x: parentTransform.x + content.x * parentTransform.scaleX,
-        y: parentTransform.y + content.y * parentTransform.scaleY,
-        w: content.w * parentTransform.scaleX,
-        h: content.h * parentTransform.scaleY,
-      };
-      transforms.set(edge.child.frameId, {
-        x: mappedContent.x,
-        y: mappedContent.y,
-        scaleX: mappedContent.w / childWidth,
-        scaleY: mappedContent.h / childHeight,
-      });
-      if (edge.child.frameId === frameId) {
-        const parentViewport = snapshotById.get(edge.parent.frameId)?.viewport || {};
-        const ownerPageX = Number.isFinite(Number(outer.pageX))
-          ? Number(outer.pageX)
-          : Number(outer.x) + (Number(parentViewport.scrollX) || 0);
-        const ownerPageY = Number.isFinite(Number(outer.pageY))
-          ? Number(outer.pageY)
-          : Number(outer.y) + (Number(parentViewport.scrollY) || 0);
-        frameOwnerRect = { ...outer, pageX: ownerPageX, pageY: ownerPageY };
-        frameOwnerMeta = exact.ownerMeta || null;
-      }
-    }
-    const transform = transforms.get(frameId);
-    if (!transform) return null;
-    const mapped = {
-      x: transform.x + Number(rect.x) * transform.scaleX,
-      y: transform.y + Number(rect.y) * transform.scaleY,
-      w: Number(rect.w) * transform.scaleX,
-      h: Number(rect.h) * transform.scaleY,
-    };
-    if (![mapped.x, mapped.y, mapped.w, mapped.h].every(Number.isFinite)) return null;
-    const rounded = value => {
-      const result = {
-        x: Math.round(value.x),
-        y: Math.round(value.y),
-        w: Math.round(value.w),
-        h: Math.round(value.h),
-      };
-      if (Number.isFinite(Number(value.pageX))) result.pageX = Math.round(Number(value.pageX));
-      if (Number.isFinite(Number(value.pageY))) result.pageY = Math.round(Number(value.pageY));
-      return result;
-    };
-    return {
-      annotationRect: rounded(mapped),
-      frameOwnerRect: frameOwnerRect ? rounded(frameOwnerRect) : null,
-      frameOwnerMeta,
-    };
-  }
-
-  async _richTextToolbarFrameRectToTop(tabId, navigationFrames, frameId, rect) {
-    const geometry = await this._richTextToolbarFrameGeometryToTop(tabId, navigationFrames, frameId, rect);
-    return geometry?.annotationRect || null;
-  }
-
-  /**
-   * Pre-toolbar-guard iframe_type dispatch: inject into every frame, let the
-   * url filter and selector decide, take the first frame that accepts.
-   *
-   * The guard's single-frame resolution is stricter and is what the target
-   * token binds to, but it can only run where the probe resolves exactly one
-   * frame with content.js reachable. Pages with repeated same-origin frames,
-   * or frames the content script cannot enter, used to work through this path
-   * and would otherwise start failing. It stays available only while no
-   * toolbar recovery is pending — once a debt is open, ambiguity must fail
-   * closed rather than type into a frame nobody vetted.
-   */
-  async _legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter }) {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: (sel, txt, clr, filter) => {
-        if (filter) {
-          // Require BOTH: (1) HOST match — so "stripe.com" can't match
-          // https://evil.example/?x=stripe.com (anti-substring), AND (2) the
-          // original substring — so a caller-supplied path still picks one
-          // of several same-host frames.
-          let w = String(filter).toLowerCase().trim();
-          try { w = new URL(/^[a-z][a-z0-9+.\-]*:\/\//i.test(w) ? w : 'https://' + w).hostname; } catch (e) {}
-          w = w.replace(/^www\./, '');
-          const h = location.hostname.toLowerCase().replace(/^www\./, '');
-          const hostOk = !w || h === w || h.endsWith('.' + w);
-          if (!hostOk || !location.href.includes(filter)) {
-            return { ok: false, skipped: 'url-filter', url: location.href };
-          }
-        }
-        let targetDispatched = false;
-        try {
-          const el = document.querySelector(sel);
-          if (!el) return { ok: false, url: location.href, reason: 'not-found' };
-          targetDispatched = true;
-          el.focus();
-          if (el.isContentEditable) {
-            if (clr) el.textContent = '';
-            el.textContent += txt;
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
-            return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
-          }
-          const proto = el instanceof HTMLTextAreaElement
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-          const newVal = (clr ? '' : (el.value || '')) + txt;
-          if (setter) setter.call(el, newVal); else el.value = newVal;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
-        } catch (e) {
-          return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message };
-        }
-      },
-      args: [selector, text, clear, urlFilter || ''],
-    });
-    const successes = results.map(r => r.result).filter(r => r && r.ok);
-    if (successes.length > 0) {
-      return { success: true, dispatched: true, frame: successes[0], resolution: 'all-frames' };
-    }
-    const candidates = results.map(r => r.result).filter(r => r && !r.skipped);
-    const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
-    return {
-      success: false,
-      ...(targetDispatched
-        ? { dispatched: true }
-        : { dispatched: false, noDispatch: true }),
-      error: 'Input not found in any matching iframe',
-      searchedFrames: candidates.length,
-      frameUrls: candidates.map(c => c.url).slice(0, 5),
-    };
-  }
-
-  async _probeRichTextToolbarIframeTarget(tabId, args = {}, { mapAnnotation = true } = {}) {
-    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
-    if (!selector) return null;
-    let navigationFrames;
-    try { navigationFrames = await chrome.webNavigation.getAllFrames({ tabId }); } catch { return null; }
-    if (!Array.isArray(navigationFrames) || !navigationFrames.length) return null;
-    const urlFilter = String(args?.urlFilter || '');
-    const matchingFrames = navigationFrames.filter(frame => {
-      const url = String(frame?.url || '');
-      return frame?.frameId !== 0
-        && (!urlFilter || (frameHostMatches(url, urlFilter) && url.includes(urlFilter)));
-    });
-    const probes = (await Promise.all(matchingFrames.map(async frame => {
-      const request = () => chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'probe_rich_text_toolbar_retry_target',
-        params: {
-          toolName: 'type_text',
-          args: { selector, text: args?.text || '' },
-        },
-      }, { frameId: frame.frameId });
-      let probe;
-      try {
-        probe = await request();
-      } catch {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId, frameIds: [frame.frameId] },
-            files: [
-              'src/content/rich-text-toolbar-heuristic.js',
-              'src/content/accessibility-tree.js',
-              'src/content/content.js',
-            ],
-          });
-          probe = await request();
-        } catch {
-          return null;
-        }
-      }
-      return probe?.resolved ? {
-        ...probe,
-        frameId: frame.frameId,
-        parentFrameId: frame.parentFrameId,
-        frameUrl: frame.url || '',
-      } : null;
-    }))).filter(Boolean);
-    if (!probes.length) return null;
-    if (probes.length !== 1) {
-      await Promise.all(probes.map(probe => this._releaseRichTextToolbarProbeTarget(tabId, probe)));
-      return {
-        resolved: false,
-        ambiguous: true,
-        matchCount: probes.length,
-        matchedFrameIds: probes.map(probe => probe.frameId),
-        // The caller needs to see which frames matched to pick a urlFilter.
-        matchedFrameUrls: probes.map(probe => probe.frameUrl || '').filter(Boolean).slice(0, 5),
-      };
-    }
-    const currentState = this._richTextToolbarStates.get(tabId);
-    const selected = probes[0];
-    const recoveryNeedsGeometry = this._richTextToolbarDebts.has(tabId)
-      && ['iframe', 'frame'].includes(String(currentState?.associatedEditorIdentity?.tag || '').toLowerCase());
-    const candidateNeedsAnnotation = Number(selected.fieldMeta?.toolbarCandidate?.score) >= 4;
-    const geometry = mapAnnotation && (candidateNeedsAnnotation || recoveryNeedsGeometry)
-      ? await this._richTextToolbarFrameGeometryToTop(
-          tabId,
-          navigationFrames,
-          selected.frameId,
-          selected.rect,
-        )
-      : null;
-    return {
-      ...selected,
-      annotationRect: mapAnnotation ? geometry?.annotationRect || null : null,
-      frameOwnerRect: geometry?.frameOwnerRect || null,
-      frameOwnerMeta: geometry?.frameOwnerMeta || null,
-      frameOwnerScopeUrl: navigationFrames.find(frame => frame?.frameId === selected.parentFrameId)?.url || '',
-      topFrameUrl: navigationFrames.find(frame => frame?.frameId === 0)?.url || '',
-    };
-  }
-
-  async _probeRichTextToolbarFocusedTarget(tabId, args = {}, { mapAnnotation = false } = {}) {
-    let navigationFrames;
-    try { navigationFrames = await chrome.webNavigation.getAllFrames({ tabId }); } catch { return null; }
-    if (!Array.isArray(navigationFrames) || !navigationFrames.length) return null;
-    const probeFrame = async frame => {
-      const request = () => chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'probe_rich_text_toolbar_retry_target',
-        params: {
-          toolName: 'type_text',
-          args: { text: args?.text || '' },
-        },
-      }, { frameId: frame.frameId });
-      let probe;
-      try {
-        probe = await request();
-      } catch {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId, frameIds: [frame.frameId] },
-            files: [
-              'src/content/rich-text-toolbar-heuristic.js',
-              'src/content/accessibility-tree.js',
-              'src/content/content.js',
-            ],
-          });
-          probe = await request();
-        } catch {
-          return null;
-        }
-      }
-      return probe?.resolved ? {
-        ...probe,
-        frameId: frame.frameId,
-        parentFrameId: frame.parentFrameId,
-        frameUrl: frame.url || '',
-      } : null;
-    };
-    const focusedChildFrame = async (parentFrameId, children) => {
-      for (const child of children) {
-        const token = `wb-focused-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
-        const parentResponse = chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'wait_for_rich_text_toolbar_focused_child_frame',
-          params: { token },
-        }, { frameId: parentFrameId }).catch(() => null);
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const announce = () => chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'announce_rich_text_toolbar_focused_child_frame',
-          params: { token },
-        }, { frameId: child.frameId });
-        try {
-          await announce();
-        } catch {
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId, frameIds: [child.frameId] },
-              files: [
-                'src/content/rich-text-toolbar-heuristic.js',
-                'src/content/accessibility-tree.js',
-                'src/content/content.js',
-              ],
-            });
-            await announce();
-          } catch {}
-        }
-        const match = await parentResponse;
-        if (match?.matched === true) return child;
-      }
-      return null;
-    };
-    const topFrame = navigationFrames.find(frame => frame?.frameId === 0);
-    if (!topFrame) return null;
-    let selected = await probeFrame(topFrame);
-    if (!selected) return null;
-    const seen = new Set();
-    while (['iframe', 'frame'].includes(String(selected.fieldMeta?.tag || '').toLowerCase())) {
-      if (seen.has(selected.frameId)) break;
-      seen.add(selected.frameId);
-      const children = navigationFrames.filter(frame => frame?.parentFrameId === selected.frameId);
-      if (!children.length) break;
-      const child = await focusedChildFrame(selected.frameId, children);
-      if (!child) break;
-      const nextSelected = await probeFrame(child);
-      if (!nextSelected) break;
-      selected = nextSelected;
-    }
-    const annotationRect = mapAnnotation
-      ? await this._richTextToolbarFrameRectToTop(tabId, navigationFrames, selected.frameId, selected.rect)
-      : null;
-    return { ...selected, annotationRect };
-  }
-
-  async _releaseRichTextToolbarProbeTarget(tabId, probe) {
-    const token = String(probe?.selectorTargetToken || '');
-    if (!token) return;
-    const options = Number.isInteger(probe?.frameId) ? { frameId: probe.frameId } : undefined;
-    try {
-      await chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'release_rich_text_toolbar_retry_target',
-        params: { token },
-      }, options);
-    } catch {}
-  }
-
-  async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}, { mapAnnotation = false } = {}) {
-    if (toolName === 'iframe_type' || toolName === 'iframe_click') {
-      return this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
-    }
-    if (Agent._richTextToolbarUsesFocusedTarget(toolName, args)) {
-      return this._probeRichTextToolbarFocusedTarget(tabId, args, { mapAnnotation });
-    }
-    if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
-      try {
-        await cdpClient.attach(tabId);
-        return await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
-      } catch {
-        // Fall through to the content probe when CDP is unavailable. Actual
-        // selector dispatch will fail independently if it also cannot attach.
-      }
-    }
-    try {
-      return await chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'probe_rich_text_toolbar_retry_target',
-        params: { toolName, args },
-      });
-    } catch {
-      try {
-        await this._injectCoreContentScripts(tabId);
-        return await chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'probe_rich_text_toolbar_retry_target',
-          params: { toolName, args },
-        });
-      } catch {
-        return null;
-      }
-    }
+  async _probeRichTextToolbarRetryTarget(tabId, toolName, args = {}, options = {}) {
+    return this._richTextToolbarProbe.probe(tabId, toolName, args, options);
   }
 
   async _richTextToolbarToolBlock(tabId, toolName, args = {}, executionContext = null) {
-    const state = this._richTextToolbarStates.get(tabId);
-    if (!state || !this._richTextToolbarDebts.has(tabId)) return null;
-    if (!Agent.RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
+    if (!this._richTextToolbarGuard.hasPending(tabId)) return null;
+    if (!RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
-      return toolName === 'iframe_click' || Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
+      return DISPATCH_BINDING_TOOLS.has(toolName)
         ? {
             success: false,
             dispatched: false,
             noDispatch: true,
             retryable: true,
+            ...(probe?.ambiguous === true
+              ? {
+                  ambiguous: true,
+                  searchedFrames: probe.matchCount,
+                  frameUrls: probe.matchedFrameUrls || [],
+                }
+              : {}),
             error: toolName === 'iframe_click'
               ? 'Could not resolve one matching iframe click target safely while a rich-text editor recovery is required. Re-read the iframe and retry with a specific urlFilter and selector after correcting the editor-body edit.'
+              : toolName === 'iframe_type'
+                ? probe?.ambiguous === true
+                  ? `Several frames matched this selector (${probe.matchCount}) while a rich-text editor recovery is pending, so none was typed into. Retry with a urlFilter naming exactly one of: ${(probe.matchedFrameUrls || []).join(', ') || 'the intended frame'}.`
+                  : 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.'
               : toolName === 'click'
                 ? 'Could not resolve the click target safely while a rich-text editor recovery is required. Re-read the page and retry with one specific target.'
-                : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
+                : toolName === 'type_text'
+                  ? 'Could not resolve the typing target safely while a rich-text editor recovery is required. Re-read the page or re-focus the intended editor body, then retry the correction.'
+                  : 'Could not resolve the focused target safely while a rich-text editor recovery is required. Re-focus the intended editor body and correct the blocked edit before sending keyboard input.',
           }
         : null;
     }
-    const obligations = this._richTextToolbarRecoveryObligations(state);
-    const frameObligations = obligations.filter(obligation => (
-      obligation.recoveryOnly === true
-        ? true
-        : Number.isInteger(obligation.frameId)
-          ? probe.frameId === obligation.frameId
-          : !Number.isInteger(probe.frameId) || probe.frameId === 0
-    ));
-    if (frameObligations.length === 0) {
+    const evaluation = this._richTextToolbarGuard.evaluateProbe(tabId, toolName, args, probe);
+    if (evaluation.rememberScope) {
+      this._rememberAxScope(tabId, probe.documentToken || '', probe.refScopeUrl || '');
+    }
+    if (evaluation.block) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return evaluation.block;
+    }
+    if (evaluation.guarded !== true) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
-    const liveDocument = String(probe.documentToken || '');
-    const livePageUrl = String(probe.refScopeUrl || '');
-    const scopedObligations = frameObligations.filter(obligation => !(
-      (obligation.documentToken && liveDocument && obligation.documentToken !== liveDocument)
-      || (obligation.pageUrl && livePageUrl && obligation.pageUrl !== livePageUrl)
-    ));
-    const iframeTool = toolName === 'iframe_click' || toolName === 'iframe_type';
-    if (scopedObligations.length === 0) {
-      this._clearRichTextToolbarDocumentState(tabId);
-      if (!iframeTool && (liveDocument || livePageUrl)) {
-        this._rememberAxScope(tabId, liveDocument, livePageUrl);
-      }
-      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
-      return null;
-    }
-    if (!iframeTool && (liveDocument || livePageUrl)) {
-      this._rememberAxScope(tabId, liveDocument, livePageUrl);
-      if (this._richTextToolbarStates.get(tabId) !== state) {
-        await this._releaseRichTextToolbarProbeTarget(tabId, probe);
-        return null;
-      }
-    }
-    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
-    const targetRefs = [args?.ref_id, probe.refId]
-      .filter(value => typeof value === 'string' && !!value);
-    const blockedSelector = !!selector && scopedObligations.some(obligation => (
-      obligation.blockedToolbarSelector === selector
-      || (obligation.blockedSelectors || []).includes(selector)
-    ));
-    const blockedRef = targetRefs.some(refId => scopedObligations.some(obligation => (
-      obligation.blockedToolbarRef === refId
-      || (obligation.blockedRefs || []).includes(refId)
-    )));
-    const probeRegionIds = [probe.toolbarRegionRef, probe.toolbarRegionKey]
-      .filter(value => typeof value === 'string' && !!value);
-    const sameToolbarContext = probe.toolbarContext === true
-      && scopedObligations.some(obligation => {
-        const obligationRegionIds = new Set([
-          obligation.regionRef,
-          obligation.regionKey,
-          ...(obligation.blockedRegionRefs || []),
-        ].filter(Boolean));
-        return probeRegionIds.some(regionId => obligationRegionIds.has(regionId));
-      });
-    const matchedObligation = scopedObligations.find(obligation => (
-      (!!selector && (
-        obligation.blockedToolbarSelector === selector
-        || (obligation.blockedSelectors || []).includes(selector)
-      ))
-      || targetRefs.some(refId => (
-        obligation.blockedToolbarRef === refId
-        || (obligation.blockedRefs || []).includes(refId)
-      ))
-      || (probe.toolbarContext === true && [
-        obligation.regionRef,
-        obligation.regionKey,
-        ...(obligation.blockedRegionRefs || []),
-      ].filter(Boolean).some(regionId => probeRegionIds.includes(regionId)))
-    )) || scopedObligations[0];
-    const block = blockedSelector || blockedRef || sameToolbarContext
-      ? this._richTextToolbarRetryBlock(matchedObligation)
-      : null;
     if (
-      !block
-      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
-      && !probe.selectorTargetToken
+      DISPATCH_BINDING_TOOLS.has(toolName)
+      && !richTextToolbarDispatchBindingReady(toolName, args, probe.dispatchBinding)
     ) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return {
@@ -2740,39 +1862,23 @@ export class Agent extends LoopDetector {
         error: 'Could not preserve the action target safely while a rich-text editor recovery is required. Re-read the page, choose the intended editor target, and retry.',
       };
     }
-    const preserveDispatchTarget = !block
-      && Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(toolName)
-      && !!probe.selectorTargetToken
+    if (
+      DISPATCH_BINDING_TOOLS.has(toolName)
+      && probe.dispatchBinding
       && executionContext
-      && typeof executionContext === 'object';
-    if (preserveDispatchTarget) {
-      executionContext.richTextToolbarTargetToken = probe.selectorTargetToken;
-      executionContext.richTextToolbarFrameId = probe.frameId;
+      && typeof executionContext === 'object'
+    ) {
+      executionContext.dispatchBinding = probe.dispatchBinding;
     } else {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
     }
-    return block;
+    return null;
   }
 
-  async _clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe = null) {
-    if (!this._richTextToolbarDebts.has(tabId) || result?.success !== true || result?.verified !== true) return false;
+  async _clearRichTextToolbarObligationAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe = null) {
+    if (!this._richTextToolbarGuard.hasPending(tabId)) return false;
+    if (result?.success !== true || result?.verified !== true) return false;
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) return false;
-    const containerState = this._richTextToolbarStates.get(tabId);
-    const obligations = this._richTextToolbarRecoveryObligations(containerState);
-    if (!containerState || obligations.length === 0) return false;
-    // These tools set verified only after the field's final value matches the
-    // submitted text. Pair that proof with the transient blocked value and
-    // effective replacement/append mode so a semantically different edit in
-    // the right editor cannot discharge the debt.
-    const recoveryClear = Agent._richTextToolbarEffectiveClear(toolName, args);
-    const candidateIndexes = obligations
-      .map((obligation, index) => ({ obligation, index }))
-      .filter(({ obligation }) => typeof obligation.blockedAttemptedText === 'string'
-        && typeof obligation.blockedClear === 'boolean'
-        && typeof args?.text === 'string'
-        && args.text === obligation.blockedAttemptedText
-        && recoveryClear === obligation.blockedClear);
-    if (candidateIndexes.length === 0) return false;
     const liveProbe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     const probe = liveProbe?.resolved ? {
       ...liveProbe,
@@ -2783,295 +1889,35 @@ export class Agent extends LoopDetector {
     } : preDispatchProbe;
     if (!probe?.resolved) return false;
     if (liveProbe?.resolved) await this._releaseRichTextToolbarProbeTarget(tabId, liveProbe);
-    const liveDocument = String(probe.documentToken || '');
-    const livePageUrl = String(probe.refScopeUrl || '');
-    const fieldMeta = probe.fieldMeta || result?.fieldMeta || {};
-    const innerEditor = fieldMeta.contentEditable === true || fieldMeta.tag === 'textarea';
-    let match = null;
-    for (const { obligation: state, index } of candidateIndexes) {
-      const recoveryTargetUnknown = state.recoveryTargetUnknown === true
-        && !state.associatedEditorRef
-        && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
-      if (
-        !recoveryTargetUnknown
-        && !state.associatedEditorRef
-        && !Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity)
-      ) continue;
-      const expectedEditorTag = String(state.associatedEditorIdentity?.tag || '').toLowerCase();
-      const iframeBackedRecovery = toolName === 'iframe_type'
-        && ['iframe', 'frame'].includes(expectedEditorTag);
-      const sameFrame = iframeBackedRecovery
-        ? Number.isInteger(probe.frameId) && probe.frameId !== 0
-        : recoveryTargetUnknown
-        ? true
-        : state.recoveryOnly === true
-        ? true
-        : Number.isInteger(state.frameId)
-          ? probe.frameId === state.frameId
-          : !Number.isInteger(probe.frameId) || probe.frameId === 0;
-      if (!sameFrame) continue;
-      const liveRecoveryScopeUrl = iframeBackedRecovery
-        ? String(probe.frameOwnerScopeUrl || probe.topFrameUrl || livePageUrl)
-        : livePageUrl;
-      if (
-        (!iframeBackedRecovery && state.documentToken && liveDocument && state.documentToken !== liveDocument)
-        || (state.pageUrl && liveRecoveryScopeUrl && state.pageUrl !== liveRecoveryScopeUrl)
-      ) continue;
-      const unknownRecoveryScopeMatches = state.recoveryOnly !== true
-        || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl);
-      const verifiedUnknownEditor = recoveryTargetUnknown
-        && innerEditor
-        && probe.toolbarContext !== true
-        && !fieldMeta.toolbarCandidate
-        && unknownRecoveryScopeMatches;
-      const exactRef = !!probe.refId && probe.refId === state.associatedEditorRef;
-      const matchingIdentity = Agent._richTextToolbarEditorIdentityMatches(
-        state.associatedEditorIdentity,
-        fieldMeta,
-        probe.rect || {},
-      );
-      const matchingFrameOwner = iframeBackedRecovery && Agent._richTextToolbarEditorIdentityMatches(
-        state.associatedEditorIdentity,
-        probe.frameOwnerMeta || {},
-        probe.frameOwnerRect || {},
-      );
-      const exactIdentity = !state.associatedEditorRef
-        && (state.recoveryOnly !== true
-          || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl))
-        && matchingIdentity;
-      const selectorScopeMatches = state.recoveryOnly !== true
-        || Agent._richTextToolbarRecoveryScopeMatches(state.recoveryPageUrl, liveRecoveryScopeUrl);
-      const exactSelector = ['type_text', 'iframe_type'].includes(toolName)
-        && typeof args?.selector === 'string'
-        && !!args.selector.trim()
-        && selectorScopeMatches
-        && matchingIdentity;
-      const iframeScopeMatches = state.recoveryOnly === true
-        ? selectorScopeMatches
-        : !!liveRecoveryScopeUrl
-          && Agent._richTextToolbarRecoveryScopeMatches(state.pageUrl, liveRecoveryScopeUrl);
-      const exactIframeEditor = iframeBackedRecovery
-        && innerEditor
-        && matchingFrameOwner
-        && iframeScopeMatches;
-      if (innerEditor && (verifiedUnknownEditor || exactRef || exactIdentity || exactSelector || exactIframeEditor)) {
-        match = { index, exactSelector, exactIdentity, exactIframeEditor, verifiedUnknownEditor };
-        break;
-      }
-    }
-    if (!match) return false;
-    const remaining = obligations.filter((_obligation, index) => index !== match.index);
-    if (remaining.length === 0) {
-      this._resetRichTextToolbarAudit(tabId);
-    } else {
-      this._syncRichTextToolbarPrimaryObligation(containerState, remaining, { rebuildBlockedTargets: true });
-      this._richTextToolbarStates.set(tabId, containerState);
-      const next = remaining[0];
-      this._richTextToolbarDebts.set(tabId, {
-        tool: next.toolName || null,
-        ref_id: next.blockedToolbarRef || null,
-        targetKind: next.targetKind || 'other_formatting',
-        source: next.source || null,
-        detectedAt: next.detectedAt || Date.now(),
-        recoveryTargetUnknown: next.recoveryTargetUnknown === true,
-      });
-    }
+    const recovery = this._richTextToolbarGuard.recover(tabId, {
+      toolName,
+      args,
+      result,
+      probe,
+    });
+    if (!recovery) return false;
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'rich_text_toolbar_target_recovered', {
       toolName,
-      refId: probe.refId || null,
-      selectorRecovery: match.exactSelector,
-      identityRecovery: match.exactIdentity,
-      iframeRecovery: match.exactIframeEditor,
-      unknownEditorRecovery: match.verifiedUnknownEditor,
-      remainingRecoveryDebtCount: remaining.length,
+      refId: recovery.refId,
+      selectorRecovery: recovery.exactSelector,
+      identityRecovery: recovery.exactIdentity,
+      iframeRecovery: recovery.exactIframeEditor,
+      unknownEditorRecovery: recovery.verifiedUnknownEditor,
+      remainingRecoveryObligationCount: recovery.remainingCount,
     });
     return true;
   }
 
   _applyRichTextToolbarWrongTarget(tabId, toolName, args, result, candidate, decision, audit, identity = {}) {
-    const refId = typeof args?.ref_id === 'string' ? args.ref_id : '';
-    const selector = typeof args?.selector === 'string' ? args.selector.trim() : '';
-    const documentToken = String(identity.documentToken || '');
-    const pageUrl = String(identity.refScopeUrl || '');
-    const prior = this._richTextToolbarStates.get(tabId);
-    const priorObligations = this._richTextToolbarRecoveryObligations(prior);
-    const priorHasRecovery = !!(
-      prior
-      && this._richTextToolbarDebts.has(tabId)
-      && (
-        prior.associatedEditorRef
-        || Agent._richTextToolbarEditorIdentityRecoverable(prior.associatedEditorIdentity)
-        || prior.recoveryTargetUnknown === true
-      )
-    );
-    const sameBlockedScope = !!(
-      prior
-      && (!prior.documentToken || !documentToken || prior.documentToken === documentToken)
-    );
-    const state = sameBlockedScope
-      ? prior
-      : priorHasRecovery
-        ? {
-            recoveryOnly: true,
-            targetKind: prior.targetKind || 'other_formatting',
-            detectedAt: prior.detectedAt || Date.now(),
-            blockedAttemptedText: prior.blockedAttemptedText,
-            blockedClear: prior.blockedClear,
-            associatedEditorRef: '',
-            associatedEditorIdentity: { ...prior.associatedEditorIdentity },
-            recoveryTargetUnknown: prior.recoveryTargetUnknown === true,
-            recoveryPageUrl: prior.recoveryPageUrl || prior.pageUrl || '',
-            documentToken: '',
-            pageUrl: '',
-            frameId: null,
-            regionRef: '',
-            regionKey: '',
-            blockedRefs: new Set(),
-            blockedSelectors: new Set(),
-            blockedRegionRefs: new Set(),
-          }
-        : { documentToken, blockedRefs: new Set() };
-    const associatedEditorRef = candidate?.associatedEditorRef || '';
-    const associatedEditorIdentity = candidate?.associatedEditorIdentity || null;
-    const recoveryTargetUnknown = !associatedEditorRef
-      && !Agent._richTextToolbarEditorIdentityRecoverable(associatedEditorIdentity);
-    const relatedRefs = (candidate?.relatedRefs || [])
-      .filter(relatedRef => typeof relatedRef === 'string' && /^ref_\d+$/.test(relatedRef));
-    const obligation = {
+    const recorded = this._richTextToolbarGuard.recordWrongTarget(tabId, {
       toolName,
-      source: decision.source,
-      recoveryOnly: false,
-      targetKind: decision.targetKind && decision.targetKind !== 'uncertain'
-        ? decision.targetKind
-        : 'other_formatting',
-      detectedAt: Date.now(),
-      blockedAttemptedText: typeof args?.text === 'string' ? args.text : undefined,
-      blockedClear: Agent._richTextToolbarEffectiveClear(toolName, args),
-      blockedToolbarRef: refId,
-      blockedToolbarSelector: selector,
-      associatedEditorRef,
-      associatedEditorIdentity,
-      recoveryTargetUnknown,
-      recoveryPageUrl: '',
-      documentToken,
-      pageUrl,
-      frameId: Number.isInteger(identity.frameId) ? identity.frameId : null,
-      frameScoped: Number.isInteger(identity.frameId) && identity.frameId !== 0,
-      regionRef: candidate?.regionRef || '',
-      regionKey: candidate?.regionKey || '',
-      blockedRefs: [...new Set([refId, ...relatedRefs].filter(Boolean))],
-      blockedSelectors: selector ? [selector] : [],
-      blockedRegionRefs: [...new Set([candidate?.regionRef, candidate?.regionKey].filter(Boolean))],
-    };
-    const obligationKey = (entry, { includeLiveFrame = true } = {}) => {
-      const identity = entry.associatedEditorIdentity;
-      const tag = String(identity?.tag || '').toLowerCase();
-      const role = String(identity?.role || '').toLowerCase();
-      const id = String(identity?.id || '');
-      const name = String(identity?.name || '');
-      const editorKey = Agent._richTextToolbarEditorIdentityRecoverable(identity)
-        ? [
-            'identity', tag, role, id, name,
-            identity.pageX, identity.pageY, identity.w, identity.h,
-          ]
-        : entry.associatedEditorRef
-          ? ['ref', entry.associatedEditorRef]
-          : null;
-      const rawScopeUrl = String(entry.recoveryOnly === true
-        ? (entry.recoveryPageUrl || entry.pageUrl || '')
-        : (entry.pageUrl || entry.recoveryPageUrl || ''));
-      let scopeKey = null;
-      if (rawScopeUrl) {
-        try { scopeKey = ['url', new URL(rawScopeUrl).href]; }
-        catch { scopeKey = ['url', rawScopeUrl]; }
-      } else if (entry.documentToken) {
-        scopeKey = ['document', entry.documentToken];
-      }
-      const frameScoped = entry.frameScoped === true
-        || (Number.isInteger(entry.frameId) && entry.frameId !== 0);
-      const frameKey = includeLiveFrame && Number.isInteger(entry.frameId) && entry.frameId !== 0
-        ? ['frame', entry.frameId]
-        : ['frame-scope', frameScoped ? 'child' : 'top'];
-      // Unknown editors or obligations with no surviving scope are not safe to
-      // coalesce. A recovered obligation and a live retry on the same route do
-      // share this semantic key even though their refs/document tokens differ.
-      // Live sibling frames remain distinct even when they host identical
-      // editor templates at the same URL.
-      if (!editorKey || !scopeKey) return null;
-      return JSON.stringify([
-        entry.blockedAttemptedText,
-        entry.blockedClear,
-        editorKey,
-        scopeKey,
-        frameKey,
-      ]);
-    };
-    const nextObligationKey = obligationKey(obligation);
-    let duplicateIndex = nextObligationKey
-      ? priorObligations.findIndex(entry => obligationKey(entry) === nextObligationKey)
-      : -1;
-    if (duplicateIndex < 0) {
-      const semanticKey = obligationKey(obligation, { includeLiveFrame: false });
-      const recoveredMatches = semanticKey
-        ? priorObligations
-            .map((entry, index) => ({ entry, index }))
-            .filter(({ entry }) => entry.recoveryOnly === true
-              && !Number.isInteger(entry.frameId)
-              && obligationKey(entry, { includeLiveFrame: false }) === semanticKey)
-        : [];
-      // A child frame receives a fresh numeric frameId after navigation. Only
-      // replace a recovered copy when its stable editor/scope identity is
-      // unique; identical recovered sibling frames remain ambiguous and must
-      // not be collapsed into one mutation.
-      if (recoveredMatches.length === 1) duplicateIndex = recoveredMatches[0].index;
-    }
-    const obligations = duplicateIndex >= 0
-      ? priorObligations.map((entry, index) => index === duplicateIndex ? {
-          ...entry,
-          ...obligation,
-          toolName: entry.toolName || obligation.toolName,
-          source: entry.source || obligation.source,
-          targetKind: entry.targetKind || obligation.targetKind,
-          detectedAt: entry.detectedAt || obligation.detectedAt,
-          recoveryPageUrl: entry.recoveryOnly === true
-            ? (entry.recoveryPageUrl || entry.pageUrl || '')
-            : (entry.recoveryPageUrl || obligation.recoveryPageUrl || ''),
-          blockedRefs: [...new Set([...(entry.blockedRefs || []), ...obligation.blockedRefs])],
-          blockedSelectors: [...new Set([...(entry.blockedSelectors || []), ...obligation.blockedSelectors])],
-          blockedRegionRefs: [...new Set([...(entry.blockedRegionRefs || []), ...obligation.blockedRegionRefs])],
-        } : entry)
-      : [...priorObligations, obligation];
-    state.documentToken = documentToken || state.documentToken || '';
-    state.pageUrl = pageUrl || state.pageUrl || '';
-    this._syncRichTextToolbarPrimaryObligation(state, obligations);
-    state.regionRef = state.regionRef || candidate?.regionRef || '';
-    state.regionKey = state.regionKey || candidate?.regionKey || '';
-    if (state.recoveryOnly !== true) {
-      state.frameId = Number.isInteger(identity.frameId) ? identity.frameId : state.frameId;
-    }
-    state.blockedSelectors = state.blockedSelectors instanceof Set ? state.blockedSelectors : new Set();
-    state.blockedRegionRefs = state.blockedRegionRefs instanceof Set ? state.blockedRegionRefs : new Set();
-    const hasExactRecoveryTarget = !!state.associatedEditorRef
-      || Agent._richTextToolbarEditorIdentityRecoverable(state.associatedEditorIdentity);
-    if (refId) state.blockedRefs.add(refId);
-    if (selector) state.blockedSelectors.add(selector);
-    if (candidate?.regionRef) state.blockedRegionRefs.add(candidate.regionRef);
-    if (candidate?.regionKey) state.blockedRegionRefs.add(candidate.regionKey);
-    for (const relatedRef of relatedRefs) state.blockedRefs.add(relatedRef);
-    this._richTextToolbarStates.set(tabId, state);
-    const debt = {
-      tool: toolName,
-      ref_id: refId || null,
-      targetKind: state.targetKind,
-      source: decision.source,
-      detectedAt: state.detectedAt,
-      recoveryTargetUnknown: !hasExactRecoveryTarget,
-    };
-    if (!this._richTextToolbarDebts.has(tabId)) {
-      this._richTextToolbarDebts.set(tabId, debt);
-    }
-
+      args,
+      candidate,
+      decision,
+      identity,
+    });
+    const obligation = recorded.obligation;
     Object.assign(result, {
       success: false,
       verified: false,
@@ -3081,7 +1927,7 @@ export class Agent extends LoopDetector {
       fieldMeta: identity.fieldMeta || null,
       wrongTarget: true,
       richTextToolbar: true,
-      targetKind: state.targetKind,
+      targetKind: obligation.targetKind,
       recoveryRequired: 'editor_body',
       retryable: false,
       visualTargetAudit: {
@@ -3095,13 +1941,13 @@ export class Agent extends LoopDetector {
     if (runId) {
       trace.recordNote(runId, null, 'rich_text_toolbar_wrong_target', {
         toolName,
-        refId,
-        targetKind: state.targetKind,
+        refId: typeof args?.ref_id === 'string' ? args.ref_id : '',
+        targetKind: obligation.targetKind,
         source: decision.source,
         confidence: audit?.confidence ?? null,
-        blockedRefCount: state.blockedRefs.size,
-        persistentRecoveryDebt: true,
-        recoveryTargetUnknown: !hasExactRecoveryTarget,
+        blockedRefCount: recorded.blockedRefCount,
+        persistentRecoveryObligation: true,
+        recoveryTargetUnknown: !recorded.hasExactRecoveryTarget,
       });
     }
   }
@@ -3132,7 +1978,7 @@ export class Agent extends LoopDetector {
         temperature: 0,
         extraBody: { chat_template_kwargs: { enable_thinking: false } },
       }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'vision' });
-      const audit = Agent._normalizeRichTextToolbarAudit(response?.content || '');
+      const audit = normalizeRichTextToolbarAudit(response?.content || '', Agent._extractFirstJsonObject);
       if (!audit) throw new Error('invalid toolbar target classification');
       trace.recordVisionSubCall(runId, {
         context: 'rich_text_toolbar_target_audit',
@@ -3184,12 +2030,12 @@ export class Agent extends LoopDetector {
         : { block: null, shot: null };
     }
     const identityMissing = toolName === 'iframe_type'
-      ? !probe.selectorTargetToken
+      ? !probe.dispatchBinding?.token
       : focusedType
-        ? !probe.selectorTargetToken
+        ? !probe.dispatchBinding?.token
         : selectorBackedType && !(
-            Number.isInteger(Number(probe.selectorBackendNodeId))
-            && Number(probe.selectorBackendNodeId) > 0
+            Number.isInteger(Number(probe.dispatchBinding?.backendNodeId))
+            && Number(probe.dispatchBinding.backendNodeId) > 0
           );
     if (identityMissing) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
@@ -3285,12 +2131,12 @@ export class Agent extends LoopDetector {
         }
       }
     }
-    const attemptedTextShape = Agent._richTextToolbarTextShape(args?.text || '');
-    const decision = Agent._richTextToolbarDecision(
+    const attemptedTextShape = richTextToolbarTextShape(args?.text || '');
+    const decision = richTextToolbarDecision(
       {
         ...candidate,
         attemptedTextShape,
-        attemptedPresetMatch: Agent._richTextToolbarPresetMatch(args?.text || '', candidate.availablePresetValues),
+        attemptedPresetMatch: richTextToolbarPresetMatch(args?.text || '', candidate.availablePresetValues),
       },
       audit,
     );
@@ -3304,7 +2150,7 @@ export class Agent extends LoopDetector {
   }
 
   async _auditRichTextToolbarTarget(tabId, toolName, args, result, preDispatchProbe = null) {
-    await this._clearRichTextToolbarDebtAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe);
+    await this._clearRichTextToolbarObligationAfterCorrectedEdit(tabId, toolName, args, result, preDispatchProbe);
     return { shot: null };
   }
 
@@ -5839,11 +4685,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate,
           {
             completionBatchStartState,
-            richTextToolbarFrameId: Number.isInteger(toolbarPreflight.probe?.frameId)
-              ? toolbarPreflight.probe.frameId
-              : null,
-            richTextToolbarTargetToken: toolbarPreflight.probe?.selectorTargetToken || null,
-            richTextToolbarBackendNodeId: Number(toolbarPreflight.probe?.selectorBackendNodeId) || null,
+            dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
           },
         );
       const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
@@ -16289,22 +15131,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
-    const toolbarExecutionContext = executionContext && typeof executionContext === 'object'
+    const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
     const richTextToolbarBlock = await this._richTextToolbarToolBlock(
       tabId,
       name,
       args,
-      toolbarExecutionContext,
+      dispatchContext,
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
-    const richTextToolbarDispatchToken = Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
-      ? String(toolbarExecutionContext.richTextToolbarTargetToken || '')
-      : '';
-    const richTextToolbarDispatchFrameId = Number.isInteger(toolbarExecutionContext.richTextToolbarFrameId)
-      ? toolbarExecutionContext.richTextToolbarFrameId
-      : null;
+    const dispatchBinding = dispatchContext.dispatchBinding || null;
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
@@ -16348,11 +15185,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
     if (protectedFailure) {
-      if (richTextToolbarDispatchToken) {
-        await this._releaseRichTextToolbarProbeTarget(tabId, {
-          selectorTargetToken: richTextToolbarDispatchToken,
-          frameId: richTextToolbarDispatchFrameId,
-        });
+      if (dispatchBinding) {
+        await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
       }
       return protectedFailure;
     }
@@ -18212,6 +17046,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'selector is required',
           };
         }
+        const binding = dispatchBinding;
+        if (binding?.token && Number.isInteger(binding.frameId)) {
+          dispatched = true;
+          const response = await chrome.tabs.sendMessage(tabId, {
+            target: 'content',
+            action: 'click',
+            params: { selector, dispatchBinding: binding },
+          }, { frameId: binding.frameId });
+          return {
+            ...(response || { success: false, dispatched: false, noDispatch: true, error: 'Iframe click returned no response' }),
+            frameId: binding.frameId,
+          };
+        }
         dispatched = true;
         const results = await chrome.scripting.executeScript({
           target: { tabId, allFrames: true },
@@ -18300,39 +17147,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'selector is required',
           };
         }
-        let targetFrameId = executionContext?.richTextToolbarFrameId;
-        let targetToken = executionContext?.richTextToolbarTargetToken || '';
-        let probe = null;
-        if (!Number.isInteger(targetFrameId) || !targetToken) {
-          probe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
-          targetFrameId = probe?.frameId;
-          targetToken = probe?.selectorTargetToken || '';
+        let binding = dispatchBinding;
+        let targetFrameId = binding?.frameId;
+        if (!Number.isInteger(targetFrameId) || !binding?.token) {
+          const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          binding = targetProbe?.dispatchBinding || null;
+          targetFrameId = binding?.frameId;
         }
-        if (!Number.isInteger(targetFrameId) || !targetToken) {
-          // No recovery pending: keep the pre-guard behavior rather than
-          // failing a call that used to work on multi-frame pages.
-          if (!this._richTextToolbarDebts.has(tabId)) {
-            dispatched = true;
-            return this._legacyIframeTypeAllFrames(tabId, {
-              selector,
-              text,
-              clear,
-              urlFilter: args.urlFilter || '',
-            });
-          }
-          const matchedFrameUrls = probe?.matchedFrameUrls || [];
-          return {
-            success: false,
-            dispatched: false,
-            noDispatch: true,
-            retryable: true,
-            ...(probe?.ambiguous === true
-              ? { ambiguous: true, searchedFrames: probe.matchCount, frameUrls: matchedFrameUrls }
-              : {}),
-            error: probe?.ambiguous === true
-              ? `Several frames matched this selector (${probe.matchCount}) while a rich-text editor recovery is pending, so none was typed into. Retry with a urlFilter naming exactly one of: ${matchedFrameUrls.join(', ') || 'the intended frame'}.`
-              : 'Could not resolve one matching iframe target safely before typing. Re-read the iframe and retry with a specific urlFilter and selector.',
-          };
+        if (!Number.isInteger(targetFrameId) || !binding?.token) {
+          dispatched = true;
+          return this._legacyIframeTypeAllFrames(tabId, {
+            selector,
+            text,
+            clear,
+            urlFilter: args.urlFilter || '',
+          });
         }
         dispatched = true;
         try {
@@ -18343,7 +17172,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               selector,
               text,
               clear,
-              richTextToolbarTargetToken: targetToken,
+              dispatchBinding: binding,
             },
           }, { frameId: targetFrameId });
           return {
@@ -18841,7 +17670,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // selector-resolution retry. The content-script versions only see flat
     // document.querySelector and el.click(), which fails on Web Components,
     // closed shadow roots, and many React/Vue handlers.
-    if (name === 'click') {
+    if (name === 'click' && dispatchBinding?.token) {
+      if (args.x != null && args.y != null) {
+        const xn = Number(args.x);
+        const yn = Number(args.y);
+        if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
+          await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
+          return {
+            success: false,
+            dispatched: false,
+            error: this._normalizedCoordinateRecoveryError(tabId, args),
+          };
+        }
+        const mapped = this._screenshotClickCoords(tabId, args);
+        if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
+      }
+      const duplicateSubmit = await guardRecentSubmitClick(
+        this._recentSubmitClicks,
+        tabId,
+        args,
+        async () => {
+          const tab = await chrome.tabs.get(tabId);
+          return tab?.url || '';
+        },
+      );
+      if (duplicateSubmit) {
+        await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
+        return duplicateSubmit;
+      }
+    }
+
+    if (name === 'click' && !dispatchBinding?.token) {
       try {
         // ── Normalized-coord guard ──────────────────────────────────────
         // Some models pass {x: 0.91, y: 0.33} thinking coords are
@@ -20022,21 +18881,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: `type_text does not accept an \`index\` parameter. To type into an element by its index, first call click({index: ${args.index}}) to focus it, then call type_text({text: "${String(args.text || '').slice(0, 60)}"}) with NO selector and NO index. Alternatively, use click_ax + type_ax with a ref_id from get_accessibility_tree.`,
           };
         }
-        const focusedTargetToken = !args.selector && args.index == null
-          ? String(executionContext?.richTextToolbarTargetToken || '')
-          : '';
-        if (focusedTargetToken) {
-          const frameId = Number.isInteger(executionContext?.richTextToolbarFrameId)
-            ? executionContext.richTextToolbarFrameId
+        const focusedBinding = !args.selector && args.index == null
+          ? dispatchBinding
+          : null;
+        if (focusedBinding?.token) {
+          const frameId = Number.isInteger(focusedBinding.frameId)
+            ? focusedBinding.frameId
             : 0;
           const sendFocusedTarget = (action, params = {}) => chrome.tabs.sendMessage(tabId, {
             target: 'content',
             action,
-            params: { token: focusedTargetToken, ...params },
+            params: { dispatchBinding: focusedBinding, ...params },
           }, { frameId });
           let tokenConsumed = false;
           try {
-            const prepared = await sendFocusedTarget('prepare_rich_text_toolbar_focused_type', {
+            const prepared = await sendFocusedTarget('prepare_focused_type_dispatch', {
               text: args.text || '',
             });
             if (!prepared?.success) {
@@ -20078,7 +18937,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
                 });
               }
-              const verification = await sendFocusedTarget('verify_rich_text_toolbar_focused_type', {
+              const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 targetText: selectInfo.targetText,
                 targetValue: selectInfo.targetValue,
               });
@@ -20114,7 +18973,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
             dispatched = true;
             await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
-            const verification = await sendFocusedTarget('verify_rich_text_toolbar_focused_type', {
+            const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
               text: args.text || '',
               clear: !!args.clear,
               beforeSignature: prepared.beforeSignature || '',
@@ -20156,13 +19015,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           } finally {
             if (!tokenConsumed) {
-              await sendFocusedTarget('release_rich_text_toolbar_retry_target').catch(() => null);
+              await sendFocusedTarget('release_dispatch_binding').catch(() => null);
             }
           }
         }
         if (args.selector) {
           let result;
-          let expectedBackendNodeId = Number(executionContext?.richTextToolbarBackendNodeId) || null;
+          let expectedBackendNodeId = Number(dispatchBinding?.backendNodeId) || null;
           if (!expectedBackendNodeId) {
             try {
               const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
@@ -20425,11 +19284,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
       const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
       if (!SUPPORTED_KEYS.includes(key)) {
-        if (richTextToolbarDispatchToken) {
-          await this._releaseRichTextToolbarProbeTarget(tabId, {
-            selectorTargetToken: richTextToolbarDispatchToken,
-            frameId: richTextToolbarDispatchFrameId,
-          });
+        if (dispatchBinding?.token) {
+          await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
         }
         return {
           success: false,
@@ -20443,13 +19299,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
-        if (richTextToolbarDispatchToken) {
+        if (dispatchBinding?.token) {
           const validation = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
-            action: 'consume_rich_text_toolbar_focused_target',
-            params: { richTextToolbarTargetToken: richTextToolbarDispatchToken },
-          }, Number.isInteger(richTextToolbarDispatchFrameId)
-            ? { frameId: richTextToolbarDispatchFrameId }
+            action: 'consume_focused_dispatch_binding',
+            params: { dispatchBinding },
+          }, Number.isInteger(dispatchBinding.frameId)
+            ? { frameId: dispatchBinding.frameId }
             : undefined);
           if (validation?.success !== true) {
             return validation || {
@@ -20757,10 +19613,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (name === 'set_checked'
           ? { ...args, probeOnly: true, markForTrustedClick: true }
           : args);
-    if (Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name) && richTextToolbarDispatchToken) {
+    if (DISPATCH_BINDING_TOOLS.has(name) && dispatchBinding?.token) {
       contentArgs = {
         ...contentArgs,
-        richTextToolbarTargetToken: richTextToolbarDispatchToken,
+        dispatchBinding,
       };
     }
 
@@ -20772,10 +19628,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           target: 'content',
           action,
           params: contentArgs,
-        }, Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
-          && richTextToolbarDispatchToken
-          && Number.isInteger(richTextToolbarDispatchFrameId)
-          ? { frameId: richTextToolbarDispatchFrameId }
+        }, DISPATCH_BINDING_TOOLS.has(name)
+          && dispatchBinding?.token
+          && Number.isInteger(dispatchBinding.frameId)
+          ? { frameId: dispatchBinding.frameId }
           : undefined);
       } catch (e) {
         // Content script might not be injected — try injecting it.
@@ -20791,10 +19647,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             target: 'content',
             action,
             params: contentArgs,
-          }, Agent.RICH_TEXT_TOOLBAR_IDENTITY_BOUND_TOOLS.has(name)
-            && richTextToolbarDispatchToken
-            && Number.isInteger(richTextToolbarDispatchFrameId)
-            ? { frameId: richTextToolbarDispatchFrameId }
+          }, DISPATCH_BINDING_TOOLS.has(name)
+            && dispatchBinding?.token
+            && Number.isInteger(dispatchBinding.frameId)
+            ? { frameId: dispatchBinding.frameId }
             : undefined);
         } catch (e2) {
           return { error: `Failed to communicate with page: ${e2.message}` };
