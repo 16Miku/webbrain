@@ -51272,28 +51272,50 @@ test('navigate rejects non-web schemes and contains browser API failures', async
       url: chromeUrl,
       force: true,
     });
-    assert.equal(chromeSameUrlPending.success, false, 'Chrome must not verify a same-URL dispatch without a loading signal');
+    assert.equal(chromeSameUrlPending.success, false, 'Chrome must not verify a same-URL dispatch without a commit signal');
     assert.equal(chromeSameUrlPending.navigationPending, true);
 
-    let chromeNavigationListener = null;
-    let chromeListenerRemoved = false;
+    let chromeLoadingListener = null;
     globalThis.chrome.tabs.onUpdated = {
-      addListener(listener) { chromeNavigationListener = listener; },
+      addListener(listener) { chromeLoadingListener = listener; },
       removeListener(listener) {
-        if (chromeNavigationListener === listener) chromeNavigationListener = null;
-        chromeListenerRemoved = true;
+        if (chromeLoadingListener === listener) chromeLoadingListener = null;
       },
     };
+    let chromeCommitListener = null;
+    let chromeListenerRemoved = false;
+    globalThis.chrome.webNavigation = { onCommitted: {
+      addListener(listener) { chromeCommitListener = listener; },
+      removeListener(listener) {
+        if (chromeCommitListener === listener) chromeCommitListener = null;
+        chromeListenerRemoved = true;
+      },
+    } };
     globalThis.chrome.tabs.update = async (_tabId, { url }) => {
       chromeUpdates.push(url);
-      chromeNavigationListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
+      chromeCommitListener?.({ tabId: 42, frameId: 1, url: chromeUrl });
+      return { id: 42, url: chromeUrl };
+    };
+    const chromeLoadingOnly = await chromeAgent.executeTool(42, 'navigate', {
+      url: chromeUrl,
+      force: true,
+    });
+    assert.equal(chromeLoadingOnly.success, false, 'Chrome loading and child-frame events must not prove a top-frame commit');
+    assert.equal(chromeLoadingOnly.navigationPending, true);
+
+    chromeListenerRemoved = false;
+    globalThis.chrome.tabs.update = async (_tabId, { url }) => {
+      chromeUpdates.push(url);
+      chromeLoadingListener?.(42, { status: 'loading' }, { id: 42, url: chromeUrl });
+      chromeCommitListener?.({ tabId: 42, frameId: 0, url: chromeUrl });
       return { id: 42, url: chromeUrl };
     };
     const chromeSameUrlCommitted = await chromeAgent.executeTool(42, 'navigate', {
       url: chromeUrl,
       force: true,
     });
-    assert.equal(chromeSameUrlCommitted.success, true, 'Chrome should verify a same-URL reload after a loading signal');
+    assert.equal(chromeSameUrlCommitted.success, true, 'Chrome should verify a same-URL reload after a top-frame commit');
     assert.equal(chromeSameUrlCommitted.verified, true);
     assert.equal(chromeListenerRemoved, true, 'Chrome should remove the temporary navigation listener');
 
@@ -51429,28 +51451,50 @@ test('navigate rejects non-web schemes and contains browser API failures', async
       url: firefoxUrl,
       force: true,
     });
-    assert.equal(firefoxSameUrlPending.success, false, 'Firefox must not verify a same-URL dispatch without a loading signal');
+    assert.equal(firefoxSameUrlPending.success, false, 'Firefox must not verify a same-URL dispatch without a commit signal');
     assert.equal(firefoxSameUrlPending.navigationPending, true);
 
-    let firefoxNavigationListener = null;
-    let firefoxListenerRemoved = false;
+    let firefoxLoadingListener = null;
     globalThis.browser.tabs.onUpdated = {
-      addListener(listener) { firefoxNavigationListener = listener; },
+      addListener(listener) { firefoxLoadingListener = listener; },
       removeListener(listener) {
-        if (firefoxNavigationListener === listener) firefoxNavigationListener = null;
-        firefoxListenerRemoved = true;
+        if (firefoxLoadingListener === listener) firefoxLoadingListener = null;
       },
     };
+    let firefoxCommitListener = null;
+    let firefoxListenerRemoved = false;
+    globalThis.browser.webNavigation = { onCommitted: {
+      addListener(listener) { firefoxCommitListener = listener; },
+      removeListener(listener) {
+        if (firefoxCommitListener === listener) firefoxCommitListener = null;
+        firefoxListenerRemoved = true;
+      },
+    } };
     globalThis.browser.tabs.update = async (_tabId, { url }) => {
       firefoxUpdates.push(url);
-      firefoxNavigationListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
+      firefoxCommitListener?.({ tabId: 42, frameId: 1, url: firefoxUrl });
+      return { id: 42, url: firefoxUrl };
+    };
+    const firefoxLoadingOnly = await firefoxAgent.executeTool(42, 'navigate', {
+      url: firefoxUrl,
+      force: true,
+    });
+    assert.equal(firefoxLoadingOnly.success, false, 'Firefox loading and child-frame events must not prove a top-frame commit');
+    assert.equal(firefoxLoadingOnly.navigationPending, true);
+
+    firefoxListenerRemoved = false;
+    globalThis.browser.tabs.update = async (_tabId, { url }) => {
+      firefoxUpdates.push(url);
+      firefoxLoadingListener?.(42, { status: 'loading' }, { id: 42, url: firefoxUrl });
+      firefoxCommitListener?.({ tabId: 42, frameId: 0, url: firefoxUrl });
       return { id: 42, url: firefoxUrl };
     };
     const firefoxSameUrlCommitted = await firefoxAgent.executeTool(42, 'navigate', {
       url: firefoxUrl,
       force: true,
     });
-    assert.equal(firefoxSameUrlCommitted.success, true, 'Firefox should verify a same-URL reload after a loading signal');
+    assert.equal(firefoxSameUrlCommitted.success, true, 'Firefox should verify a same-URL reload after a top-frame commit');
     assert.equal(firefoxSameUrlCommitted.verified, true);
     assert.equal(firefoxListenerRemoved, true, 'Firefox should remove the temporary navigation listener');
 

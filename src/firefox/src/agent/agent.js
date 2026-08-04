@@ -13175,29 +13175,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         beforeUrl = tab?.url || '';
       } catch {}
 
-      // tabs.update() only acknowledges dispatch. For a same-URL reload, URL
-      // readback cannot distinguish a committed navigation from a blocked
-      // beforeunload dialog, so also require a real loading/URL update signal.
-      let navigationSignalObserved = false;
-      let navigationUpdateListener = null;
-      const navigationEvent = browser.tabs?.onUpdated;
+      // tabs.update() only acknowledges dispatch, and tabs.onUpdated loading
+      // only proves that a navigation started. For a same-URL or round-trip
+      // redirect, require a real top-frame document commit before claiming
+      // success over the unchanged URL readback.
+      let navigationCommitObserved = false;
+      let navigationCommitListener = null;
+      const navigationEvent = browser.webNavigation?.onCommitted;
       if (navigationEvent?.addListener && navigationEvent?.removeListener) {
-        navigationUpdateListener = (updatedTabId, changeInfo = {}) => {
-          if (updatedTabId !== tabId) return;
-          if (changeInfo.status === 'loading' || typeof changeInfo.url === 'string') {
-            navigationSignalObserved = true;
-          }
+        navigationCommitListener = (details = {}) => {
+          if (details.tabId !== tabId || details.frameId !== 0) return;
+          navigationCommitObserved = true;
         };
         try {
-          navigationEvent.addListener(navigationUpdateListener);
+          navigationEvent.addListener(navigationCommitListener);
         } catch {
-          navigationUpdateListener = null;
+          navigationCommitListener = null;
         }
       }
       const removeNavigationListener = () => {
-        if (!navigationUpdateListener) return;
-        try { navigationEvent.removeListener(navigationUpdateListener); } catch {}
-        navigationUpdateListener = null;
+        if (!navigationCommitListener) return;
+        try { navigationEvent.removeListener(navigationCommitListener); } catch {}
+        navigationCommitListener = null;
       };
 
       try {
@@ -13237,7 +13236,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const stayedOnPreviousUrl = !!beforeUrl && finalUrl === beforeUrl;
-      const navigationNotCommitted = stayedOnPreviousUrl && !navigationSignalObserved;
+      const navigationNotCommitted = stayedOnPreviousUrl && !navigationCommitObserved;
       if (navigationNotCommitted) {
         const error = 'Navigation was dispatched, but the tab is still on the previous URL. A native leave-page confirmation may be waiting for the user, or the navigation has not committed. Do not report arrival or retry repeatedly; ask the user to confirm/cancel the browser dialog, then inspect the current page again.';
         if (typeof onUpdate === 'function') {
