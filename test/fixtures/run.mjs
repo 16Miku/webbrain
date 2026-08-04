@@ -27,6 +27,7 @@ const firefoxAccessibilityTreeJsPath = path.join(root, 'src', 'firefox', 'src', 
 const contentJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'content.js');
 const firefoxContentJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'content.js');
 const redactionRegionsJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'redaction-regions.js');
+const firefoxRedactionRegionsJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'redaction-regions.js');
 const filePickerGuardPageJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'file-picker-guard-page.js');
 const firefoxFilePickerGuardPageJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'file-picker-guard-page.js');
 const selectionShortcutJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
@@ -328,54 +329,78 @@ const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
 test('exact iframe rect handshake distinguishes same-URL sibling frames', async (page) => {
-  await page.setContent(`<!doctype html>
-    <style>
-      body { margin: 0; height: 1200px; }
-      iframe { position: absolute; top: 180px; width: 300px; height: 180px; border: 0; }
-      #first { left: 100px; }
-      #second { left: 600px; }
-    </style>
-    <iframe id="first" srcdoc="<input>"></iframe>
-    <iframe id="second" srcdoc="<input>"></iframe>`);
-  await page.evaluate(() => window.scrollTo(0, 100));
-  const runtimeStub = `
-    window.chrome = window.chrome || {};
-    window.chrome.runtime = {
-      onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
-    };`;
-  const source = await readFile(redactionRegionsJsPath, 'utf-8');
-  for (const frame of page.frames()) {
-    await frame.addScriptTag({ content: runtimeStub });
-    await frame.addScriptTag({ content: source });
-  }
-  const childFrames = page.frames().filter(frame => frame !== page.mainFrame());
-  if (childFrames.length !== 2) throw new Error(`expected two child frames, got ${childFrames.length}`);
-  const token = `fixture-${Date.now()}`;
-  const parentWait = page.evaluate(probeToken => new Promise(resolve => {
-    const keepAlive = window.__redaction_handler({
-      target: 'redaction-content',
-      action: 'wait_for_exact_child_frame_rect',
-      params: { token: probeToken },
-    }, {}, resolve);
-    if (keepAlive !== true) resolve({ found: false, keepAlive });
-  }), token);
-  await new Promise(resolve => setTimeout(resolve, 10));
-  const announced = await childFrames[1].evaluate(probeToken => new Promise(resolve => {
-    window.__redaction_handler({
-      target: 'redaction-content',
-      action: 'announce_exact_child_frame',
-      params: { token: probeToken },
-    }, {}, resolve);
-  }), token);
-  const exact = await parentWait;
-  if (
-    announced?.announced !== true
-    || exact?.found !== true
-    || Math.round(exact.outerRect?.x) !== 600
-    || Math.round(exact.outerRect?.y) !== 80
-    || Math.round(exact.outerRect?.pageY) !== 180
-  ) {
-    throw new Error(`expected exact second-frame geometry, got: ${JSON.stringify({ announced, exact })}`);
+  for (const [browserKind, sourcePath] of [
+    ['chrome', redactionRegionsJsPath],
+    ['firefox', firefoxRedactionRegionsJsPath],
+  ]) {
+    await page.setContent(`<!doctype html>
+      <style>
+        body { margin: 0; height: 1200px; }
+        #first { position: absolute; top: 180px; left: 100px; width: 300px; height: 180px; border: 0; }
+      </style>
+      <iframe id="first" srcdoc="<input>"></iframe>
+      <div id="shadow-host"></div>
+      <script>
+        (() => {
+          const root = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
+          root.innerHTML = '<iframe id="second" style="position:absolute;top:180px;left:600px;width:300px;height:180px;border:0" srcdoc="<input>"></iframe>';
+        })();
+      </script>`);
+    await page.waitForFunction(() => {
+      const first = document.getElementById('first');
+      const second = document.getElementById('shadow-host')?.shadowRoot?.getElementById('second');
+      return !!first?.contentWindow && !!second?.contentWindow;
+    });
+    await page.waitForTimeout(50);
+    await page.evaluate(() => window.scrollTo(0, 100));
+    const runtimeStub = browserKind === 'firefox' ? `
+      window.browser = window.browser || {};
+      window.browser.runtime = {
+        onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
+      };` : `
+      window.chrome = window.chrome || {};
+      window.chrome.runtime = {
+        onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
+      };`;
+    const source = await readFile(sourcePath, 'utf-8');
+    for (const frame of page.frames()) {
+      await frame.addScriptTag({ content: runtimeStub });
+      await frame.addScriptTag({ content: source });
+    }
+    const childFrames = page.frames().filter(frame => frame !== page.mainFrame());
+    if (childFrames.length !== 2) throw new Error(`${browserKind}: expected two child frames, got ${childFrames.length}`);
+    const shadowChildFrame = (await Promise.all(childFrames.map(async frame => ({
+      frame,
+      id: await frame.evaluate(() => window.frameElement?.id || ''),
+    })))).find(entry => entry.id === 'second')?.frame;
+    if (!shadowChildFrame) throw new Error(`${browserKind}: shadow child frame was not reachable`);
+    const token = `fixture-${browserKind}-${Date.now()}`;
+    const parentWait = page.evaluate(probeToken => new Promise(resolve => {
+      const keepAlive = window.__redaction_handler({
+        target: 'redaction-content',
+        action: 'wait_for_exact_child_frame_rect',
+        params: { token: probeToken },
+      }, {}, resolve);
+      if (keepAlive !== true) resolve({ found: false, keepAlive });
+    }), token);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const announced = await shadowChildFrame.evaluate(probeToken => new Promise(resolve => {
+      window.__redaction_handler({
+        target: 'redaction-content',
+        action: 'announce_exact_child_frame',
+        params: { token: probeToken },
+      }, {}, resolve);
+    }), token);
+    const exact = await parentWait;
+    if (
+      announced?.announced !== true
+      || exact?.found !== true
+      || Math.round(exact.outerRect?.x) !== 600
+      || Math.round(exact.outerRect?.y) !== 80
+      || Math.round(exact.outerRect?.pageY) !== 180
+    ) {
+      throw new Error(`${browserKind}: expected exact shadow-frame geometry, got: ${JSON.stringify({ announced, exact })}`);
+    }
   }
 });
 
@@ -4019,6 +4044,7 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
     const extensionGlobal = AgentClass === Agent ? 'chrome' : 'browser';
     const originalExtensionApi = globalThis[extensionGlobal];
     const frameMessages = [];
+    const focusedFrameWaits = new Map();
     globalThis[extensionGlobal] = {
       webNavigation: {
         async getAllFrames() {
@@ -4032,6 +4058,15 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
       tabs: {
         async sendMessage(_tabId, message, options) {
           frameMessages.push({ message, options });
+          if (message.action === 'wait_for_rich_text_toolbar_focused_child_frame') {
+            return new Promise(resolve => focusedFrameWaits.set(message.params.token, resolve));
+          }
+          if (message.action === 'announce_rich_text_toolbar_focused_child_frame') {
+            const resolve = focusedFrameWaits.get(message.params.token);
+            focusedFrameWaits.delete(message.params.token);
+            resolve?.({ matched: options.frameId === 7 });
+            return { announced: true };
+          }
           if (options.frameId === 0) {
             return {
               resolved: true,
@@ -4052,7 +4087,17 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
               toolbarContext: true,
             };
           }
-          return { resolved: false };
+          return {
+            resolved: true,
+            refId: 'inactive_ref',
+            selectorTargetToken: 'inactive-frame-token',
+            rect: { x: 14, y: 11, w: 100, h: 22 },
+            fieldMeta: {
+              tag: 'input',
+              toolbarCandidate: { score: 99, reasons: ['semantic_toolbar'] },
+            },
+            toolbarContext: true,
+          };
         },
       },
     };
@@ -4068,15 +4113,19 @@ test('Agent rich-text toolbar audit accepts visual family classification, reject
         { text: 'Paris' },
         { mapAnnotation: true },
       );
+      const probeMessages = frameMessages.filter(entry => entry.message.action === 'probe_rich_text_toolbar_retry_target');
       if (
         deepFrameProbe?.frameId !== 7
         || deepFrameProbe.refId !== 'ref_7'
         || deepFrameProbe.selectorTargetToken !== 'focused-frame-token'
         || deepFrameProbe.annotationRect?.x !== 42
-        || frameMessages.length !== 3
-        || frameMessages.some(entry => entry.message.params.args.selector != null)
+        || probeMessages.length !== 2
+        || probeMessages.map(entry => entry.options.frameId).join(',') !== '0,7'
+        || !frameMessages.some(entry => entry.message.action === 'wait_for_rich_text_toolbar_focused_child_frame')
+        || !frameMessages.some(entry => entry.message.action === 'announce_rich_text_toolbar_focused_child_frame' && entry.options.frameId === 7)
+        || probeMessages.some(entry => entry.message.params.args.selector != null)
       ) {
-        throw new Error(`focused type_text must probe and select the deeply focused frame field: ${JSON.stringify({ deepFrameProbe, frameMessages })}`);
+        throw new Error(`focused type_text must probe only the handshaken focused frame branch: ${JSON.stringify({ deepFrameProbe, frameMessages })}`);
       }
     } finally {
       if (originalExtensionApi === undefined) delete globalThis[extensionGlobal];

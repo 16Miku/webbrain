@@ -4138,6 +4138,43 @@
     }
   }
 
+  function _waitForRichTextToolbarFocusedChildFrame(params = {}) {
+    const token = String(params.token || '');
+    const focusedFrame = _deepActiveElement();
+    const tag = String(focusedFrame?.tagName || '').toLowerCase();
+    if (!token || !focusedFrame?.isConnected || !['iframe', 'frame'].includes(tag)) {
+      return Promise.resolve({ matched: false });
+    }
+    return new Promise(resolve => {
+      let settled = false;
+      let timer = null;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve(value);
+      };
+      const onMessage = event => {
+        if (event?.data?.__webbrainFocusedFrameToken !== token) return;
+        finish({ matched: event.source === focusedFrame.contentWindow });
+      };
+      window.addEventListener('message', onMessage);
+      timer = setTimeout(() => finish({ matched: false }), 750);
+    });
+  }
+
+  function _announceRichTextToolbarFocusedChildFrame(params = {}) {
+    const token = String(params.token || '');
+    if (!token || window.parent === window) return { announced: false };
+    try {
+      window.parent.postMessage({ __webbrainFocusedFrameToken: token }, '*');
+      return { announced: true };
+    } catch {
+      return { announced: false };
+    }
+  }
+
   function _blurRichTextToolbarTarget(params = {}) {
     try {
       const active = document.activeElement;
@@ -4169,6 +4206,8 @@
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_rich_text_toolbar_retry_target': () => _releaseRichTextToolbarRetryTarget(msg.params || {}),
+      'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
+      'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),

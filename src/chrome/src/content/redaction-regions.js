@@ -129,9 +129,26 @@
         w: rect.width,
         h: rect.height,
       });
+      const reachableFrames = () => {
+        const frames = [];
+        const roots = [document];
+        const seenRoots = new Set();
+        while (roots.length) {
+          const root = roots.shift();
+          if (!root || seenRoots.has(root)) continue;
+          seenRoots.add(root);
+          for (const frame of root.querySelectorAll?.('iframe, frame') || []) frames.push(frame);
+          for (const element of root.querySelectorAll?.('*') || []) {
+            try {
+              if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot);
+            } catch {}
+          }
+        }
+        return frames;
+      };
       const onMessage = event => {
         if (event?.data?.__webbrainExactFrameRectToken !== token) return;
-        const frame = Array.from(document.querySelectorAll('iframe, frame'))
+        const frame = reachableFrames()
           .find(candidate => candidate.contentWindow === event.source);
         if (!frame) return;
         let outer = frame.getBoundingClientRect();

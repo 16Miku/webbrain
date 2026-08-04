@@ -2343,6 +2343,40 @@ export class Agent extends LoopDetector {
         frameUrl: frame.url || '',
       } : null;
     };
+    const focusedChildFrame = async (parentFrameId, children) => {
+      for (const child of children) {
+        const token = `wb-focused-frame-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const parentResponse = browser.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'wait_for_rich_text_toolbar_focused_child_frame',
+          params: { token },
+        }, { frameId: parentFrameId }).catch(() => null);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const announce = () => browser.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'announce_rich_text_toolbar_focused_child_frame',
+          params: { token },
+        }, { frameId: child.frameId });
+        try {
+          await announce();
+        } catch {
+          try {
+            await browser.tabs.executeScript(tabId, {
+              frameId: child.frameId,
+              file: 'src/content/accessibility-tree.js',
+            });
+            await browser.tabs.executeScript(tabId, {
+              frameId: child.frameId,
+              file: 'src/content/content.js',
+            });
+            await announce();
+          } catch {}
+        }
+        const match = await parentResponse;
+        if (match?.matched === true) return child;
+      }
+      return null;
+    };
     const topFrame = navigationFrames.find(frame => frame?.frameId === 0);
     if (!topFrame) return null;
     let selected = await probeFrame(topFrame);
@@ -2353,19 +2387,10 @@ export class Agent extends LoopDetector {
       seen.add(selected.frameId);
       const children = navigationFrames.filter(frame => frame?.parentFrameId === selected.frameId);
       if (!children.length) break;
-      const childProbes = (await Promise.all(children.map(probeFrame))).filter(Boolean);
-      if (!childProbes.length) break;
-      const nextSelected = childProbes
-        .filter(probe => probe.fieldMeta?.toolbarCandidate)
-        .sort((a, b) => Number(b.fieldMeta.toolbarCandidate.score) - Number(a.fieldMeta.toolbarCandidate.score))[0]
-        || childProbes.find(probe => {
-          const meta = probe.fieldMeta || {};
-          return meta.contentEditable === true || ['input', 'textarea', 'select'].includes(String(meta.tag || '').toLowerCase());
-        })
-        || childProbes[0];
-      await Promise.all(childProbes
-        .filter(probe => probe !== nextSelected)
-        .map(probe => this._releaseRichTextToolbarProbeTarget(tabId, probe)));
+      const child = await focusedChildFrame(selected.frameId, children);
+      if (!child) break;
+      const nextSelected = await probeFrame(child);
+      if (!nextSelected) break;
       selected = nextSelected;
     }
     const annotationRect = mapAnnotation
