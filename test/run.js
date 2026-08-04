@@ -2309,6 +2309,28 @@ test('matches www.github.com', () => {
   assert.equal(a?.name, 'github');
 });
 
+test('matches Hugging Face upload pages with staged-upload guidance and rejects spoofed hosts', () => {
+  const url = 'https://huggingface.co/acme/example-model/upload/main';
+  const chromeAdapter = getActiveAdapter(url);
+  const firefoxAdapter = getActiveAdapterFx(url);
+
+  assert.equal(chromeAdapter?.name, 'huggingface');
+  assert.equal(firefoxAdapter?.name, 'huggingface');
+  assert.equal(firefoxAdapter?.notes, chromeAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /input\[type="file"\]:not\(\[accept\]\)/);
+  assert.match(chromeAdapter?.notes || '', /accept\*="image".*extended-description editor/i);
+  assert.match(chromeAdapter?.notes || '', /filename chip.*commit summary.*enabled "Commit changes".*staged only/is);
+  assert.match(chromeAdapter?.notes || '', /Click "Commit changes".*verify the file under "Files and versions"/is);
+
+  for (const resolveAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.notEqual(
+      resolveAdapter('https://huggingface.co.evil.example/acme/example-model/upload/main')?.name,
+      'huggingface',
+      'lookalike hosts must not activate Hugging Face upload guidance',
+    );
+  }
+});
+
 test('matches Mozilla Add-ons Developer Hub and guides version submission', () => {
   const sourceUrl = 'https://addons.mozilla.org/en-US/developers/addon/example-addon/versions/submit/6358210/source';
   const chromeAdapter = getActiveAdapter(sourceUrl);
@@ -43774,6 +43796,67 @@ test('browser batches keep leading reads, then require fresh evidence after unsa
   }
 });
 
+test('remote-unverified file attachment blocks a queued commit action in every prompt tier', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const tier of ['compact', 'mid', 'full']) {
+      const agent = new AgentClass({
+        getActive: () => ({ promptTier: tier, supportsVision: false }),
+        getVisionProvider: async () => null,
+      });
+      const executed = [];
+      const messages = [];
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._currentUrl = async () => 'https://huggingface.co/acme/model/upload/main';
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      agent.executeTool = async (_tabId, name) => {
+        executed.push(name);
+        if (name === 'upload_file') {
+          return {
+            success: true,
+            attachmentState: 'input_attached',
+            remoteStateVerified: false,
+          };
+        }
+        return { success: true, verified: true };
+      };
+
+      const result = await agent._executeToolBatch(
+        label === 'chrome' ? 815 : 816,
+        [
+          {
+            id: 'attach',
+            function: {
+              name: 'upload_file',
+              arguments: JSON.stringify({ selector: 'input[type="file"]:not([accept])', downloadId: 1 }),
+            },
+          },
+          {
+            id: 'commit',
+            function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_commit' }) },
+          },
+        ],
+        messages,
+        () => {},
+        { supportsVision: false },
+        null,
+        new Set(['upload_file', 'click_ax']),
+        1,
+      );
+
+      assert.equal(result.action, 'continue', `${label}/${tier}: unverified attachment should start a fresh turn`);
+      assert.deepEqual(executed, ['upload_file'], `${label}/${tier}: queued Commit ran before attachment observation`);
+      const skipped = JSON.parse(messages.find(message => message.tool_call_id === 'commit').content);
+      assert.equal(skipped.skipped, true, `${label}/${tier}: queued Commit was not skipped`);
+      assert.equal(skipped.triggeringTool, 'upload_file', `${label}/${tier}: wrong action triggered the boundary`);
+      assert.equal(skipped.reason, 'action_unverified', `${label}/${tier}: wrong fresh-turn reason`);
+    }
+  }
+});
+
 test('fresh-turn batch interruptions preserve configured auto-screenshots', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const autoScreenshot of ['state_change', 'every_step']) {
@@ -50043,6 +50126,7 @@ test('upload_file schema accepts downloadId and no longer hard-requires filePath
   assert.deepEqual(up.function.parameters.required, ['selector'], 'filePath should no longer be required');
   assert.match(up.function.description, /without opening the page or OS file-picker dialog/i);
   assert.match(up.function.description, /Do NOT click "Choose file", "Select a file"/);
+  assert.match(up.function.description, /does NOT prove a remote upload, form submission, or repository commit/i);
 });
 
 test('Chrome click paths suppress native file choosers and redirect to upload_file', async () => {
@@ -50389,6 +50473,9 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
 
     assert.equal(result.success, true);
     assert.equal(result.file, realPath);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
     assert.equal(args.filePath, realPath);
     assert.deepEqual(uploaded, [[realPath]]);
     assert.deepEqual(releasedGroups, ['upload-query-1'], 'successful uploads must release selector handles');
@@ -50398,22 +50485,86 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
     const fallback = await agent.executeTool(42, 'upload_file', fallbackArgs);
     assert.equal(fallback.success, true);
     assert.equal(fallback.file, exactPath);
+    assert.equal(fallback.attachmentState, 'input_attached');
+    assert.equal(fallback.verified, false);
+    assert.equal(fallback.remoteStateVerified, false);
     assert.equal(fallbackArgs.filePath, exactPath, 'an unresolved downloadId must not replace a supplied absolute path');
     assert.deepEqual(uploaded, [[realPath], [exactPath]]);
 
     expectedPath = realPath;
+    cdpClientCh.getFileInputFiles = async () => [];
+    const consumed = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      downloadId: 9123,
+    });
+    assert.equal(consumed.success, true);
+    assert.equal(consumed.attachmentState, 'page_consumed');
+    assert.equal(consumed.verified, false);
+    assert.equal(consumed.remoteStateVerified, false);
+    assert.match(consumed.note, /does not prove a remote upload or form submission/i);
+    cdpClientCh.getFileInputFiles = async () => [{ name: expectedPath.split('/').pop(), size: 123, readable: true }];
+
     selectorMatches = ['input-501', 'input-502'];
     const ambiguous = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
       downloadId: 9123,
     });
     assert.equal(ambiguous.success, false);
+    assert.equal(ambiguous.dispatched, false);
+    assert.equal(ambiguous.noDispatch, true);
+    assert.equal(ambiguous.ambiguous, true);
+    assert.equal(ambiguous.matchCount, 2);
+    assert.equal(ambiguous.recoveryRequired, 'get_interactive_elements');
     assert.match(ambiguous.error, /matched 2 elements/);
     assert.match(ambiguous.error, /exact, unique selector/);
-    assert.deepEqual(uploaded, [[realPath], [exactPath]], 'ambiguous selectors must fail before attaching the file');
+    assert.deepEqual(uploaded, [[realPath], [exactPath], [realPath]], 'ambiguous selectors must fail before attaching the file');
+
+    const queryCountBeforeBlockedRetry = queryCount;
+    const blockedRetry = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]:not([accept])',
+      downloadId: 9123,
+    });
+    assert.equal(blockedRetry.success, false);
+    assert.equal(blockedRetry.noDispatch, true);
+    assert.equal(blockedRetry.matchCount, 2);
+    assert.equal(blockedRetry.recoveryRequired, 'get_interactive_elements');
+    assert.equal(queryCount, queryCountBeforeBlockedRetry, 'retry must not query the DOM before a fresh inspection');
+
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_accessibility_tree', {}),
+      false,
+      'an unrelated observation must not clear upload recovery',
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', []),
+      false,
+      'an inspection without file inputs must not clear upload recovery',
+    );
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{ tag: 'input', type: 'file' }]),
+      false,
+      'a file-input record without a verified selector must not clear upload recovery',
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), true);
+    assert.equal(
+      agent._clearUploadSelectorRecoveryAfterInspection(42, 'get_interactive_elements', [{
+        tag: 'input',
+        type: 'file',
+        selector: 'input[type=file]:not([accept])',
+      }]),
+      true,
+    );
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false);
+    agent._uploadSelectorRecoveryRequired.set(42, 2);
+    agent._clearRunLoopState(42);
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'run cleanup must clear upload recovery');
+    agent._uploadSelectorRecoveryRequired.set(42, 2);
+    agent._clearPageLoopState(42);
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'navigation cleanup must clear upload recovery');
     assert.deepEqual(
       releasedGroups,
-      ['upload-query-1', 'upload-query-2', 'upload-query-3'],
+      ['upload-query-1', 'upload-query-2', 'upload-query-3', 'upload-query-4'],
       'early upload failures must release selector handles',
     );
   } finally {
@@ -50431,6 +50582,31 @@ test('upload_file schema accepts downloadId and no longer hard-requires filePath
   assert.deepEqual(up.function.parameters.required, ['selector'], 'filePath should no longer be required');
   assert.match(up.function.description, /without clicking the page upload control/i);
   assert.match(up.function.description, /Do NOT click "Choose file", "Select a file"/);
+  assert.match(up.function.description, /does NOT prove a remote upload, form submission, or repository commit/i);
+});
+
+test('upload_file digests preserve local attachment and remote-unverified semantics', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const attached = agent._digestToolResult('upload_file', JSON.stringify({
+      success: true,
+      attached: { name: 'asset.bin', size: 12 },
+      verified: false,
+      attachmentState: 'input_attached',
+      remoteStateVerified: false,
+    }));
+    assert.match(attached, /file attached to input.*remote submission unverified/i, `${label}: attached digest lost local-only state`);
+    assert.doesNotMatch(attached, /\buploaded\b/i, `${label}: attached digest claimed remote upload`);
+
+    const consumed = agent._digestToolResult('upload_file', JSON.stringify({
+      success: true,
+      verified: false,
+      attachmentState: 'page_consumed',
+      remoteStateVerified: false,
+    }));
+    assert.match(consumed, /page consumed attachment.*remote submission unverified/i, `${label}: consumed digest lost local-only state`);
+    assert.doesNotMatch(consumed, /\buploaded\b/i, `${label}: consumed digest claimed remote upload`);
+  }
 });
 
 test('upload_file (firefox) rejects non-complete downloads and missing picker base64', async () => {
@@ -50487,6 +50663,7 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
   const originalFetch = globalThis.fetch;
   const executedScripts = [];
   const fetchCalls = [];
+  let injectedAttachmentState = 'input_attached';
   try {
     globalThis.browser = {
       downloads: {
@@ -50501,7 +50678,10 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
         },
         async executeScript(tabId, details) {
           executedScripts.push(details.code);
-          return [{ success: true, file: 'test.zip', size: 4 }];
+          if (details.code.includes('WebBrain file attachment settle probe')) {
+            return [{ attachmentState: injectedAttachmentState }];
+          }
+          return [{ success: true, file: 'test.zip', size: 4, attachmentState: 'input_attached' }];
         },
       },
     };
@@ -50546,13 +50726,16 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
 
     assert.equal(result.success, true);
     assert.equal(result.file, 'test.zip');
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
     assert.equal(fetchCalls.length, 2);
     assert.equal(fetchCalls[0].opts.redirect, 'manual');
     assert.equal(fetchCalls[0].opts.credentials, 'include');
     assert.equal(fetchCalls[1].opts.redirect, 'manual');
     assert.equal(fetchCalls[1].opts.credentials, 'omit');
 
-    assert.equal(executedScripts.length, 1);
+    assert.equal(executedScripts.length, 2);
     assert.ok(executedScripts[0].includes('new DataTransfer()'), 'Script should use DataTransfer');
     assert.ok(executedScripts[0].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
     assert.ok(executedScripts[0].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
@@ -50560,6 +50743,14 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
     assert.ok(executedScripts[0].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
     assert.ok(executedScripts[0].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
     assert.ok(executedScripts[0].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
+    assert.ok(executedScripts[1].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
+
+    injectedAttachmentState = 'page_consumed';
+    const consumed = await agent.executeTool(42, 'upload_file', args);
+    assert.equal(consumed.success, true);
+    assert.equal(consumed.attachmentState, 'page_consumed');
+    assert.equal(consumed.verified, false);
+    assert.equal(consumed.remoteStateVerified, false);
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;

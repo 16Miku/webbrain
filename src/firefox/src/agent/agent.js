@@ -367,6 +367,7 @@ export class Agent extends LoopDetector {
     // Default off; user opts in via Settings → "Strict secret handling".
     this.strictSecretMode = false;
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
+    this._uploadSelectorRecoveryRequired = new Map(); // tabId -> prior ambiguous match count; cleared only by inspection/navigation/cleanup
     // Productive browsing often mixes reads and scrolling, so exact-call loop
     // detection cannot tell when the agent already has enough evidence to
     // answer. Track long observation-only streaks and remind it to deliver a
@@ -1696,6 +1697,7 @@ export class Agent extends LoopDetector {
    */
   _clearPageLoopState(tabId) {
     super._clearPageLoopState(tabId);
+    this._uploadSelectorRecoveryRequired.delete(tabId);
     this.deliveryObservationStreaks.delete(tabId);
     this.bulkApiMutationClicks.delete(tabId);
     this.bulkApiMutationHints.delete(tabId);
@@ -1705,6 +1707,19 @@ export class Agent extends LoopDetector {
         this.failedBulkApiReplayShapes.delete(key);
       }
     }
+  }
+
+  _clearUploadSelectorRecoveryAfterInspection(tabId, name, response) {
+    if (name !== 'get_interactive_elements' || !Array.isArray(response)) return false;
+    const hasVerifiedFileInputSelector = response.some(element => (
+      element?.tag === 'input'
+      && String(element.type || '').toLowerCase() === 'file'
+      && typeof element.selector === 'string'
+      && element.selector.trim().length > 0
+    ));
+    if (!hasVerifiedFileInputSelector) return false;
+    this._uploadSelectorRecoveryRequired.delete(tabId);
+    return true;
   }
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
@@ -1747,6 +1762,7 @@ export class Agent extends LoopDetector {
       && this._isSuccessfulExecutionEvidence(result)
       && result?.noProgress !== true
       && result?.verified !== false
+      && result?.remoteStateVerified !== false
       && result?.inconclusive !== true;
   }
 
@@ -3207,7 +3223,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ) {
       return 'action_failed';
     }
-    if (toolResult?.inconclusive || toolResult?.verified === false) {
+    if (
+      toolResult?.inconclusive
+      || toolResult?.verified === false
+      || toolResult?.remoteStateVerified === false
+    ) {
       return 'action_unverified';
     }
     if (
@@ -11888,7 +11908,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       case 'upload_file': {
         if (parsed.success === false) return `upload failed: ${this._truncate(parsed.error || '', 110)}`;
-        if (parsed.attached) return `uploaded ${this._truncate(parsed.attached.name || '', 60)} (${parsed.attached.size} bytes)`;
+        if (parsed.remoteStateVerified === false) {
+          const localState = parsed.attachmentState === 'page_consumed'
+            ? 'page consumed attachment'
+            : 'file attached to input';
+          return `${localState} (remote submission unverified)`;
+        }
+        if (parsed.attached) return `attached ${this._truncate(parsed.attached.name || '', 60)} (${parsed.attached.size} bytes)`;
         return parsed.verified === false ? `upload sent (unverified)` : `uploaded ${this._truncate(parsed.file || '', 70)}`;
       }
       case 'new_tab': {
@@ -13485,6 +13511,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'upload_file') {
       const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
       try {
+        if (this._uploadSelectorRecoveryRequired.has(tabId)) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            ambiguous: true,
+            matchCount: Number(this._uploadSelectorRecoveryRequired.get(tabId)) || 0,
+            recoveryRequired: 'get_interactive_elements',
+            error: 'A previous upload selector matched multiple file inputs. Call get_interactive_elements now and use the exact selector returned on the intended file-input record before retrying upload_file; do not guess another selector variant.',
+          };
+        }
         if (args.filePath) {
           return {
             success: false,
@@ -13696,7 +13733,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched = true;
               el.dispatchEvent(new Event('input', { bubbles: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
-              return { success: true, dispatched: true, file: ${JSON.stringify(filename)}, size: len };
+              const attachmentState = el.files && el.files.length
+                ? 'input_attached'
+                : 'page_consumed';
+              return { success: true, dispatched: true, file: ${JSON.stringify(filename)}, size: len, attachmentState };
             } catch (e) {
               return { success: false, dispatched, error: e.message || String(e) };
             }
@@ -13714,20 +13754,72 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const res = results && results[0];
         if (!res || !res.success) {
+          if (res?.ambiguous) this._uploadSelectorRecoveryRequired.set(tabId, Number(res.matchCount) || 0);
           return {
             success: false,
             dispatched: res?.dispatched === true,
             ...(res?.ambiguous ? {
               ambiguous: true,
               matchCount: Number(res.matchCount) || 0,
+              noDispatch: true,
+              recoveryRequired: 'get_interactive_elements',
             } : {}),
-            error: res ? res.error : 'Failed to attach file to input element',
+            error: res?.ambiguous
+              ? `${res.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
+              : (res ? res.error : 'Failed to attach file to input element'),
           };
+        }
+        let attachmentState = res.attachmentState === 'page_consumed'
+          ? 'page_consumed'
+          : 'input_attached';
+        if (attachmentState === 'input_attached') {
+          // Let change handlers queued through a microtask/timer consume or
+          // replace the input before we classify its stable local state.
+          await new Promise(resolve => setTimeout(resolve, 25));
+          const settleProbeCode = `
+            (function() {
+              // WebBrain file attachment settle probe.
+              const selector = ${JSON.stringify(args.selector)};
+              const matches = [];
+              const collectDeepMatches = (root) => {
+                matches.push(...root.querySelectorAll(selector));
+                for (const element of root.querySelectorAll('*')) {
+                  if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
+                }
+              };
+              try {
+                collectDeepMatches(document);
+              } catch {
+                return null;
+              }
+              if (matches.length !== 1) return { attachmentState: 'page_consumed' };
+              const input = matches[0];
+              if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
+                return { attachmentState: 'page_consumed' };
+              }
+              const expectedName = ${JSON.stringify(filename)};
+              const expectedSize = ${Number(res.size) || 0};
+              const attached = Array.from(input.files || []).some(file => (
+                file.name === expectedName && file.size === expectedSize
+              ));
+              return { attachmentState: attached ? 'input_attached' : 'page_consumed' };
+            })();
+          `;
+          try {
+            const settledResults = await browser.tabs.executeScript(tabId, { code: settleProbeCode });
+            const settledState = settledResults?.[0]?.attachmentState;
+            if (settledState === 'input_attached' || settledState === 'page_consumed') {
+              attachmentState = settledState;
+            }
+          } catch { /* Navigation/detachment leaves the initial state unverified. */ }
         }
         return {
           success: true,
           attached: { name: filename, size: res.size },
           file: filename,
+          verified: false,
+          attachmentState,
+          remoteStateVerified: false,
         };
       } catch (e) {
         return { success: false, error: e.message || String(e) };
@@ -14698,6 +14790,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (name === 'read_page') {
         response = applyReadPageWindow(response, args);
       }
+      this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
       return response;
     } catch (e) {
       // Content script might not be injected — try injecting it
@@ -14727,6 +14820,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (name === 'read_page') {
           response = applyReadPageWindow(response, args);
         }
+        this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
         return response;
       } catch (e2) {
         let pageUrl = '';

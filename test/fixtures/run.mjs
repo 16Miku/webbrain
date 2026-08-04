@@ -1052,6 +1052,49 @@ test('CDP upload selector bridge resolves hidden and open-shadow file inputs', a
 });
 
 for (const browserKind of ['chrome', 'firefox']) {
+  test(`get_interactive_elements (${browserKind}): identifies the Hugging Face repository file input`, async (page) => {
+    const setupHtml = browserKind === 'firefox' ? setupFirefoxHtml : setupChromeHtml;
+    await setupHtml(page, `<!doctype html>
+      <style>
+        [data-repository-drop-zone] { display: none; }
+      </style>
+      <label>Repository files
+        <input data-repository-drop-zone type="file" multiple>
+      </label>
+      <section aria-label="Extended description editor">
+        <input type="file" accept="image/png,image/jpeg" multiple hidden>
+      </section>`);
+
+    const elements = await call(page, 'get_interactive_elements_cdp', {});
+    const fileInputs = elements.filter((element) => element.type === 'file');
+    if (fileInputs.length !== 2) {
+      throw new Error(`expected both Hugging Face-shaped file inputs, got ${JSON.stringify(fileInputs)}`);
+    }
+
+    const repositoryInput = fileInputs.find((element) => element.accept === null);
+    const editorMediaInput = fileInputs.find((element) => element.accept === 'image/png,image/jpeg');
+    if (!repositoryInput || repositoryInput.multiple !== true) {
+      throw new Error(`file metadata mismatch: ${JSON.stringify(repositoryInput)}`);
+    }
+    if (!editorMediaInput || editorMediaInput.multiple !== true) {
+      throw new Error(`raw editor-media accept metadata mismatch: ${JSON.stringify(editorMediaInput)}`);
+    }
+    if (!repositoryInput.selector || !repositoryInput.selector.includes(':not([accept])')) {
+      throw new Error(`expected a no-accept repository selector, got ${JSON.stringify(repositoryInput)}`);
+    }
+
+    const selectorCheck = await page.evaluate((selector) => {
+      const matches = document.querySelectorAll(selector);
+      return {
+        count: matches.length,
+        repository: matches[0] === document.querySelector('[data-repository-drop-zone]'),
+      };
+    }, repositoryInput.selector);
+    if (selectorCheck.count !== 1 || !selectorCheck.repository) {
+      throw new Error(`selector did not uniquely target the repository drop zone: ${JSON.stringify(selectorCheck)}`);
+    }
+  });
+
   test(`file picker guard (${browserKind}): blocks the native chooser and returns the exact input`, async (page) => {
     await setupContentHtml(page, `<!doctype html>
       <button id="choose">Select a file...</button>
@@ -1409,7 +1452,14 @@ test('Firefox upload_file resolves one open-shadow input and rejects ambiguous p
       selector: '#shadow-upload',
       downloadId: 9001,
     });
-    if (!uploaded?.success || uploaded.attached?.name !== 'shadow-upload.txt' || uploaded.attached?.size !== 2) {
+    if (
+      !uploaded?.success
+      || uploaded.attached?.name !== 'shadow-upload.txt'
+      || uploaded.attached?.size !== 2
+      || uploaded.attachmentState !== 'input_attached'
+      || uploaded.verified !== false
+      || uploaded.remoteStateVerified !== false
+    ) {
       throw new Error(`open-shadow upload failed: ${JSON.stringify(uploaded)}`);
     }
     const state = await page.evaluate(() => {
@@ -1431,6 +1481,29 @@ test('Firefox upload_file resolves one open-shadow input and rejects ambiguous p
       throw new Error(`open-shadow upload state mismatch: ${JSON.stringify(state)}`);
     }
 
+    await page.evaluate(() => {
+      const input = document.querySelector('#host-a').shadowRoot.querySelector('#shadow-upload');
+      input.addEventListener('change', () => {
+        queueMicrotask(() => { input.value = ''; });
+      }, { once: true });
+    });
+    const consumed = await agent.executeTool(77, 'upload_file', {
+      selector: '#shadow-upload',
+      downloadId: 9001,
+    });
+    const consumedCount = await page.evaluate(() => (
+      document.querySelector('#host-a').shadowRoot.querySelector('#shadow-upload').files.length
+    ));
+    if (
+      consumed?.success !== true
+      || consumed.attachmentState !== 'page_consumed'
+      || consumed.verified !== false
+      || consumed.remoteStateVerified !== false
+      || consumedCount !== 0
+    ) {
+      throw new Error(`queued file consumption was misclassified: ${JSON.stringify({ consumed, consumedCount })}`);
+    }
+
     const ambiguous = await agent.executeTool(77, 'upload_file', {
       selector: 'input[type="file"]',
       downloadId: 9001,
@@ -1440,9 +1513,52 @@ test('Firefox upload_file resolves one open-shadow input and rejects ambiguous p
       || ambiguous.dispatched !== false
       || ambiguous.ambiguous !== true
       || ambiguous.matchCount !== 2
+      || ambiguous.recoveryRequired !== 'get_interactive_elements'
       || !/exact, unique selector/.test(ambiguous.error || '')
     ) {
       throw new Error(`ambiguous pierced selector did not fail closed: ${JSON.stringify(ambiguous)}`);
+    }
+
+    const blockedRetry = await agent.executeTool(77, 'upload_file', {
+      selector: '#shadow-upload',
+      downloadId: 9001,
+    });
+    if (
+      blockedRetry?.success !== false
+      || blockedRetry.noDispatch !== true
+      || blockedRetry.matchCount !== 2
+      || blockedRetry.recoveryRequired !== 'get_interactive_elements'
+    ) {
+      throw new Error(`upload retry was not blocked pending inspection: ${JSON.stringify(blockedRetry)}`);
+    }
+    if (agent._clearUploadSelectorRecoveryAfterInspection(
+      77,
+      'get_interactive_elements',
+      [],
+    )) {
+      throw new Error('empty inspection cleared upload recovery');
+    }
+    if (!agent._uploadSelectorRecoveryRequired.has(77)) {
+      throw new Error('empty inspection removed upload recovery state');
+    }
+    if (agent._clearUploadSelectorRecoveryAfterInspection(
+      77,
+      'get_interactive_elements',
+      [{ tag: 'input', type: 'file' }],
+    )) {
+      throw new Error('selector-less file-input inspection cleared upload recovery');
+    }
+    if (!agent._clearUploadSelectorRecoveryAfterInspection(
+      77,
+      'get_interactive_elements',
+      [{ tag: 'input', type: 'file', selector: '#shadow-upload' }],
+    )) {
+      throw new Error('fresh interactive-element inspection did not clear upload recovery');
+    }
+    agent._uploadSelectorRecoveryRequired.set(77, 2);
+    agent._clearRunLoopState(77);
+    if (agent._uploadSelectorRecoveryRequired.has(77)) {
+      throw new Error('Firefox run cleanup did not clear upload recovery');
     }
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
