@@ -16,8 +16,9 @@ Treat evidence in this order:
 5. A mutable Hugging Face model page or current local working tree.
 
 The local DeepSeek source snapshot is base commit
-`285a35a1c5cbff3251418013a0671b25ef78488a` plus uncommitted changes. It includes the final
-local inference/API and SGLang work, but it is not a clean source release. See
+`285a35a1c5cbff3251418013a0671b25ef78488a` plus working-tree changes. Its published
+SGLang runtime subset is synchronized to the reviewed public package revisions below,
+but the larger snapshot is not represented as one clean source release. See
 [`sources/SOURCE_SNAPSHOT.json`](sources/SOURCE_SNAPSHOT.json).
 
 ## 2. Immutable revision ledger
@@ -32,10 +33,11 @@ local inference/API and SGLang work, but it is not a clean source release. See
 | `poolside/Laguna-XS-2.1-NVFP4` source | `d32afde8b09af1539b49ff96ff5551c674485f8e` |
 | `moonshotai/Kimi-K2.6` MoonViT source | `7eb5002f6aadc958aed6a9177b7ed26bb94011bb` |
 | `HuggingFaceM4/the_cauldron` data source | `847a98a779b1652d65111daf20c972dfcd333605` |
-| DeepSeek public NVFP4 final | `e50f91a535bfad0e6fdd69a9a7920ed8b401cf65` |
-| DeepSeek public BF16 overlay final | `fdaec16d9847dc051e2fdcb5287655bf11c80063` |
-| Laguna public NVFP4 final | `a9d729b41ffbffe4f469c80f498de895a2711aa8` |
-| Laguna public BF16 final | `4d5ca0f788a4e0eeb4e5f8720d82a98008ec8346` |
+| DeepSeek public NVFP4 final | `12b653e63329ac3c20395f9aeeb1bb8264d2db8b` |
+| DeepSeek public BF16 overlay final | `60c441aa1c7386387c89ddaff703136395ad8d8b` |
+| Laguna public NVFP4 final | `ce108f0f3764a18a1f5f7d14ecefa90485ea6e52` |
+| Laguna public BF16 final | `b06063d00b73f7713ef1c28f8247eed488c73faf` |
+| Laguna NVFP4 SGLang integration candidate | `sglang-integration` at `740a6ccc05441a7ea0426c1d2536d5cd031adb86` |
 | Laguna private 100K archive | `4f5d6359867fa55315a2bec4b568901bfdeca5e5` |
 
 ## 3. Security and storage prerequisites
@@ -293,14 +295,18 @@ DeepSeek package rules:
 - BF16 is a source overlay and must say `complete_text_checkpoint: false`.
 - Stock SGLang is unsupported; the integration requires the pinned source patch.
 - The packaged native target is SGLang `/generate`, not OpenAI multimodal chat.
-- Final target-GPU validation is still required.
+- The pinned B200 profile passed loader/startup and two live image requests; text-only
+  parity, broad evaluation, and production validation are still required.
 
 Laguna package rules:
 
 - BF16 and NVFP4 repositories each contain their complete pinned text backbone plus tower
   and projector.
-- Both must say that the multimodal processor/serving integration is absent.
+- Both public main revisions must say that the multimodal processor/serving integration is
+  absent from main.
 - BF16 image inference, NVFP4 equivalence, and end-to-end image serving remain unvalidated.
+- A processor/server candidate exists only on the NVFP4 `sglang-integration` branch at
+  `740a6ccc05441a7ea0426c1d2536d5cd031adb86`; it has no recorded full-model or image smoke.
 
 The public model cards and adapter manifests copied into
 [`sources/published-artifacts`](sources/published-artifacts) are the templates for these
@@ -347,14 +353,33 @@ The prototype accepts one base64 `data:image/...` URL, rejects remote image URLs
 decoded images to 20 MiB, serializes generation, and buffers responses even when `stream`
 is requested. These local API semantics are separate from the public custom SGLang package.
 
-Laguna has no equivalent endpoint in the recorded artifact. Testing it requires first
-implementing and validating its tokenizer/image placeholder contract, processor, embedding
-scatter, and generation server. Do not point a generic text server at the projector and call
-that an image test.
+### Pinned B200 SGLang package smoke
+
+On 2026-08-04, the public DeepSeek integration was exercised on NVIDIA B200 with four-way
+tensor parallelism using SGLang source
+`fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1`. The server remained healthy across two
+consecutive requests to its native endpoint, `http://127.0.0.1:30000/generate`:
+
+| Probe | Image tokens | Total prompt tokens | Observed answer content | Elapsed |
+|---|---:|---:|---|---:|
+| Street/taxi scene | 294 | 308 | A man, yellow vest, and taxi were identified | 6.95 s |
+| Cat/person scene | 532 | — | A cat sitting on a person's shoulder was identified | 2.52 s |
+
+This is bounded evidence of end-to-end image serving, not a broad quality benchmark or a
+production-readiness claim. The extension accepts one image per request, requires CUDA
+image preprocessing, targets tensor parallelism, and does not support stock SGLang or the
+OpenAI `/v1/chat/completions` `image_url` path. Pipeline parallelism and encoder data
+parallelism remain blocked or unvalidated, and text-only parity remains a separate gate.
+
+Laguna has no validated equivalent endpoint in the recorded artifact. The NVFP4
+`sglang-integration` candidate is packaging evidence only until its tokenizer/image
+placeholder contract, processor, embedding scatter, loader, and generation path pass a
+real smoke test. Do not point a generic text server at the projector and call that an image
+test.
 
 ## 12. Completion checklist
 
-- [ ] Source, model, tower, data, and serving revisions are immutable.
+- [x] Published source, model, tower, and serving revisions are immutable.
 - [ ] Dataset manifest and component SHA-256 values match this record.
 - [ ] All feature-cache invariants pass.
 - [ ] Synthetic backward changes only projector gradients.
@@ -362,7 +387,10 @@ that an image test.
 - [ ] Overfit loss falls and timed calibration remains within the approved budget.
 - [ ] Final checkpoint, optimizer state where applicable, state file, log, and hashes are
   copied before the pod is stopped.
-- [ ] Public cards distinguish full checkpoints, overlays, and serving limitations.
-- [ ] BF16 reference image inference passes.
-- [ ] Quantized end-to-end image inference and regression gates pass before declaring either
-  NVFP4 package production ready.
+- [x] Public cards distinguish full checkpoints, overlays, and serving limitations.
+- [x] BF16 reference image inference passes.
+- [x] A bounded quantized DeepSeek B200 end-to-end image smoke passes.
+- [ ] Text-only parity, held-out evaluation, and broader regression gates pass before
+  declaring either NVFP4 package production ready.
+- [ ] The Laguna NVFP4 integration candidate passes a full-model loader and image smoke
+  before any serving change is promoted to a public main revision.

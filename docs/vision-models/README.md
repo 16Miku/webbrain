@@ -23,11 +23,11 @@ upstream multimodal model.
 
 | Model package | Role | Inspected revision |
 |---|---|---|
-| [DeepSeek V4 Flash Vision NVFP4](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4) | Complete pinned NVFP4 text package plus MoonViT tower, projector, and custom SGLang source | [`e50f91a535bfad0e6fdd69a9a7920ed8b401cf65`](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4/commit/e50f91a535bfad0e6fdd69a9a7920ed8b401cf65) |
-| [DeepSeek V4 Flash Vision BF16](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-BF16) | BF16 vision source overlay; deliberately not a full 291B BF16 text checkpoint | [`fdaec16d9847dc051e2fdcb5287655bf11c80063`](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-BF16/commit/fdaec16d9847dc051e2fdcb5287655bf11c80063) |
+| [DeepSeek V4 Flash Vision NVFP4](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4) | Complete pinned NVFP4 text package plus MoonViT tower, projector, and custom SGLang source | [`12b653e63329ac3c20395f9aeeb1bb8264d2db8b`](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4/commit/12b653e63329ac3c20395f9aeeb1bb8264d2db8b) |
+| [DeepSeek V4 Flash Vision BF16](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-BF16) | BF16 vision source overlay; deliberately not a full 291B BF16 text checkpoint | [`60c441aa1c7386387c89ddaff703136395ad8d8b`](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-BF16/commit/60c441aa1c7386387c89ddaff703136395ad8d8b) |
 | [DeepSeek V4 Flash Vision Training Archive](https://huggingface.co/webbrain-one/DeepSeek-V4-Flash-Vision-Training-Archive) | Private bring-up, calibration, recovery, and code archive; it predates the completed 100K run | Private, mutable access-controlled repository |
-| [Laguna XS 2.1 Vision NVFP4](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4) | Complete pinned NVFP4 text package plus MoonViT tower and projector | [`a9d729b41ffbffe4f469c80f498de895a2711aa8`](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4/commit/a9d729b41ffbffe4f469c80f498de895a2711aa8) |
-| [Laguna XS 2.1 Vision BF16](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-BF16) | Complete pinned BF16 text package plus MoonViT tower and projector | [`4d5ca0f788a4e0eeb4e5f8720d82a98008ec8346`](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-BF16/commit/4d5ca0f788a4e0eeb4e5f8720d82a98008ec8346) |
+| [Laguna XS 2.1 Vision NVFP4](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4) | Complete pinned NVFP4 text package plus MoonViT tower and projector | [`ce108f0f3764a18a1f5f7d14ecefa90485ea6e52`](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-NVFP4/commit/ce108f0f3764a18a1f5f7d14ecefa90485ea6e52) |
+| [Laguna XS 2.1 Vision BF16](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-BF16) | Complete pinned BF16 text package plus MoonViT tower and projector | [`b06063d00b73f7713ef1c28f8247eed488c73faf`](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-BF16/commit/b06063d00b73f7713ef1c28f8247eed488c73faf) |
 | [Laguna XS 2.1 Vision Projector 100K](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-Projector-100K) | Private full projector/optimizer checkpoint history and run evidence | [`4f5d6359867fa55315a2bec4b568901bfdeca5e5`](https://huggingface.co/webbrain-one/Laguna-XS-2.1-Vision-Projector-100K/commit/4f5d6359867fa55315a2bec4b568901bfdeca5e5) |
 
 ## What is complete
@@ -36,6 +36,8 @@ upstream multimodal model.
   their frozen BF16 MoonViT towers.
 - The DeepSeek adapter preserves the discrete token IDs required by DeepSeek V4's
   hash-routed experts while separately injecting projected image embeddings.
+- DeepSeek's pinned SGLang/Blackwell profile passed full NVFP4 loading and two consecutive
+  end-to-end image requests on NVIDIA B200 with four-way tensor parallelism.
 - The Laguna private archive retains the full 782-step projector and optimizer checkpoint
   history, its training log, final state, hashes, and two code snapshots.
 - Public NVFP4 and BF16 package layouts, source model revisions, component sizes, and
@@ -48,10 +50,12 @@ upstream multimodal model.
 - No standard vision benchmark suite is archived for either final package, so this report
   does not make quality claims beyond finite training, loss behavior, component integrity,
   and the explicitly listed inference gates.
-- Laguna's multimodal processor and serving integration are not packaged, and neither its
-  BF16 nor NVFP4 package is an end-to-end image endpoint today.
-- DeepSeek's custom SGLang package still requires a pinned source patch and final target-GPU
-  validation. It is not stock-SGLang compatible.
+- Laguna's main BF16 and NVFP4 revisions are not end-to-end image endpoints. An unvalidated
+  integration candidate exists only on the NVFP4 `sglang-integration` branch at
+  `740a6ccc05441a7ea0426c1d2536d5cd031adb86`; no loader or image smoke result is recorded.
+- DeepSeek's custom SGLang package still requires its pinned source patch and is not
+  stock-SGLang compatible. The B200 result is a bounded functional smoke test, not
+  text-only parity, a broad quality benchmark, or production validation.
 - The DeepSeek private archive does not contain a complete final 100K checkpoint history;
   the public final projector is reproducible as an artifact, but the full run telemetry is
   not as complete as Laguna's.

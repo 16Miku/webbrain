@@ -3,12 +3,13 @@ set -euo pipefail
 
 model_path="${DEEPSEEK_VISION_MODEL_PATH:-webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4}"
 model_revision="${DEEPSEEK_VISION_REVISION:-}"
-tensor_parallel_size="${DEEPSEEK_VISION_TP:-5}"
+tensor_parallel_size="${DEEPSEEK_VISION_TP:-4}"
 context_length="${DEEPSEEK_VISION_CONTEXT_LENGTH:-4096}"
-mem_fraction_static="${DEEPSEEK_VISION_MEM_FRACTION_STATIC:-0.92}"
+mem_fraction_static="${DEEPSEEK_VISION_MEM_FRACTION_STATIC:-0.85}"
 host="${DEEPSEEK_VISION_HOST:-127.0.0.1}"
 port="${DEEPSEEK_VISION_PORT:-30000}"
 model_python_path="${DEEPSEEK_VISION_PYTHONPATH:-}"
+kernel_profile="${DEEPSEEK_VISION_KERNEL_PROFILE:-blackwell-native}"
 
 if [[ -z "$model_python_path" ]]; then
   echo "Set DEEPSEEK_VISION_PYTHONPATH to MODEL_DIR/sglang_ext." >&2
@@ -32,14 +33,32 @@ launch_args=(
   --trust-remote-code
   --enable-multimodal
   --limit-mm-data-per-request '{"image":1}'
-  # Native NVFP4 kernels require Blackwell. SGLang v0.5.16 supports the
-  # Marlin W4A16 fallback for dense and MoE layers on SM80-SM90 GPUs
-  # (A100, Ada/L40S, H100, and H200).
-  --fp4-gemm-backend marlin
-  --moe-runner-backend marlin
   --disable-cuda-graph
   --skip-server-warmup
 )
+case "$kernel_profile" in
+  blackwell-native)
+    # Verified loader/startup profile for lmsysorg/sglang:deepseek-v4-blackwell
+    # on B200. flashinfer-python 0.6.14 currently pairs with the available
+    # flashinfer-cubin 0.6.13 wheel, so the upstream version check is disabled.
+    export FLASHINFER_DISABLE_VERSION_CHECK="${FLASHINFER_DISABLE_VERSION_CHECK:-1}"
+    blackwell_ld_prefix="/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib:/usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/lib/python3.12/dist-packages/tvm_ffi/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
+    export LD_LIBRARY_PATH="${blackwell_ld_prefix}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    launch_args+=(
+      --fp4-gemm-backend flashinfer_trtllm
+      --moe-runner-backend flashinfer_trtllm_routed
+    )
+    ;;
+  marlin)
+    launch_args+=(--fp4-gemm-backend marlin --moe-runner-backend marlin)
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unsupported DEEPSEEK_VISION_KERNEL_PROFILE: $kernel_profile" >&2
+    exit 2
+    ;;
+esac
 if [[ -n "$model_revision" ]]; then
   launch_args+=(--revision "$model_revision")
 fi

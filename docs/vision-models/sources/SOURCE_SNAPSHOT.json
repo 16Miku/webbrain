@@ -4,6 +4,30 @@
   "copy_path": "deepseek-v4-flash",
   "base_git_commit": "285a35a1c5cbff3251418013a0671b25ef78488a",
   "snapshot_kind": "base_commit_plus_working_tree_changes",
+  "published_sglang_sync": {
+    "synced_at": "2026-08-04",
+    "source_repository": "webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4",
+    "nvfp4": {
+      "fix_parent_revision": "e50f91a535bfad0e6fdd69a9a7920ed8b401cf65",
+      "working_fix_revision": "5a882728507b78fe355e0eddbb875834ac979d1a",
+      "final_public_revision": "12b653e63329ac3c20395f9aeeb1bb8264d2db8b"
+    },
+    "bf16": {
+      "fix_parent_revision": "fdaec16d9847dc051e2fdcb5287655bf11c80063",
+      "working_fix_revision": "6f3844c6920a69b63e722934e0eb54abd39fa0ba",
+      "final_public_revision": "60c441aa1c7386387c89ddaff703136395ad8d8b"
+    },
+    "synced_files": [
+      "docs/SGLANG_DEPLOYMENT.md",
+      "scripts/launch_sglang_moonvit.sh",
+      "sglang_ext/deepseek_vision_sglang/models/deepseek_v4_moonvit.py",
+      "sglang_ext/deepseek_vision_sglang/processors/moonvit.py",
+      "sglang_ext/deepseek_vision_sglang/routing.py",
+      "tests/test_moonvit_model.py",
+      "tests/test_moonvit_processor.py",
+      "tests/test_sglang_routing.py"
+    ]
+  },
   "modified_files": [
     "README.md",
     "scripts/runpod_verified_work_guard.sh",
@@ -25,6 +49,9 @@
     "src/deepseek_vision/vision_worker.py",
     "tests/test_api.py",
     "tests/test_inference.py",
+    "tests/test_moonvit_model.py",
+    "tests/test_moonvit_processor.py",
+    "tests/test_sglang_routing.py",
     "tests/test_sglang_extension.py",
     "tests/test_training.py",
     "uv.lock"
@@ -49,6 +76,7 @@
   "notes": [
     "The snapshot is not represented as a clean Git revision.",
     "The historical local README predates the completed 100K public artifacts.",
-    "Final artifact state is recorded in ARTIFACTS.json."
+    "Final artifact state is recorded in ARTIFACTS.json.",
+    "The eight-file SGLang runtime/test subset is synchronized byte-for-byte from the final public NVFP4 package revision."
   ]
 }

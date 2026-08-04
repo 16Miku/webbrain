@@ -12,7 +12,10 @@ from sglang.srt.multimodal.processors.base_processor import (
     MultimodalSpecialTokens,
 )
 from sglang.srt.multimodal.processors.kimi_common import KimiGridMMDataMixin
-from sglang.srt.multimodal.processors.kimi_k25 import KimiGPUProcessorWrapper
+from sglang.srt.multimodal.processors.kimi_k25 import (
+    KimiGPUProcessorWrapper,
+    navit_resize_config,
+)
 
 from deepseek_vision_sglang.models.deepseek_v4_moonvit import DeepseekV4ForCausalLM
 
@@ -33,6 +36,66 @@ def _spatial_pair(value) -> tuple[int, int]:
     if isinstance(value, (list, tuple)) and len(value) == 2:
         return int(value[0]), int(value[1])
     raise ValueError(f"expected a scalar or two-element spatial size, got {value!r}")
+
+
+class DeepseekMoonViTGPUProcessorWrapper(KimiGPUProcessorWrapper):
+    """Emit DeepSeek's out-of-vocabulary image sentinel without retokenizing it."""
+
+    def __init__(self, *args, image_token_id: int, **kwargs):
+        self._deepseek_image_token_id = int(image_token_id)
+        if "image_token_id" in inspect.signature(KimiGPUProcessorWrapper).parameters:
+            kwargs["image_token_id"] = self._deepseek_image_token_id
+        super().__init__(*args, **kwargs)
+
+    def _token_counts(self, images) -> list[int]:
+        counts: list[int] = []
+        for image in images:
+            shape = getattr(image, "shape", None)
+            if shape is not None and len(shape) >= 2:
+                width, height = int(shape[-1]), int(shape[-2])
+            else:
+                size = getattr(image, "size", None)
+                if not isinstance(size, (tuple, list)) or len(size) != 2:
+                    raise TypeError(f"unsupported image type for token counting: {type(image)}")
+                width, height = int(size[0]), int(size[1])
+            resize = navit_resize_config(
+                width,
+                height,
+                self._patch_size,
+                self._merge_kernel_size,
+                self._in_patch_limit,
+                self._patch_limit_on_one_side,
+                self._fixed_output_tokens,
+            )
+            counts.append(int(resize["num_tokens"]))
+        return counts
+
+    def _expanded_input_ids(self, text, counts: list[int]) -> list[int]:
+        prompt = text[0] if isinstance(text, list) else text
+        parts = prompt.split(self._image_token)
+        if len(parts) - 1 != len(counts):
+            raise ValueError("image placeholder count differs from decoded image count")
+        input_ids: list[int] = []
+        for index, part in enumerate(parts):
+            input_ids.extend(
+                self._hf_processor.tokenizer.encode(part, add_special_tokens=False)
+            )
+            if index < len(counts):
+                input_ids.extend([self._deepseek_image_token_id] * counts[index])
+        return input_ids
+
+    def _gpu_call(self, text, images):
+        output = super()._gpu_call(text, images)
+        expanded = self._expanded_input_ids(text, self._token_counts(images))
+        output["input_ids"] = output["input_ids"].new_tensor([expanded])
+        return output
+
+    def _cpu_call(self, text, images, **kwargs):
+        output = super()._cpu_call(text, images, **kwargs)
+        if images:
+            expanded = self._expanded_input_ids(text, self._token_counts(images))
+            output["input_ids"] = output["input_ids"].new_tensor([expanded])
+        return output
 
 
 class DeepseekV4MoonViTProcessor(KimiGridMMDataMixin, BaseMultimodalProcessor):
@@ -80,14 +143,24 @@ class DeepseekV4MoonViTProcessor(KimiGridMMDataMixin, BaseMultimodalProcessor):
             image_mean=media_cfg["image_mean"],
             image_std=media_cfg["image_std"],
         )
-        # image_token_id was added to KimiGPUProcessorWrapper after the
-        # v0.5.16 release container.  Supply it when supported, but retain the
-        # older constructor used by the immutable HF Endpoint image.
-        if wrapper_supports_token_id:
-            wrapper_kwargs["image_token_id"] = mm_tokens.image_token_id
-        processor = KimiGPUProcessorWrapper(tower_processor, **wrapper_kwargs)
+        processor = DeepseekMoonViTGPUProcessorWrapper(
+            tower_processor,
+            image_token_id=mm_tokens.image_token_id,
+            **wrapper_kwargs,
+        )
         super().__init__(hf_config, server_args, processor, *args, **kwargs)
         self.mm_tokens = mm_tokens
+
+    def resolve_image_token_counts(self, images) -> list[int]:
+        """Count GPU-decoded images without falling back to retokenization.
+
+        Kimi's remote ``media_tokens_calculator`` accepts PIL images but not the
+        CUDA tensors produced by SGLang's fast image loader.  Falling back to
+        decode+retokenize is incorrect here because ``<image>`` is not a native
+        DeepSeek token and expands into ordinary text tokens.  Reuse the exact
+        NaViT sizing math used by ``KimiGPUProcessorWrapper`` instead.
+        """
+        return self._processor._token_counts(images)
 
     def _encode_prompt(self, prompt: str, image_count: int) -> list[int]:
         if not isinstance(prompt, str):

@@ -26,13 +26,20 @@ The package is pinned to SGLang commit
 
 1. The external processor recognizes one literal `<image>` marker and uses the official,
    revision-pinned Kimi K2.6 processor for NaViT resize/normalization/patchification.
-2. SGLang's native MoonViT implementation loads `vision_tower.safetensors`.
-3. The native Kimi PatchMerger shape loads the trained `mm_projector.safetensors` and
+2. A DeepSeek-specific `KimiGPUProcessorWrapper` subclass counts decoded tensor images
+   with the same `navit_resize_config` and private sizing parameters as Kimi, then
+   overwrites both GPU and CPU processor `input_ids` with one DeepSeek out-of-vocabulary
+   sentinel per image token. Literal `<image>` is never retokenized as ordinary text.
+3. SGLang's native MoonViT implementation loads `vision_tower.safetensors`.
+4. The native Kimi PatchMerger shape loads the trained `mm_projector.safetensors` and
    emits 4096-d DeepSeek embeddings.
-4. Image positions are replaced in `inputs_embeds`.  A separate tensor preserves every
+5. Image positions are replaced in `inputs_embeds`.  A separate tensor preserves every
    text token ID and cycles the checked-in 64-ID route palette over image positions.
-5. The routing phase uses absolute image offsets, so chunked-prefill boundaries do not
+6. The routing phase uses absolute image offsets, so chunked-prefill boundaries do not
    restart the palette.
+7. Route substitution runs only in SGLang extend/prefill mode. SGLang retains
+   `mm_inputs` on decode batches after removing the extend-only offset metadata; decode
+   therefore returns a clone of the generated token IDs without reapplying image routes.
 
 Keeping the architecture string `DeepseekV4ForCausalLM` is intentional.  SGLang selects
 its V4 attention, memory-pool, and FP4 expert behavior from that exact name; the external
@@ -62,10 +69,63 @@ the diff.  The script does not contact Hugging Face.
 Use the exact SGLang commit documented above.  Set the model snapshot's extension path,
 then launch through the checked-in wrapper:
 
+### Pinned B200 startup profile
+
+The following matrix has passed dependency import, full NVFP4 shard loading, model
+initialization, server startup, and two live image-response smoke tests on B200. Treat
+this as a pinned, bounded smoke profile rather than a production-readiness claim.
+
+| Component | Verified value |
+|---|---|
+| Base image | `lmsysorg/sglang:deepseek-v4-blackwell` |
+| SGLang source | `fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1` installed with `pip install -e python` |
+| Python / CUDA | Python 3.12, CUDA 13 runtime paths from the base image |
+| PyTorch | `2.11.0+cu130` |
+| SGLang package | `0.0.0.dev1+gfdebc938f.d20260804` |
+| FlashInfer Python | `0.6.14` |
+| FlashInfer JIT cache | `0.6.14+cu130` |
+| FlashInfer cubin | `0.6.13` |
+| SGL DeepGEMM | `0.1.4.post1` |
+
+Inside that image, pin the source and replace the older bundled FlashInfer cubin before
+launching:
+
+```bash
+cd /workspace/sglang
+git fetch origin fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1
+git checkout fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1
+python3 -m pip install -e python
+python3 -m pip uninstall -y flashinfer-cubin
+python3 -m pip install \
+  --extra-index-url https://flashinfer.ai/whl/cu130 \
+  'flashinfer-jit-cache==0.6.14+cu130' \
+  'flashinfer-cubin==0.6.13'
+```
+
+The currently available Python and cubin wheels differ by one patch version. The launch
+wrapper sets `FLASHINFER_DISABLE_VERSION_CHECK=1` only for the explicit
+`blackwell-native` profile and prepends the CUDA 13, PyTorch, TVM-FFI, CUDA, and NVIDIA
+library paths used by the verified image. It selects the native Blackwell backends:
+
+```text
+--fp4-gemm-backend flashinfer_trtllm
+--moe-runner-backend flashinfer_trtllm_routed
+```
+
+Startup logs must identify the hybrid FP8+NVFP4 checkpoint, `DeepseekV4AttnBackend`, and
+the FlashInfer TRTLLM routed MoE backend. A Marlin log indicates that this native profile
+was not selected.
+
+### Wrapper launch
+
 ```bash
 export DEEPSEEK_VISION_MODEL_PATH=/models/deepseek-v4-flash-vision
 export DEEPSEEK_VISION_PYTHONPATH="$DEEPSEEK_VISION_MODEL_PATH/sglang_ext"
-export DEEPSEEK_VISION_TP=5
+export DEEPSEEK_VISION_KERNEL_PROFILE=blackwell-native
+export DEEPSEEK_VISION_TP=4
+export DEEPSEEK_VISION_CONTEXT_LENGTH=4096
+export DEEPSEEK_VISION_MEM_FRACTION_STATIC=0.85
+export DEEPSEEK_VISION_HOST=0.0.0.0
 scripts/launch_sglang_moonvit.sh
 ```
 
@@ -77,10 +137,16 @@ Hub model ID.  For example, the pre-merge smoke branch uses:
 export DEEPSEEK_VISION_REVISION=sglang-integration
 ```
 
-The wrapper verifies/applies the one-line SGLang patch before startup and exports all
+The wrapper verifies/applies the checked-in narrow SGLang patch set before startup and exports all
 three official external-registration variables.  It disables CUDA graphs for the first
 correctness gate.  Re-enable performance features only after text-only parity and image
 parity pass on the pinned build.
+
+The decode-lifecycle regression is CPU-only and should pass before a GPU launch:
+
+```bash
+python3 -m unittest tests/test_sglang_routing.py
+```
 
 ## First request
 
@@ -109,11 +175,25 @@ generation response:
 python scripts/smoke_sglang_moonvit.py /path/to/probe.jpg
 ```
 
+## Verified live image smoke
+
+On 2026-08-04, the pinned B200 profile above remained healthy across two consecutive
+image requests using the current processor, routing bridge, and packed projector output:
+
+| Probe | Image tokens | Total prompt tokens | Observed answer content | Elapsed |
+|---|---:|---:|---|---:|
+| Street/taxi scene | 294 | 308 | A man, yellow vest, and taxi were identified | 6.95 s |
+| Cat/person scene | 532 | — | A cat sitting on a person's shoulder was identified | 2.52 s |
+
+These are functional smoke results, not an accuracy benchmark or a production SLA.
+
 ## Required GPU validation
 
-The Mac can validate packaging, routing math, source anchors, and Python syntax, but it
-cannot instantiate the 168 GB NVFP4 checkpoint or CUDA kernels.  Before calling this
-deployment ready, run these gates on suitable NVIDIA hardware:
+CPU-only checks can validate packaging, routing math, source anchors, and Python syntax,
+but cannot instantiate the 168 GB NVFP4 checkpoint or CUDA kernels. The pinned profile
+has completed loader/startup and the two image requests above. Before making a broader
+production-readiness claim, complete the remaining parity and coverage gates on suitable
+NVIDIA hardware:
 
 1. `python -m deepseek_vision_sglang.patch --check` against the pinned SGLang install.
 2. Loader startup with the staged private model directory.
@@ -125,7 +205,8 @@ deployment ready, run these gates on suitable NVIDIA hardware:
 ## Deliberate limitations
 
 - Custom SGLang package plus a one-line source patch; no upstream support claim.
-- Exactly one image per request and at most 512 post-merge image tokens.
+- Exactly one image per request. Projector training targeted up to 512 merged image
+  tokens; the live serving smoke exercised a 532-image-token request.
 - CUDA image preprocessing only; CPU-only serving is not supported.
 - Tensor parallelism is intended; pipeline parallelism and encoder data parallelism are
   blocked/unvalidated.
