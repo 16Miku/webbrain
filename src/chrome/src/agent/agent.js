@@ -13592,17 +13592,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _userAttachmentNotice(attachments, options = {}) {
-    const names = (attachments || [])
-      .map(att => {
-        const name = this._sanitizeAttachmentName(att?.name);
-        return att?.attachmentId ? `${att.attachmentId} (${name})` : name;
-      })
-      .filter(Boolean)
-      .slice(0, 8);
-    const nameList = names.length ? ` Files: ${names.join(', ')}.` : '';
-    const hasUploadHandles = (attachments || []).some(att => att?.attachmentId);
+    const entries = (attachments || []).map(att => ({
+      attachmentId: String(att?.attachmentId || '').trim(),
+      name: this._sanitizeAttachmentName(att?.name),
+    }));
+    const names = entries.map(entry => entry.name).filter(Boolean).slice(0, 8);
+    const hiddenNameCount = Math.max(0, entries.length - names.length);
+    const nameList = names.length
+      ? ` Files: ${names.join(', ')}${hiddenNameCount ? `, +${hiddenNameCount} more` : ''}.`
+      : '';
+    // Display names stay bounded, but opaque upload IDs cannot be truncated:
+    // every accepted attachment must remain addressable by the model.
+    const uploadHandles = entries
+      .filter(entry => entry.attachmentId)
+      .map(entry => `${entry.attachmentId} (${entry.name})`);
+    const hasUploadHandles = uploadHandles.length > 0;
     const uploadGuidance = hasUploadHandles && options.canUseScratchpadTool !== false
-      ? ' To upload one of these exact files to the page, call upload_file with its attachmentId and the file-input selector. Do not open another picker, navigate to a separate upload route, or guess a local path.'
+      ? ` Available upload handles: ${uploadHandles.join(', ')}. To upload one of these exact files to the page, call upload_file with its attachmentId and the file-input selector. Do not open another picker, navigate to a separate upload route, or guess a local path.`
       : '';
     const hasTextAttachment = (attachments || []).some(att => att?.kind === 'text');
     const canUseScratchpadTool = options.canUseScratchpadTool !== false;

@@ -50176,6 +50176,33 @@ test('user attachment handles enforce the actual-byte upload limit', () => {
   }
 });
 
+test('user attachment notices expose every registered opaque upload handle', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 22031 : 22032;
+    const attachments = Array.from({ length: 10 }, (_, index) => ({
+      kind: 'image',
+      name: `file-${index + 1}.gif`,
+      dataUrl: 'data:image/gif;base64,R0lGODlh',
+    }));
+    const registered = agent._registerUserAttachments(tabId, attachments);
+    const notice = agent._userAttachmentNotice(registered, { canUseScratchpadTool: true });
+
+    assert.match(notice, /Files: file-1\.gif,[\s\S]*file-8\.gif, \+2 more\./, `${label} should keep the display-name summary bounded`);
+    for (let index = 1; index <= attachments.length; index += 1) {
+      assert.ok(
+        notice.includes(`attachment_${index} (file-${index}.gif)`),
+        `${label} should expose the handle/name mapping for accepted attachment ${index}`,
+      );
+      assert.equal(
+        agent._resolveUserAttachment(tabId, `attachment_${index}`).ok,
+        true,
+        `${label} should resolve every handle advertised in the notice`,
+      );
+    }
+  }
+});
+
 test('text attachment handles preserve original bytes and MIME while retaining legacy fallback', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
