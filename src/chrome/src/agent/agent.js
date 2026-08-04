@@ -16957,6 +16957,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               file: attachmentPayload.filename,
               attachmentId: String(args.attachmentId),
               attached: { name: attached.name, size: attached.size },
+              verified: false,
+              attachmentState: 'input_attached',
+              remoteStateVerified: false,
             };
           }
           return {
@@ -16964,7 +16967,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             file: attachmentPayload.filename,
             attachmentId: String(args.attachmentId),
             verified: false,
-            note: `The exact user-attached file bytes were dispatched, but the input is now empty or unreadable. An async uploader may already have consumed "${attachmentPayload.filename}"; verify it appears on the page before retrying.`,
+            attachmentState: 'page_consumed',
+            remoteStateVerified: false,
+            note: `The exact user-attached file bytes were dispatched, but the input is now empty or unreadable. An async uploader may already have consumed "${attachmentPayload.filename}"; this does not prove a remote upload or form submission, so verify it appears on the page before retrying.`,
           };
         }
 

@@ -50270,6 +50270,9 @@ test('Chrome upload_file injects the exact user attachment bytes without a path 
 
     assert.equal(result.success, true);
     assert.equal(result.attachmentId, attachmentId);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
     assert.deepEqual(injected, [{
       objectId: 'input-handle',
       payload: {
@@ -50798,7 +50801,10 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
       tabs: {
         async executeScript(_tabId, details) {
           scripts.push(details.code);
-          return [{ success: true, dispatched: true, file: 'demo.gif', size: 6 }];
+          if (details.code.includes('WebBrain file attachment settle probe')) {
+            return [{ attachmentState: 'input_attached' }];
+          }
+          return [{ success: true, dispatched: true, file: 'demo.gif', size: 6, attachmentState: 'input_attached' }];
         },
       },
     };
@@ -50816,9 +50822,13 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
 
     assert.equal(result.success, true);
     assert.equal(result.attachmentId, attachmentId);
-    assert.equal(scripts.length, 1);
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(result.verified, false);
+    assert.equal(result.remoteStateVerified, false);
+    assert.equal(scripts.length, 2);
     assert.match(scripts[0], /const b64 = "R0lGODlh"/);
     assert.match(scripts[0], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
+    assert.match(scripts[1], /WebBrain file attachment settle probe/);
     assert.equal(agent._pendingUploadPickers.size, 0, 'attachmentId must not open the WebBrain picker');
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
