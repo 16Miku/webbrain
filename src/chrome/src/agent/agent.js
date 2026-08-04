@@ -2202,7 +2202,7 @@ export class Agent extends LoopDetector {
     }
     if (!child || child.frameId !== 0) return null;
     const exactChildRect = async edge => {
-      const token = `wb-frame-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const token = `wb-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
       const parentResponse = chrome.tabs.sendMessage(tabId, {
         target: 'redaction-content',
         action: 'wait_for_exact_child_frame_rect',
@@ -2401,7 +2401,7 @@ export class Agent extends LoopDetector {
     };
     const focusedChildFrame = async (parentFrameId, children) => {
       for (const child of children) {
-        const token = `wb-focused-frame-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const token = `wb-focused-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
         const parentResponse = chrome.tabs.sendMessage(tabId, {
           target: 'content',
           action: 'wait_for_rich_text_toolbar_focused_child_frame',
@@ -17606,6 +17606,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.attach(tabId);
         await cdpClient.sendCommand(tabId, 'DOM.enable');
         await cdpClient.sendCommand(tabId, 'DOM.getDocument', { depth: 0 });
+        const selectorLiteral = JSON.stringify(String(args.selector || ''));
 
         const result = await cdpClient.evaluate(tabId, `
           (() => {
@@ -17627,7 +17628,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 if (host.shadowRoot) pierce(host.shadowRoot, sel);
               });
             };
-            pierce(document, '${args.selector.replace(/'/g, "\\'")}');
+            pierce(document, ${selectorLiteral});
             return results;
           })()
         `);

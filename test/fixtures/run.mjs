@@ -3935,7 +3935,21 @@ for (const browserKind of ['chrome', 'firefox']) {
 }
 
 test('Agent rich-text toolbar audit accepts visual family classification, rejects ordinary fields, and blocks the full toolbar scope', async () => {
+  const shadowQuerySource = Agent.prototype.executeTool.toString();
+  if (
+    !shadowQuerySource.includes("const selectorLiteral = JSON.stringify(String(args.selector || ''))")
+    || shadowQuerySource.includes("args.selector.replace(/'/g")
+  ) {
+    throw new Error('Chrome shadow_dom_query must embed selectors through a complete JSON string literal');
+  }
   for (const AgentClass of [Agent, FirefoxAgent]) {
+    const frameHandshakeSource = [
+      AgentClass.prototype._richTextToolbarFrameGeometryToTop,
+      AgentClass.prototype._probeRichTextToolbarFocusedTarget,
+    ].map(fn => fn.toString()).join('\n');
+    if (frameHandshakeSource.includes('Math.random(') || !frameHandshakeSource.includes('secureRandomBase36Token(12)')) {
+      throw new Error('rich-text frame handshakes must use cryptographically strong coordination tokens');
+    }
     if (
       AgentClass._richTextToolbarRecoveryScopeMatches(
         'https://example.test/editor?mode=edit#/document/A',
