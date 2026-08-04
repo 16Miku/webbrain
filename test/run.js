@@ -28224,19 +28224,48 @@ test('Chrome focused type_text marks missing focus as a pre-dispatch failure', a
   }
 });
 
-test('Chrome focused type_text dispatches only through the preflight-bound frame token', async () => {
+test('Chrome focused type_text binds the frame token while preserving trusted CDP insertion', async () => {
   const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
   const originalChrome = globalThis.chrome;
   const sent = [];
+  const commands = [];
   try {
     cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (tabId, method, params = {}) => {
+      commands.push({ tabId, method, params });
+      return {};
+    };
     globalThis.chrome = {
       ...(originalChrome || {}),
       tabs: {
         ...(originalChrome?.tabs || {}),
         sendMessage: async (tabId, message, options) => {
           sent.push({ tabId, message, options });
-          return { success: true, verified: true, dispatched: true };
+          if (message.action === 'prepare_rich_text_toolbar_focused_type') {
+            if (message.params?.token === 'stale-token') {
+              return {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                retryable: true,
+                error: 'focused target changed',
+              };
+            }
+            return {
+              success: true,
+              tag: 'DIV',
+              type: '',
+              name: 'rich-editor',
+              contentEditable: true,
+              beforeSignature: '0:cbf29ce484222325',
+              rect: { x: 10, y: 20, w: 300, h: 120 },
+            };
+          }
+          if (message.action === 'verify_rich_text_toolbar_focused_type') {
+            return { success: true, verified: true };
+          }
+          return { success: true };
         },
       },
     };
@@ -28245,13 +28274,36 @@ test('Chrome focused type_text dispatches only through the preflight-bound frame
       richTextToolbarFrameId: 7,
       richTextToolbarTargetToken: 'focused-token',
     });
-    const typed = sent.find(entry => entry.message?.action === 'type');
+    const prepared = sent.find(entry => entry.message?.action === 'prepare_rich_text_toolbar_focused_type');
+    const verified = sent.find(entry => entry.message?.action === 'verify_rich_text_toolbar_focused_type');
     assert.equal(result.verified, true);
-    assert.equal(typed?.tabId, 42);
-    assert.equal(typed?.options?.frameId, 7);
-    assert.equal(typed?.message?.params?.richTextToolbarTargetToken, 'focused-token');
+    assert.equal(result.method, 'cdp-insert-focused');
+    assert.equal(prepared?.tabId, 42);
+    assert.equal(prepared?.options?.frameId, 7);
+    assert.equal(prepared?.message?.params?.token, 'focused-token');
+    assert.equal(verified?.options?.frameId, 7);
+    assert.equal(verified?.message?.params?.token, 'focused-token');
+    assert.equal(sent.some(entry => entry.message?.action === 'type'), false, 'bound focus must not use synthetic content typing');
+    assert.deepEqual(
+      commands.find(command => command.method === 'Input.insertText'),
+      { tabId: 42, method: 'Input.insertText', params: { text: 'hello' } },
+    );
+    const dispatchedBeforeStaleAttempt = commands.filter(command => command.method.startsWith('Input.')).length;
+    const staleResult = await agent.executeTool(42, 'type_text', { text: 'blocked' }, null, {
+      richTextToolbarFrameId: 7,
+      richTextToolbarTargetToken: 'stale-token',
+    });
+    assert.equal(staleResult.success, false);
+    assert.equal(staleResult.dispatched, false);
+    assert.equal(staleResult.noDispatch, true);
+    assert.equal(
+      commands.filter(command => command.method.startsWith('Input.')).length,
+      dispatchedBeforeStaleAttempt,
+      'a stale focused target must fail before any trusted input dispatch',
+    );
   } finally {
     cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
     globalThis.chrome = originalChrome;
   }
 });

@@ -4007,6 +4007,135 @@
       && expected.pageUrl === location.href;
   }
 
+  function _richTextToolbarValueSignature(value) {
+    const text = String(value || '');
+    let hash = 14695981039346656037n;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= BigInt(text.charCodeAt(i));
+      hash = BigInt.asUintN(64, hash * 1099511628211n);
+    }
+    return `${text.length}:${hash.toString(16)}`;
+  }
+
+  function _prepareRichTextToolbarFocusedType(params = {}) {
+    const token = String(params.token || '');
+    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+    const el = record?.el;
+    const active = _deepActiveElement();
+    const tag = String(el?.tagName || '').toUpperCase();
+    const typeable = el?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag);
+    const valid = !!record
+      && !!el?.isConnected
+      && record.pageUrl === location.href
+      && active === el
+      && typeable;
+    if (!valid) {
+      if (record?.timer) clearTimeout(record.timer);
+      if (token) _richTextToolbarRetryTargets.delete(token);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'The focused target changed after the rich-text toolbar safety preflight. Focus the intended field again and retry.',
+      };
+    }
+    record.prepared = true;
+    const rect = el.getBoundingClientRect();
+    const response = {
+      success: true,
+      tag,
+      type: String(el.getAttribute?.('type') || '').toLowerCase(),
+      name: el.getAttribute?.('name') || el.id || el.getAttribute?.('aria-label') || '',
+      contentEditable: el.isContentEditable === true,
+      rect: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        w: Math.round(rect.width),
+        h: Math.round(rect.height),
+      },
+    };
+    if (tag === 'SELECT') {
+      const needle = String(params.text || '').trim();
+      const options = Array.from(el.options || []);
+      const match = options.find(option => option.value === needle)
+        || options.find(option => String(option.text || '').trim() === needle)
+        || options.find(option => String(option.text || '').trim().toLowerCase().includes(needle.toLowerCase()));
+      if (!match) {
+        if (record.timer) clearTimeout(record.timer);
+        _richTextToolbarRetryTargets.delete(token);
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          error: `No option matching "${needle}". Available: ${options.map(option => String(option.text || '').trim()).join(', ')}`,
+        };
+      }
+      response.selectInfo = {
+        currentIndex: el.selectedIndex,
+        targetIndex: match.index,
+        targetText: String(match.text || '').trim(),
+        targetValue: match.value,
+      };
+    } else {
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      response.beforeSignature = _richTextToolbarValueSignature(value);
+    }
+    return response;
+  }
+
+  async function _verifyRichTextToolbarFocusedType(params = {}) {
+    const token = String(params.token || '');
+    const record = token ? _richTextToolbarRetryTargets.get(token) : null;
+    if (record?.timer) clearTimeout(record.timer);
+    if (token) _richTextToolbarRetryTargets.delete(token);
+    const el = record?.el;
+    if (!record?.prepared || !el?.isConnected || record.pageUrl !== location.href) {
+      return { success: true, verified: false };
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    if (!el.isConnected || record.pageUrl !== location.href) return { success: true, verified: false };
+    const tag = String(el.tagName || '').toUpperCase();
+    let verified = false;
+    if (tag === 'SELECT') {
+      const option = el.options?.[el.selectedIndex];
+      verified = String(el.value || '') === String(params.targetValue || '')
+        || String(option?.text || '').trim() === String(params.targetText || '');
+    } else {
+      const expected = String(params.text || '');
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      if (params.clear === true) {
+        verified = value === expected;
+      } else {
+        const beforeSignature = String(params.beforeSignature || '');
+        const separator = beforeSignature.indexOf(':');
+        const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+        if (expected && Number.isInteger(beforeLength) && value.length === beforeLength + expected.length) {
+          let index = value.indexOf(expected);
+          while (index >= 0) {
+            const withoutInsertion = value.slice(0, index) + value.slice(index + expected.length);
+            if (_richTextToolbarValueSignature(withoutInsertion) === beforeSignature) {
+              verified = true;
+              break;
+            }
+            index = value.indexOf(expected, index + 1);
+          }
+        }
+      }
+    }
+    const rect = el.getBoundingClientRect();
+    return {
+      success: true,
+      verified,
+      rect: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        w: Math.round(rect.width),
+        h: Math.round(rect.height),
+      },
+    };
+  }
+
   function _releaseRichTextToolbarRetryTarget(params = {}) {
     const token = String(params.token || '');
     const record = token ? _richTextToolbarRetryTargets.get(token) : null;
@@ -4209,6 +4338,8 @@
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_rich_text_toolbar_retry_target': () => _releaseRichTextToolbarRetryTarget(msg.params || {}),
+      'prepare_rich_text_toolbar_focused_type': () => _prepareRichTextToolbarFocusedType(msg.params || {}),
+      'verify_rich_text_toolbar_focused_type': () => _verifyRichTextToolbarFocusedType(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),

@@ -19198,29 +19198,135 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const frameId = Number.isInteger(executionContext?.richTextToolbarFrameId)
             ? executionContext.richTextToolbarFrameId
             : 0;
+          const sendFocusedTarget = (action, params = {}) => chrome.tabs.sendMessage(tabId, {
+            target: 'content',
+            action,
+            params: { token: focusedTargetToken, ...params },
+          }, { frameId });
+          let tokenConsumed = false;
           try {
-            const response = await chrome.tabs.sendMessage(tabId, {
-              target: 'content',
-              action: 'type',
-              params: {
-                ...args,
-                richTextToolbarTargetToken: focusedTargetToken,
+            const prepared = await sendFocusedTarget('prepare_rich_text_toolbar_focused_type', {
+              text: args.text || '',
+            });
+            if (!prepared?.success) {
+              tokenConsumed = !!prepared;
+              return prepared || {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                error: 'Focused typing target could not be prepared.',
+              };
+            }
+            this._showAgentTarget(tabId, prepared.rect, 'type_text_focused');
+
+            if (prepared.tag === 'SELECT') {
+              const selectInfo = prepared.selectInfo;
+              if (!selectInfo) {
+                return {
+                  success: false,
+                  dispatched: false,
+                  noDispatch: true,
+                  error: 'Focused select target could not be prepared.',
+                };
+              }
+              dispatched = true;
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+              });
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+              });
+              const delta = selectInfo.targetIndex - selectInfo.currentIndex;
+              const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
+              const arrowVK = delta > 0 ? 40 : 38;
+              for (let i = 0; i < Math.abs(delta); i += 1) {
+                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                  type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+                });
+                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                  type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+                });
+              }
+              const verification = await sendFocusedTarget('verify_rich_text_toolbar_focused_type', {
+                targetText: selectInfo.targetText,
+                targetValue: selectInfo.targetValue,
+              });
+              if (!verification || verification.success !== true) {
+                throw new Error('Focused select verification returned no response.');
+              }
+              tokenConsumed = true;
+              return {
+                success: true,
+                verified: verification?.verified === true,
+                method: 'select-keyboard',
+                selectedText: selectInfo.targetText,
+                selectedValue: selectInfo.targetValue,
+                keyPresses: Math.abs(delta),
+                direction: delta > 0 ? 'down' : 'up',
+              };
+            }
+
+            if (args.clear) {
+              dispatched = true;
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+              });
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+              });
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+              });
+              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+              });
+            }
+            dispatched = true;
+            await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+            const verification = await sendFocusedTarget('verify_rich_text_toolbar_focused_type', {
+              text: args.text || '',
+              clear: !!args.clear,
+              beforeSignature: prepared.beforeSignature || '',
+            });
+            if (!verification || verification.success !== true) {
+              throw new Error('Focused typing verification returned no response.');
+            }
+            tokenConsumed = true;
+
+            const fieldIdent = `focused:${prepared.tag}|${prepared.name}`;
+            const prev = this._lastTypeFieldIdent?.get(tabId);
+            let warning;
+            if (prev === fieldIdent) {
+              warning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
+            }
+            if (!this._lastTypeFieldIdent) this._lastTypeFieldIdent = new Map();
+            this._lastTypeFieldIdent.set(tabId, fieldIdent);
+            return {
+              success: true,
+              verified: verification?.verified === true,
+              method: 'cdp-insert-focused',
+              text: (args.text || '').slice(0, 100),
+              focusedField: {
+                tag: prepared.tag,
+                type: prepared.type,
+                name: prepared.name,
               },
-            }, { frameId });
-            if (response?.success) this._showAgentTarget(tabId, response.rect || response, 'type_text_focused');
-            return response || {
-              success: false,
-              dispatched: false,
-              noDispatch: true,
-              error: 'Focused typing returned no response.',
+              ...(warning ? { warning } : {}),
             };
           } catch (error) {
             return {
               success: false,
-              dispatched: true,
-              retryable: true,
-              error: `Focused typing response became uncertain: ${error?.message || String(error)}`,
+              dispatched,
+              ...(dispatched ? {} : { noDispatch: true }),
+              retryable: !dispatched,
+              error: dispatched
+                ? `Focused typing outcome became uncertain: ${error?.message || String(error)}`
+                : `Focused typing was not dispatched: ${error?.message || String(error)}`,
             };
+          } finally {
+            if (!tokenConsumed) {
+              await sendFocusedTarget('release_rich_text_toolbar_retry_target').catch(() => null);
+            }
           }
         }
         if (args.selector) {

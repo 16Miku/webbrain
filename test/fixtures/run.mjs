@@ -3618,10 +3618,15 @@ for (const browserKind of ['chrome', 'firefox']) {
       document.querySelector('#shadow-toolbar-host').shadowRoot
         .querySelector('#shadow-family-input').focus();
     });
-    const staleFocusedType = await call(page, 'type', {
-      text: 'SHOULD_NOT_APPLY',
-      richTextToolbarTargetToken: focusedProbe.selectorTargetToken,
-    });
+    const staleFocusedType = browserKind === 'chrome'
+      ? await call(page, 'prepare_rich_text_toolbar_focused_type', {
+          token: focusedProbe.selectorTargetToken,
+          text: 'SHOULD_NOT_APPLY',
+        })
+      : await call(page, 'type', {
+          text: 'SHOULD_NOT_APPLY',
+          richTextToolbarTargetToken: focusedProbe.selectorTargetToken,
+        });
     if (staleFocusedType?.success !== false || staleFocusedType?.dispatched !== false || staleFocusedType?.noDispatch !== true) {
       throw new Error(`focused typing must fail closed after focus moves from the preflight element: ${JSON.stringify(staleFocusedType)}`);
     }
@@ -3636,6 +3641,58 @@ for (const browserKind of ['chrome', 'firefox']) {
       || !shadowFocusedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
     ) {
       throw new Error(`expected deeply focused shadow toolbar target, got: ${JSON.stringify(shadowFocusedProbe)}`);
+    }
+    if (browserKind === 'chrome') {
+      const preparedFocusedType = await call(page, 'prepare_rich_text_toolbar_focused_type', {
+        token: shadowFocusedProbe.selectorTargetToken,
+        text: 'Paris',
+      });
+      if (
+        preparedFocusedType?.success !== true
+        || !/^\d+:[0-9a-f]+$/.test(preparedFocusedType.beforeSignature || '')
+        || Object.hasOwn(preparedFocusedType, 'value')
+      ) {
+        throw new Error(`trusted focused typing must prepare an exact secret-free target: ${JSON.stringify(preparedFocusedType)}`);
+      }
+      const unmodifiedVerification = await call(page, 'verify_rich_text_toolbar_focused_type', {
+        token: shadowFocusedProbe.selectorTargetToken,
+        text: 'Paris',
+        clear: false,
+        beforeSignature: preparedFocusedType.beforeSignature,
+      });
+      if (unmodifiedVerification?.success !== true || unmodifiedVerification.verified !== false) {
+        throw new Error(`focused verification must reject an unmodified target: ${JSON.stringify(unmodifiedVerification)}`);
+      }
+      const insertedProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'type_text',
+        args: { text: 'Paris' },
+      });
+      const insertedPreparation = await call(page, 'prepare_rich_text_toolbar_focused_type', {
+        token: insertedProbe.selectorTargetToken,
+        text: 'Paris',
+      });
+      await page.evaluate(() => {
+        const input = document.querySelector('#shadow-toolbar-host').shadowRoot
+          .querySelector('#shadow-family-input');
+        input.value += 'Paris';
+      });
+      const insertedVerification = await call(page, 'verify_rich_text_toolbar_focused_type', {
+        token: insertedProbe.selectorTargetToken,
+        text: 'Paris',
+        clear: false,
+        beforeSignature: insertedPreparation.beforeSignature,
+      });
+      if (insertedPreparation?.success !== true || insertedVerification?.verified !== true) {
+        throw new Error(`focused verification must accept the exact requested insertion: ${JSON.stringify({ insertedPreparation, insertedVerification })}`);
+      }
+      await page.evaluate(() => {
+        document.querySelector('#shadow-toolbar-host').shadowRoot
+          .querySelector('#shadow-family-input').value = 'Default';
+      });
+    } else {
+      await call(page, 'release_rich_text_toolbar_retry_target', {
+        token: shadowFocusedProbe.selectorTargetToken,
+      });
     }
 
     const editorPoint = await page.evaluate(() => {
