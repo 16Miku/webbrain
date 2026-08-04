@@ -768,6 +768,12 @@ const { buildRecommendedActions: buildRecommendedActionsCh, shouldShowRecommende
 const { buildRecommendedActions: buildRecommendedActionsFx, shouldShowRecommendedActions: shouldShowRecommendedActionsFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/ui/recommended-actions.js').replace(/\\/g, '/')
 );
+const { t: translateRecommendedActionCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/ui/i18n.js').replace(/\\/g, '/')
+);
+const { t: translateRecommendedActionFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/ui/i18n.js').replace(/\\/g, '/')
+);
 const {
   recordSuccessfulTask: recordStoreReviewSuccessCh,
   shouldShowPrompt: shouldShowStoreReviewCh,
@@ -10146,9 +10152,8 @@ for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActio
   });
 }
 
-test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go plans', () => {
-  const exactPost = 'Introducing WebBrain — an open-source AI browser agent that lives in your browser. Chat with any page, automate multi-step workflows, and bring your own LLM. Extensible by design. Try it: https://webbrain.one';
-  const expectedTweetSteps = [
+test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
+  const expectedTweetSteps = (exactPost) => [
     'Open https://x.com/compose/post in the current tab through the visible browser UI.',
     'Wait for the visible X composer to become stable before entering text.',
     `Enter this exact reviewed text in the visible X composer without translating, rewriting, or adding anything: ${JSON.stringify(exactPost)}`,
@@ -10156,7 +10161,7 @@ test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go p
     'Treat an unverified or no-progress Post click as not submitted; keep the composer open and recover instead of dismissing it.',
     'Verify the new tweet appears, then report its URL when available.',
   ];
-  const expectedLinkedInSteps = [
+  const expectedLinkedInSteps = (exactPost) => [
     'Open https://www.linkedin.com/feed/ in the current tab through the visible browser UI.',
     'Select Start a post to open LinkedIn\'s visible composer.',
     `Enter this exact reviewed text without translating, rewriting, or adding anything: ${JSON.stringify(exactPost)}`,
@@ -10169,29 +10174,33 @@ test('WebBrain promotion has explicit X and LinkedIn variants with ready-to-go p
     { url: 'https://mail.google.com/mail/u/0/#inbox/FMfc123', title: 'Gmail - Project update', text: 'From Ada Subject Project update Reply' },
   ];
 
-  for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
+  for (const [buildRecommendedActions, translate] of [
+    [buildRecommendedActionsCh, translateRecommendedActionCh],
+    [buildRecommendedActionsFx, translateRecommendedActionFx],
+  ]) {
+    const exactPost = translate('sp.recommended.tweet.text');
     for (const pageInfo of pages) {
       const tweetActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'x' });
       const tweet = tweetActions.find((action) => action.id === 'tweet-webbrain');
-      assert.equal(tweet?.label, 'Tweet about WebBrain');
+      assert.equal(tweet?.label, translate('sp.recommended.tweet.label'));
       assert.equal(tweet?.mode, 'act');
-      assert.match(tweet?.prompt || '', /visible X interface[\s\S]*without changing it/);
-      assert.ok(tweet?.prompt?.includes(exactPost), 'visible action prompt should carry the reviewed English post verbatim');
+      assert.equal(tweet?.prompt, translate('sp.recommended.tweet.prompt', { post: exactPost }));
+      assert.ok(tweet?.prompt?.includes(exactPost), 'visible action prompt should carry the reviewed localized post verbatim');
       assert.equal(tweet?.runOptions?.skipPlanner, true);
       assert.equal(tweet?.runOptions?.tool, 'navigate');
       assert.equal(tweet?.runOptions?.summary, 'Publish the reviewed localized WebBrain post exactly as supplied.');
-      assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps);
+      assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps(exactPost));
 
       const linkedinActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'linkedin' });
       const linkedin = linkedinActions.find((action) => action.id === 'post-webbrain-linkedin');
-      assert.equal(linkedin?.label, 'Post about WebBrain');
+      assert.equal(linkedin?.label, translate('sp.recommended.linkedin.label'));
       assert.equal(linkedin?.mode, 'act');
-      assert.match(linkedin?.prompt || '', /visible LinkedIn interface[\s\S]*without changing it/);
-      assert.ok(linkedin?.prompt?.includes(exactPost), 'LinkedIn prompt should carry the reviewed English post verbatim');
+      assert.equal(linkedin?.prompt, translate('sp.recommended.linkedin.prompt', { post: exactPost }));
+      assert.ok(linkedin?.prompt?.includes(exactPost), 'LinkedIn prompt should carry the reviewed localized post verbatim');
       assert.equal(linkedin?.runOptions?.skipPlanner, true);
       assert.equal(linkedin?.runOptions?.tool, 'navigate');
       assert.equal(linkedin?.runOptions?.summary, 'Publish the reviewed localized WebBrain post on LinkedIn exactly as supplied.');
-      assert.deepEqual(linkedin?.runOptions?.steps, expectedLinkedInSteps);
+      assert.deepEqual(linkedin?.runOptions?.steps, expectedLinkedInSteps(exactPost));
       assert.equal(linkedinActions.some((action) => action.id === 'tweet-webbrain'), false, 'one cohort should render only one promotion');
     }
 
