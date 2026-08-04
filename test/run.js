@@ -28365,6 +28365,147 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
   }
 });
 
+test('pending toolbar recovery binds and dispatches screenshot clicks at one canonical CSS target', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const pageUrl = 'https://example.test/editor';
+  const imagePoint = { x: 784, y: 441 };
+  const cssPoint = { x: 1280, y: 720 };
+
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    let activeCase = null;
+    const elementAt = (x, y, dispatch = false) => {
+      if (Number(x) === cssPoint.x && Number(y) === cssPoint.y) {
+        return dispatch && activeCase?.replaceBeforeDispatch ? 'replacement-button' : 'intended-editor';
+      }
+      if (Number(x) === imagePoint.x && Number(y) === imagePoint.y) return 'image-coordinate-neighbor';
+      return 'other-target';
+    };
+    const sendMessage = async (_tabId, message) => {
+      if (message.action === 'probe_rich_text_toolbar_retry_target') {
+        activeCase.probeArgs = { ...message.params.args };
+        activeCase.boundTarget = elementAt(activeCase.probeArgs.x, activeCase.probeArgs.y);
+        return {
+          resolved: true,
+          refId: activeCase.boundTarget === 'intended-editor' ? 'ref_editor' : 'ref_neighbor',
+          documentToken: 'doc-a',
+          refScopeUrl: pageUrl,
+          rect: { x: cssPoint.x - 20, y: cssPoint.y - 10, w: 40, h: 20 },
+          fieldMeta: { tag: 'button', type: 'button' },
+          toolbarContext: false,
+          dispatchBinding: { token: `binding:${activeCase.boundTarget}` },
+        };
+      }
+      if (message.action === 'click') {
+        activeCase.dispatchArgs = { ...message.params };
+        const dispatchTarget = elementAt(message.params.x, message.params.y, true);
+        const boundTarget = String(message.params.dispatchBinding?.token || '').replace(/^binding:/, '');
+        if (dispatchTarget !== boundTarget) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+          };
+        }
+        return { success: true, dispatched: true, target: dispatchTarget };
+      }
+      throw new Error(`${label}: unexpected content message ${message.action}`);
+    };
+    const tabs = {
+      get: async () => ({ url: pageUrl }),
+      sendMessage,
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 4301 : 4302;
+      agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+      agent._richTextToolbarGuard.restore(tabId, {
+        recoveryObligations: [{
+          toolName: 'set_field',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'Document prose',
+          blockedClear: true,
+          blockedToolbarRef: 'ref_toolbar',
+          associatedEditorRef: 'ref_editor',
+          documentToken: 'doc-a',
+          pageUrl,
+          blockedRefs: ['ref_toolbar'],
+        }],
+      });
+      agent._isPdfTab = async () => false;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      if (label === 'chrome') {
+        agent._currentUrl = async () => pageUrl;
+        agent._clickProgressSnapshot = async () => '';
+        agent._annotateClickProgress = async () => {};
+      }
+      const mapScreenshotCoords = agent._screenshotClickCoords.bind(agent);
+      agent._screenshotClickCoords = (...callArgs) => {
+        activeCase.mappingCalls += 1;
+        return mapScreenshotCoords(...callArgs);
+      };
+
+      const executeCase = async ({ args, replaceBeforeDispatch = false }) => {
+        activeCase = {
+          replaceBeforeDispatch,
+          mappingCalls: 0,
+          probeArgs: null,
+          dispatchArgs: null,
+          boundTarget: null,
+        };
+        const result = await agent.executeTool(tabId, 'click', args);
+        assert.equal(activeCase.mappingCalls, 1, `${label}: click coordinates must be canonicalized exactly once`);
+        assert.deepEqual(
+          [activeCase.probeArgs?.x, activeCase.probeArgs?.y],
+          [activeCase.dispatchArgs?.x, activeCase.dispatchArgs?.y],
+          `${label}: preflight and dispatch must receive the same CSS point`,
+        );
+        return result;
+      };
+
+      const screenshotClick = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+      });
+      assert.equal(screenshotClick.success, true, `${label}: stable canonical target should dispatch`);
+      assert.equal(screenshotClick.target, 'intended-editor');
+      assert.deepEqual(
+        [activeCase.probeArgs.x, activeCase.probeArgs.y],
+        [cssPoint.x, cssPoint.y],
+        `${label}: downscaled image coordinates must map before toolbar preflight`,
+      );
+      assert.equal(activeCase.boundTarget, 'intended-editor');
+
+      const changedTarget = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+        replaceBeforeDispatch: true,
+      });
+      assert.equal(changedTarget.success, false, `${label}: a genuinely changed canonical target must fail closed`);
+      assert.equal(changedTarget.dispatched, false);
+      assert.equal(changedTarget.noDispatch, true);
+      assert.match(changedTarget.error, /target changed after the rich-text toolbar safety preflight/);
+
+      const cssClick = await executeCase({ args: { ...cssPoint } });
+      assert.equal(cssClick.success, true, `${label}: ordinary CSS-coordinate clicks must remain unchanged`);
+      assert.deepEqual([activeCase.probeArgs.x, activeCase.probeArgs.y], [cssPoint.x, cssPoint.y]);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
 test('rich-text toolbar obligation survives a paused run and trusted continuation only', async () => {
   for (const [label, AgentClass] of [
     ['chrome', AgentCh],

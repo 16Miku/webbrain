@@ -15134,6 +15134,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    // Canonicalize coordinate clicks before toolbar recovery probes them.
+    // The preflight binding and the eventual dispatch must resolve the same
+    // CSS-pixel point, especially when the model clicked a downscaled image.
+    if (name === 'click' && args?.x != null && args?.y != null) {
+      const xn = Number(args.x);
+      const yn = Number(args.y);
+      if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
+        return {
+          success: false,
+          dispatched: false,
+          error: this._normalizedCoordinateRecoveryError(tabId, args),
+        };
+      }
+      const mapped = this._screenshotClickCoords(tabId, args);
+      if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
+    }
     const richTextToolbarBlock = await this._richTextToolbarToolBlock(
       tabId,
       name,
@@ -17671,20 +17687,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // document.querySelector and el.click(), which fails on Web Components,
     // closed shadow roots, and many React/Vue handlers.
     if (name === 'click' && dispatchBinding?.token) {
-      if (args.x != null && args.y != null) {
-        const xn = Number(args.x);
-        const yn = Number(args.y);
-        if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
-          await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
-          return {
-            success: false,
-            dispatched: false,
-            error: this._normalizedCoordinateRecoveryError(tabId, args),
-          };
-        }
-        const mapped = this._screenshotClickCoords(tabId, args);
-        if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
-      }
       const duplicateSubmit = await guardRecentSubmitClick(
         this._recentSubmitClicks,
         tabId,
@@ -17702,30 +17704,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'click' && !dispatchBinding?.token) {
       try {
-        // ── Normalized-coord guard ──────────────────────────────────────
-        // Some models pass {x: 0.91, y: 0.33} thinking coords are
-        // normalized (0–1 fractions of the viewport). The click tool takes
-        // CSS pixels — so 0.91 hits the very top-left of the page, the
-        // click misses, the model retries the same values, and we burn 8
-        // attempts before the coord-loop detector trips. Reject up front
-        // so the model pivots to click_ax / click({text}) on the first try.
-        if (args.x != null && args.y != null) {
-          const xn = Number(args.x);
-          const yn = Number(args.y);
-          if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
-            return {
-              success: false,
-              dispatched: false,
-              error: this._normalizedCoordinateRecoveryError(tabId, args),
-            };
-          }
-          // from_screenshot: coords were read off the most recent screenshot;
-          // when that capture was downscaled for maxImageDimension, convert
-          // image pixels → CSS pixels here so the model never does the math.
-          const mapped = this._screenshotClickCoords(tabId, args);
-          if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
-        }
-
         await cdpClient.attach(tabId);
 
         const duplicateSubmit = await guardRecentSubmitClick(

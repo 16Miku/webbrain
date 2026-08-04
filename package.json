@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/run.js && node test/security/injection-corpus.mjs",
+    "test": "npm run test:toolbar-guard && node test/run.js && npm run test:security",
     "test:security": "node test/security/injection-corpus.mjs",
     "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
     "test:injection-bench": "node test/llm/run-scenarios.mjs --category prompt-injection",
