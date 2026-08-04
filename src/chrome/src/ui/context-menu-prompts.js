@@ -3,7 +3,7 @@
  * The Chrome and Firefox copies of this file are identical — edit both together.
  */
 
-import { SELECTION_ONLY_SOURCE_GROUNDING } from '../context-menu-storage.js';
+import { SELECTION_ONLY_SOURCE_GROUNDING, normalizeSelectionAction } from '../context-menu-storage.js';
 
 export function createContextMenuPromptHandler({
   getCurrentTabId,
@@ -36,7 +36,16 @@ export function createContextMenuPromptHandler({
     const sourceGrounding = payload?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
       ? SELECTION_ONLY_SOURCE_GROUNDING
       : null;
-    return { id, tabId, text, ...(sourceGrounding ? { sourceGrounding } : {}) };
+    // Only a source-bound prompt has a shortcut action to report; anything
+    // else would be an unattributed id riding into the run options.
+    const selectionAction = sourceGrounding ? normalizeSelectionAction(payload?.selectionAction) : '';
+    return {
+      id,
+      tabId,
+      text,
+      ...(sourceGrounding ? { sourceGrounding } : {}),
+      ...(selectionAction ? { selectionAction } : {}),
+    };
   }
 
   function contextMenuPromptMatchesCurrentTab(payload) {
@@ -206,6 +215,7 @@ export function createContextMenuPromptHandler({
           rejectedClaim = result || { reason: 'claim-lost' };
         },
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
+        ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
       });
     } catch { /* storage recovery can retry the prompt later */ }
     runningContextMenuPromptId = null;

@@ -13281,7 +13281,7 @@ test('NYTimes runs preactivate the adapter-scoped fallback without weakening ski
   }
 });
 
-test('mail runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
+test('mail and selected-text runs preactivate the Humanizer skill without widening it to other sites or Compact', () => {
   for (const [label, prefix, AgentClass] of [
     ['chrome', 'src/chrome', AgentCh],
     ['firefox', 'src/firefox', AgentFx],
@@ -13318,16 +13318,150 @@ test('mail runs preactivate the Humanizer skill without widening it to other sit
     agent.lastSeenAdapter.set(tabId, '');
     assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: absent adapter preactivated Humanizer`);
 
+    // Selected-text runs suppress page context, so the adapter is empty or
+    // stale; they route on the shortcut action instead, and their empty tool
+    // list means load_skill can never load the skill afterwards.
+    for (const action of ['humanize']) {
+      assert.equal(
+        agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
+        true,
+        `${label}: ${action} selected-text run did not preactivate Humanizer`
+      );
+      assert.ok(agent.activeSkillIds.get(tabId)?.has('humanizer'), `${label}: ${action} active skill id missing`);
+      agent._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+    }
+
+    // The free-form question box and canned readers do not establish a writing
+    // request, so they must not pay for the skill body. Neither may an unknown
+    // or absent action.
+    for (const action of ['custom', 'summarize', 'explain', 'quiz', 'translate', 'proofread', 'load_skill', '']) {
+      assert.equal(
+        agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: action }),
+        false,
+        `${label}: ${action || '(absent)'} selected-text run preactivated Humanizer`
+      );
+    }
+    assert.equal(agent.activeSkillIds.has(tabId), false, `${label}: non-writing selected-text run retained an active skill`);
+
     // A user who removes the default skill must not get it back through preactivation.
     agent.lastSeenAdapter.set(tabId, 'gmail');
     agent.setCustomSkills([]);
     assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: removed skill was preactivated`);
+    assert.equal(
+      agent._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: 'humanize' }),
+      false,
+      `${label}: removed skill was preactivated for a selected-text run`
+    );
 
     const compact = new AgentClass({ getActive: () => ({ promptTier: 'compact' }) });
     compact.setCustomSkills([packagedHumanizerRecord(prefix)]);
     compact.conversationModes.set(tabId, 'act');
     compact.lastSeenAdapter.set(tabId, 'gmail');
     assert.equal(compact._preactivateHumanizerSkillForRun(tabId, 'act'), false, `${label}: Compact preactivated a skill`);
+    assert.equal(
+      compact._preactivateHumanizerSkillForRun(tabId, 'ask', { selectionOnly: true, selectionAction: 'humanize' }),
+      false,
+      `${label}: Compact preactivated a skill for a selected-text run`
+    );
+  }
+});
+
+test('selected-text runs carry the Humanizer body into the tool-free request without the page skill', async () => {
+  for (const [buildIndex, [label, prefix, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', 'src/chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', 'src/firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    for (const [pathIndex, streaming] of [false, true].entries()) {
+      const requests = [];
+      const requestOptions = [];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        chat: async (messages, options) => {
+          requests.push(messages);
+          requestOptions.push(options);
+          return { content: 'Rewritten reply.', toolCalls: null };
+        },
+        async *chatStream(messages, options) {
+          requests.push(messages);
+          requestOptions.push(options);
+          yield { type: 'text', content: 'Rewritten reply.' };
+          yield { type: 'done' };
+        },
+      };
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = 4960 + (buildIndex * 10) + pathIndex;
+      agent.setCustomSkills([packagedHumanizerRecord(prefix)]);
+      agent.conversationModes.set(tabId, 'ask');
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', tabId) }]);
+      agent.maxSteps = 2;
+      agent._hydrate = async () => {};
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({ role: 'user', content });
+      // The page-scoped skill stays out: a source-bound run cannot call its
+      // fetch tool, while Humanizer only adds prompt text.
+      agent._preactivateNyTimesSkillForRun = () => {
+        throw new Error('selection-only run must not activate a page-specific skill');
+      };
+      agent._startTraceRun = async () => null;
+      agent._endTraceRun = () => {};
+      agent._persist = () => {};
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+
+      const prompt = buildSelectionPrompt('Circling back to touch base on the deliverable.', 'humanize');
+      const runOptions = { sourceGrounding, selectionAction: 'humanize' };
+      const final = streaming
+        ? await agent.processMessageStream(tabId, prompt, () => {}, 'ask', runOptions)
+        : await agent.processMessage(tabId, prompt, () => {}, 'ask', [], runOptions);
+      const path = `${label} ${streaming ? 'streaming' : 'non-streaming'}`;
+
+      assert.equal(final, 'Rewritten reply.', `${path}: final mismatch`);
+      assert.equal(requests.length, 1, `${path}: expected one model request`);
+      assert.equal(requestOptions[0]?.tools, undefined, `${path}: selected-text request must stay tool-free`);
+      assert.match(
+        String(requests[0][0]?.content),
+        /Humanizer/,
+        `${path}: preactivated skill body missing from the selected-text request`
+      );
+      assert.equal(agent.activeSkillIds.has(tabId), false, `${path}: run-scoped activation should not outlive the run`);
+
+      // A grounded follow-up ("make it warmer") is the same writing flow.
+      const followUp = streaming
+        ? await agent.processMessageStream(tabId, 'Make it warmer.', () => {}, 'ask')
+        : await agent.processMessage(tabId, 'Make it warmer.', () => {}, 'ask');
+      assert.equal(followUp, 'Rewritten reply.', `${path}: grounded follow-up final mismatch`);
+      assert.equal(requests.length, 2, `${path}: follow-up should make one additional model request`);
+      assert.equal(requestOptions[1]?.tools, undefined, `${path}: grounded follow-up must remain tool-free`);
+      assert.match(
+        String(requests[1][0]?.content),
+        /Humanizer/,
+        `${path}: grounded follow-up lost the skill body`
+      );
+
+      // A canned reader shortcut on the same tab pays nothing for the skill.
+      const readerTabId = tabId + 100;
+      agent.conversationModes.set(readerTabId, 'ask');
+      agent.conversations.set(readerTabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', readerTabId) }]);
+      const readerPrompt = buildSelectionPrompt('Circling back to touch base on the deliverable.', 'summarize');
+      const readerRunOptions = { sourceGrounding, selectionAction: 'summarize' };
+      const readerFinal = streaming
+        ? await agent.processMessageStream(readerTabId, readerPrompt, () => {}, 'ask', readerRunOptions)
+        : await agent.processMessage(readerTabId, readerPrompt, () => {}, 'ask', [], readerRunOptions);
+      assert.equal(readerFinal, 'Rewritten reply.', `${path}: summarize shortcut final mismatch`);
+      assert.equal(requests.length, 3, `${path}: summarize shortcut should make one additional model request`);
+      assert.doesNotMatch(
+        String(requests[2][0]?.content),
+        /Humanizer/,
+        `${path}: summarize shortcut should not carry the skill body`
+      );
+    }
   }
 });
 
@@ -23369,6 +23503,31 @@ test('sidepanel preserves selection-only grounding across retries and attachment
       /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
       `${label}: rendered retry controls should preserve the selection boundary`,
     );
+    assert.match(
+      panel,
+      /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?normalizeSelectionAction\(requestedSelectionAction\)/,
+      `${label}: retries should restore their normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /const retryPayload = \{[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),[\s\S]*?assistantEl\.dataset\.retrySelectionAction = selectionAction;/,
+      `${label}: live and persisted retry state should retain the selection action`,
+    );
+    assert.match(
+      panel,
+      /function configureRetryButton\([\s\S]*?btn\.dataset\.retrySelectionAction = btn\.dataset\.retrySourceGrounding[\s\S]*?normalizeSelectionAction\(retryPayload\.selectionAction\)/,
+      `${label}: retry buttons should retain only a grounded normalized selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadFromButton\([\s\S]*?normalizeSelectionAction\(btn\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: retry button reads should restore the selection action`,
+    );
+    assert.match(
+      panel,
+      /function retryPayloadForRunAssistant\([\s\S]*?normalizeSelectionAction\(assistantEl\?\.dataset\.retrySelectionAction\)[\s\S]*?\.\.\.\(selectionAction \? \{ selectionAction \} : \{\}\),/,
+      `${label}: reconstructed retries should restore the persisted selection action`,
+    );
 
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(
@@ -23507,6 +23666,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /button\.dataset\.action === 'translate'\) submitSelection\('translate', '', interfaceLanguage\)/, `${label}: floating Translate should submit directly in the plugin language`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
+    assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
     assert.doesNotMatch(content, /M6\.8 8\.5 9\.2 14l2\.8-3\.4 2\.8 3\.4 2\.4-5\.5/, `${label}: discarded WebBrain W outline should be removed`);
     assert.doesNotMatch(content, /M12 2\.8c\.65 3\.78/, `${label}: Claude-like sparkle icon should be removed`);
     assert.match(content, /const MAX_SELECTION_HIGHLIGHT_RECTS = 200;/, `${label}: selection highlights should have a hard DOM-node limit`);
@@ -23526,12 +23686,28 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(settingsJs, new RegExp(`${apiName}\\.storage\\.local\\.set\\(\\{ selectionShortcutEnabled: selectionShortcutToggle\\.checked \\}\\)`), `${label}: settings should persist toggle changes`);
 
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const panelSource = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(background, /title: 'Ask WebBrain about this'[\s\S]*?parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open (side panel|sidebar) to chat'/, `${label}: native Ask item should become an action submenu`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
     assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
-    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?\{ sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING \}/, `${label}: only allowlisted grounding should reach agent run options`);
+    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\?\s*\{\s*sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,/, `${label}: only allowlisted grounding should reach agent run options`);
+    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'Humanize'\]/, `${label}: native submenu should include Humanize`);
+    assert.match(background, /selectionAction = normalizeSelectionAction\(menuItemId\.slice\(CONTEXT_MENU_ACTION_PREFIX\.length\)\)/, `${label}: native action ids should be normalized before travelling with the prompt`);
+    assert.match(background, /normalizeSelectionAction\(msg\.selectionAction\)\s*\?\s*\{ selectionAction: normalizeSelectionAction\(msg\.selectionAction\) \}/, `${label}: only a normalized shortcut action should reach agent run options`);
+    assert.match(content, /data-action="humanize">Humanize<\/button>/, `${label}: floating popup should expose one-click Humanize`);
+
+    // The action travels one hop at a time and every hop re-validates it, so a
+    // page-authored message cannot name a skill route of its own.
+    const prompts = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/context-menu-prompts.js'), 'utf8');
+    assert.match(prompts, /const selectionAction = sourceGrounding \? normalizeSelectionAction\(payload\?\.selectionAction\) : '';/, `${label}: only a source-bound prompt should keep a shortcut action`);
+    assert.match(prompts, /\.\.\.\(payload\.selectionAction \? \{ selectionAction: payload\.selectionAction \} : \{\}\),/, `${label}: the stored action should ride with the prompt it belongs to`);
+    assert.match(panelSource, /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?const selectionAction = sourceGrounding \? normalizeSelectionAction\(requestedSelectionAction\) : '';[\s\S]*?delete chatExtraParams\.selectionAction;/, `${label}: sidepanel should retain retry actions but drop actions without selected-text grounding`);
+    assert.match(agentSource, /action: normalizeSelectionAction\(runOptions\?\.selectionAction\),/, `${label}: the durable scope should record the shortcut action`);
+    assert.match(agentSource, /action: normalizeSelectionAction\(entry\.selectionGroundingScope\.action\),/, `${label}: a restarted worker should restore the shortcut action`);
+    assert.match(agentSource, /selectionAction: normalizeSelectionAction\(scope\?\.action\),/, `${label}: follow-up turns should read the action off the scope, not a resent field`);
   }
 
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');

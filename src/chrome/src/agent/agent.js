@@ -68,7 +68,11 @@ import {
 } from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
-import { SELECTION_ONLY_SOURCE_GROUNDING } from '../context-menu-storage.js';
+import {
+  isSelectionProseAction,
+  normalizeSelectionAction,
+  SELECTION_ONLY_SOURCE_GROUNDING,
+} from '../context-menu-storage.js';
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
@@ -6726,6 +6730,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             excludedFingerprints: Array.isArray(entry.selectionGroundingScope.excludedFingerprints)
               ? entry.selectionGroundingScope.excludedFingerprints.filter(value => typeof value === 'string')
               : [],
+            action: normalizeSelectionAction(entry.selectionGroundingScope.action),
           });
         }
         if (
@@ -10105,8 +10110,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  _preactivateHumanizerSkillForRun(tabId, mode) {
-    if (!HUMANIZER_SKILL_SITE_ADAPTERS.has(this._activeSkillSiteAdapter(tabId))) return false;
+  /**
+   * Two independent routes, because they fail differently.
+   *
+   * An ordinary run matches the webmail adapter and can still reach the skill
+   * through load_skill if the match misses. A selected-text run cannot: it
+   * carries no tools at all, and it suppresses page context, which leaves
+   * lastSeenAdapter stale or empty. So it routes only on the explicit Humanize
+   * shortcut action, which the durable selection scope keeps across follow-up
+   * turns. The canned readers and general-purpose custom question box do not
+   * establish a writing request and would only pay for the skill body in
+   * tokens.
+   */
+  _preactivateHumanizerSkillForRun(tabId, mode, { selectionOnly = false, selectionAction = '' } = {}) {
+    if (selectionOnly
+      ? !isSelectionProseAction(selectionAction)
+      : !HUMANIZER_SKILL_SITE_ADAPTERS.has(this._activeSkillSiteAdapter(tabId))) return false;
     const tier = this._resolvePromptTier();
     if (tier === 'compact') return false;
     const owner = this._eligibleSkills(mode, tier).find((skill) => skill.id === 'humanizer');
@@ -13278,6 +13297,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         excludedFingerprints: messages.slice(1).map(message =>
           this._selectionGroundingMessageFingerprint(message)
         ),
+        // Only the opening turn carries the shortcut action. Store it on the
+        // scope so "now make it warmer" is still recognizable as the writing
+        // flow the user started, without re-trusting a resent field.
+        action: normalizeSelectionAction(runOptions?.selectionAction),
       };
       this.selectionGroundingScopes.set(tabId, scope);
     } else if (
@@ -13291,6 +13314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...runOptions,
       sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
       selectionGroundingScopeStarted: explicitSelection,
+      selectionAction: normalizeSelectionAction(scope?.action),
     };
   }
 
@@ -19815,10 +19839,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) {
-      this._preactivateNyTimesSkillForRun(tabId, mode);
-      this._preactivateHumanizerSkillForRun(tabId, mode);
-    }
+    // NYTimes preactivation only buys a fetch tool, which a source-bound run
+    // cannot call; Humanizer is prompt-only and a selected-text writing
+    // shortcut has no other way to load it, so it runs on both paths.
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    this._preactivateHumanizerSkillForRun(tabId, mode, {
+      selectionOnly,
+      selectionAction: runOptions?.selectionAction,
+    });
 
     const provider = this.providerManager.getActive();
 
@@ -20594,10 +20622,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       sourceBoundMessagesAtTrim = new Set(rawMessages);
       sourceBoundTrimmedMessages = this._emergencyTrimModelCopy(currentModelMessages);
     };
-    if (!selectionOnly) {
-      this._preactivateNyTimesSkillForRun(tabId, mode);
-      this._preactivateHumanizerSkillForRun(tabId, mode);
-    }
+    // NYTimes preactivation only buys a fetch tool, which a source-bound run
+    // cannot call; Humanizer is prompt-only and a selected-text writing
+    // shortcut has no other way to load it, so it runs on both paths.
+    if (!selectionOnly) this._preactivateNyTimesSkillForRun(tabId, mode);
+    this._preactivateHumanizerSkillForRun(tabId, mode, {
+      selectionOnly,
+      selectionAction: runOptions?.selectionAction,
+    });
 
     const provider = this.providerManager.getActive();
 
