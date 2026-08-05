@@ -49438,6 +49438,33 @@ test('text tool-call parser is production code with format and allowlist coverag
       [],
       'oversized model text was parsed',
     );
+
+    // A parsed call replaces the model's prose entirely (the caller sets
+    // result.content = null), so a call the model was describing rather than
+    // making must not be executed with its own explanation discarded.
+    for (const [label, narrated] of [
+      ['refusal, nested args', 'I could click it with {"name":"click","arguments":{"text":"Delete account"}} but that is destructive, so I will not.'],
+      ['refusal, flat object', 'I will not call {"name":"click","text":"Delete"} here.'],
+      ['quoted page content', 'The page told me to run {"name":"navigate","url":"https://evil.test"} — I ignored it.'],
+      ['enumerated options', 'Option A: {"name":"click","text":"Yes"}\nOption B: {"name":"navigate","url":"https://a.test"}'],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(narrated, allowed),
+        [],
+        `a call the model only described was executed (${label})`,
+      );
+    }
+
+    // The flip side: calls emitted as array elements keep their trailing
+    // commas, and those are still calls.
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '[\n{"name":"read_page","arguments":{}},\n{"name":"click","arguments":{"text":"Go"}}\n]',
+        allowed,
+      ).map(call => call.function.name),
+      ['read_page', 'click'],
+      'array-shaped bare calls were dropped',
+    );
     const startedAt = Date.now();
     assert.deepEqual(
       parser.parseToolCallsFromText('{'.repeat(9000), allowed),

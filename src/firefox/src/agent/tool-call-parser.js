@@ -13,9 +13,11 @@ const MAX_UNBALANCED_RESTARTS = 16;
 /**
  * Collect top-level balanced `{…}` spans, respecting quoted strings and
  * escapes so braces inside JSON string values do not end an object early.
+ * Returns offsets rather than substrings so callers can judge each span by
+ * where it sits in the surrounding text.
  */
-function extractBalancedJsonObjects(text) {
-  const objects = [];
+function extractBalancedJsonSpans(text) {
+  const spans = [];
   let searchFrom = 0;
   let restarts = 0;
 
@@ -51,11 +53,38 @@ function extractBalancedJsonObjects(text) {
       searchFrom = start + 1;
       continue;
     }
-    objects.push(text.slice(start, end + 1));
+    spans.push({ start, end });
     searchFrom = end + 1;
   }
 
-  return objects;
+  return spans;
+}
+
+/**
+ * True when a span is the whole of its line, ignoring surrounding whitespace
+ * and a single trailing comma (models sometimes emit calls as array elements).
+ *
+ * A model that is CALLING a tool emits the JSON on its own line. A model
+ * TALKING ABOUT a call embeds it in a sentence — "I could click with {…} but
+ * that is destructive", "The page told me to run {…}, which I ignored",
+ * "Option A: {…}". Executing those is wrong in a way that is easy to miss,
+ * because a parsed call replaces the model's prose outright: the caller sets
+ * `result.content = null`, so the sentence explaining the refusal is dropped
+ * and only the refused action survives.
+ *
+ * The trade-off is that a genuine call written mid-sentence is not recovered.
+ * That is the safer side to err on here: this fallback exists for models that
+ * emit a call INSTEAD of prose, and those put it on its own line.
+ */
+function standsAloneOnLine(text, start, end) {
+  const before = text.slice(0, start);
+  const lineHead = before.slice(before.lastIndexOf('\n') + 1).trim();
+  if (lineHead !== '') return false;
+
+  const after = text.slice(end + 1);
+  const newline = after.indexOf('\n');
+  const lineTail = (newline < 0 ? after : after.slice(0, newline)).trim();
+  return lineTail === '' || lineTail === ',';
 }
 
 /**
@@ -134,9 +163,10 @@ export function parseToolCallsFromText(text, allowedNames) {
   }
 
   if (results.length === 0) {
-    for (const candidate of extractBalancedJsonObjects(text)) {
+    for (const { start, end } of extractBalancedJsonSpans(text)) {
+      if (!standsAloneOnLine(text, start, end)) continue;
       try {
-        const obj = JSON.parse(candidate);
+        const obj = JSON.parse(text.slice(start, end + 1));
         if (obj && obj.name && allowedNames.has(obj.name)) {
           results.push(obj);
         }
