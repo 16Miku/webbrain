@@ -342,8 +342,10 @@ var __wbRichTextToolbarHeuristic = (() => {
       ].join(',');
 
       let cluster = null;
+      let guardCluster = null;
       let node = _composedParent(el);
       for (let depth = 1; node && depth <= 6; depth++, node = _composedParent(node)) {
+        if (['FORM', 'BODY', 'HTML'].includes(String(node.tagName || '').toUpperCase())) break;
         if (!_visibleFieldContextNode(node)) continue;
         const region = node.getBoundingClientRect();
         if (region.height > 160 || region.width < rect.width) continue;
@@ -352,7 +354,21 @@ var __wbRichTextToolbarHeuristic = (() => {
         if (!controls.includes(el)) controls.unshift(el);
         if (controls.length < 2 || controls.length > 40) continue;
         const area = region.width * region.height;
-        if (!cluster || area < cluster.area) cluster = { node, controls, region, area };
+        const entry = { node, controls, region, area };
+        if (!cluster || area < cluster.area) cluster = entry;
+        // Component toolbars without role="toolbar" often wrap an input in a
+        // tiny 40px sub-container while the adjacent Body/Heading control is a
+        // generic div. Keep the smallest cluster for scoring, but widen the
+        // recovery region only when the compact row has a definite associated
+        // editor. This keeps ordinary one-row forms out of the blocked scope.
+        if (
+          controls.length >= 3
+          && region.height <= 96
+          && (!guardCluster || region.width > guardCluster.region.width)
+        ) {
+          const associatedEditor = _associatedRichTextEditor(node);
+          if (associatedEditor) guardCluster = { ...entry, associatedEditor };
+        }
       }
 
       const reasons = [];
@@ -366,7 +382,12 @@ var __wbRichTextToolbarHeuristic = (() => {
       if (semanticToolbar) { reasons.push('semantic_toolbar'); score += 4; }
       if (score < 4) return null;
 
-      const regionNode = semanticToolbar || cluster?.node || _composedParent(el) || el;
+      const directParent = _composedParent(el);
+      const safeDirectParent = directParent
+        && !['FORM', 'BODY', 'HTML'].includes(String(directParent.tagName || '').toUpperCase())
+        ? directParent
+        : null;
+      const regionNode = semanticToolbar || guardCluster?.node || cluster?.node || safeDirectParent || el;
       const region = regionNode.getBoundingClientRect();
       const related = _richTextToolbarQueryAcrossOpenShadowRoots(regionNode, interactiveSelector, 30)
         .filter(candidate => !candidate.isContentEditable && _visibleFieldContextNode(candidate))
@@ -398,7 +419,9 @@ var __wbRichTextToolbarHeuristic = (() => {
           } catch {}
         }
       }
-      const associatedEditor = _associatedRichTextEditor(regionNode);
+      const associatedEditor = guardCluster?.node === regionNode
+        ? guardCluster.associatedEditor
+        : _associatedRichTextEditor(regionNode);
       // A formatting affordance the control declares itself, or an ARIA
       // toolbar that demonstrably belongs to an editor. [role=toolbar] alone
       // is not evidence of a rich-text editor: ordinary app toolbars hold

@@ -496,6 +496,35 @@
       : null;
   }
 
+  function _isFullyVisibleForInteraction(el) {
+    try {
+      if (!el?.isConnected) return false;
+      const view = el.ownerDocument?.defaultView || window;
+      const rect = el.getBoundingClientRect();
+      if (
+        rect.width < 1
+        || rect.height < 1
+        || rect.left < 0
+        || rect.top < 0
+        || rect.right > view.innerWidth
+        || rect.bottom > view.innerHeight
+      ) return false;
+      for (let node = _composedParent(el); node && node !== el.ownerDocument; node = _composedParent(node)) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const style = view.getComputedStyle(node);
+        const clipsX = /^(?:auto|scroll|hidden|clip)$/.test(style.overflowX);
+        const clipsY = /^(?:auto|scroll|hidden|clip)$/.test(style.overflowY);
+        if (!clipsX && !clipsY) continue;
+        const parentRect = node.getBoundingClientRect();
+        if (clipsX && (rect.left < parentRect.left || rect.right > parentRect.right)) return false;
+        if (clipsY && (rect.top < parentRect.top || rect.bottom > parentRect.bottom)) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function _isComposedAncestor(ancestor, node) {
     let cur = node;
     while (cur) {
@@ -3656,7 +3685,9 @@
           const targetRole = String(el.getAttribute?.('role') || '').toLowerCase();
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (!_isFullyVisibleForInteraction(el)) {
+            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          }
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
           if (!el.isConnected || rect.width < 1 || rect.height < 1) {
