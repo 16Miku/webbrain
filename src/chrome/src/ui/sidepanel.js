@@ -8887,12 +8887,27 @@ function getOrCreateStepsContainer() {
   return container;
 }
 
+function findLastActiveCompactStep(toolName = '') {
+  if (!currentAssistantEl) return null;
+  const activeSteps = [...currentAssistantEl.querySelectorAll('.steps-container .step-item.active')];
+  if (toolName) {
+    const matchingStep = activeSteps
+      .slice()
+      .reverse()
+      .find(step => step.dataset.tool === toolName);
+    return matchingStep || null;
+  }
+  return activeSteps.at(-1) || null;
+}
+
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
 
-  // Mark previous active step as done if still spinning
-  const prev = container.querySelector('.step-item.active');
+  // A previous call may live before an answered clarification boundary while
+  // this call belongs to the new segment after it. Never leave the old spinner
+  // active merely because the timeline now has more than one steps container.
+  const prev = findLastActiveCompactStep();
   if (prev) {
     prev.classList.remove('active');
     prev.classList.add('done');
@@ -8937,10 +8952,10 @@ function appendCompactStep(toolName, args) {
 }
 
 function markLastStepDone(toolName, result) {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-
-  const active = container.querySelector('.step-item.active');
+  // A blocking clarify/confirmation tool emits its result only after its card
+  // is answered. Settle that original pre-card step; do not create or search a
+  // post-card container until a later tool_call actually starts there.
+  const active = findLastActiveCompactStep(toolName);
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
@@ -8963,9 +8978,7 @@ function markLastStepDone(toolName, result) {
 }
 
 function markLastStepFailed() {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-  const active = container.querySelector('.step-item.active');
+  const active = findLastActiveCompactStep();
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');

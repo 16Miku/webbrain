@@ -24713,6 +24713,34 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       /latestAnsweredCard[\s\S]*?latestAnsweredCard\.nextElementSibling[\s\S]*?candidate !== textEl[\s\S]*?classList\.contains\('steps-container'\)[\s\S]*?content\.insertBefore\(container, textEl\);/,
       `${label}: compact resumed events should use a steps segment after the latest answered clarification`,
     );
+    const compactLifecycleSource = panel.slice(
+      panel.indexOf('function findLastActiveCompactStep('),
+      panel.indexOf('function finalizeSteps(', panel.indexOf('function findLastActiveCompactStep(')),
+    );
+    assert.match(
+      compactLifecycleSource,
+      /querySelectorAll\('\.steps-container \.step-item\.active'\)[\s\S]*?step\.dataset\.tool === toolName/,
+      `${label}: compact results should find their pending step across timeline segments`,
+    );
+    assert.match(
+      compactLifecycleSource,
+      /function appendCompactStep[\s\S]*?const prev = findLastActiveCompactStep\(\);/,
+      `${label}: a later compact call should settle an active step from an earlier segment`,
+    );
+    const compactResultSource = compactLifecycleSource.slice(
+      compactLifecycleSource.indexOf('function markLastStepDone('),
+      compactLifecycleSource.indexOf('function markLastStepFailed('),
+    );
+    assert.match(
+      compactResultSource,
+      /const active = findLastActiveCompactStep\(toolName\);/,
+      `${label}: compact tool results should settle the matching pre-clarification step`,
+    );
+    assert.doesNotMatch(
+      compactResultSource,
+      /getOrCreateStepsContainer\(\)/,
+      `${label}: compact tool results should not create an empty post-clarification segment`,
+    );
     const verboseToolSource = panel.slice(
       panel.indexOf('function appendVerboseToolCall('),
       panel.indexOf('function appendVerboseToolResult(', panel.indexOf('function appendVerboseToolCall(')),
@@ -24761,6 +24789,72 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       /command\.value === '\/schedule'[\s\S]*?action === 'create'[\s\S]*?await renderScheduleComposer\(payload, tabId\);/,
       `${label}: schedule forms should finish rendering before slash-command reveal`,
     );
+  }
+});
+
+test('compact clarification results settle the pending pre-card tool step', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const helperStart = panel.indexOf('function findLastActiveCompactStep(');
+    const helperEnd = panel.indexOf('function appendCompactStep(', helperStart);
+    const resultStart = panel.indexOf('function markLastStepDone(', helperEnd);
+    const resultEnd = panel.indexOf('function markLastStepFailed(', resultStart);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: compact active-step helper missing`);
+    assert.ok(resultStart >= 0 && resultEnd > resultStart, `${label}: compact result settlement missing`);
+
+    const makeStep = (toolName) => {
+      const classes = new Set(['step-item', 'active']);
+      const icon = { className: 'step-icon spinning', textContent: '' };
+      const appendedResults = [];
+      const details = {
+        classList: { contains: (name) => name === 'step-details' },
+        appendChild: (child) => appendedResults.push(child),
+      };
+      const step = {
+        dataset: { tool: toolName },
+        classList: {
+          add: (name) => classes.add(name),
+          remove: (name) => classes.delete(name),
+          contains: (name) => classes.has(name),
+        },
+        querySelector: (selector) => selector === '.step-icon' ? icon : null,
+        nextElementSibling: details,
+      };
+      return { step, classes, icon, appendedResults };
+    };
+
+    const pendingClarify = makeStep('clarify');
+    const laterUnrelated = makeStep('auto_screenshot');
+    const currentAssistantEl = {
+      querySelectorAll: (selector) => {
+        assert.equal(selector, '.steps-container .step-item.active');
+        return [pendingClarify.step, laterUnrelated.step];
+      },
+    };
+    const runtime = vm.runInNewContext(
+      `(() => {
+        ${panel.slice(helperStart, helperEnd)}
+        ${panel.slice(resultStart, resultEnd)}
+        return { markLastStepDone };
+      })()`,
+      {
+        currentAssistantEl,
+        document: { createElement: () => ({}) },
+        escapeHtml: (value) => String(value),
+        truncate: (value) => String(value),
+        t: (key) => key,
+      },
+    );
+
+    runtime.markLastStepDone('clarify', { error: 'denied' });
+    assert.equal(pendingClarify.classes.has('active'), false, `${label}: pre-card clarify step should stop spinning`);
+    assert.equal(pendingClarify.classes.has('done'), true, `${label}: pre-card clarify step should be terminal`);
+    assert.equal(pendingClarify.icon.className, 'step-icon fail', `${label}: failed clarify result should retain failure status`);
+    assert.equal(pendingClarify.appendedResults.length, 1, `${label}: clarify result details should stay attached to the original step`);
+    assert.equal(laterUnrelated.classes.has('active'), true, `${label}: matching should not settle an unrelated later step`);
   }
 });
 
