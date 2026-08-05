@@ -29072,16 +29072,22 @@ test('Chrome selector type reports post-edit value verification', async () => {
   assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
 });
 
-test('toolbar safety captures share the per-turn screenshot cap after a reserved first', async () => {
-  // The setting says further auto-screenshots are skipped once the budget is
-  // spent, and a classifier capture is a vision capture. It used to increment
-  // a counter no gate consulted, so a run that kept hitting guarded targets
-  // billed an unbounded number of extra screenshots and vision calls against
-  // a cap of 1. The turn's first safety capture stays reserved so a low cap
-  // degrades the guard instead of blinding it on the first guarded edit.
+test('toolbar safety captures use one separate reserved slot under finite caps', async () => {
+  // A finite cap N belongs to the model-facing capture path. The toolbar
+  // classifier gets one separate successful capture so the first guarded edit
+  // is not judged blind, but ordering must never let the turn grow past N+1.
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
     const tabId = 909;
+
+    const resetCounts = () => {
+      agent.autoScreenshotCount.delete(tabId);
+      agent.toolbarAuditScreenshotCount.delete(tabId);
+    };
+    const takeModelFacingCapture = () => {
+      assert.equal(agent._canTakeAutoScreenshot(tabId), true, `${label}: model-facing slot available`);
+      agent._recordAutoScreenshot(tabId);
+    };
 
     agent.maxScreenshotsPerTurn = 0;
     agent.autoScreenshotCount.set(tabId, 12);
@@ -29091,36 +29097,68 @@ test('toolbar safety captures share the per-turn screenshot cap after a reserved
       true,
       `${label}: an unlimited budget must never gate the safety check`,
     );
+    assert.equal(agent._canTakeAutoScreenshot(tabId), true, `${label}: zero keeps model captures unlimited`);
 
-    agent.maxScreenshotsPerTurn = 1;
-    agent.autoScreenshotCount.set(tabId, 1);
-    agent.toolbarAuditScreenshotCount.delete(tabId);
+    agent.maxScreenshotsPerTurn = 3;
+    resetCounts();
     assert.equal(
       agent._canTakeToolbarAuditScreenshot(tabId),
       true,
-      `${label}: the turn's first safety capture is reserved even at a spent cap`,
+      `${label}: the first finite-cap safety capture is reserved`,
+    );
+    assert.equal(agent.toolbarAuditScreenshotCount.has(tabId), false);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: a failed capture that leaves no counter must not burn the reservation`,
     );
 
     agent.toolbarAuditScreenshotCount.set(tabId, 1);
     assert.equal(
       agent._canTakeToolbarAuditScreenshot(tabId),
       false,
-      `${label}: the second safety capture must compete against the same cap`,
+      `${label}: an audit-first turn admits exactly one safety capture`,
+    );
+    for (let index = 0; index < 3; index += 1) takeModelFacingCapture();
+    assert.equal(agent._canTakeAutoScreenshot(tabId), false);
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: audit-first ordering must stay at N+1`,
     );
 
-    // Headroom in the shared budget still admits a second one.
-    agent.maxScreenshotsPerTurn = 4;
+    resetCounts();
+    for (let index = 0; index < 3; index += 1) takeModelFacingCapture();
+    assert.equal(agent._canTakeAutoScreenshot(tabId), false);
     assert.equal(agent._canTakeToolbarAuditScreenshot(tabId), true);
-    agent.toolbarAuditScreenshotCount.set(tabId, 3);
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
     assert.equal(
       agent._canTakeToolbarAuditScreenshot(tabId),
       false,
-      `${label}: model-facing and safety captures must count against one cap`,
+      `${label}: model-first ordering still admits only one safety capture`,
+    );
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: model-first ordering must stay at N+1`,
+    );
+
+    resetCounts();
+    takeModelFacingCapture();
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
+    assert.equal(agent._canTakeToolbarAuditScreenshot(tabId), false);
+    takeModelFacingCapture();
+    takeModelFacingCapture();
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: interleaved ordering must stay at N+1`,
     );
 
     // Both counters, and the once-per-turn skip notice, reset with the turn.
     agent.toolbarAuditBudgetNotified.add(tabId);
     agent._cleanupTab(tabId);
+    assert.equal(agent.autoScreenshotCount.has(tabId), false, `${label}: model count must reset`);
     assert.equal(agent.toolbarAuditScreenshotCount.has(tabId), false, `${label}: audit count must reset`);
     assert.equal(agent.toolbarAuditBudgetNotified.has(tabId), false, `${label}: skip notice must reset`);
   }

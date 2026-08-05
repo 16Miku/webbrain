@@ -2635,13 +2635,13 @@ export function registerRichTextToolbarFixtures({
         || classifierCaptureCount !== 1
         || agent.toolbarAuditScreenshotCount.get(tabId) !== 1
         || agent.autoScreenshotCount.get(tabId) !== 1
-        || !budgetWarnings.some(message => message.includes('beyond the 1 per turn'))
+        || !budgetWarnings.some(message => message.includes("one reserved capture in addition to the 1 model-facing"))
       ) {
         throw new Error(`the turn's first toolbar safety capture must be reserved and disclosed: ${JSON.stringify({ reservedPreflight, classifierArgCount, classifierCaptureCount, budgetWarnings })}`);
       }
 
-      // Every later one competes against the same cap, so the guard falls back
-      // to structural scoring instead of billing another vision call.
+      // The finite turn's separate audit allowance is now spent, so the guard
+      // falls back to structural scoring instead of billing another vision call.
       agent._resetRichTextToolbarAudit(tabId);
       classifierArgCount = 0;
       budgetWarnings.length = 0;

@@ -368,16 +368,15 @@ export class Agent extends LoopDetector {
     this.maxScreenshotsPerTurn = 0;  // 0 = unlimited
     this.maxImageDimension = 1568;   // max width/height in px for any vision image
     // tabId -> model-facing auto-screenshot count within the current turn/run.
-    // Initial viewport and post-action captures share this budget. Internal
-    // security-classifier captures are gate-checked against it but do not
-    // consume the slot that supplies post-action evidence to the main model.
+    // Initial viewport and post-action captures share this budget. A finite
+    // budget leaves these slots intact and gives the toolbar classifier one
+    // separate safety capture; 0 keeps both capture paths unlimited.
     // Reset when a run starts and on tab cleanup.
     this.autoScreenshotCount = new Map();
     // tabId -> internal toolbar-classifier captures this turn. These are
-    // gate-checked against maxScreenshotsPerTurn but do not consume the slot
-    // that supplies post-action evidence to the main model, so without a
-    // separate counter their screenshot and vision cost was invisible to a
-    // user who capped the budget precisely to control spend.
+    // limited to one successful capture whenever maxScreenshotsPerTurn is
+    // finite, without consuming a model-facing slot. The separate counter
+    // makes that N+1 contract enforceable regardless of capture ordering.
     this.toolbarAuditScreenshotCount = new Map();
     // tabIds already told that a toolbar safety check was skipped for budget.
     // Shares the per-turn lifecycle of the counter above so the notice lands
@@ -2088,9 +2087,9 @@ export class Agent extends LoopDetector {
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
     const visionAvailable = !!(dedicatedVision || provider?.supportsVision);
-    const visualAuditBudgetOk = this._canTakeToolbarAuditScreenshot(tabId);
+    const visualAuditAllowanceAvailable = this._canTakeToolbarAuditScreenshot(tabId);
     const visualAuditEligible = this._shouldAutoScreenshot(toolName)
-      && visualAuditBudgetOk
+      && visualAuditAllowanceAvailable
       && visionAvailable;
     if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
@@ -2106,15 +2105,15 @@ export class Agent extends LoopDetector {
         probe,
       };
     }
-    if (!visualAuditBudgetOk && visionAvailable && this._shouldAutoScreenshot(toolName)) {
+    if (!visualAuditAllowanceAvailable && visionAvailable && this._shouldAutoScreenshot(toolName)) {
       // The visual check is the half of this guard that can tell a formatting
-      // control from an ordinary field. Say so when the budget retires it,
+      // control from an ordinary field. Say so when its allowance retires it,
       // rather than letting the run quietly fall back to structural scoring.
       if (!this.toolbarAuditBudgetNotified.has(tabId)) {
         this.toolbarAuditBudgetNotified.add(tabId);
         if (typeof captureOptions?.onUpdate === 'function') {
           captureOptions.onUpdate('warning', {
-            message: `The per-turn screenshot budget (${Number(this.maxScreenshotsPerTurn) || 0}) is spent, so rich-text toolbar safety checks fall back to structural scoring for the rest of this turn.`,
+            message: 'The turn\'s reserved rich-text toolbar safety capture has already been used, so later toolbar checks fall back to structural scoring.',
           });
         }
         const skipRunId = this.currentRunId.get(tabId);
@@ -2138,18 +2137,19 @@ export class Agent extends LoopDetector {
         coordAligned: true,
       });
       if (shot?.dataUrl) {
-        // Kept in its own counter so it does not consume the slot that shows
-        // the model its own post-edit page, but both counters share one cap.
+        // Kept in its own counter so a finite budget preserves all N slots
+        // that show the main model post-edit state while allowing at most one
+        // separate classifier capture.
         const auditCaptures = (this.toolbarAuditScreenshotCount.get(tabId) || 0) + 1;
         this.toolbarAuditScreenshotCount.set(tabId, auditCaptures);
         const cap = Number(this.maxScreenshotsPerTurn) || 0;
         const modelFacing = this.autoScreenshotCount.get(tabId) || 0;
-        // The reserved first capture is the only one allowed past the cap, so
-        // this fires at most once a turn, and only when the budget was
-        // already spent. Every later safety capture is gated instead.
+        // If the model-facing budget was already spent, surface the reserved
+        // capture's immediate N+1 overage. The settings copy discloses the
+        // same bound when the audit happens earlier in the turn.
         if (cap > 0 && modelFacing + auditCaptures > cap && typeof captureOptions?.onUpdate === 'function') {
           captureOptions.onUpdate('warning', {
-            message: `A rich-text toolbar safety check took one screenshot and vision call beyond the ${cap} per turn you configured, so the agent would not have to guess at a formatting control blind.`,
+            message: `A rich-text toolbar safety check used the turn's one reserved capture in addition to the ${cap} model-facing auto-screenshots you configured, so the agent would not have to guess at a formatting control blind.`,
           });
         }
         const auditRunId = this.currentRunId.get(tabId);
@@ -6125,24 +6125,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Budget gate for the rich-text toolbar classifier's own captures.
    *
-   * These are vision captures like any other, and the setting the user picked
-   * says further auto-screenshots are skipped once the budget is spent. They
-   * used to be counted in a separate map that no gate consulted, so a run that
-   * kept hitting guarded targets could bill an unbounded number of extra
-   * screenshots and vision calls against a cap of 1.
-   *
-   * The turn's first safety capture is still reserved, so a low cap degrades
-   * the guard to structural scoring instead of switching its visual check off
-   * on the first guarded edit. Every later capture competes with the
-   * model-facing ones against the same cap, which bounds the overage at one
-   * capture per turn.
+   * For a finite model-facing cap N, one successful safety capture is reserved
+   * separately. This preserves all N post-edit evidence slots while bounding
+   * the turn at N+1 captures regardless of whether the audit happens before
+   * or after them. A failed capture does not increment the audit counter, and
+   * cap 0 keeps both paths unlimited.
    */
   _canTakeToolbarAuditScreenshot(tabId) {
     const cap = Number(this.maxScreenshotsPerTurn) || 0;
     if (cap <= 0) return true;
     const audits = this.toolbarAuditScreenshotCount.get(tabId) || 0;
-    if (audits === 0) return true;
-    return (this.autoScreenshotCount.get(tabId) || 0) + audits < cap;
+    return audits === 0;
   }
 
   /**

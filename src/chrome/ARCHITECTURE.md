@@ -612,9 +612,11 @@ with the target outlined and asks a vision model to classify only that region.
 The verdict is combined with a shape check on the text being typed (a font
 size accepts `14`, a link accepts a URL, neither accepts a sentence). Without
 vision it falls back to structural scoring and fails closed for prose-like
-values. These classifier captures are counted separately from the model-facing
-screenshot budget and are surfaced once they exceed it, because each one also
-costs a vision call.
+values. With a finite model-facing screenshot limit of N, the classifier gets
+one separate reserved capture per turn, so all N post-edit evidence slots stay
+available while total capture and vision-call cost is bounded at N+1 regardless
+of ordering. A limit of 0 keeps both paths unlimited; later guarded targets in a
+finite turn fall back to structural scoring after the reserved capture is used.
 
 **Recovery contract** — a block records a per-tab debt that refuses
 `done(outcome="success")` and plain final text until the edit is redone
