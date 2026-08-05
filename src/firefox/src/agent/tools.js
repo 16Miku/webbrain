@@ -989,6 +989,11 @@ export const COMPACT_TOOL_NAMES = new Set([
   'get_accessibility_tree', 'read_page', 'scroll',
   'get_window_info',
   'extract_data', 'get_selection', 'find_text',
+  // get_interactive_elements is the only tool that returns a verified, unique
+  // CSS selector for a file input, so upload_file's ambiguous-selector
+  // recovery is built on it. It stays in the compact catalog for as long as
+  // upload_file does; without it an ambiguous selector is unrecoverable.
+  'get_interactive_elements',
   'click_ax', 'set_checked', 'type_ax', 'set_field',
   'click', 'type_text', 'press_keys',
   'navigate', 'new_tab', 'wait_for_element',
@@ -1115,15 +1120,24 @@ const WATCH_BEEP_TOOL = {
   },
 };
 
+// Compact has no download tools, so the only file it can legitimately reach is
+// the one the user attached to this run, or one the user picks themselves.
+// Deleting the keys rather than rebuilding `parameters` keeps any future base
+// parameter reaching compact. Firefox never had filePath (no CDP).
+const COMPACT_UPLOAD_HIDDEN_PARAMS = ['downloadId', 'filePath'];
+
 function compactUploadFileTool(tool) {
+  const properties = { ...tool.function.parameters.properties };
+  for (const key of COMPACT_UPLOAD_HIDDEN_PARAMS) delete properties[key];
   return {
     ...tool,
     function: {
       ...tool.function,
-      description: 'Attach a user-provided file directly to an existing file input without clicking the page upload control. Use attachmentId from the current user-attachment notice, or omit it to open WebBrain\'s file picker. This proves only local page attachment, not remote upload or submission. Use the exact selector for the intended input; never guess a generic input[type="file"] selector when multiple inputs exist. If the widget creates its input lazily, make one guarded click on its add-files control, then retry upload_file with the exact selector.',
+      description: 'Attach a user-provided file directly to an existing file input without clicking the page upload control. Use attachmentId from the current user-attachment notice, or omit it to open WebBrain\'s file picker. This proves only local page attachment, not remote upload or submission. Use the exact selector for the intended input; never guess a generic input[type="file"] selector when multiple inputs exist. If the selector is ambiguous, call get_interactive_elements and use the exact selector on the intended file-input record before retrying. If the widget creates its input lazily, make one guarded click on its add-files control, then retry upload_file with the exact selector.',
       parameters: {
-        type: 'object',
+        ...tool.function.parameters,
         properties: {
+          ...properties,
           selector: { type: 'string', description: 'Exact CSS selector for the intended file input.' },
           attachmentId: { type: 'string', description: 'Opaque id from the current user-attachment notice. Omit only to ask the user through WebBrain\'s file picker; never guess an id.' },
         },
@@ -1238,6 +1252,7 @@ TOOLS - use only these:
 - get_window_info: Read window/viewport size.
 - scroll: Scroll up/down.
 - extract_data: Get tables, headings, images, or links.
+- get_interactive_elements: List interactive elements with exact CSS selectors. Use it when you need a selector rather than a ref_id — above all to find the intended file input before upload_file, and to recover after an ambiguous upload selector.
 - click_ax({ref_id}): Click by ref_id from the tree. Preferred.
 - set_checked({ref_id, checked}): Idempotently set and verify a native checkbox. Never toggle checkboxes repeatedly with click_ax.
 - type_ax({ref_id, text}): Type into a field by ref_id.
@@ -1251,7 +1266,7 @@ TOOLS - use only these:
 - new_tab({url}): Open a URL in a background tab for user reference. It does not activate or retarget the current run, so never use it as a site-permission workaround.
 - wait_for_element({selector}): Wait for an element to appear.
 - fetch_url({url}): Fetch other URLs for reading only; do not use it to re-read the active tab.
-- upload_file({selector, attachmentId?}): Attach a user-provided file directly to an existing file input; do not click the page upload control first. Use the current attachmentId or omit it for WebBrain's picker. Use the exact selector and never guess generic input[type="file"] when multiple inputs exist. If the widget creates its input lazily, make one guarded initializer click, re-read the page, then retry with the exact selector. Verify the page shows the attachment before submitting.
+- upload_file({selector, attachmentId?}): Attach a user-provided file directly to an existing file input; do not click the page upload control first. Use the current attachmentId or omit it for WebBrain's picker. Use the exact selector from get_interactive_elements and never guess generic input[type="file"] when multiple inputs exist. If the selector is ambiguous, call get_interactive_elements and retry with the exact selector it returns. If the widget creates its input lazily, make one guarded initializer click, re-read the page, then retry with the exact selector. Verify the page shows the attachment before submitting.
 - scratchpad_write({text}): Save notes that persist across steps.
 - progress_update({items}) / progress_read({status}): Structured progress ledger for the active repeated item/action task. On GitHub stargazers, only "Follow USER" buttons are follow targets when following is allowed by the task; "Unfollow USER" means skip/already followed unless the ledger shows acted.
 - clarify({question, options?}): Ask the user only when materially blocked or ambiguous. Unanswered clarifies auto-select options[0] after timeout (source=timeout is not user approval for high-risk steps; source=auto Instant is intentional auto-approve).

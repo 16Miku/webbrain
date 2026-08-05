@@ -12820,18 +12820,70 @@ test('compact Act exposes a direct-upload-only file workflow in both browsers', 
     assert.match(upload.function.description, /one guarded click/i);
     assert.doesNotMatch(upload.function.description, /download_files|list_downloads|downloadId/i);
     assert.ok(upload.function.parameters.properties.attachmentId, `[${label}] compact upload must accept attachmentId`);
-    assert.equal(upload.function.parameters.properties.downloadId, undefined, `[${label}] compact upload must hide downloadId`);
     assert.ok(fullUpload.function.parameters.properties.downloadId, `[${label}] full upload must retain downloadId`);
-    assert.match(prompt, /upload_file[\s\S]{0,180}do not click the page upload control/i);
-    assert.match(prompt, /upload_file[\s\S]{0,360}exact selector/i);
-    assert.match(prompt, /upload_file[\s\S]{0,420}one guarded initializer click/i);
+
+    // Compact can reach only the file the user attached to this run: it has no
+    // download tools to produce a downloadId, and no way to learn a local path
+    // that the model did not invent.
+    for (const hidden of ['downloadId', 'filePath']) {
+      assert.equal(
+        upload.function.parameters.properties[hidden],
+        undefined,
+        `[${label}] compact upload must hide ${hidden}`,
+      );
+    }
+    assert.deepEqual(
+      Object.keys(upload.function.parameters.properties).sort(),
+      ['attachmentId', 'selector'],
+      `[${label}] compact upload must expose exactly selector + attachmentId`,
+    );
+
+    // An ambiguous selector latches upload_file until get_interactive_elements
+    // returns a verified file-input selector, so the recovery tool has to be in
+    // the catalog the model is given.
+    assert.ok(
+      compactNames.includes('get_interactive_elements'),
+      `[${label}] compact Act must expose upload_file's ambiguity-recovery tool`,
+    );
+    assert.match(upload.function.description, /get_interactive_elements/);
+
+    // Assert on the prompt's own upload_file bullet rather than on character
+    // distances, so rewording the neighbouring bullets cannot break these.
+    const uploadLine = prompt.split('\n').find(line => line.startsWith('- upload_file('));
+    assert.ok(uploadLine, `[${label}] compact prompt must document upload_file`);
+    assert.match(uploadLine, /do not click the page upload control/i);
+    assert.match(uploadLine, /exact selector/i);
+    assert.match(uploadLine, /one guarded initializer click/i);
+    assert.match(uploadLine, /get_interactive_elements/);
+    assert.ok(
+      prompt.split('\n').some(line => line.startsWith('- get_interactive_elements')),
+      `[${label}] compact prompt must document the recovery tool it points at`,
+    );
     assert.doesNotMatch(prompt, /download_files|list_downloads|downloadId/i);
 
-    if (label === 'chrome') {
-      assert.ok(upload.function.parameters.properties.filePath, 'chrome: compact upload must accept a user-supplied filePath');
-    } else {
-      assert.equal(upload.function.parameters.properties.filePath, undefined, 'firefox: compact upload must not invent filePath support');
+    if (label === 'firefox') {
       assert.match(upload.function.description, /WebBrain's file picker/i);
+    } else {
+      assert.doesNotMatch(uploadLine, /filePath/);
+    }
+  }
+});
+
+test('every tier exposing upload_file also exposes its ambiguity-recovery tool', () => {
+  // upload_file latches on an ambiguous selector and only a
+  // get_interactive_elements response carrying a verified file-input selector
+  // clears it (Agent._clearUploadSelectorRecoveryAfterInspection). A tier that
+  // ships upload_file without it can never recover: the handler keeps
+  // returning recoveryRequired:'get_interactive_elements' and the model has no
+  // way to satisfy it until the page is replaced.
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    for (const tier of ['compact', 'mid', 'full']) {
+      const names = new Set(getTools('act', { tier }).map(tool => tool.function.name));
+      if (!names.has('upload_file')) continue;
+      assert.ok(
+        names.has('get_interactive_elements'),
+        `[${label}] act/${tier} exposes upload_file without get_interactive_elements, so an ambiguous selector is unrecoverable`,
+      );
     }
   }
 });
