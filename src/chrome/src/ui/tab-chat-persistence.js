@@ -142,45 +142,6 @@ export async function persistTabChatToSession(storageArea, key, html, warn = con
     }
 
     try {
-      // Older per-tab chats can consume nearly the entire shared quota. Free
-      // the largest stored chats one at a time and retry after each removal.
-      // Removal is intentionally used instead of rewriting a stale get(null)
-      // snapshot: a concurrent clear remains cleared rather than being
-      // resurrected by quota recovery in another panel context.
-      const stored = await storageArea.get(null);
-      const candidates = Object.entries(stored || {})
-        .filter(([storedKey, value]) => (
-          storedKey !== key
-          && storedKey.startsWith(TAB_CHAT_PREFIX)
-          && typeof value === 'string'
-        ))
-        .sort((a, b) => b[1].length - a[1].length);
-      const evictedKeys = [];
-
-      for (const [storedKey] of candidates) {
-        try {
-          await storageArea.remove(storedKey);
-          evictedKeys.push(storedKey);
-        } catch {
-          continue;
-        }
-        try {
-          await storageArea.set({ [key]: retryValue });
-          return {
-            ok: true,
-            degraded: true,
-            recoveredFromQuota: true,
-            evictedKeys,
-          };
-        } catch (error) {
-          retryError = error;
-        }
-      }
-    } catch (error) {
-      retryError = error;
-    }
-
-    try {
       warn(
         '[WebBrain] persistTabChat: session storage write failed after compacting the stored copy; chat may not survive a panel reopen:',
         retryError?.message || retryError || initialError?.message || initialError,

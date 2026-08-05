@@ -153,6 +153,8 @@ export default {
   'sp.copy': '复制',
   'sp.copied': '已复制！',
   'sp.copy.code.title': '复制代码',
+  'sp.copy.message.title': '复制消息',
+  'sp.persistence.unavailable': '无法保存恢复数据。当前任务可以继续，但连接中断后不会重放任何操作；请手动重试。',
 
   'sp.error_prefix': '错误：{msg}',
   'sp.subscribe.allowance_used': '今日免费的 WebBrain Cloud 额度已用完。',

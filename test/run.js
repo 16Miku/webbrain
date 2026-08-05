@@ -7995,7 +7995,7 @@ test('mutation batch invokes CAPTCHA preflight before dispatch when no gate exis
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const [toolName, toolArguments, allowedTools] of [
       ['click_ax', '{"ref_id":"ref_9"}', new Set(['click_ax', 'solve_captcha'])],
-      ['done', '{"success":true}', new Set(['done', 'solve_captcha'])],
+      ['done', '{"summary":"Done.","outcome":"success"}', new Set(['done', 'solve_captcha'])],
       ['fetch_url', '{"url":"https://example.test/signup","method":"POST"}', new Set(['fetch_url', 'solve_captcha'])],
     ]) {
       const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -20305,7 +20305,7 @@ test('tab-chat persistence recovers when several sub-threshold chats exceed the 
   }
 });
 
-test('tab-chat persistence evicts an existing chat when older keys saturate the shared quota', async () => {
+test('tab-chat persistence never evicts other chats when shared quota remains exhausted', async () => {
   for (const [label, persistence] of [
     ['chrome', TabChatPersistenceCh],
     ['firefox', TabChatPersistenceFx],
@@ -20343,14 +20343,11 @@ test('tab-chat persistence evicts an existing chat when older keys saturate the 
       (...args) => warnings.push(args),
     );
 
-    assert.equal(result.ok, true, `${label}: saturated shared quota should recover`);
-    assert.equal(result.recoveredFromQuota, true, `${label}: recovery marker missing`);
-    assert.deepEqual(result.evictedKeys, [oldKey], `${label}: recovery should report the evicted chat`);
-    assert.equal(values[oldKey], undefined, `${label}: older chat should be evicted to free quota`);
-    assert.equal(typeof values[newKey], 'string', `${label}: current compacted chat should persist`);
-    assert.ok(values[newKey].length <= 256 * 1024, `${label}: recovered chat should remain tightly bounded`);
+    assert.equal(result.ok, false, `${label}: saturated shared quota should report non-durable persistence`);
+    assert.equal(values[oldKey]?.length > 0, true, `${label}: another tab's chat must not be evicted`);
+    assert.equal(values[newKey], undefined, `${label}: failed current snapshot should not be advertised as stored`);
     assert.equal(values.unrelatedSessionState, 'keep', `${label}: non-chat session state must not be evicted`);
-    assert.equal(warnings.length, 0, `${label}: successful recovery should not warn`);
+    assert.equal(warnings.length, 1, `${label}: failed bounded persistence should warn once`);
   }
 });
 
@@ -36064,7 +36061,7 @@ test('Agent tool loops preserve provider reasoning state on both execution paths
     assert.match(source, /_withResponseItems\(message, responseItems, reasoningContent = '', provider = null\)[\s\S]*response_items: responseItems/, `${prefix}: assistant helper should retain Responses output Items`);
     assert.match(source, /_expireCurrentToolReasoning\(messages\)/, `${prefix}: new user turns should expire immediate-only reasoning replay`);
     assert.match(source, /reasoning_content: reasoningContent/, `${prefix}: assistant helper should retain Chat Completions reasoning content`);
-    assert.match(source, /content: result\.content \|\| null,[\s\S]*tool_calls: result\.toolCalls,[\s\S]*}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream tool loop should retain provider reasoning state`);
+    assert.match(source, /content: assistantToolContent,[\s\S]*tool_calls: result\.toolCalls,[\s\S]*}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream tool loop should retain provider reasoning state`);
     assert.match(source, /content: result\.content \}, result\.responseItems, result\.reasoningContent, provider\)[\s\S]*messages\.push\(\{ role: 'user', content: plainFinalBlocks\.join/, `${prefix}: non-stream progress continuations should scope provider reasoning state`);
     assert.match(source, /content: finalResponse \}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream final answers should scope provider reasoning state`);
     assert.match(source, /chunk\.type === 'reasoning'[\s\S]*content: fullText \|\| null,[\s\S]*tool_calls: toolCalls,[\s\S]*}, responseItems, reasoningContent, provider\)/, `${prefix}: stream tool loop should retain provider reasoning state`);
@@ -39507,7 +39504,7 @@ test('agent stops prompting current tool after permission gate is disabled mid-p
         id: 'tool_1',
         function: {
           name: 'set_field',
-          arguments: '{"selector":"input[name=email]","value":"a@example.com","submit":true}',
+          arguments: '{"ref_id":"ref_email","text":"a@example.com","submit":true}',
         },
       }],
       messages,
@@ -40574,7 +40571,6 @@ ${JSON.stringify([
           name: 'download_custom_media',
           arguments: JSON.stringify({
             mediaUrl: 'https://media.example/assets/video.mp4',
-            url: 'https://trusted.example/decoy.mp4',
           }),
         },
       }],
@@ -43658,7 +43654,7 @@ test('nullish tool responses classify consequential outcomes and stop unsafe bat
       ['fetch_url', { url: 'https://api.example.com/items', method: 'POST', body: '{}' }, true],
       ['iframe_click', { selector: '#submit', urlFilter: 'payments.example.com' }, true],
       ['download_file', { url: 'https://example.com/report.pdf' }, true],
-      ['schedule_task', { title: 'Check later', prompt: 'Check status later', schedule: { after_seconds: 60 } }, true],
+      ['schedule_task', { title: 'Check later', prompt: 'Check status later', schedule: { type: 'once', after_seconds: 60 }, target: { type: 'current_tab' } }, true],
     ]) {
       const agent = new AgentClass({
         getActive: () => ({ contextWindow: 128000, supportsVision: false }),
@@ -43994,7 +43990,7 @@ test('streaming and non-streaming paths share the hardened batch executor', () =
 
 test('tool-result limiting is nullish-safe and preserves serializable falsy values', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }), getVisionProvider: async () => null });
     for (const value of [undefined, null]) {
       const parsed = JSON.parse(agent._limitToolResult(value));
       assert.equal(parsed.errorCode, 'missing_tool_response', `${AgentClass.name}: nullish result was not normalized`);
@@ -62720,6 +62716,242 @@ test('capsolver errors: demo-key refusals and task-config errors get different r
     }
   } finally {
     globalThis.fetch = previousFetch;
+  }
+});
+
+test('built-in tool schemas are closed and invalid arguments never dispatch', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const toolsModule = await import(pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tools.js`)).href);
+    const argumentModule = await import(pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tool-arguments.js`)).href);
+    const advertised = toolsModule.getToolsForMode('act');
+    assert.ok(advertised.length > 0, `${label}: Act tool catalog is empty`);
+    assert.ok(
+      advertised.every(tool => tool.function?.parameters?.additionalProperties === false),
+      `${label}: an advertised object schema remains open`,
+    );
+
+    const setField = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'set_field');
+    const rejectedLang = argumentModule.validateToolArguments(
+      'set_field',
+      { ref_id: 'ref_1', text: 'miras.global', clear: true, submit: false, lang: 'tr-deasciify' },
+      setField.function.parameters,
+    );
+    assert.equal(rejectedLang.ok, false, `${label}: undeclared lang argument was accepted`);
+    assert.equal(rejectedLang.result.noDispatch, true, `${label}: rejected lang argument did not fail closed`);
+    assert.equal(rejectedLang.result.errorCode, 'invalid_tool_arguments', `${label}: unstable invalid-argument code`);
+
+    const click = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'click');
+    for (const args of [
+      { index: 3, x: 0, y: 0 },
+      { text: 'Save', selector: '#save' },
+      { x: 10 },
+    ]) {
+      const rejectedClick = argumentModule.validateToolArguments('click', args, click.function.parameters);
+      assert.equal(rejectedClick.ok, false, `${label}: mixed/incomplete click target was accepted`);
+      assert.equal(rejectedClick.result.noDispatch, true, `${label}: invalid click target did not fail closed`);
+    }
+    assert.equal(
+      argumentModule.validateToolArguments('click', { index: 3 }, click.function.parameters).ok,
+      true,
+      `${label}: one valid click strategy was rejected`,
+    );
+
+    const agent = new AgentClass({
+      getActive: () => ({ contextWindow: 128000, supportsVision: false }),
+      getVisionProvider: async () => null,
+    });
+    const tabId = label === 'chrome' ? 9901 : 9902;
+    agent.conversationModes.set(tabId, 'act');
+    agent._persist = () => {};
+    let dispatches = 0;
+    agent.executeTool = async () => {
+      dispatches++;
+      return { success: true };
+    };
+    const messages = [];
+    const updates = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'bad_lang', function: { name: 'set_field', arguments: JSON.stringify({ ref_id: 'ref_1', text: 'miras.global', lang: 'tr-deasciify' }) } }],
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { supportsVision: false },
+      null,
+      new Set(['set_field']),
+      1,
+    );
+    assert.equal(dispatches, 0, `${label}: invalid set_field arguments reached executeTool`);
+    const result = JSON.parse(messages.find(message => message.role === 'tool')?.content || '{}');
+    assert.equal(result.invalidArguments, true, `${label}: structured invalidArguments marker missing`);
+    assert.equal(result.noDispatch, true, `${label}: structured noDispatch marker missing`);
+    assert.ok(updates.some(update => update.type === 'tool_result' && update.data?.result?.noDispatch === true), `${label}: UI did not receive the rejected tool result`);
+  }
+});
+
+test('execute protocol suppresses planner payloads, rejects false Ask claims, and ends with friendly failure', async () => {
+  const plannerPayload = JSON.stringify({
+    request_kind: 'execute',
+    requires_state_change: true,
+    summary: 'Fill the form.',
+    steps: [{ id: '1', action: 'Type the value.' }],
+    localized: { locale: 'tr', summary: 'Formu doldur.', steps: [] },
+  });
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = AgentClass === AgentCh ? 9911 : 9912;
+    assert.equal(agent._isPlannerShapedJson(plannerPayload), true, `${AgentClass.name}: planner JSON was not detected`);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: false });
+    assert.equal(
+      agent._looksLikePlanOnlyTerminal('You are currently in Ask mode. Switch to Act mode to continue.', agent._planExecutionGuards.get(tabId)),
+      true,
+      `${AgentClass.name}: false runtime-mode claim was accepted`,
+    );
+    const first = agent._planOnlyTerminalDecision(tabId, plannerPayload);
+    assert.equal(first?.retry, true, `${AgentClass.name}: first planner terminal did not receive one recovery`);
+    const second = agent._planOnlyTerminalDecision(tabId, plannerPayload);
+    assert.match(second?.failure || '', /could not verify any requested page action/i, `${AgentClass.name}: terminal failure is not user-facing`);
+    assert.doesNotMatch(second?.failure || '', /execute protocol|recovery nudge|model returned/i, `${AgentClass.name}: raw protocol detail leaked to terminal`);
+  }
+});
+
+test('planner routes Act advice follow-ups to respond and protects unknown required form values', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const planner = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/planner.js`), 'utf8');
+    assert.match(planner, /Runtime mode does not force execute/, `${build}: Act advice routing rule missing`);
+    assert.match(planner, /trusted conversation context already contains everything needed/, `${build}: conversation-only respond rule missing`);
+    assert.match(planner, /required form value is unavailable[\s\S]*?leave the field untouched/, `${build}: missing form-value guard missing`);
+  }
+});
+
+test('error formatting is bounded and never exposes object coercion text', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const { formatErrorMessage } = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/error-format.js`)).href);
+    assert.equal(formatErrorMessage({ error: { detail: { message: 'Provider rejected the request.' } } }), 'Provider rejected the request.', `${build}: nested provider message missing`);
+    assert.equal(formatErrorMessage(new Error('Network unavailable.')), 'Network unavailable.', `${build}: Error instance message missing`);
+    assert.equal(formatErrorMessage({ error: { cause: new Error('Nested provider failure.') } }), 'Nested provider failure.', `${build}: nested Error cause message missing`);
+    const arbitrary = formatErrorMessage({ status: 503, payload: { retry: false } });
+    assert.doesNotMatch(arbitrary, /\[object Object\]/, `${build}: arbitrary object leaked coercion text`);
+    assert.match(arbitrary, /"status":503/, `${build}: arbitrary object did not receive a useful stable representation`);
+    const circular = { code: 'E_LOOP' };
+    circular.self = circular;
+    assert.doesNotMatch(formatErrorMessage(circular), /\[object Object\]/, `${build}: circular error leaked coercion text`);
+    assert.ok(formatErrorMessage({ message: 'x'.repeat(5000) }, { maxLength: 200 }).length <= 200, `${build}: formatter ignored its bound`);
+
+    const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
+    assert.match(panel, /function renderAgentErrorUpdate[\s\S]*?formatErrorMessage\(data\?\.message \?\? data\?\.error \?\? data\)/, `${build}: UI error ingress is not normalized`);
+    assert.match(panel, /const existing = content\.querySelector\('\.msg-copy-btn:not\(\.scratchpad-copy-btn\)'\)/, `${build}: message Copy insertion is not idempotent`);
+    assert.match(panel, /btn\.title = t\('sp\.copy\.message\.title'\)/, `${build}: message Copy still reuses the code tooltip`);
+    assert.match(panel, /data-rejected-completion[\s\S]*?rejectedCompletion = 'pending'/, `${build}: rejected done retries are not collapsed`);
+  }
+});
+
+test('session conversation snapshots strip binary payloads and cap large tool results', async () => {
+  const imagePayload = 'A'.repeat(3 * 1024 * 1024);
+  for (const build of ['chrome', 'firefox']) {
+    const persistence = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/conversation-persistence.js`)).href);
+    const messages = [
+      { role: 'system', content: 'system' },
+      {
+        role: 'user',
+        attachmentHandles: [{ attachmentId: 'attachment_safe_1', kind: 'image', name: 'fixture.png' }],
+        content: [
+          { type: 'text', text: 'Use this attachment.' },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${imagePayload}` } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'shot', content: JSON.stringify({ image: `data:image/png;base64,${imagePayload}`, tree: 'x'.repeat(200_000) }) },
+      { role: 'user', transientCompletionVerification: true, content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${imagePayload}` } }] },
+    ];
+    const serialized = persistence.serializeConversationForSession(messages);
+    const json = JSON.stringify(serialized.messages);
+    assert.equal(serialized.compacted, true, `${build}: binary snapshot was not marked compacted`);
+    assert.ok(serialized.bytes <= persistence.SESSION_CONVERSATION_BUDGET_BYTES, `${build}: serialized conversation exceeded its bound`);
+    assert.doesNotMatch(json, /data:image\//, `${build}: inline image survived session serialization`);
+    assert.doesNotMatch(json, new RegExp(`A{${1024 * 1024}}`), `${build}: multi-megabyte payload survived session serialization`);
+    assert.match(json, /attachment_safe_1/, `${build}: user attachment durable handle was lost`);
+    assert.match(json, /Completion verification screenshot omitted/, `${build}: completion screenshot placeholder missing`);
+  }
+});
+
+test('quota exhaustion degrades recovery once, continues live, and disables automatic replay', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName, tabId] of [
+      ['chrome', AgentCh, 'chrome', 9931],
+      ['firefox', AgentFx, 'browser', 9932],
+    ]) {
+      let writes = 0;
+      globalThis[apiName] = {
+        storage: {
+          session: {
+            get: async () => ({}),
+            set: async () => {
+              writes++;
+              throw new Error('QUOTA_BYTES exceeded');
+            },
+          },
+        },
+      };
+      const agent = new AgentClass({});
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'continue live' }]);
+      agent.submittedRunRequestIds.set(tabId, `${label}-request`);
+      agent.currentRunId.set(tabId, `${label}-run`);
+      const updates = [];
+      agent._runUpdateCallbacks.set(tabId, (type, data) => updates.push({ type, data }));
+
+      const first = await agent._persistNow(tabId);
+      const second = await agent._persistNow(tabId);
+      assert.deepEqual(
+        { ok: first.ok, degraded: first.degraded, reason: first.reason },
+        { ok: false, degraded: true, reason: 'quota' },
+        `${label}: quota failure did not return structured degradation`,
+      );
+      assert.equal(second.ok, false, `${label}: repeated quota write unexpectedly became durable`);
+      assert.equal(writes, 4, `${label}: each write should make one compact retry and stop`);
+      assert.equal(updates.filter(update => update.data?.code === 'persistence_degraded').length, 1, `${label}: degradation warning was not deduped per run`);
+      assert.equal(agent.activeRunState(tabId).persistenceDegraded, true, `${label}: active run state omitted degradation`);
+      assert.equal(await agent.hasDurableSubmittedTurn(tabId, `${label}-request`), false, `${label}: non-durable run remained replayable`);
+      assert.equal(agent.conversations.get(tabId).at(-1).content, 'continue live', `${label}: live conversation was discarded`);
+
+      let retryWrites = 0;
+      let compactStored = null;
+      globalThis[apiName].storage.session.set = async patch => {
+        retryWrites++;
+        if (retryWrites === 1) throw new Error('QUOTA_BYTES exceeded');
+        compactStored = patch;
+      };
+      const recovered = new AgentClass({});
+      recovered.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'tool', content: 'x'.repeat(600_000) }]);
+      const persisted = await recovered._persistNow(tabId);
+      assert.equal(persisted.ok, true, `${label}: compact retry did not recover`);
+      assert.equal(persisted.reason, 'quota_compacted', `${label}: compact retry reason missing`);
+      assert.ok(JSON.stringify(compactStored).length < 500_000, `${label}: retry snapshot was not tightly bounded`);
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('run UI persistence compaction preserves acknowledged versus discarded boundaries', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const journal = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/run-ui-journal.js`)).href);
+    const events = Array.from({ length: 120 }, (_, index) => ({
+      seq: index + 1,
+      type: 'text_delta',
+      data: { content: 'x'.repeat(10_000) },
+      ts: index + 1,
+    }));
+    const snapshot = { requestId: 'bounded-run', seq: 120, ackedSeq: 10, discardedBeforeSeq: 0, events, streamedText: 'x'.repeat(100_000), finalContent: '' };
+    const compact = journal.compactRunUiSnapshotForPersist(snapshot, { tight: true });
+    assert.ok(JSON.stringify(compact).length <= journal.RUN_UI_PERSIST_RETRY_BUDGET, `${build}: run UI retry snapshot exceeded budget`);
+    assert.equal(compact.ackedSeq, 10, `${build}: compaction rewrote acknowledged boundary`);
+    assert.ok(compact.discardedBeforeSeq > compact.ackedSeq, `${build}: genuine persisted eviction did not create a replay-gap boundary`);
+    const acknowledgedOnly = { ackedSeq: 42, discardedBeforeSeq: 0, truncatedBeforeSeq: 42 };
+    assert.equal(journal.runUiDiscardedBeforeSeq(acknowledgedOnly), 0, `${build}: acknowledged events became a false replay gap`);
   }
 });
 

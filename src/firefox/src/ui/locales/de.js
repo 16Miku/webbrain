@@ -264,6 +264,8 @@ export default {
   'sp.copy': 'Kopieren',
   'sp.copied': 'Kopiert!',
   'sp.copy.code.title': 'Code kopieren',
+  'sp.copy.message.title': 'Nachricht kopieren',
+  'sp.persistence.unavailable': 'Wiederherstellungsdaten können nicht gespeichert werden. Die laufende Aufgabe kann fortfahren, Aktionen werden nach einem Verbindungsabbruch jedoch nicht wiederholt. Versuche es dann manuell erneut.',
   'sp.retry': 'Erneut versuchen',
   'sp.retry.busy': 'Warten Sie, bis der aktuelle Durchlauf abgeschlossen ist, bevor Sie es erneut versuchen.',
   'sp.retry.attachments_unavailable': 'Anhänge vom fehlgeschlagenen Versuch sind nicht mehr verfügbar; nur der Text wird erneut versucht.',

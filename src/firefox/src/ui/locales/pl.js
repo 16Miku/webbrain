@@ -200,6 +200,8 @@ export default {
   'sp.copy': 'Kopiuj',
   'sp.copied': 'Skopiowano!',
   'sp.copy.code.title': 'Kopiuj kod',
+  'sp.copy.message.title': 'Kopiuj wiadomość',
+  'sp.persistence.unavailable': 'Nie można zapisać danych odzyskiwania. Bieżące zadanie może być kontynuowane, ale po utracie połączenia działania nie zostaną powtórzone. Spróbuj ponownie ręcznie.',
   'sp.error_prefix': 'Błąd: {msg}',
   'sp.subscribe.allowance_used': 'Wykorzystano dzienny darmowy limit WebBrain Cloud.',
   'sp.subscribe.btn': 'Subskrybuj',
