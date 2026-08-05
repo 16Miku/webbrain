@@ -83,6 +83,33 @@ function editorProbe(overrides = {}) {
   };
 }
 
+function frameWrongTarget(frameId, documentToken) {
+  return wrongTarget({
+    toolName: 'iframe_type',
+    args: {
+      selector: `#font-size-${frameId}`,
+      text: `Requested prose for frame ${frameId}`,
+      clear: true,
+    },
+    candidate: {
+      ...wrongTarget().candidate,
+      associatedEditorRef: `ref_${frameId}0`,
+      associatedEditorIdentity: editorIdentity({
+        id: `editor-${frameId}`,
+        pageY: frameId * 100,
+      }),
+      relatedRefs: [`ref_${frameId}1`],
+      regionRef: `ref_${frameId}2`,
+      regionKey: `toolbar:${frameId}`,
+    },
+    identity: {
+      frameId,
+      documentToken,
+      refScopeUrl: 'https://frame.example.test/editor',
+    },
+  });
+}
+
 console.log('\nrich-text toolbar guard');
 
 await test('Chrome and Firefox ship the byte-identical guard', () => {
@@ -174,6 +201,94 @@ for (const [label, Guard] of [['chrome', ChromeGuard], ['firefox', FirefoxGuard]
     }
     assert.equal(guard.obligations(8).length, 2);
     assert.deepEqual(new Set(guard.obligations(8).map(obligation => obligation.frameId)), new Set([7, 8]));
+  });
+
+  await test(`${label}: a sibling frame reload demotes only that frame obligation`, () => {
+    const guard = new Guard({ now: () => 275 });
+    guard.recordWrongTarget(8, frameWrongTarget(7, 'frame-doc-a'));
+    guard.recordWrongTarget(8, frameWrongTarget(8, 'frame-doc-b'));
+
+    const reloaded = guard.evaluateProbe(8, 'iframe_click', { selector: '#editor-7' }, {
+      frameId: 7,
+      documentToken: 'frame-doc-a-reloaded',
+      refScopeUrl: 'https://frame.example.test/editor',
+      toolbarContext: false,
+    });
+    assert.equal(reloaded.navigated, true);
+    assert.equal(reloaded.guarded, false);
+
+    const frameA = guard.obligations(8)
+      .find(obligation => obligation.blockedToolbarSelector === '#font-size-7');
+    const frameB = guard.obligations(8)
+      .find(obligation => obligation.blockedToolbarSelector === '#font-size-8');
+    assert.equal(frameA.recoveryOnly, true);
+    assert.equal(frameA.frameId, null);
+    assert.equal(frameA.documentToken, '');
+    assert.equal(frameB.recoveryOnly, false);
+    assert.equal(frameB.frameId, 8);
+    assert.equal(frameB.documentToken, 'frame-doc-b');
+    assert.equal(frameB.associatedEditorRef, 'ref_80');
+    assert.deepEqual(frameB.blockedRefs, ['ref_81']);
+    assert.equal(frameB.regionRef, 'ref_82');
+
+    const siblingRetry = guard.evaluateProbe(8, 'iframe_click', { selector: '#font-size-8' }, {
+      frameId: 8,
+      documentToken: 'frame-doc-b',
+      refScopeUrl: 'https://frame.example.test/editor',
+      toolbarContext: false,
+    });
+    assert.equal(siblingRetry.block?.wrongTarget, true);
+  });
+
+  await test(`${label}: recording a replacement frame document preserves live siblings`, () => {
+    const guard = new Guard({ now: () => 280 });
+    guard.recordWrongTarget(8, frameWrongTarget(7, 'frame-doc-a'));
+    guard.recordWrongTarget(8, frameWrongTarget(8, 'frame-doc-b'));
+    guard.recordWrongTarget(8, frameWrongTarget(7, 'frame-doc-a-reloaded'));
+
+    assert.equal(guard.obligations(8).length, 2);
+    const frameA = guard.obligations(8).find(obligation => obligation.frameId === 7);
+    const frameB = guard.obligations(8).find(obligation => obligation.frameId === 8);
+    assert.equal(frameA.documentToken, 'frame-doc-a-reloaded');
+    assert.equal(frameA.recoveryOnly, false);
+    assert.equal(frameB.documentToken, 'frame-doc-b');
+    assert.equal(frameB.recoveryOnly, false);
+    assert.equal(frameB.associatedEditorRef, 'ref_80');
+    assert.deepEqual(frameB.blockedRefs, ['ref_81']);
+    assert.equal(frameB.regionRef, 'ref_82');
+  });
+
+  await test(`${label}: a stale direct ref demotes only its own obligation`, () => {
+    const guard = new Guard({ now: () => 285 });
+    guard.recordWrongTarget(8, wrongTarget({
+      args: { ref_id: 'ref_70', text: 'Frame A prose', clear: true },
+      identity: { frameId: 7, documentToken: 'frame-doc-a', refScopeUrl: 'https://frame.example.test/editor' },
+    }));
+    guard.recordWrongTarget(8, wrongTarget({
+      args: { ref_id: 'ref_70', text: 'Frame B prose', clear: true },
+      candidate: {
+        ...wrongTarget().candidate,
+        associatedEditorRef: 'ref_90',
+        associatedEditorIdentity: editorIdentity({ id: 'editor-8', pageY: 800 }),
+        regionRef: 'ref_82',
+        regionKey: 'toolbar:8',
+      },
+      identity: { frameId: 8, documentToken: 'frame-doc-b', refScopeUrl: 'https://frame.example.test/editor' },
+    }));
+
+    assert.equal(
+      guard.blockRef(8, 'set_field', { ref_id: 'ref_70' }, 'frame-doc-b')?.wrongTarget,
+      true,
+    );
+    const frameA = guard.obligations(8)
+      .find(obligation => obligation.blockedAttemptedText === 'Frame A prose');
+    const frameB = guard.obligations(8)
+      .find(obligation => obligation.blockedAttemptedText === 'Frame B prose');
+    assert.equal(frameA.recoveryOnly, true);
+    assert.equal(frameB.recoveryOnly, false);
+    assert.equal(frameB.frameId, 8);
+    assert.equal(frameB.documentToken, 'frame-doc-b');
+    assert.equal(frameB.associatedEditorRef, 'ref_90');
   });
 
   await test(`${label}: persisted recoveryObligations restore into the same ledger`, () => {

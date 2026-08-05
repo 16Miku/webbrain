@@ -292,6 +292,17 @@ function demoteObligationForNavigation(obligation) {
   };
 }
 
+function obligationMatchesFrame(obligation, frameId) {
+  return Number.isInteger(obligation.frameId)
+    ? frameId === obligation.frameId
+    : !Number.isInteger(frameId) || frameId === 0;
+}
+
+function obligationScopeMismatches(obligation, documentToken, pageUrl) {
+  return (obligation.documentToken && documentToken && obligation.documentToken !== documentToken)
+    || (obligation.pageUrl && pageUrl && obligation.pageUrl !== pageUrl);
+}
+
 function obligationKey(entry, { includeLiveFrame = true } = {}) {
   const identity = entry.associatedEditorIdentity;
   const tag = String(identity?.tag || '').toLowerCase();
@@ -458,11 +469,16 @@ export class RichTextToolbarGuard {
     this.ledger.delete(tabId);
   }
 
-  navigate(tabId) {
-    const obligations = this.obligations(tabId).map(demoteObligationForNavigation);
+  _demoteMatching(tabId, matches) {
+    const obligations = this.obligations(tabId)
+      .map(obligation => matches(obligation) ? demoteObligationForNavigation(obligation) : obligation);
     if (obligations.length === 0) this.reset(tabId);
     else this.ledger.set(tabId, obligations);
     return obligations;
+  }
+
+  navigate(tabId) {
+    return this._demoteMatching(tabId, () => true);
   }
 
   persist(tabId) {
@@ -505,16 +521,22 @@ export class RichTextToolbarGuard {
     const refId = typeof args?.ref_id === 'string' ? args.ref_id : '';
     if (!refId) return null;
     const obligations = this.obligations(tabId);
-    const blocked = obligations.find(obligation => (
+    const blockedMatches = obligations.filter(obligation => (
       obligation.blockedToolbarRef === refId || (obligation.blockedRefs || []).includes(refId)
     ));
-    if (!blocked) return null;
+    if (blockedMatches.length === 0) return null;
     const currentDocument = String(liveDocumentToken || '');
     if (!currentDocument) return null;
-    if (blocked.documentToken && blocked.documentToken !== currentDocument) {
-      this.navigate(tabId);
-      return null;
+    const staleBlocked = new Set(blockedMatches.filter(obligation => (
+      obligation.recoveryOnly !== true
+      && obligation.documentToken
+      && obligation.documentToken !== currentDocument
+    )));
+    if (staleBlocked.size > 0) {
+      this._demoteMatching(tabId, obligation => staleBlocked.has(obligation));
     }
+    const blocked = blockedMatches.find(obligation => !staleBlocked.has(obligation));
+    if (!blocked) return null;
     return {
       success: false,
       dispatched: false,
@@ -532,21 +554,21 @@ export class RichTextToolbarGuard {
     const obligations = this.obligations(tabId);
     const frameObligations = obligations.filter(obligation => (
       obligation.recoveryOnly === true
-        ? true
-        : Number.isInteger(obligation.frameId)
-          ? probe.frameId === obligation.frameId
-          : !Number.isInteger(probe.frameId) || probe.frameId === 0
+        || obligationMatchesFrame(obligation, probe.frameId)
     ));
     if (frameObligations.length === 0) return { block: null, rememberScope: false, guarded: false };
     const liveDocument = String(probe.documentToken || '');
     const livePageUrl = String(probe.refScopeUrl || '');
-    const scopedObligations = frameObligations.filter(obligation => !(
-      (obligation.documentToken && liveDocument && obligation.documentToken !== liveDocument)
-      || (obligation.pageUrl && livePageUrl && obligation.pageUrl !== livePageUrl)
-    ));
+    const staleObligations = new Set(frameObligations.filter(obligation => (
+      obligation.recoveryOnly !== true
+      && obligationScopeMismatches(obligation, liveDocument, livePageUrl)
+    )));
+    if (staleObligations.size > 0) {
+      this._demoteMatching(tabId, obligation => staleObligations.has(obligation));
+    }
+    const scopedObligations = frameObligations.filter(obligation => !staleObligations.has(obligation));
     const iframeTool = toolName === 'iframe_click' || toolName === 'iframe_type';
     if (scopedObligations.length === 0) {
-      this.navigate(tabId);
       return {
         block: null,
         rememberScope: !iframeTool && !!(liveDocument || livePageUrl),
@@ -589,17 +611,17 @@ export class RichTextToolbarGuard {
     const documentToken = String(identity.documentToken || '');
     const pageUrl = String(identity.refScopeUrl || '');
     let prior = this.obligations(tabId);
-    if (prior.some(obligation => (
-      obligation.documentToken
+    const stalePrior = new Set(prior.filter(obligation => (
+      obligation.recoveryOnly !== true
+      && obligation.documentToken
       && documentToken
       && obligation.documentToken !== documentToken
-      && (
-        !Number.isInteger(obligation.frameId)
-        || !Number.isInteger(identity.frameId)
-        || obligation.frameId === identity.frameId
-      )
-    ))) {
-      prior = prior.map(demoteObligationForNavigation);
+      && obligationMatchesFrame(obligation, identity.frameId)
+    )));
+    if (stalePrior.size > 0) {
+      prior = prior.map(obligation => (
+        stalePrior.has(obligation) ? demoteObligationForNavigation(obligation) : obligation
+      ));
     }
 
     const associatedEditorRef = candidate?.associatedEditorRef || '';
