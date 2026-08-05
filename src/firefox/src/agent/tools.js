@@ -684,7 +684,7 @@ export const AGENT_TOOLS = [
         properties: {
           url: { type: 'string', description: 'URL to fetch' },
           method: { type: 'string', description: 'HTTP method (default GET)' },
-          headers: { type: 'object', description: 'Optional request headers' },
+          headers: { type: 'object', description: 'Optional request headers as a string-valued map.', additionalProperties: { type: 'string' } },
           body: { type: 'string', description: 'Optional request body' },
           replayRequestId: { type: 'string', description: 'Optional opaque id from a bulk API mutation hint. Reuses captured same-origin XHR/fetch body and safe headers without exposing hidden form tokens.' },
           offset: { type: 'number', description: 'Character offset for text/JSON pagination. Default 0; continue with the returned nextOffset.' },

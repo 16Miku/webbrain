@@ -57,9 +57,14 @@ function validateValue(value, schema, path, failures) {
       if (!Object.prototype.hasOwnProperty.call(properties, key)) failures.push(`${path}.${key}`);
     }
   }
+  const additionalPropertiesSchema = isPlainObject(schema.additionalProperties)
+    ? schema.additionalProperties
+    : null;
   for (const [key, child] of Object.entries(value)) {
     if (Object.prototype.hasOwnProperty.call(properties, key)) {
       validateValue(child, properties[key], `${path}.${key}`, failures);
+    } else if (additionalPropertiesSchema) {
+      validateValue(child, additionalPropertiesSchema, `${path}.${key}`, failures);
     }
   }
 }
