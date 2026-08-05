@@ -104,6 +104,9 @@ async function setupContentHtml(page, html, browserKind) {
   // Simulate manifest injection followed by extension-reload recovery.
   await page.addScriptTag({ content: pageGuardSrc });
   await page.addScriptTag({ content: firefox ? stubFirefoxBrowser : stubChrome });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8'),
+  });
   await page.addScriptTag({ content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });

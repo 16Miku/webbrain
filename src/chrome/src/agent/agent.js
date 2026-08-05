@@ -65,6 +65,7 @@ import {
   formatPlanScratchpad,
   userMessageToText,
   messageContentToText,
+  plannerClarificationForPage,
 } from './planner.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
@@ -1924,6 +1925,10 @@ export class Agent extends LoopDetector {
       identity,
     });
     const obligation = recorded.obligation;
+    const associatedEditorRef = typeof candidate?.associatedEditorRef === 'string'
+      && /^ref_\d+$/.test(candidate.associatedEditorRef)
+      ? candidate.associatedEditorRef
+      : '';
     Object.assign(result, {
       success: false,
       verified: false,
@@ -1935,13 +1940,16 @@ export class Agent extends LoopDetector {
       richTextToolbar: true,
       targetKind: obligation.targetKind,
       recoveryRequired: 'editor_body',
+      ...(associatedEditorRef ? { associatedEditorRef } : {}),
       retryable: false,
       visualTargetAudit: {
         source: decision.source,
         confidence: audit?.confidence ?? null,
         regionKind: audit?.regionKind || 'uncertain',
       },
-      error: 'This edit was blocked before dispatch because the target is a rich-text formatting toolbar control, not the editor body. Do not retry this ref or another font-family, font-size, style, color, or link control in the same toolbar. Re-read the tree, focus the associated editor body, enter the requested content there, and verify that exact editor edit.',
+      error: associatedEditorRef
+        ? `This edit was blocked before dispatch because the target is a rich-text formatting toolbar control, not the editor body. Do not retry this ref or another font-family, font-size, style, color, or link control in the same toolbar. Use the associated editor body ${associatedEditorRef}, enter the requested content there, and verify that exact editor edit.`
+        : 'This edit was blocked before dispatch because the target is a rich-text formatting toolbar control, not the editor body. Do not retry this ref or another font-family, font-size, style, color, or link control in the same toolbar. Re-read the tree, focus the associated editor body, enter the requested content there, and verify that exact editor edit.',
     });
     const runId = this.currentRunId.get(tabId);
     if (runId) {
@@ -7909,9 +7917,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const scratchpadFacts = scratchpadBody.length > 1800
       ? `…${scratchpadBody.slice(scratchpadBody.length - 1800)}`
       : scratchpadBody;
+    let plannerClarification = null;
+    for (let index = messages.length - 1; index >= 1; index -= 1) {
+      const message = messages[index];
+      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
+      if (
+        message?.role === 'assistant'
+        && message.webbrainPlannerClarification?.requiresSubmission === true
+      ) {
+        plannerClarification = {
+          requiresSubmission: true,
+          pageUrl: String(message.webbrainPlannerClarification.pageUrl || '').slice(0, 500),
+        };
+      }
+      break;
+    }
     return {
       priorUserTask: priorUserTask.slice(0, 1200),
       scratchpadFacts: scratchpadFacts === '(empty)' ? '' : scratchpadFacts,
+      plannerClarification,
     };
   }
 
@@ -8186,7 +8210,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
       if (!gate.proceed) {
-        messages.push({ role: 'assistant', content: gate.message || 'More information is required.' });
+        messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
         this._persist(tabId);
       }
       return gate;
@@ -8203,7 +8227,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
     if (!gate.proceed) {
-      messages.push({ role: 'assistant', content: gate.message || 'More information is required.' });
+      messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
       this._persist(tabId);
       return {
         proceed: false,
@@ -8211,6 +8235,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reason: gate.reason,
         requestKind: gate.requestKind,
         requiresStateChange: gate.requiresStateChange,
+        requiresSubmission: gate.requiresSubmission === true,
         // Carried so a caller can tell an auth failure from a transient one
         // without re-parsing the message text.
         ...(gate.failureKind ? { failureKind: gate.failureKind } : {}),
@@ -8289,7 +8314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ];
   }
 
-  _plannerIntentConsistencyIssue(plan) {
+  _plannerIntentConsistencyIssue(plan, followUpContext = {}) {
     if (!plan || !Array.isArray(plan.steps)) return null;
     const tools = [...new Set(
       plan.steps.flatMap(step => Array.isArray(step?.tools) ? step.tools : [])
@@ -8303,14 +8328,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (plan.request_kind === 'plan_only' && executionTools.length > 0) {
       return { kind: 'plan_only_with_execution_tools', tools: executionTools };
     }
+    if (
+      plan.request_kind === 'execute'
+      && followUpContext?.plannerClarification?.requiresSubmission === true
+      && plan.requires_submission !== true
+    ) {
+      return { kind: 'clarification_submit_intent_dropped', tools };
+    }
     return null;
   }
 
   _plannerIntentConsistencyRepairMessages(plannerMessages, issue) {
     const issueKind = issue?.kind === 'respond_with_tools'
       || issue?.kind === 'plan_only_with_execution_tools'
+      || issue?.kind === 'clarification_submit_intent_dropped'
       ? issue.kind
       : 'unknown';
+    const clarificationGuidance = issueKind === 'clarification_submit_intent_dropped'
+      ? ' The trusted unresolved-clarification block records that the user had authorized an eventual submission for the task being clarified. Decide semantically whether the current User task directly answers or continues that clarification. If it does and does not revoke submission, keep execute and set requires_submission=true. If it changes, cancels, or explicitly limits the task to filling without submission, keep the appropriate non-submit intent.'
+      : '';
     return [
       ...plannerMessages,
       {
@@ -8322,20 +8358,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Keep plan_only only when the user asked merely for a plan, outline, strategy, or discussion without authorizing execution. ' +
           'Use execute when producing the requested answer needs a fresh page, browser, network, memory, or scheduling tool; read-only execution still has requires_state_change false. ' +
           'Use respond only when existing conversation or working-note context is sufficient and list no tools. ' +
+          clarificationGuidance +
           'Do not infer permission for a mutation that the current user task did not authorize. No prose, markdown, tool calls, or reasoning text.',
       },
     ];
   }
 
-  _plannerIntentUnresolvedConsistencyIssue(plan, recheckedIssueKind = null) {
-    const issue = this._plannerIntentConsistencyIssue(plan);
+  _plannerIntentUnresolvedConsistencyIssue(plan, recheckedIssueKind = null, followUpContext = {}) {
+    const issue = this._plannerIntentConsistencyIssue(plan, followUpContext);
     if (!issue) return null;
     // Repeating plan_only after the focused semantic recheck confirms that the
     // user asked only for a plan. A respond plan that still lists tools can
     // never be routed response-only, and a new issue after either repair has
     // not received the focused consistency check.
     if (
-      issue.kind === 'plan_only_with_execution_tools'
+      (
+        issue.kind === 'plan_only_with_execution_tools'
+        || issue.kind === 'clarification_submit_intent_dropped'
+      )
       && recheckedIssueKind === issue.kind
     ) {
       return null;
@@ -8426,6 +8466,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || 'No plan was produced.';
   }
 
+  _plannerTerminalAssistantMessage(gate = {}, tabInfo = null) {
+    const message = {
+      role: 'assistant',
+      content: gate.message || 'More information is required.',
+    };
+    if (gate.requestKind === 'clarify' && gate.requiresSubmission === true) {
+      message.webbrainPlannerClarification = {
+        requiresSubmission: true,
+        pageUrl: String(tabInfo?.tabUrl || ''),
+      };
+    }
+    return message;
+  }
+
   _plannerProgressLedgerGateFields(plan) {
     const policy = ['enabled', 'disabled', 'auto'].includes(plan?.memory?.progress_ledger_policy)
       ? plan.memory.progress_ledger_policy
@@ -8484,6 +8538,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _runPlannerIntentGate(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null, conversationMode = 'act', runOptions = {}, followUpContext = {}) {
     const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
+    followUpContext = {
+      ...followUpContext,
+      plannerClarification: plannerClarificationForPage(
+        followUpContext.plannerClarification,
+        tabUrl,
+      ),
+    };
     const locale = runOptions?.locale || 'en';
     const provider = this.providerManager.getActive();
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
@@ -8491,6 +8552,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       locale,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
+      plannerClarification: followUpContext.plannerClarification,
     });
     const plannerStep = 0;
     onUpdate('thinking', { step: plannerStep, note: 'Understanding request…' });
@@ -8545,7 +8607,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
       const consistencyIssue = !plannerRepairUsed
-        ? this._plannerIntentConsistencyIssue(plan)
+        ? this._plannerIntentConsistencyIssue(plan, followUpContext)
         : null;
       if (consistencyIssue) {
         plannerRepairUsed = true;
@@ -8564,7 +8626,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!plan) {
         return this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
-      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind)) {
+      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         return this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (plan.request_kind === 'respond') {
@@ -8582,6 +8644,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: plan.request_kind,
           requestKind: plan.request_kind,
           requiresStateChange: false,
+          requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
         };
       }
       return {
@@ -8611,6 +8674,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _runPlannerGate(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null, plannerMode = this._plannerMode(), conversationMode = 'act', runOptions = {}, followUpContext = {}) {
     const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
+    followUpContext = {
+      ...followUpContext,
+      plannerClarification: plannerClarificationForPage(
+        followUpContext.plannerClarification,
+        tabUrl,
+      ),
+    };
     const locale = runOptions?.locale || 'en';
 
     onUpdate('thinking', { step: 0, note: 'Planning…' });
@@ -8625,6 +8695,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       locale,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
+      plannerClarification: followUpContext.plannerClarification,
     });
     const plannerStep = 0;
 
@@ -8683,7 +8754,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
       const consistencyIssue = !plannerRepairUsed
-        ? this._plannerIntentConsistencyIssue(plan)
+        ? this._plannerIntentConsistencyIssue(plan, followUpContext)
         : null;
       if (consistencyIssue) {
         plannerRepairUsed = true;
@@ -8709,7 +8780,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? this._strictPlannerFailure(onUpdate)
           : this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
-      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind)) {
+      if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
           ? this._strictPlannerFailure(onUpdate)
           : this._plannerReadOnlyFallback(runOptions, onUpdate);
@@ -8729,6 +8800,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: plan.request_kind,
           requestKind: plan.request_kind,
           requiresStateChange: false,
+          requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
         };
       }
 

@@ -51,6 +51,170 @@ export function registerRichTextToolbarFixtures({
       }
     });
 
+    test(`${browserKind}: ordinary compact form controls stay outside a widened toolbar region`, async (page) => {
+      await setupContentHtml(page, `<!doctype html>
+        <style>
+          body { margin: 20px; font: 16px sans-serif; }
+          #ordinary-form { width: 720px; height: 60px; display: flex; align-items: center; gap: 8px; }
+          #quantity { width: 22px; height: 16px; }
+          #title { width: 240px; height: 24px; }
+        </style>
+        <form id="ordinary-form">
+          <input id="quantity" value="11">
+          <input id="title" aria-label="Title">
+          <button id="save" type="button">Save</button>
+        </form>`, browserKind);
+      const refs = await page.evaluate(() => ({
+        form: window.__wb_ax_ref(document.querySelector('#ordinary-form')),
+        quantity: window.__wb_ax_ref(document.querySelector('#quantity')),
+        title: window.__wb_ax_ref(document.querySelector('#title')),
+        save: window.__wb_ax_ref(document.querySelector('#save')),
+      }));
+      const quantityProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'set_field',
+        args: { ref_id: refs.quantity, text: 'Document prose' },
+      });
+      const candidate = quantityProbe?.fieldMeta?.toolbarCandidate;
+      if (
+        !candidate
+        || candidate.regionRef === refs.form
+        || candidate.relatedRefs?.includes(refs.title)
+        || candidate.relatedRefs?.includes(refs.save)
+        || candidate.associatedEditorRef
+      ) {
+        throw new Error(`ordinary form siblings must stay outside the numeric candidate's recovery region: ${JSON.stringify({ refs, quantityProbe })}`);
+      }
+      const saveProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'click_ax',
+        args: { ref_id: refs.save },
+      });
+      if (!saveProbe?.resolved || saveProbe.toolbarContext === true) {
+        throw new Error(`ordinary Save control must not inherit toolbar context: ${JSON.stringify(saveProbe)}`);
+      }
+
+      const AgentClass = browserKind === 'chrome' ? Agent : FirefoxAgent;
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = browserKind === 'chrome' ? 1881 : 1882;
+      agent._applyRichTextToolbarWrongTarget(
+        tabId,
+        'set_field',
+        { ref_id: refs.quantity, text: 'Document prose', clear: true },
+        {},
+        candidate,
+        { source: 'structural', targetKind: 'font_size' },
+        null,
+        quantityProbe,
+      );
+      agent._probeRichTextToolbarRetryTarget = async () => saveProbe;
+      const saveBlock = await agent._richTextToolbarToolBlock(tabId, 'click_ax', { ref_id: refs.save });
+      if (saveBlock) {
+        throw new Error(`ordinary Save control must remain dispatchable after a blocked numeric mis-target: ${JSON.stringify(saveBlock)}`);
+      }
+    });
+
+    test(`${browserKind}: roleless nested toolbar binds Body/Heading siblings to the blocked recovery region`, async (page) => {
+      await setupContentHtml(page, `<!doctype html>
+        <style>
+          body { margin: 20px; font: 16px sans-serif; }
+          #editor-shell { width: 620px; border: 1px solid #aaa; }
+          #roleless-toolbar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #ccc; }
+          #style-control, #family-control { height: 24px; display: flex; align-items: center; padding: 0 8px; border: 1px solid #bbb; }
+          #size-wrap { width: 44px; height: 24px; display: flex; align-items: center; overflow: hidden; }
+          #font-size { width: 22px; height: 16px; }
+          #visual-editor { min-height: 150px; position: relative; padding: 12px; }
+          #editor-proxy { position: absolute; right: 12px; top: 12px; width: 23px; height: 23px; }
+        </style>
+        <div id="editor-shell">
+          <div id="roleless-toolbar">
+            <div id="style-control" tabindex="0">Heading3</div>
+            <div id="family-control" tabindex="0">Default</div>
+            <div id="size-wrap"><input id="font-size" value="11"><button type="button">v</button></div>
+            <button type="button">B</button><button type="button">I</button><button type="button">U</button>
+          </div>
+          <div id="visual-editor"><h3>Existing answer</h3><textarea id="editor-proxy" aria-label="Editor input"></textarea></div>
+        </div>`, browserKind);
+      const refs = await page.evaluate(() => ({
+        toolbar: window.__wb_ax_ref(document.querySelector('#roleless-toolbar')),
+        style: window.__wb_ax_ref(document.querySelector('#style-control')),
+        size: window.__wb_ax_ref(document.querySelector('#font-size')),
+        proxy: window.__wb_ax_ref(document.querySelector('#editor-proxy')),
+      }));
+      const sizeProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'set_field',
+        args: { ref_id: refs.size, text: 'Document prose' },
+      });
+      const candidate = sizeProbe?.fieldMeta?.toolbarCandidate;
+      if (
+        !candidate
+        || candidate.regionRef !== refs.toolbar
+        || candidate.associatedEditorRef !== refs.proxy
+      ) {
+        throw new Error(`roleless toolbar must widen past the nested size wrapper and bind its proxy editor: ${JSON.stringify({ refs, sizeProbe })}`);
+      }
+      const styleProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'click_ax',
+        args: { ref_id: refs.style },
+      });
+      if (
+        !styleProbe?.resolved
+        || styleProbe.toolbarContext !== true
+        || styleProbe.toolbarRegionRef !== refs.toolbar
+        || styleProbe.toolbarRegionKey !== candidate.regionKey
+      ) {
+        throw new Error(`Body/Heading sibling must resolve to the same roleless toolbar region: ${JSON.stringify({ candidate, styleProbe })}`);
+      }
+
+      const AgentClass = browserKind === 'chrome' ? Agent : FirefoxAgent;
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = browserKind === 'chrome' ? 1901 : 1902;
+      const wrongTarget = {};
+      agent._applyRichTextToolbarWrongTarget(
+        tabId,
+        'set_field',
+        { ref_id: refs.size, text: 'Document prose', clear: true },
+        wrongTarget,
+        candidate,
+        { source: 'structural', targetKind: 'font_size' },
+        null,
+        sizeProbe,
+      );
+      if (wrongTarget.associatedEditorRef !== refs.proxy || !String(wrongTarget.error || '').includes(refs.proxy)) {
+        throw new Error(`blocked write must surface the exact associated editor ref: ${JSON.stringify(wrongTarget)}`);
+      }
+      agent._probeRichTextToolbarRetryTarget = async () => styleProbe;
+      const styleBlock = await agent._richTextToolbarToolBlock(tabId, 'click_ax', { ref_id: refs.style });
+      if (!styleBlock?.wrongTarget || styleBlock.dispatched !== false) {
+        throw new Error(`Body/Heading toolbar retry must be blocked before it can change formatting: ${JSON.stringify(styleBlock)}`);
+      }
+    });
+
+    test(`${browserKind}: click_ax keeps an already-visible nested textarea at its current scroll position`, async (page) => {
+      await setupContentHtml(page, `<!doctype html>
+        <style>
+          body { margin: 0; }
+          #scroller { width: 500px; height: 180px; overflow: auto; border: 1px solid #aaa; }
+          .spacer { height: 260px; }
+          #editor-proxy { display: block; width: 23px; height: 23px; }
+        </style>
+        <div id="scroller"><div class="spacer"></div><textarea id="editor-proxy"></textarea><div class="spacer"></div></div>`, browserKind);
+      const state = await page.evaluate(() => {
+        const scroller = document.querySelector('#scroller');
+        const target = document.querySelector('#editor-proxy');
+        scroller.scrollTop = 230;
+        return {
+          ref: window.__wb_ax_ref(target),
+          before: scroller.scrollTop,
+          targetRect: target.getBoundingClientRect().toJSON(),
+          scrollerRect: scroller.getBoundingClientRect().toJSON(),
+        };
+      });
+      const response = await call(page, 'click_ax', { ref_id: state.ref });
+      const after = await page.evaluate(() => document.querySelector('#scroller').scrollTop);
+      if (!response?.success || after !== state.before) {
+        throw new Error(`visible proxy textarea click must not recenter its scroll container: ${JSON.stringify({ state, response, after })}`);
+      }
+    });
+
     test(`${browserKind}: rich-text toolbar metadata covers labelled controls and excludes labelled ordinary fields`, async (page) => {
       await setupContentFixture(page, 'rich-text-toolbar-target.html', browserKind);
 
