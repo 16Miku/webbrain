@@ -254,6 +254,8 @@ export default {
   'sp.copy': 'Copy',
   'sp.copied': 'Copied!',
   'sp.copy.code.title': 'Copy code',
+  'sp.copy.message.title': 'Copy message',
+  'sp.persistence.unavailable': 'Recovery persistence is unavailable. The live task can continue, but actions will not be replayed after a connection loss. Retry manually if disconnected.',
   'sp.retry': 'Retry',
   'sp.retry.busy': 'Wait for the current run to finish before retrying.',
   'sp.retry.attachments_unavailable': 'Attachments from the failed attempt are no longer available; retrying the text only.',

@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'نسخ',
   'sp.copied': 'تم النسخ!',
   'sp.copy.code.title': 'نسخ الكود',
+  'sp.copy.message.title': 'نسخ الرسالة',
+  'sp.persistence.unavailable': 'تعذّر حفظ بيانات الاسترداد. يمكن متابعة المهمة الحالية، لكن لن تُعاد الإجراءات بعد انقطاع الاتصال. أعد المحاولة يدويًا.',
 
   'sp.error_prefix': 'خطأ: {msg}',
   'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Cloud.',

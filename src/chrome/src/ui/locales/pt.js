@@ -255,6 +255,8 @@ export default {
   'sp.copy': "Copiar",
   'sp.copied': "Copiado!",
   'sp.copy.code.title': "Copiar código",
+  'sp.copy.message.title': "Copiar mensagem",
+  'sp.persistence.unavailable': "Não foi possível salvar os dados de recuperação. A tarefa ativa pode continuar, mas as ações não serão repetidas após uma desconexão. Tente novamente de forma manual.",
   'sp.retry': "Tentar novamente",
   'sp.retry.busy': "Aguarde a conclusão da execução atual antes de tentar novamente.",
   'sp.retry.attachments_unavailable': "Os anexos da tentativa fracassada não estão mais disponíveis; repetindo apenas o texto.",

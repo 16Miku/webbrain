@@ -114,10 +114,13 @@ Rules:
 - Classify the user's semantic intent across any language; never rely on literal keywords or UI labels.
 - execute means the user authorizes action. A request to plan and then perform is execute.
 - respond means the user asks only for a natural-language answer or recoverable artifact from existing conversation/working-note context, with no fresh page read or browser action.
+- Runtime mode does not force execute. In Act mode, an advice, explanation, or drafting follow-up is still respond when trusted conversation context already contains everything needed.
+- Require execute only when the answer genuinely needs fresh page, browser, or network evidence. Do not reread a page merely because Act mode is selected.
 - plan_only means the user asks for a plan, outline, strategy, or discussion without authorizing action.
 - clarify means missing or conflicting user information prevents a useful plan; localized.summary must be the concise question to ask.
 - A request to answer, summarize, explain, analyze, or draft a response about currently visible/open page content is execute when producing the answer needs a fresh page or browser read, even if the final deliverable is only text and requires_state_change is false. Example: "How should I respond to this open email?" is execute because the email must be read now.
 - respond must not include steps that need page, browser, network, memory, or scheduling tools. If any such tool is needed to produce the requested answer, classify the request as execute instead.
+- When a required form value is unavailable from trusted or public evidence, leave the field untouched and classify as clarify. Never plan to focus, clear, or write an empty value as a stand-in for missing personal information.
 - requires_state_change is true only when an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
 - requires_submission is true only when an execute request must explicitly commit a form/dialog with an action such as Submit, Save, Send, Publish, Post, or Confirm. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for non-execute requests.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.

@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [26.0.11] - 2026-08-05
+
+### Changed
+- Routed advice and drafting follow-ups through response-only handling when trusted conversation context is sufficient, even while Act mode is selected.
+- Closed built-in tool schemas and made the runtime mode authoritative during execute tasks.
+- Kept Turkish deasciification opt-in and instruction-only, with skill instructions loadable only from the enabled catalog after explicit conversion intent.
+- Bounded Chrome and Firefox conversation, chat, and run-replay session snapshots so live work can continue safely when recovery persistence is unavailable.
+
+### Fixed
+- Rejected undeclared tool arguments and mixed click targets before dispatch with structured `invalid_tool_arguments` / `noDispatch` results.
+- Suppressed planner-shaped JSON beside tool calls, retried planner-shaped terminals once, and replaced raw execute-protocol failures with a user-facing unverified-completion message.
+- Prevented unknown required form values from being represented by empty focus, clear, or write actions.
+- Normalized nested and object-shaped failures before UI, trace, and dedupe handling so `[object Object]` is never rendered.
+- Made assistant-message Copy controls idempotent, added a localized **Copy message** label, and collapsed rejected `done` retries into one visible diagnostic row.
+- Preserved acknowledged replay boundaries without false warnings while deduplicating genuine discarded-event gaps per request.
+- Retried quota failures with compact snapshots, marked unrecoverable runs non-durable, warned once, and prevented consequential action replay after connection loss without deleting other tab/session data.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for closed schemas, disabled skill arguments, Act/planner enforcement, nested errors, Copy deduplication, replay boundaries, multi-tab quota exhaustion, attachment/screenshot compaction, and fail-closed reconnect durability.
+
 ## [26.0.0] - 2026-07-26
 
 ### Added

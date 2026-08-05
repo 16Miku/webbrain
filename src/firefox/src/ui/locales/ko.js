@@ -153,6 +153,8 @@ export default {
   'sp.copy': '복사',
   'sp.copied': '복사됨!',
   'sp.copy.code.title': '코드 복사',
+  'sp.copy.message.title': '메시지 복사',
+  'sp.persistence.unavailable': '복구 데이터를 저장할 수 없습니다. 진행 중인 작업은 계속할 수 있지만 연결이 끊긴 뒤 작업을 다시 실행하지 않습니다. 수동으로 다시 시도하세요.',
 
   'sp.error_prefix': '오류: {msg}',
   'sp.subscribe.allowance_used': 'WebBrain Cloud의 무료 일일 사용량을 모두 사용했습니다.',

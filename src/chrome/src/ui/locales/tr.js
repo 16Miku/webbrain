@@ -189,6 +189,8 @@ export default {
   'sp.copy': 'Kopyala',
   'sp.copied': 'Kopyalandı!',
   'sp.copy.code.title': 'Kodu kopyala',
+  'sp.copy.message.title': 'Mesajı kopyala',
+  'sp.persistence.unavailable': 'Kurtarma verileri kaydedilemiyor. Canlı görev devam edebilir ancak bağlantı koparsa işlemler yeniden oynatılmaz; elle yeniden deneyin.',
 
   'sp.error_prefix': 'Hata: {msg}',
   'sp.subscribe.allowance_used': 'Ücretsiz günlük WebBrain Cloud kullanım hakkınız doldu.',

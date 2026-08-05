@@ -38,7 +38,7 @@ import {
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-import { RunUiJournal, RunUiPersistenceScheduler, runUiSnapshotForRequest } from './run-ui-journal.js';
+import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
   USER_MEMORY_ENABLED_KEY,
@@ -1442,7 +1442,7 @@ function cloneRunUiSnapshot(snapshot) {
 function persistRunUiSnapshot(tabId, snapshot) {
   const requestId = String(snapshot?.requestId || '');
   if (runUiPersistenceFailures.get(tabId) === requestId) return Promise.resolve(false);
-  const stableSnapshot = cloneRunUiSnapshot(snapshot);
+  const stableSnapshot = compactRunUiSnapshotForPersist(cloneRunUiSnapshot(snapshot));
   const previous = runUiPersistenceQueues.get(tabId) || Promise.resolve(true);
   const write = previous.catch(() => false).then(async () => {
     if (runUiPersistenceFailures.get(tabId) === requestId) return false;
@@ -1450,9 +1450,15 @@ function persistRunUiSnapshot(tabId, snapshot) {
       await browser.storage.session?.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
       return true;
     } catch {
-      runUiPersistenceFailures.set(tabId, requestId);
-      try { await browser.storage.session?.remove(RUN_UI_PREFIX + tabId); } catch {}
-      return false;
+      try {
+        await browser.storage.session?.set({
+          [RUN_UI_PREFIX + tabId]: compactRunUiSnapshotForPersist(stableSnapshot, { tight: true }),
+        });
+        return true;
+      } catch {
+        runUiPersistenceFailures.set(tabId, requestId);
+        return false;
+      }
     }
   });
   runUiPersistenceQueues.set(tabId, write);
@@ -2261,15 +2267,20 @@ async function handleMessage(msg, sender) {
         || (durabilityRequestId
           ? await agent.hasDurableSubmittedTurn(tabId, durabilityRequestId)
           : false);
+      const conversationState = await agent.getConversationState(tabId);
+      const activeState = agent.activeRunState(tabId);
+      const runUiDurable = !runUiSnapshot
+        || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
       return {
         ok: true,
-        ...(await agent.getConversationState(tabId)),
-        ...agent.activeRunState(tabId),
+        ...conversationState,
+        ...activeState,
         starting: !!starting,
         startingRequestId: starting?.requestId || null,
         submittedTurnDurable,
-        runUiDurable: !runUiSnapshot
-          || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || ''),
+        runUiDurable: runUiDurable,
+        persistenceDegraded: activeState.persistenceDegraded === true || !runUiDurable,
+        persistenceDegradedReason: activeState.persistenceDegradedReason || (!runUiDurable ? 'run_ui' : null),
         detachedError,
         runUi: requestedRunUi,
       };
