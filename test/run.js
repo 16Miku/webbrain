@@ -10410,6 +10410,7 @@ test('public media recommendations carry immediate download_public_media fast pa
     { url: 'https://www.facebook.com/example/videos/123', title: 'Facebook video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://www.reddit.com/r/pics/comments/abc/photo/', title: 'A photo post', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
     { url: 'https://www.linkedin.com/posts/example_123', title: 'LinkedIn public post video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://www.linkedin.com/feed/update/urn:li:activity:123', title: 'LinkedIn public feed update', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://threads.net/@user/post/abc', title: 'Threads photo', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
   ];
 
@@ -10454,6 +10455,16 @@ test('public media recommendations carry immediate download_public_media fast pa
     assert.equal(feedAction?.runOptions?.firstTool, 'screenshot', 'feed download should take a screenshot before the first model call');
     assert.deepEqual(feedAction?.runOptions?.args, { save: false }, 'feed screenshot should not save an extra file');
     assert.ok(feedAction?.runOptions?.steps?.some((step) => /explicit permalink/.test(step)), 'feed plan should pin explicit permalink resolution');
+
+    for (const url of ['https://www.linkedin.com/posts/', 'https://www.linkedin.com/feed/update/']) {
+      const linkedinFeedAction = buildRecommendedActions({
+        url,
+        title: 'LinkedIn',
+        media: { videoCount: 1, imageCount: 0 },
+      }).find((a) => a.id === 'download-media');
+      assert.equal(linkedinFeedAction?.runOptions?.firstTool, 'screenshot', `empty LinkedIn permalink should resolve a visible target first for ${url}`);
+      assert.match(linkedinFeedAction?.prompt || '', /exact public post\/reel URL/i, `empty LinkedIn permalink should require an explicit target for ${url}`);
+    }
 
     const mobileFeedAction = buildRecommendedActions({
       url: 'https://m.twitter.com/home',
