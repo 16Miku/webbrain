@@ -1,14 +1,6 @@
 import { frameHostMatches } from './permission-gate.js';
 import { richTextToolbarUsesFocusedTarget } from './rich-text-toolbar-guard.js';
-
-function secureRandomBase36Token(length = 8) {
-  const size = Math.max(1, Math.floor(Number(length) || 0));
-  const bytes = new Uint8Array(size);
-  globalThis.crypto.getRandomValues(bytes);
-  let out = '';
-  for (const byte of bytes) out += (byte % 36).toString(36);
-  return out;
-}
+import { secureRandomBase36Token } from './random-token.js';
 
 function withDispatchBinding(probe, frameId = probe?.frameId) {
   if (!probe || typeof probe !== 'object') return probe;

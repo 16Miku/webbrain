@@ -9,6 +9,7 @@ import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { guardRecentSubmitClick } from './submit-click-guard.js';
+import { secureRandomBase36Token } from './random-token.js';
 import {
   DISPATCH_BINDING_TOOLS,
   RICH_TEXT_TOOLBAR_GUARDED_TOOLS,
@@ -93,15 +94,6 @@ import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
-
-function secureRandomBase36Token(length = 8) {
-  const size = Math.max(1, Math.floor(Number(length) || 0));
-  const bytes = new Uint8Array(size);
-  globalThis.crypto.getRandomValues(bytes);
-  let out = '';
-  for (const b of bytes) out += (b % 36).toString(36);
-  return out;
-}
 
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
@@ -2019,11 +2011,17 @@ export class Agent extends LoopDetector {
       && typeof args?.selector === 'string'
       && !!args.selector.trim();
     const focusedType = toolName === 'type_text' && !selectorBackedType && args?.index == null;
+    // An unresolvable iframe target only fails closed once a recovery is
+    // pending. Single-frame resolution is stricter than the pre-guard
+    // behaviour: repeated same-origin frames and frames content.js cannot
+    // enter never resolve to exactly one, and those calls have to keep
+    // reaching the legacy all-frames dispatch in executeTool.
+    const recoveryPending = this._richTextToolbarGuard.hasPending(tabId);
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
-      return toolName === 'iframe_type' || selectorBackedType || focusedType
+      return (toolName === 'iframe_type' && recoveryPending) || selectorBackedType || focusedType
         ? {
             block: {
               success: false,
@@ -2038,7 +2036,9 @@ export class Agent extends LoopDetector {
             },
             shot: null,
           }
-        : { block: null, shot: null };
+        // The probe already swept every frame; tell executeTool so the legacy
+        // fallback does not repeat that sweep before dispatching.
+        : { block: null, shot: null, iframeTargetUnresolved: toolName === 'iframe_type' };
     }
     const identityMissing = toolName === 'iframe_type'
       ? !probe.dispatchBinding?.token
@@ -2050,15 +2050,20 @@ export class Agent extends LoopDetector {
           );
     if (identityMissing) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      // Without the trusted resolver the same call fails the same way every
+      // time, so do not invite a retry that cannot succeed.
+      const resolverUnavailable = selectorBackedType && probe.trustedResolverUnavailable === true;
       return {
         block: {
           success: false,
           dispatched: false,
           noDispatch: true,
-          retryable: true,
-          error: focusedType
-            ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
-            : 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
+          ...(resolverUnavailable ? {} : { retryable: true }),
+          error: resolverUnavailable
+            ? 'The trusted selector resolver could not attach to this tab, so selector typing cannot preserve its target. This usually means DevTools is open on the page. Use click_ax with a ref_id from get_accessibility_tree followed by type_ax instead; repeating this call will fail the same way.'
+            : focusedType
+              ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
+              : 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
         },
         shot: null,
         probe,
@@ -4735,6 +4740,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           {
             completionBatchStartState,
             dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
+            iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
           },
         );
       const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
@@ -17273,7 +17279,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         let binding = dispatchBinding;
         let targetFrameId = binding?.frameId;
-        if (!Number.isInteger(targetFrameId) || !binding?.token) {
+        // The preflight sweeps every frame; when it already reported that no
+        // single frame matched, repeating the sweep here would only pay for
+        // the same answer before falling back.
+        if (
+          (!Number.isInteger(targetFrameId) || !binding?.token)
+          && dispatchContext.iframeTargetUnresolved !== true
+        ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
           binding = targetProbe?.dispatchBinding || null;
           targetFrameId = binding?.frameId;
@@ -20903,7 +20915,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw new Error('An agent run is already in progress for this tab.');
     }
     this._runningTabs.add(tabId);
-    await this._hydrate(tabId);
+    try {
+      // Hydration has to run before the toolbar-ledger reset below, so a
+      // persisted obligation cannot outlive the run that cleared it. It is
+      // also the first await after the tab is marked busy, and it sits
+      // outside the try/finally that releases that marker: without this
+      // catch, a rejected storage read wedges the tab on "An agent run is
+      // already in progress" until the worker restarts.
+      await this._hydrate(tabId);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
@@ -21793,7 +21816,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw new Error('An agent run is already in progress for this tab.');
     }
     this._runningTabs.add(tabId);
-    await this._hydrate(tabId);
+    try {
+      // Hydration has to run before the toolbar-ledger reset below, so a
+      // persisted obligation cannot outlive the run that cleared it. It is
+      // also the first await after the tab is marked busy, and it sits
+      // outside the try/finally that releases that marker: without this
+      // catch, a rejected storage read wedges the tab on "An agent run is
+      // already in progress" until the worker restarts.
+      await this._hydrate(tabId);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {

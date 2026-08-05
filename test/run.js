@@ -28161,14 +28161,35 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(ambiguousChromeProbe.ambiguous, true);
     assert.equal(ambiguousChromeProbe.matchCount, 2);
     assert.deepEqual(ambiguousChromeProbe.matchedFrameIds, [7, 9]);
-    const ambiguousChromePreflight = await chromeAgent._preflightRichTextToolbarTarget(
+    const preflightAmbiguousIframe = () => chromeAgent._preflightRichTextToolbarTarget(
       42,
       'iframe_type',
       { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
       null,
     );
-    assert.equal(ambiguousChromePreflight.block?.noDispatch, true);
-    assert.equal(ambiguousChromePreflight.block?.retryable, true);
+    // Ambiguity is only unsafe once a recovery is pending. Blocking it
+    // unconditionally would strand every page with repeated same-origin
+    // frames, because the tool loop returns the preflight block instead of
+    // ever reaching the legacy all-frames fallback in executeTool.
+    const ambiguousChromePreflight = await preflightAmbiguousIframe();
+    assert.equal(ambiguousChromePreflight.block, null, 'Chrome: ambiguous frames with no debt must reach the all-frames fallback');
+    assert.equal(
+      ambiguousChromePreflight.iframeTargetUnresolved,
+      true,
+      'Chrome: the preflight must tell executeTool the frame sweep already failed',
+    );
+    chromeAgent._richTextToolbarGuard.restore(42, {
+      recoveryObligations: [{
+        toolName: 'type_ax',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: false,
+      }],
+    });
+    const ambiguousChromePreflightBlocked = await preflightAmbiguousIframe();
+    assert.equal(ambiguousChromePreflightBlocked.block?.noDispatch, true);
+    assert.equal(ambiguousChromePreflightBlocked.block?.retryable, true);
+    chromeAgent._richTextToolbarGuard.reset(42);
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -28240,14 +28261,35 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(ambiguousFirefoxProbe.ambiguous, true);
     assert.equal(ambiguousFirefoxProbe.matchCount, 2);
     assert.deepEqual(ambiguousFirefoxProbe.matchedFrameIds, [7, 9]);
-    const ambiguousFirefoxPreflight = await firefoxAgent._preflightRichTextToolbarTarget(
+    const preflightAmbiguousFirefoxIframe = () => firefoxAgent._preflightRichTextToolbarTarget(
       42,
       'iframe_type',
       { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
       null,
     );
-    assert.equal(ambiguousFirefoxPreflight.block?.noDispatch, true);
-    assert.equal(ambiguousFirefoxPreflight.block?.retryable, true);
+    // Ambiguity is only unsafe once a recovery is pending. Blocking it
+    // unconditionally would strand every page with repeated same-origin
+    // frames, because the tool loop returns the preflight block instead of
+    // ever reaching the legacy all-frames fallback in executeTool.
+    const ambiguousFirefoxPreflight = await preflightAmbiguousFirefoxIframe();
+    assert.equal(ambiguousFirefoxPreflight.block, null, 'Firefox: ambiguous frames with no debt must reach the all-frames fallback');
+    assert.equal(
+      ambiguousFirefoxPreflight.iframeTargetUnresolved,
+      true,
+      'Firefox: the preflight must tell executeTool the frame sweep already failed',
+    );
+    firefoxAgent._richTextToolbarGuard.restore(42, {
+      recoveryObligations: [{
+        toolName: 'type_ax',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: false,
+      }],
+    });
+    const ambiguousFirefoxPreflightBlocked = await preflightAmbiguousFirefoxIframe();
+    assert.equal(ambiguousFirefoxPreflightBlocked.block?.noDispatch, true);
+    assert.equal(ambiguousFirefoxPreflightBlocked.block?.retryable, true);
+    firefoxAgent._richTextToolbarGuard.reset(42);
     frameContainerOffscreen = true;
     frameContainerScrolled = false;
     frameScrollParentId = null;
@@ -28965,6 +29007,122 @@ test('Chrome selector type reports post-edit value verification', async () => {
   const persisted = await client.typeText(42, '#field', 'hello', true);
   assert.equal(persisted.success, true);
   assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
+});
+
+test('a rejected hydrate releases the run marker instead of wedging the tab', async () => {
+  // Hydration moved ahead of the toolbar-ledger reset so a persisted
+  // obligation cannot outlive the run that cleared it. That put an awaited
+  // storage read between marking the tab busy and the try/finally that
+  // releases it: without a catch there, one rejected read makes every later
+  // run on that tab report "already in progress" until the worker restarts.
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const entry of ['processMessage', 'processMessageStream']) {
+      const agent = new AgentClass({});
+      agent._hydrate = async () => { throw new Error('storage unavailable'); };
+      await assert.rejects(
+        () => agent[entry](4242, 'hello', () => {}, 'ask'),
+        /storage unavailable/,
+        `${label} ${entry}: the hydrate failure must surface`,
+      );
+      assert.equal(
+        agent._runningTabs.has(4242),
+        false,
+        `${label} ${entry}: a failed hydrate must not leave the tab marked as running`,
+      );
+      await assert.rejects(
+        () => agent[entry](4242, 'hello', () => {}, 'ask'),
+        /storage unavailable/,
+        `${label} ${entry}: the tab must stay runnable, not report an in-progress run`,
+      );
+    }
+  }
+});
+
+test('trusted selector resolution counts every closed-shadow match, not one per root', async () => {
+  // requireUnique is what stops a trusted dispatch from landing on a second
+  // element that answers the same selector. DOM.querySelector reports only
+  // the first hit in a root, so counting one per root would let two matches
+  // inside a single closed shadow root pass as a unique identity.
+  const client = new CDPClient();
+  let queriedRoots = 0;
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'Runtime.enable' || command === 'DOM.enable') return {};
+    if (command === 'DOM.getDocument') {
+      return { root: { nodeName: '#document', nodeId: 1, shadowRoots: [{ nodeId: 2, children: [] }], children: [] } };
+    }
+    if (command === 'DOM.querySelectorAll') {
+      queriedRoots += 1;
+      // Both hits live in the same shadow root.
+      return { nodeIds: params.nodeId === 2 ? [40, 41] : [] };
+    }
+    if (command === 'DOM.querySelector') return { nodeId: params.nodeId === 2 ? 40 : 0 };
+    throw new Error(`unexpected command: ${command}`);
+  };
+  // Strategy 1 cannot see closed shadow roots, so it finds nothing.
+  client.evaluate = async () => ({ result: { value: null } });
+
+  const ambiguous = await client.resolveSelector(9, '.target', { requireUnique: true, retries: 0 });
+  assert.equal(ambiguous?.nonUnique, true, 'two matches in one closed root must not resolve');
+  assert.equal(ambiguous?.matchCount, 2);
+  assert.ok(queriedRoots > 0, 'the unique path must query with querySelectorAll');
+
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'Runtime.enable' || command === 'DOM.enable') return {};
+    if (command === 'DOM.getDocument') {
+      return { root: { nodeName: '#document', nodeId: 1, shadowRoots: [{ nodeId: 2, children: [] }], children: [] } };
+    }
+    if (command === 'DOM.querySelectorAll') return { nodeIds: params.nodeId === 2 ? [40] : [] };
+    if (command === 'DOM.scrollIntoViewIfNeeded') return {};
+    if (command === 'DOM.getBoxModel') return null;
+    if (command === 'DOM.querySelector') return { nodeId: params.nodeId === 2 ? 40 : 0 };
+    throw new Error(`unexpected command: ${command}`);
+  };
+  const unique = await client.resolveSelector(9, '.target', { requireUnique: true, retries: 0 });
+  assert.equal(unique?.nodeId, 40, 'a single closed-shadow match must still resolve');
+});
+
+test('Chrome select typing reports verification as a positive proof only', async () => {
+  // The <select> fast-path returns success from the keyboard walk itself, so
+  // its separate value read is the same kind of evidence as verifyTextEntry:
+  // a proof when it lands, and nothing at all when it does not. Emitting
+  // `verified: false` here would mark a select change that actually happened
+  // as an unverified action, because the option read is best-effort and its
+  // evaluate returns null on any CDP hiccup.
+  const client = new CDPClient();
+  client.resolveSelector = async () => ({
+    inViewport: false, hitOk: false, nodeId: null, tag: 'SELECT', x: 1, y: 2, width: 3, height: 4,
+  });
+  client.sendCommand = async () => ({});
+  let verificationValue = null;
+  let evaluateCalls = 0;
+  client.evaluate = async () => {
+    evaluateCalls += 1;
+    // First call resolves the option, the second reads it back.
+    return evaluateCalls === 1
+      ? {
+          result: {
+            value: {
+              success: true, currentIndex: 0, targetIndex: 2, targetText: 'Large', targetValue: 'lg',
+            },
+          },
+        }
+      : { result: { value: verificationValue } };
+  };
+
+  const unproven = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(unproven.success, true);
+  assert.ok(!('verified' in unproven), 'an unproven select change must omit verified entirely');
+
+  evaluateCalls = 0;
+  verificationValue = { verified: false };
+  const refuted = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(refuted.success, true);
+  assert.ok(!('verified' in refuted), 'a failed option read must not refute the select change');
+
+  evaluateCalls = 0;
+  verificationValue = { verified: true };
+  const proven = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(proven.verified, true, 'a proven select change must be verified');
 });
 
 test('Chrome append verification proves the requested insertion delta', async () => {

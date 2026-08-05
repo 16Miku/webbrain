@@ -1,15 +1,7 @@
 import { cdpClient } from '../cdp/cdp-client.js';
 import { frameHostMatches } from './permission-gate.js';
 import { richTextToolbarUsesFocusedTarget } from './rich-text-toolbar-guard.js';
-
-function secureRandomBase36Token(length = 8) {
-  const size = Math.max(1, Math.floor(Number(length) || 0));
-  const bytes = new Uint8Array(size);
-  globalThis.crypto.getRandomValues(bytes);
-  let out = '';
-  for (const byte of bytes) out += (byte % 36).toString(36);
-  return out;
-}
+import { secureRandomBase36Token } from './random-token.js';
 
 function withDispatchBinding(probe, frameId = probe?.frameId) {
   if (!probe || typeof probe !== 'object') return probe;
@@ -385,6 +377,12 @@ export class RichTextToolbarProbe {
     if (richTextToolbarUsesFocusedTarget(toolName, args)) {
       return this.probeFocusedTarget(tabId, args, { mapAnnotation });
     }
+    // Set when the debugger could not be attached at all. Selector typing
+    // dispatches through that same resolver, so the content-script probe
+    // below can describe the target but can never preserve its identity —
+    // and retrying the call cannot change that. Callers use this to say so
+    // instead of asking the model to re-read the page forever.
+    let trustedResolverUnavailable = false;
     if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
       try {
         await cdpClient.attach(tabId);
@@ -396,15 +394,23 @@ export class RichTextToolbarProbe {
             ? { dispatchBinding: { backendNodeId: Number(selectorBackendNodeId), frameId: 0 } }
             : {}),
         }, 0);
-      } catch {}
+      } catch {
+        trustedResolverUnavailable = true;
+      }
     }
+    const withResolverState = probe => {
+      const bound = withDispatchBinding(probe, 0);
+      return bound && trustedResolverUnavailable
+        ? { ...bound, trustedResolverUnavailable: true }
+        : bound;
+    };
     try {
       const probe = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'probe_rich_text_toolbar_retry_target',
         params: { toolName, args },
       });
-      return withDispatchBinding(probe, 0);
+      return withResolverState(probe);
     } catch {
       try {
         await this.agent._injectCoreContentScripts(tabId);
@@ -413,7 +419,7 @@ export class RichTextToolbarProbe {
           action: 'probe_rich_text_toolbar_retry_target',
           params: { toolName, args },
         });
-        return withDispatchBinding(probe, 0);
+        return withResolverState(probe);
       } catch {
         return null;
       }

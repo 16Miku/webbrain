@@ -3348,7 +3348,19 @@
       if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
         return { resolved: false };
       }
-      const rect = await _settledRichTextToolbarRect(el, !coordinateTarget);
+      // Score before measuring. Only an escalating candidate gets annotated
+      // into a screenshot, and only that needs the target centred in the
+      // viewport. A click probe still scrolls, because dispatching the click
+      // scrolls anyway; text entry does not, so centring the page on every
+      // type_text would move it under the user purely for the guard, and on
+      // an animating page would spend the settle loop's full deadline doing
+      // it. Settling in place is what keeps recovery geometry comparable.
+      const fieldMeta = _fieldMeta(el);
+      const escalating = Number(fieldMeta?.toolbarCandidate?.score) >= 4;
+      const rect = await _settledRichTextToolbarRect(
+        el,
+        !coordinateTarget && (escalating || toolName === 'click'),
+      );
       if (!rect) return { resolved: false };
       let refId = '';
       try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
@@ -3373,7 +3385,7 @@
           w: Math.round(rect.width),
           h: Math.round(rect.height),
         },
-        fieldMeta: _fieldMeta(el),
+        fieldMeta,
         ...(dispatchBindingToken ? { dispatchBinding: { token: dispatchBindingToken } } : {}),
         ...toolbarContext,
       };

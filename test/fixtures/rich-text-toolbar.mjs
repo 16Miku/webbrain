@@ -707,6 +707,42 @@ export function registerRichTextToolbarFixtures({
       await call(page, 'release_dispatch_binding', { dispatchBinding: coordinateProbe.dispatchBinding });
       await call(page, 'release_dispatch_binding', { dispatchBinding: selectorProbe.dispatchBinding });
 
+      // Text entry does not scroll on dispatch the way a click does, so the
+      // probe must not centre the page on an ordinary field just to score it.
+      // Only a target that will be annotated into a classifier screenshot
+      // earns the scroll.
+      await page.evaluate(() => { window.__richTextRetryProbeScrolls = 0; });
+      const ordinaryTypeProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'type_text',
+        args: { selector: '#editor-body', text: 'Document prose' },
+      });
+      const ordinaryTypeScrolls = await page.evaluate(() => window.__richTextRetryProbeScrolls);
+      if (!ordinaryTypeProbe?.resolved || ordinaryTypeScrolls !== 0) {
+        throw new Error(`an ordinary text-entry probe must not scroll the page, got: ${JSON.stringify({ ordinaryTypeProbe, ordinaryTypeScrolls })}`);
+      }
+      await call(page, 'release_dispatch_binding', { dispatchBinding: ordinaryTypeProbe.dispatchBinding });
+
+      const escalatingScrolls = await page.evaluate(() => {
+        window.__richTextEscalatingScrolls = 0;
+        const control = document.getElementById('font-size');
+        control.scrollIntoView = () => { window.__richTextEscalatingScrolls += 1; };
+        return window.__richTextEscalatingScrolls;
+      });
+      const escalatingTypeProbe = await call(page, 'probe_rich_text_toolbar_retry_target', {
+        toolName: 'type_text',
+        args: { selector: '#font-size', text: 'Document prose' },
+      });
+      const escalatingTypeScrolls = await page.evaluate(() => window.__richTextEscalatingScrolls);
+      if (
+        !escalatingTypeProbe?.resolved
+        || Number(escalatingTypeProbe.fieldMeta?.toolbarCandidate?.score) < 4
+        || escalatingScrolls !== 0
+        || escalatingTypeScrolls !== 1
+      ) {
+        throw new Error(`an escalating toolbar target must still be brought into view for the classifier, got: ${JSON.stringify({ escalatingTypeProbe, escalatingTypeScrolls })}`);
+      }
+      await call(page, 'release_dispatch_binding', { dispatchBinding: escalatingTypeProbe.dispatchBinding });
+
       await page.evaluate(() => {
         const container = document.createElement('div');
         const button = document.createElement('button');

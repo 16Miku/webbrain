@@ -3272,11 +3272,13 @@ export class CDPClient {
           ${heuristicPrelude}
           const el = this;
           if (!el || el.nodeType !== 1 || !el.isConnected) return null;
-          const settledRect = async () => {
-            try {
-              el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-            } catch {
-              try { el.scrollIntoView(); } catch {}
+          const settledRect = async (shouldScroll) => {
+            if (shouldScroll) {
+              try {
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+              } catch {
+                try { el.scrollIntoView(); } catch {}
+              }
             }
             let previous = el.getBoundingClientRect();
             let stableFrames = 0;
@@ -3305,8 +3307,6 @@ export class CDPClient {
             }
             return el.isConnected ? el.getBoundingClientRect() : null;
           };
-          const rect = await settledRect();
-          if (!rect) return null;
           const visible = node => {
             try {
               const rect = node.getBoundingClientRect();
@@ -3413,6 +3413,11 @@ export class CDPClient {
             ? __wbTrustedRichTextToolbarHeuristic.candidate(el, fieldMeta)
             : null;
           if (candidate) fieldMeta.toolbarCandidate = candidate;
+          // Measure last, and only scroll for a candidate that will be
+          // annotated into a screenshot. Ordinary selector typing must not
+          // move the page to centre its target.
+          const rect = await settledRect(Number(candidate?.score) >= 4);
+          if (!rect) return null;
           return {
             pageUrl: location.href,
             rect: {
@@ -3607,10 +3612,21 @@ export class CDPClient {
       const foundNodeIds = [];
       for (const rootId of searchRoots) {
         try {
-          const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
-          if (nodeId && !foundNodeIds.includes(nodeId)) {
-            foundNodeIds.push(nodeId);
-            if (!requireUnique) break;
+          if (requireUnique) {
+            // querySelector reports only the first hit in a root, so two
+            // matches inside one closed shadow root would pass the uniqueness
+            // check below as a single identity. Count them all.
+            const { nodeIds } = await this.sendCommand(tabId, 'DOM.querySelectorAll', { nodeId: rootId, selector });
+            for (const nodeId of nodeIds || []) {
+              if (nodeId && !foundNodeIds.includes(nodeId)) foundNodeIds.push(nodeId);
+            }
+            if (foundNodeIds.length > 1) break;
+          } else {
+            const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
+            if (nodeId && !foundNodeIds.includes(nodeId)) {
+              foundNodeIds.push(nodeId);
+              break;
+            }
           }
         } catch (e) { /* invalid selector for this root, keep going */ }
       }
@@ -4300,7 +4316,10 @@ export class CDPClient {
       `).catch(() => null);
       return {
         success: true,
-        verified: verifiedResult?.result?.value?.verified === true,
+        // Positive proof only — see verifyTextEntry. A `false` here would be
+        // read as a failed action by the loop detector and the delivery
+        // checkpoint, and this evaluate returns null on any CDP hiccup.
+        ...(verifiedResult?.result?.value?.verified === true ? { verified: true } : {}),
         method: 'select-keyboard',
         selectedText: sInfo.targetText,
         selectedValue: sInfo.targetValue,
