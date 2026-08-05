@@ -50872,6 +50872,20 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
       true,
     );
     assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false);
+
+    // The retry the recovery exists to enable: once the inspection has supplied
+    // a unique selector, the corrected upload must actually dispatch. Without
+    // this the latch could clear and still leave uploads wedged.
+    selectorMatches = ['input-501'];
+    const recoveredRetry = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]:not([accept])',
+      downloadId: 9123,
+    });
+    assert.equal(recoveredRetry.success, true, 'a corrected selector must upload after recovery');
+    assert.equal(recoveredRetry.file, realPath);
+    assert.equal(recoveredRetry.attachmentState, 'input_attached');
+    assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'a successful retry must leave the latch clear');
+
     agent._uploadSelectorRecoveryRequired.set(42, 2);
     agent._clearRunLoopState(42);
     assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'run cleanup must clear upload recovery');
@@ -50880,8 +50894,8 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
     assert.equal(agent._uploadSelectorRecoveryRequired.has(42), false, 'navigation cleanup must clear upload recovery');
     assert.deepEqual(
       releasedGroups,
-      ['upload-query-1', 'upload-query-2', 'upload-query-3', 'upload-query-4'],
-      'early upload failures must release selector handles',
+      ['upload-query-1', 'upload-query-2', 'upload-query-3', 'upload-query-4', 'upload-query-5'],
+      'early upload failures and the post-recovery retry must release selector handles',
     );
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
