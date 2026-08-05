@@ -23,6 +23,7 @@ import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
+import { formatErrorMessage } from '../error-format.js';
 import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
@@ -5643,7 +5644,7 @@ function scheduleActiveChatPayloadCleanup(tabId, state) {
 }
 
 function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', options = {}) {
-  const message = data?.message || data?.error || 'unknown error';
+  const message = formatErrorMessage(data?.message ?? data?.error ?? data);
   // Allowance routing depends on terminal durable-turn proof. Live error
   // updates arrive before that proof, so the run_complete/direct response
   // path owns the single actionable card.
@@ -8165,6 +8166,8 @@ function handleAgentUpdateMessage(msg) {
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
+      } else if (data?.code === 'persistence_degraded') {
+        showComposerToast(t('sp.persistence.unavailable'), { duration: 10000 });
       }
       break;
 
@@ -9108,9 +9111,25 @@ function clearTransientAssistantTextForToolCall() {
 function appendVerboseToolCall(name, args) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
+  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
+    tool.dataset.awaitingResult = 'false';
+  });
+
+  if (name === 'done') {
+    const priorRejected = content.querySelector('.tool-call[data-tool-name="done"][data-rejected-completion="true"]');
+    if (priorRejected) {
+      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
+      priorRejected.querySelector('.tool-result')?.remove();
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      priorRejected.dataset.awaitingResult = 'true';
+      return;
+    }
+  }
 
   const el = document.createElement('div');
   el.className = 'tool-call';
+  el.dataset.toolName = name || '';
+  el.dataset.awaitingResult = 'true';
 
   const header = document.createElement('div');
   header.className = 'tool-call-header';
@@ -9133,12 +9152,16 @@ function appendVerboseToolCall(name, args) {
 function appendVerboseToolResult(name, result) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
-  const lastTool = content.querySelector('.tool-call:last-of-type');
+  const lastTool = content.querySelector('.tool-call[data-awaiting-result="true"]');
   if (lastTool) {
     const resultEl = document.createElement('div');
     resultEl.className = 'tool-result';
     resultEl.textContent = truncate(JSON.stringify(result), 200);
     lastTool.appendChild(resultEl);
+    if (name === 'done') {
+      lastTool.dataset.rejectedCompletion = result?.blockedDone === true ? 'true' : 'false';
+    }
+    lastTool.dataset.awaitingResult = 'false';
   }
 }
 
@@ -10128,12 +10151,18 @@ function addMessageCopyButton(msgEl) {
   if (!msgEl) return;
   const content = msgEl.querySelector('.message-content');
   if (!content) return;
+  const existing = content.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
   const btn = document.createElement('button');
   btn.className = 'msg-copy-btn';
   btn.textContent = t('sp.copy');
-  btn.title = t('sp.copy.code.title');
+  btn.title = t('sp.copy.message.title');
   bindMessageCopyButton(btn);
   content.appendChild(btn);
+  return btn;
 }
 
 function addScratchpadCopyButton(msgEl) {
@@ -10141,12 +10170,18 @@ function addScratchpadCopyButton(msgEl) {
   const content = msgEl.querySelector('.message-content');
   const pre = content?.querySelector('pre.scratchpad-dump');
   if (!content || !pre) return;
+  const existing = content.querySelector('.scratchpad-copy-btn');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
   const btn = document.createElement('button');
   btn.className = 'msg-copy-btn scratchpad-copy-btn';
   btn.textContent = t('sp.copy');
   btn.title = t('sp.copy.code.title');
   bindMessageCopyButton(btn);
   content.appendChild(btn);
+  return btn;
 }
 
 function getMessageCopyText(btn) {

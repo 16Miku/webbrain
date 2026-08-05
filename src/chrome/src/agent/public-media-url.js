@@ -58,7 +58,7 @@ export function isDirectPublicMediaUrl(rawUrl) {
     return hasPathId(path, /^\/[^/?#]+/);
   }
   if (hostMatches(host, 'pinterest.com')) return hasPathId(path, /^\/pin\/[^/?#]+/i);
-  if (hostMatches(host, 'linkedin.com')) return hasPathId(path, /^\/(?:posts\/|feed\/update\/)/i);
+  if (hostMatches(host, 'linkedin.com')) return hasPathId(path, /^\/(?:posts|feed\/update)\/[^/?#]+/i);
   if (hostMatches(host, 'threads.net')) return hasPathId(path, /^\/@[^/]+\/post\/[^/?#]+/i);
   if (hostMatches(host, 'facebook.com') || hostMatches(host, 'fb.com')) {
     return (

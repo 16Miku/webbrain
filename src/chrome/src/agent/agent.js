@@ -1,4 +1,7 @@
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
+import { validateToolArguments } from './tool-arguments.js';
+import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
+import { formatErrorMessage } from '../error-format.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { LoopDetector } from './loop-detector.js';
@@ -310,6 +313,9 @@ export class Agent extends LoopDetector {
     this._runModeOverrides = new Map(); // tabId -> effective mode for the active run only
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
     this.submittedRunRequestIds = new Map(); // tabId -> request whose user turn is durable in storage.session
+    this.persistenceDegradedTabs = new Map(); // tabId -> non-durable recovery state after storage failure
+    this._persistenceWarningKeys = new Set();
+    this._runUpdateCallbacks = new Map();
     this.plannerFollowUpSkipTabs = new Set(); // tabIds allowed one short follow-up after an approved try-mode plan
     this.hydratedTabs = new Set(); // tabIds we've already pulled from storage
     this.persistTimers = new Map(); // tabId -> debounce handle
@@ -888,10 +894,13 @@ export class Agent extends LoopDetector {
   }
 
   activeRunState(tabId) {
+    const persistenceState = this.persistenceDegradedTabs.get(tabId) || null;
     const state = {
       running: this._runningTabs.has(tabId),
       runId: this.currentRunId.get(tabId) || null,
       pendingPlan: null,
+      persistenceDegraded: !!persistenceState,
+      persistenceDegradedReason: persistenceState?.reason || null,
     };
     const tabPending = this._pendingPlans.get(tabId);
     if (tabPending?.size) {
@@ -933,6 +942,8 @@ export class Agent extends LoopDetector {
     return {
       conversationId: this.conversationIds.get(tabId) || null,
       sourceGrounding: selectionGrounded ? SELECTION_ONLY_SOURCE_GROUNDING : null,
+      persistenceDegraded: this.persistenceDegradedTabs.has(tabId),
+      persistenceDegradedReason: this.persistenceDegradedTabs.get(tabId)?.reason || null,
     };
   }
 
@@ -1461,7 +1472,7 @@ export class Agent extends LoopDetector {
   }
 
   _interactiveAskStreamingFailure(error) {
-    const rawMessage = String(error?.message || error || 'Streaming request failed.');
+    const rawMessage = formatErrorMessage(error, { fallback: 'Streaming request failed.' });
     const message = rawMessage
       .replace(/\b(Bearer)\s+[^\s,;]+/gi, '$1 [redacted]')
       .replace(/((?:^|[^a-zA-Z0-9_])["']?(?:api[_ -]?key|access[_ -]?token|token|secret|password)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, '$1[redacted]')
@@ -2462,11 +2473,37 @@ export class Agent extends LoopDetector {
   _invalidToolArgumentsResult(fnName, parsed) {
     return {
       success: false,
+      invalidArguments: true,
       invalidToolArguments: true,
+      noDispatch: true,
+      dispatched: false,
+      errorCode: 'invalid_tool_arguments',
       error: `${fnName || 'tool'} could not run because its arguments were not valid JSON. Re-emit the same tool call with a valid JSON object for arguments; do not assume the action happened.`,
       detail: parsed?.error || 'invalid JSON',
       rawPreview: parsed?.rawPreview || '',
     };
+  }
+
+  _toolParametersForValidation(tabId, fnName, toolSchemas = null) {
+    const advertised = toolSchemas instanceof Map ? toolSchemas.get(fnName) : null;
+    if (advertised) return advertised;
+    const builtIn = AGENT_TOOLS.find(tool => tool.function?.name === fnName)?.function?.parameters;
+    if (fnName === 'done') {
+      return {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          outcome: { type: 'string', enum: ['success', 'partial', 'failed'] },
+          result: { type: 'object' },
+        },
+        required: ['summary'],
+      };
+    }
+    if (builtIn) return builtIn;
+    if (fnName === 'load_skill') {
+      return this._skillLoaderDefinition(this._effectiveRunMode(tabId), this._resolvePromptTier())?.function?.parameters || null;
+    }
+    return this._activeSkillToolForName(tabId, fnName)?.parameters || null;
   }
 
   _normalizeToolResult(fnName, result, outcomeUnknown = Agent.STATE_CHANGE_TOOLS.has(fnName)) {
@@ -3389,7 +3426,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           denied: true,
           noDispatch: true,
           unsupported: true,
-          error: String(error?.message || error || 'WebMCP is unavailable.'),
+          error: formatErrorMessage(error, { fallback: 'WebMCP is unavailable.' }),
         },
       };
     }
@@ -4096,7 +4133,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return true;
   }
 
-  async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}) {
+  async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
     let didStateChange = false;
     const promptTier = this._resolvePromptTier();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
@@ -4175,6 +4212,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const argRepair = this._repairToolCallArgs(fnName, parsedArgs.args);
       let fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, argRepair.args);
       const argRepairNotice = argRepair.note || '';
+      const parameters = this._toolParametersForValidation(tabId, fnName, toolSchemas);
+      const argumentValidation = parameters ? validateToolArguments(fnName, fnArgs, parameters) : { ok: true };
+      if (!argumentValidation.ok) {
+        const result = argumentValidation.result;
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result });
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) trace.recordToolCall(runId, step, { name: fnName, args: fnArgs, result, latencyMs: 0 });
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
 
       // Chrome-protected pages must be rejected before any helper can touch
       // the DOM or debugger. In particular, WebMCP preparation attaches CDP,
@@ -5175,8 +5224,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         content: resultContent,
       });
       if (missingResponseOutcomeUnknown && typeof runOptions?.afterConsequentialTool === 'function') {
-        const conversationDurable = await this._persistNow(tabId).catch(() => false);
-        if (conversationDurable) {
+        const conversationDurable = await this._persistNow(tabId);
+        if (conversationDurable === true || conversationDurable?.ok === true) {
           try {
             await runOptions.afterConsequentialTool({ name: fnName });
           } catch {}
@@ -7246,7 +7295,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (e) { /* session storage may be unavailable */ }
   }
 
-  _conversationStorageEntry(tabId) {
+  _conversationStorageEntry(tabId, options = {}) {
     const messages = this.conversations.get(tabId);
     if (!messages) return null;
     const conversationId = this.conversationIds.get(tabId) || null;
@@ -7262,14 +7311,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           updatedAt: Number(clarificationGuard.updatedAt) || Date.now(),
         }
       : null;
-    const persistedMessages = messages.map(message => (
-      message?.transientCompletionVerification === true
-        ? { role: 'user', content: '[Completion verification screenshot omitted from persisted history.]' }
-        : message
-    ));
+    const serialized = serializeConversationForSession(messages, {
+      maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
+    });
     return {
       mode: this.conversationModes.get(tabId) || 'ask',
-      messages: persistedMessages,
+      messages: serialized.messages,
+      sessionSnapshotCompacted: serialized.compacted,
+      sessionSnapshotBytes: serialized.bytes,
       conversationId,
       submittedRunRequestId: this.submittedRunRequestIds.get(tabId) || null,
       progressLedger: this.progressLedgers.get(tabId) || [],
@@ -7281,17 +7330,60 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _markPersistenceDegraded(tabId, reason, error = null) {
+    const state = {
+      reason: reason || 'unavailable',
+      requestId: this.submittedRunRequestIds.get(tabId) || null,
+      runId: this.currentRunId.get(tabId) || null,
+      at: Date.now(),
+    };
+    this.persistenceDegradedTabs.set(tabId, state);
+    // A stale snapshot must never authorize automatic replay of a
+    // consequential action after the background connection is lost.
+    this.submittedRunRequestIds.delete(tabId);
+    const warningKey = state.runId || state.requestId || `tab:${tabId}`;
+    if (!this._persistenceWarningKeys.has(warningKey)) {
+      this._persistenceWarningKeys.add(warningKey);
+      this._runUpdateCallbacks.get(tabId)?.('warning', {
+        code: 'persistence_degraded',
+        persistenceDegraded: true,
+        reason: state.reason,
+        message: 'Recovery persistence is unavailable. The live task can continue, but WebBrain will not replay actions after a connection loss; retry manually if disconnected.',
+      });
+    }
+    return {
+      ok: false,
+      degraded: true,
+      reason: state.reason,
+      errorCode: 'persistence_unavailable',
+      error: error?.message || null,
+    };
+  }
+
   async _persistNow(tabId) {
-    if (tabId == null) return false;
+    if (tabId == null) return { ok: false, degraded: false, reason: 'invalid_tab' };
     const existing = this.persistTimers.get(tabId);
     if (existing) {
       clearTimeout(existing);
       this.persistTimers.delete(tabId);
     }
     const entry = this._conversationStorageEntry(tabId);
-    if (!entry) return false;
-    await chrome.storage.session.set({ [this._convKey(tabId)]: entry });
-    return true;
+    if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
+    try {
+      await chrome.storage.session.set({ [this._convKey(tabId)]: entry });
+      return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
+    } catch (error) {
+      if (isSessionQuotaError(error)) {
+        const compactEntry = this._conversationStorageEntry(tabId, { maxBytes: SESSION_CONVERSATION_RETRY_BUDGET_BYTES });
+        try {
+          await chrome.storage.session.set({ [this._convKey(tabId)]: compactEntry });
+          return { ok: true, degraded: true, reason: 'quota_compacted' };
+        } catch (retryError) {
+          return this._markPersistenceDegraded(tabId, isSessionQuotaError(retryError) ? 'quota' : 'unavailable', retryError);
+        }
+      }
+      return this._markPersistenceDegraded(tabId, 'unavailable', error);
+    }
   }
 
   /**
@@ -7304,7 +7396,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (existing) clearTimeout(existing);
     const handle = setTimeout(() => {
       this.persistTimers.delete(tabId);
-      this._persistNow(tabId).catch(() => {});
+      void this._persistNow(tabId);
     }, 300);
     this.persistTimers.set(tabId, handle);
   }
@@ -7317,10 +7409,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const previousRequestId = this.submittedRunRequestIds.get(tabId);
     this.submittedRunRequestIds.set(tabId, cleanRequestId);
-    try {
-      await this._persistNow(tabId);
-      return true;
-    } catch {
+    const persisted = await this._persistNow(tabId);
+    if (persisted.ok) return true;
+    {
       if (previousRequestId) this.submittedRunRequestIds.set(tabId, previousRequestId);
       else this.submittedRunRequestIds.delete(tabId);
       return false;
@@ -7331,6 +7422,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const cleanRequestId = String(requestId || '');
     if (!cleanRequestId) return false;
     await this._hydrate(tabId);
+    if (this.persistenceDegradedTabs.has(tabId)) return false;
     return this.submittedRunRequestIds.get(tabId) === cleanRequestId;
   }
 
@@ -8242,7 +8334,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _plannerRequestFailure(error, onUpdate, provider = null) {
     const detail = sanitizePlannerText(
-      error?.message || String(error || 'Unknown planner request error.'),
+      formatErrorMessage(error, { fallback: 'Unknown planner request error.' }),
       500,
       { collapseWhitespace: true },
     );
@@ -8791,7 +8883,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { step, runOptions, currentUserMessage, priorMessageSet },
       );
     } catch (error) {
-      this._logDebug({ type: 'delivery_recovery_error', step, error: error?.message || String(error) });
+      this._logDebug({ type: 'delivery_recovery_error', step, error: formatErrorMessage(error) });
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
@@ -8981,7 +9073,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
       finalResponse = this._isCostAllowanceError(error)
         ? error.message
-        : `I could not generate the requested response: ${error?.message || String(error)}`;
+        : `I could not generate the requested response: ${formatErrorMessage(error)}`;
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
@@ -9022,7 +9114,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           { phase: 'terminal_recovery', step, runOptions, currentUserMessage, priorMessageSet },
         );
       } catch (error) {
-        this._logDebug({ type: 'terminal_recovery_error', step, error: error?.message || String(error) });
+        this._logDebug({ type: 'terminal_recovery_error', step, error: formatErrorMessage(error) });
       }
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
@@ -10839,6 +10931,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.completionInvariants.delete(tabId);
     this._captchaGateStates.delete(tabId);
     this._userAttachmentHandles.delete(tabId);
+    this._runUpdateCallbacks.delete(tabId);
+    if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);
     if (!preserveRunGuard) {
       this._runningTabs.delete(tabId);
       this.currentRunId.delete(tabId);
@@ -10859,6 +10953,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
     this.submittedRunRequestIds.delete(tabId);
+    this.persistenceDegradedTabs.delete(tabId);
+    this._runUpdateCallbacks.delete(tabId);
     this._lastInputTokens.delete(tabId);
     this._lastEstCharsAtReport.delete(tabId);
     this._compactCooldown.delete(tabId);
@@ -12576,6 +12672,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && /\b(?:refus|will not|do not proceed|unauthorized|illegal|fraud|theft|unsafe|cannot assist|can't assist)\b/i.test(text);
   }
 
+  _isPlannerShapedJson(content) {
+    const object = extractFirstJsonObject(String(content || ''));
+    if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
+    const plannerKeys = ['request_kind', 'requires_state_change', 'requires_submission', 'allows_planner_shaped_result', 'confidence', 'memory', 'scheduling', 'risks', 'localized'];
+    const hasPlannerMetadata = plannerKeys.some(key => Object.prototype.hasOwnProperty.call(object, key));
+    return hasPlannerMetadata
+      && (typeof object.summary === 'string' || typeof object.localized?.summary === 'string')
+      && (Array.isArray(object.steps) || Array.isArray(object.localized?.steps));
+  }
+
   _looksLikePlanOnlyTerminal(content, state = {}, { ignoreFuturePromise = false } = {}) {
     const text = String(content || '').trim();
     if (!text) return false;
@@ -12597,6 +12703,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && String(object.mode || '').toLowerCase() !== 'inactive';
       if (plannerShape || policyShape) return state.allowsPlannerShapedResult !== true;
     }
+    const runtimeModeContradiction = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b|\b(?:currently|still|now)\s+(?:running\s+)?in\s+ask\s+mode\b/i.test(text);
+    if (runtimeModeContradiction) return true;
     // "Next, I will …" / "I plan to …" is agent-continue language and is always
     // invalid as a terminal. Bare "I will …" is evidence-gated so drafted reply
     // text can finish after a real task tool without a planner exemption flag.
@@ -12668,8 +12776,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     return {
       failure: hasSuccessfulToolEvidence
-        ? '[Agent stopped because the model returned another plain terminal or a plan/promise after one recovery nudge. Some task tools completed, but final completion was not verified. Inspect the current state before retrying to avoid duplicate side effects.]'
-        : '[Agent stopped because the model returned another plain terminal or a plan/promise instead of completing the execute protocol, even after one recovery nudge. No successful action was verified.]',
+        ? 'Some task tools completed, but I could not verify a valid completion after the recovery attempt. Please inspect the current page before retrying to avoid duplicate side effects.'
+        : 'I could not verify any requested page action after the recovery attempt, so I stopped without claiming completion. No successful action was verified, and nothing was verified as submitted or sent.',
       status: 'plan_only_output',
     };
   }
@@ -15223,7 +15331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           success: false,
           supported: false,
           unsupported: true,
-          error: String(error?.message || error || 'WebMCP is unavailable.'),
+          error: formatErrorMessage(error, { fallback: 'WebMCP is unavailable.' }),
           hint: 'WebMCP currently requires a supporting Chrome build/page configuration. Continue with the accessibility tree or DOM tools.',
         };
       }
@@ -15294,7 +15402,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           success: false,
           dispatched: false,
           noDispatch: true,
-          error: `execute_webmcp_tool failed: ${error?.message || error}`,
+          error: `execute_webmcp_tool failed: ${formatErrorMessage(error)}`,
         };
       }
     }
@@ -20804,6 +20912,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
+    this._runningTabs.add(tabId);
+    if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
+    this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
@@ -20825,6 +20936,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._userAttachmentHandles.delete(tabId);
+      this._runUpdateCallbacks.delete(tabId);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
@@ -20845,6 +20957,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _applyAttachments(enriched, attachments, provider, options = {}) {
     attachments = this._registerUserAttachments(options.tabId, attachments);
+    enriched.attachmentHandles = attachments.map(att => ({
+      attachmentId: att.attachmentId,
+      kind: att.kind,
+      name: att.name || null,
+      mimeType: att.mimeType || null,
+      size: Number(att.size) || null,
+    }));
     const blocks = [];
     const textAttachmentCount = (attachments || []).filter(att => att?.kind === 'text').length;
     let textBudgetRemaining = this._textAttachmentContentBudget(provider, { ...options, enriched });
@@ -21122,6 +21241,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // second source and defeat the selection-only boundary.
     if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
+    let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
     // Tracks whether we've already nudged the model after an empty
@@ -21288,6 +21408,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
+      toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
 
       // Auto-compact mid-run when the conversation outgrows the budget — not
       // just between user turns. Uses the previous step's reported token count,
@@ -21447,14 +21568,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       if (result.toolCalls && result.toolCalls.length > 0) {
+        const suppressPlannerContent = this._isPlannerShapedJson(result.content);
+        const assistantToolContent = suppressPlannerContent ? null : (result.content || null);
+        if (suppressPlannerContent) {
+          this._logDebug({ type: 'planner_shaped_content_suppressed', step: steps, toolCallCount: result.toolCalls.length });
+        }
         messages.push(this._withResponseItems({
           role: 'assistant',
-          content: result.content || null,
+          content: assistantToolContent,
           tool_calls: result.toolCalls,
         }, result.responseItems, result.reasoningContent, provider));
 
         const batchResult = await this._executeToolBatch(
-          tabId, result.toolCalls, messages, onUpdate, provider, result.content, allowedToolNames, steps, runOptions
+          tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
         if (batchResult.action === 'return') {
           finalResponse = batchResult.value;
@@ -21643,7 +21769,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._persist(tabId);
     return finalResponse;
     } catch (error) {
-      const message = error?.message || String(error);
+      const message = formatErrorMessage(error);
       _traceStatus = 'error';
       finalResponse = `Error: ${message}`;
       if (runId) {
@@ -21676,6 +21802,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
+    this._runningTabs.add(tabId);
+    if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
+    this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
@@ -21697,6 +21826,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._userAttachmentHandles.delete(tabId);
+      this._runUpdateCallbacks.delete(tabId);
       this._runningTabs.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
@@ -21862,6 +21992,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // page or network content cannot be introduced after the source anchor.
     if (selectionOnly) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
+    let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
     let steps = 0;
     // See processMessage — used to break the empty-response→nudge cycle.
@@ -21904,6 +22035,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
+      toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
 
       // Auto-compact mid-run when the conversation outgrows the budget. The
       // streaming path doesn't get a per-call token count, so this leans on
@@ -22001,6 +22133,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return finish(costStopMessage, 'cost_limit');
           }
           const toolCalls = Object.values(toolCallsAccumulator);
+          const suppressPlannerContent = this._isPlannerShapedJson(fullText);
+          if (suppressPlannerContent) {
+            this._logDebug({ type: 'planner_shaped_content_suppressed', step: steps, toolCallCount: toolCalls.length });
+            fullText = '';
+            onUpdate('text', { content: '', replace: true });
+          }
           this._logDebug({ type: 'llm_stream_response', step: steps, content: fullText, toolCalls });
           messages.push(this._withResponseItems({
             role: 'assistant',
@@ -22009,7 +22147,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }, responseItems, reasoningContent, provider));
 
           const batchResult = await this._executeToolBatch(
-            tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions
+            tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
           if (batchResult.action === 'return') {
             if (batchResult.status) {
@@ -22175,7 +22313,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(fullText);
 
       } catch (e) {
-        this._logDebug({ type: 'llm_stream_error', step: steps, error: e.message });
+        const caughtMessage = formatErrorMessage(e);
+        this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         // If context overflow, trim and retry
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
@@ -22183,8 +22322,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           continue; // retry the loop with trimmed context
         }
-        onUpdate('error', { message: e.message });
-        const errMsg = `Error: ${e.message}`;
+        onUpdate('error', { message: caughtMessage });
+        const errMsg = `Error: ${caughtMessage}`;
         messages.push({ role: 'assistant', content: errMsg });
         this._persist(tabId);
         return finish(errMsg, 'error');
@@ -22201,7 +22340,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     onUpdate('text', { content: summary });
     return finish(summary, 'max_steps');
     } catch (error) {
-      const message = error?.message || String(error);
+      const message = formatErrorMessage(error);
       _traceStatus = 'error';
       finalResponse = `Error: ${message}`;
       if (runId) trace.recordError(runId, null, 'agent', message);

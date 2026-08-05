@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'คัดลอก',
   'sp.copied': 'คัดลอกแล้ว!',
   'sp.copy.code.title': 'คัดลอกโค้ด',
+  'sp.copy.message.title': 'คัดลอกข้อความ',
+  'sp.persistence.unavailable': 'ไม่สามารถบันทึกข้อมูลการกู้คืนได้ งานที่กำลังทำยังดำเนินต่อได้ แต่จะไม่ทำซ้ำการกระทำหลังการเชื่อมต่อขาด โปรดลองใหม่ด้วยตนเอง',
 
   'sp.error_prefix': 'ข้อผิดพลาด: {msg}',
   'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Cloud หมดแล้ว',

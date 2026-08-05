@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepseek-vision"
+version = "0.1.0"
+description = "Frozen vision towers and a routing-aware PatchMerger for DeepSeek V4 Flash"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.optional-dependencies]
+train = [
+  "accelerate>=1.8",
+  "datasets>=3.6",
+  "huggingface-hub>=0.33",
+  "kernels>=0.16.0,<0.17.0",
+  "pillow>=11",
+  "safetensors>=0.5",
+  "torch>=2.11,<2.12",
+  "transformers @ git+https://github.com/huggingface/transformers.git@b3a36037d3feb22e3f0174b3dd4248fcc0f0f722",
+]
+dev = ["pytest>=8.4", "ruff>=0.12"]
+
+[project.scripts]
+deepseek-vision = "deepseek_vision.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepseek_vision"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

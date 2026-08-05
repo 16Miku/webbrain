@@ -1,0 +1,27 @@
+{
+  "examples": 100000,
+  "final": true,
+  "local_examples": 25000,
+  "model_id": "poolside/Laguna-XS-2.1",
+  "model_revision": "e9df9a59996d790b94b70f3fef343fe1d9e34bdf",
+  "optimizer": "optimizer-step-000782.pt",
+  "optimizer_step": 782,
+  "projector": "projector-step-000782.safetensors",
+  "scheduler": {
+    "_get_lr_called_within_step": false,
+    "_is_initial": false,
+    "_last_lr": [
+      0.0
+    ],
+    "_step_count": 783,
+    "base_lrs": [
+      0.001
+    ],
+    "last_epoch": 782,
+    "lr_lambdas": [
+      null
+    ]
+  },
+  "total_examples": 100000,
+  "world_size": 4
+}

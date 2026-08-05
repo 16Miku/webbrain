@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Kopyahin',
   'sp.copied': 'Nakopya!',
   'sp.copy.code.title': 'Kopyahin ang code',
+  'sp.copy.message.title': 'Kopyahin ang mensahe',
+  'sp.persistence.unavailable': 'Hindi ma-save ang data sa pagbawi. Maaaring magpatuloy ang kasalukuyang gawain, ngunit hindi uulitin ang mga aksyon kapag naputol ang koneksyon. Subukang muli nang manu-mano.',
 
   'sp.error_prefix': 'Error: {msg}',
   'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Cloud.',
