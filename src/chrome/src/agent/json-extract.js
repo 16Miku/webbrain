@@ -1,3 +1,10 @@
+// An opener that never closes must not abandon the candidate: a stray brace
+// in prose ahead of the real object is as common as the illustrative-object
+// case, and the object after it still has to be found. Each unbalanced opener
+// costs one extra scan, so the restarts are capped to keep a pathological
+// "{{{{…" response from going quadratic.
+const MAX_UNBALANCED_RESTARTS = 16;
+
 /**
  * Extract the first balanced JSON object from model output (fence-aware).
  * Shared by the agent's classifier sub-calls and the planner so the parsing
@@ -13,6 +20,7 @@ export function extractFirstJsonObject(raw) {
 
   for (const candidate of candidates) {
     let searchFrom = 0;
+    let restarts = 0;
     while (searchFrom < candidate.length) {
       const start = candidate.indexOf('{', searchFrom);
       if (start < 0) break;
@@ -44,7 +52,11 @@ export function extractFirstJsonObject(raw) {
           }
         }
       }
-      if (end < 0) break;
+      if (end < 0) {
+        if (++restarts > MAX_UNBALANCED_RESTARTS) break;
+        searchFrom = start + 1;
+        continue;
+      }
       try {
         return JSON.parse(candidate.slice(start, end + 1));
       } catch (_) {
