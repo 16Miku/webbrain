@@ -8083,6 +8083,7 @@ function lockClarifyCardFromAuto(data) {
       : (typeof t === 'function' ? t('sp.clarify.auto_selected') : 'Auto-selected (timed out):');
     answered.textContent = `${prefix} ${answer}`;
     card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();
     return;
   }
@@ -8436,6 +8437,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     }
     answered.textContent = `${prefix} ${answer}`;
     card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();
   }
 
@@ -8490,15 +8492,49 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
 // COMPACT MODE (default) — shows tool steps as a tidy activity log
 // ==========================================================================
 
+function placeAnsweredClarifyCardInTimeline(card) {
+  const content = card?.closest('.message-content');
+  if (!content || card.parentElement !== content) return;
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return;
+
+  // Clarify prompts are appended after the text element so the blocking card
+  // is always the live edge while it awaits input. Once answered, move the
+  // card immediately before that text cursor. Verbose tool calls already
+  // insert at the cursor; compact mode creates a fresh steps segment there,
+  // keeping resumed activity and the final answer after the Q&A in time order.
+  content.insertBefore(card, textEl);
+}
+
 function getOrCreateStepsContainer() {
   if (!currentAssistantEl) return null;
   const content = currentAssistantEl.querySelector('.message-content');
-  let container = content.querySelector('.steps-container');
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return null;
+
+  // Each answered clarification is a timeline boundary. Reusing a compact
+  // steps container from before that boundary would place resumed events above
+  // the Q&A, so only reuse a segment between the latest answered card and the
+  // final-text cursor.
+  const latestAnsweredCard = [...content.children]
+    .reverse()
+    .find(child => child.matches('.clarify-card.clarify-answered')) || null;
+  let candidate = latestAnsweredCard
+    ? latestAnsweredCard.nextElementSibling
+    : content.firstElementChild;
+  let container = null;
+  while (candidate && candidate !== textEl) {
+    if (candidate.classList.contains('steps-container')) {
+      container = candidate;
+      break;
+    }
+    candidate = candidate.nextElementSibling;
+  }
   if (!container) {
     container = document.createElement('div');
     container.className = 'steps-container';
-    // Insert before the text element
-    const textEl = content.querySelector('.message-text');
     content.insertBefore(container, textEl);
   }
   return container;

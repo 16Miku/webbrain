@@ -24681,6 +24681,47 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       3,
       `${label}: submit, permission, and clarify prompts should override reading-first scroll suppression`,
     );
+    assert.match(
+      panel,
+      /function placeAnsweredClarifyCardInTimeline\(card\) \{[\s\S]*?card\.parentElement !== content[\s\S]*?content\.insertBefore\(card, textEl\);/,
+      `${label}: answered clarifications should move before the final-text cursor`,
+    );
+    const submitClarifySource = panel.slice(
+      panel.indexOf('function submitClarify('),
+      panel.indexOf('// ==========================================================================\n// COMPACT MODE', panel.indexOf('function submitClarify(')),
+    );
+    assert.match(
+      submitClarifySource,
+      /card\.appendChild\(answered\);\s*placeAnsweredClarifyCardInTimeline\(card\);/,
+      `${label}: direct clarification answers should establish a timeline boundary`,
+    );
+    const autoClarifySource = panel.slice(
+      panel.indexOf('function lockClarifyCardFromAuto('),
+      panel.indexOf('function renderPlanReviewCard(', panel.indexOf('function lockClarifyCardFromAuto(')),
+    );
+    assert.match(
+      autoClarifySource,
+      /card\.appendChild\(answered\);\s*placeAnsweredClarifyCardInTimeline\(card\);/,
+      `${label}: auto-selected clarification answers should establish a timeline boundary`,
+    );
+    const compactStepsSource = panel.slice(
+      panel.indexOf('function getOrCreateStepsContainer()'),
+      panel.indexOf('function appendCompactStep(', panel.indexOf('function getOrCreateStepsContainer()')),
+    );
+    assert.match(
+      compactStepsSource,
+      /latestAnsweredCard[\s\S]*?latestAnsweredCard\.nextElementSibling[\s\S]*?candidate !== textEl[\s\S]*?classList\.contains\('steps-container'\)[\s\S]*?content\.insertBefore\(container, textEl\);/,
+      `${label}: compact resumed events should use a steps segment after the latest answered clarification`,
+    );
+    const verboseToolSource = panel.slice(
+      panel.indexOf('function appendVerboseToolCall('),
+      panel.indexOf('function appendVerboseToolResult(', panel.indexOf('function appendVerboseToolCall(')),
+    );
+    assert.match(
+      verboseToolSource,
+      /content\.insertBefore\(el, textEl\);/,
+      `${label}: verbose resumed events should render after the repositioned clarification and before final text`,
+    );
     const planReviewSource = panel.slice(
       panel.indexOf('function renderPlanReviewCard('),
       panel.indexOf('function submitPlanReview('),
