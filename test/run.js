@@ -38517,6 +38517,25 @@ test('provider compatibility defaults preserve legacy chat request bodies', () =
       temperature: 0.2,
       max_tokens: 123,
     });
+    const internalMessages = [{
+      role: 'assistant',
+      content: 'What value should I use?',
+      webbrainPlannerClarification: {
+        requiresSubmission: true,
+        pageUrl: 'https://example.test/application',
+      },
+    }];
+    const internalBody = provider._buildChatCompletionsBody(internalMessages, {}, false);
+    assert.deepEqual(
+      internalBody.messages,
+      [{ role: 'assistant', content: 'What value should I use?' }],
+      'app-only planner clarification metadata must not reach Chat Completions providers',
+    );
+    assert.equal(
+      internalMessages[0].webbrainPlannerClarification.requiresSubmission,
+      true,
+      'provider message sanitization must not mutate persisted conversation state',
+    );
   }
   for (const Provider of [LlamaCppProviderCh, LlamaCppProviderFx]) {
     const provider = new Provider({ baseUrl: 'http://localhost:8080' });
@@ -54403,6 +54422,27 @@ test('planner: parse and format structured plan', () => {
   assert.equal(respond?.requires_state_change, false, 'respond must never authorize page mutation');
   assert.equal(respond?.requires_submission, false, 'respond must never require submission');
   assert.equal(respond?.scheduling, null, 'respond must not preserve scheduling metadata');
+
+  for (const parse of [parsePlanFromContent, parsePlanFromContentFx]) {
+    const clarifyBeforeSubmit = parse(JSON.stringify({
+      request_kind: 'clarify',
+      requires_state_change: false,
+      requires_submission: true,
+      summary: 'Ask for the missing answer before submitting the form.',
+      steps: [],
+      memory: {},
+      scheduling: null,
+      risks: [],
+      localized: {
+        locale: 'en',
+        summary: 'What answer should I use before submitting?',
+        steps: [],
+        risks: [],
+      },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(clarifyBeforeSubmit?.requires_state_change, false, 'clarify must never authorize an immediate mutation');
+    assert.equal(clarifyBeforeSubmit?.requires_submission, true, 'clarify must retain the eventual user-authorized submit intent');
+  }
 });
 
 test('planner: parse JSON inside markdown fence', () => {
@@ -54447,6 +54487,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"use_progress_ledger": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"requires_submission": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /explicit do-not-submit tasks and autosave UIs/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /For clarify, preserve true.*already-requested commit/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /answers, drafts, or values already prepared.*classify execute and inspect/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /sequential workflow stages, sites, apps, or destinations are not peer items/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Calendar\/cron recurrence.*unsupported/i);
@@ -54767,6 +54809,138 @@ test('planner consistency repair keeps model-derived plan fields out of trusted 
       `${AgentClass.name}: model-derived plan data crossed the trust boundary`,
     );
   }
+});
+
+test('planner consistency repair preserves submit intent across one direct clarification continuation', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        const responses = [false, true].map(requiresSubmission => plannerFixtureJson({
+          request_kind: 'execute',
+          requires_state_change: true,
+          requires_submission: requiresSubmission,
+          summary: 'Fill the remaining application answers and submit the form.',
+          confidence: 0.99,
+          steps: [
+            { id: '1', action: 'Fill the remaining answers.', tools: ['set_field'] },
+            { id: '2', action: 'Submit and verify the form.', tools: ['click_ax', 'read_page'] },
+          ],
+          localized: {
+            locale: 'en',
+            summary: 'Fill the remaining application answers and submit the form.',
+            steps: [
+              { id: '1', action: 'Fill the remaining answers.' },
+              { id: '2', action: 'Submit and verify the form.' },
+            ],
+            risks: [],
+          },
+        }));
+        const requests = [];
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-submit-continuation-test',
+          name: 'planner-submit-continuation-test',
+          chat: async messages => {
+            requests.push(messages);
+            return { content: responses.shift(), usage: {} };
+          },
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        const followUpContext = {
+          priorUserTask: 'Fill and submit this application.',
+          scratchpadFacts: '',
+          plannerClarification: {
+            requiresSubmission: true,
+            pageUrl: 'https://example.test/application',
+          },
+        };
+        const args = [
+          9340 + (agentIndex * 20) + (routeIndex * 10),
+          { role: 'user', content: 'Use the WebBrain details and answer the remaining questions.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://example.test/application', tabTitle: 'Application' },
+        ];
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' }, followUpContext)
+          : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' }, followUpContext);
+
+        assert.equal(gate.proceed, true, `${AgentClass.name}: ${route} continuation did not execute`);
+        assert.equal(gate.requiresSubmission, true, `${AgentClass.name}: ${route} dropped clarified submit intent`);
+        assert.equal(requests.length, 2, `${AgentClass.name}: ${route} should get one semantic submit-intent recheck`);
+        assert.match(requests[0][1].content, /Unresolved planner clarification/);
+        assert.match(requests[1].at(-1)?.content || '', /clarification_submit_intent_dropped/);
+        assert.equal(responses.length, 0);
+      }
+    }
+  });
+});
+
+test('planner submit clarification does not cross page boundaries', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        const response = plannerFixtureJson({
+          request_kind: 'execute',
+          requires_state_change: true,
+          requires_submission: false,
+          summary: 'Fill the different form without submitting it.',
+          confidence: 0.99,
+          steps: [
+            { id: '1', action: 'Fill the requested fields without submitting.', tools: ['set_field'] },
+          ],
+          localized: {
+            locale: 'en',
+            summary: 'Fill the different form without submitting it.',
+            steps: [
+              { id: '1', action: 'Fill the requested fields without submitting.' },
+            ],
+            risks: [],
+          },
+        });
+        const requests = [];
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-submit-page-scope-test',
+          name: 'planner-submit-page-scope-test',
+          chat: async messages => {
+            requests.push(messages);
+            return { content: response, usage: {} };
+          },
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        const followUpContext = {
+          priorUserTask: 'Fill and submit the first application.',
+          scratchpadFacts: '',
+          plannerClarification: {
+            requiresSubmission: true,
+            pageUrl: 'https://example.test/first-application',
+          },
+        };
+        const args = [
+          9380 + (agentIndex * 20) + (routeIndex * 10),
+          { role: 'user', content: 'Fill this different form without submitting it.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://example.test/second-application', tabTitle: 'Second application' },
+        ];
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' }, followUpContext)
+          : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' }, followUpContext);
+
+        assert.equal(gate.proceed, true, `${AgentClass.name}: ${route} different-page task did not execute`);
+        assert.equal(gate.requiresSubmission, false, `${AgentClass.name}: ${route} carried stale submit intent across pages`);
+        assert.equal(requests.length, 1, `${AgentClass.name}: ${route} should not repair submit intent from another page`);
+        assert.doesNotMatch(requests[0][1].content, /Unresolved planner clarification/);
+      }
+    }
+  });
 });
 
 test('planner falls back safely when repaired respond intent still lists tools', async () => {
@@ -55893,14 +56067,20 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(disposable, /browser conversation\/session until the user runs `\/reset`/i, `${label}: disposable email skill should disclose session retention`);
     assert.match(disposable, /use `clarify` to confirm the user understands/i, `${label}: disposable email skill should require explicit user confirmation`);
     assert.match(disposable, /Continue only after the user confirms/i, `${label}: disposable email skill should stop without confirmation`);
+    assert.match(disposable, /visible browser UI first/i, `${label}: disposable email skill should prefer the Mail.tm UI`);
+    assert.match(disposable, /`navigate` to `https:\/\/mail\.tm\/en\/`/i, `${label}: disposable email skill should open Mail.tm in the active run tab`);
+    assert.match(disposable, /UI-first route does not require `\/allow-api`/i, `${label}: disposable email skill should not require API approval for the default route`);
+    assert.match(disposable, /Request `\/allow-api` at that point, not preemptively/i, `${label}: disposable email skill should defer API approval until fallback`);
+    assert.doesNotMatch(disposable, /will be deleted automatically/i, `${label}: UI-provided mailbox should not promise automatic deletion`);
     assert.match(disposable, /Never write the password or bearer token to the scratchpad/i, `${label}: disposable email skill should keep secrets out of the scratchpad`);
     assert.doesNotMatch(disposable, /Keep the address, password, token/i, `${label}: disposable email skill should not pin secrets`);
     assert.match(disposable, /confirm its hostname matches the signup site/i, `${label}: disposable email skill should validate verification-link destinations`);
-    assert.match(disposable, /before every normal success or failure exit/i, `${label}: disposable email skill should clean up failed flows too`);
+    assert.match(disposable, /If the API fallback created the mailbox[\s\S]*before every normal success or failure exit/i, `${label}: API fallback should clean up failed flows too`);
+    assert.match(disposable, /UI-provided mailbox was not explicitly deleted and may remain active/i, `${label}: UI-first completion should disclose retained mailbox state`);
     assert.match(disposable, /use `schedule_resume` for a later inbox check/i, `${label}: disposable email skill should schedule external inbox waits`);
     assert.doesNotMatch(disposable, /Poll every 5-10 seconds/i, `${label}: disposable email skill should not recommend tight polling`);
-    assert.match(disposable, /fetch_url/, `${label}: disposable email skill should use fetch_url in normal runs`);
-    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain API mutation approval`);
+    assert.match(disposable, /API fallback `fetch_url` examples \(not the default route\)/i, `${label}: disposable email skill should retain an explicit API fallback`);
+    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain fallback API mutation approval`);
     assert.match(disposable, new RegExp(String.raw`"url": "https:\/\/api\.mail\.tm\/accounts"`), `${label}: disposable email skill should document account creation`);
     assert.match(disposable, /\"Authorization\": \"Bearer REPLACE_TOKEN\"/, `${label}: disposable email skill should document authenticated message reads`);
     assert.match(disposable, /accounts\/REPLACE_ACCOUNT_ID/, `${label}: disposable email skill should document account deletion`);
@@ -60068,6 +60248,35 @@ test('planner input: active prior task and pending draft survive long tool chatt
     const context = agent._buildPlannerFollowUpContext(messages);
     assert.match(context.priorUserTask, /Draft and send Gary/, `${label}: original task fell out of planner context`);
     assert.match(context.scratchpadFacts, /\[pending draft\]/, `${label}: pending draft fell out of planner context`);
+
+    const clarificationMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Fill these answers and submit the form.' },
+      agent._plannerTerminalAssistantMessage({
+        requestKind: 'clarify',
+        requiresSubmission: true,
+        message: 'What should I use for the final answer?',
+      }, { tabUrl: 'https://example.test/application' }),
+    ];
+    const clarificationContext = agent._buildPlannerFollowUpContext(clarificationMessages);
+    assert.equal(clarificationContext.plannerClarification?.requiresSubmission, true, `${label}: pending submit clarification was not retained`);
+    const clarificationPlannerMessages = build(
+      { role: 'user', content: 'Use the WebBrain details.' },
+      'https://example.test/application',
+      'Application',
+      agent._buildPlannerHistoryDigest(clarificationMessages),
+      clarificationContext,
+    );
+    assert.match(clarificationPlannerMessages[1].content, /Unresolved planner clarification[\s\S]*eventual explicit submission/);
+    assert.match(clarificationPlannerMessages[1].content, /unless the current User task revokes submission/);
+    const changedPagePlannerMessages = build(
+      { role: 'user', content: 'Fill this different form without submitting it.' },
+      'https://example.test/other-application',
+      'Other application',
+      agent._buildPlannerHistoryDigest(clarificationMessages),
+      clarificationContext,
+    );
+    assert.doesNotMatch(changedPagePlannerMessages[1].content, /Unresolved planner clarification/);
 
     const plannerMessages = build(
       { role: 'user', content: 'Just tell me what you were going to draft.' },
@@ -64795,6 +65004,41 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
     assert.equal(rejectedLang.result.noDispatch, true, `${label}: rejected lang argument did not fail closed`);
     assert.equal(rejectedLang.result.errorCode, 'invalid_tool_arguments', `${label}: unstable invalid-argument code`);
 
+    const fetchUrl = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'fetch_url');
+    const acceptedHeaders = argumentModule.validateToolArguments(
+      'fetch_url',
+      {
+        url: 'https://api.example.com/items',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+          'X-Custom-Header': 'custom-value',
+        },
+        body: '{}',
+      },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(acceptedHeaders.ok, true, `${label}: string-valued fetch_url headers were rejected`);
+
+    for (const invalidValue of [42, true, null, ['application/json'], { value: 'application/json' }]) {
+      const rejectedHeaders = argumentModule.validateToolArguments(
+        'fetch_url',
+        { url: 'https://api.example.com/items', headers: { 'Content-Type': invalidValue } },
+        fetchUrl.function.parameters,
+      );
+      assert.equal(rejectedHeaders.ok, false, `${label}: non-string fetch_url header value was accepted`);
+      assert.ok(rejectedHeaders.result.invalidArgumentNames.includes('$.headers.Content-Type'), `${label}: invalid header path was not reported`);
+    }
+
+    const rejectedFetchTopLevel = argumentModule.validateToolArguments(
+      'fetch_url',
+      { url: 'https://api.example.com/items', timeout: 5000 },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(rejectedFetchTopLevel.ok, false, `${label}: undeclared fetch_url top-level argument was accepted`);
+    assert.ok(rejectedFetchTopLevel.result.invalidArgumentNames.includes('$.timeout'), `${label}: undeclared fetch_url argument path was not reported`);
+
     const click = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'click');
     for (const args of [
       { index: 3, x: 0, y: 0 },
@@ -64840,6 +65084,22 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
     assert.equal(result.invalidArguments, true, `${label}: structured invalidArguments marker missing`);
     assert.equal(result.noDispatch, true, `${label}: structured noDispatch marker missing`);
     assert.ok(updates.some(update => update.type === 'tool_result' && update.data?.result?.noDispatch === true), `${label}: UI did not receive the rejected tool result`);
+
+    const headerMessages = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'bad_headers', function: { name: 'fetch_url', arguments: JSON.stringify({ url: 'https://api.example.com/items', headers: { Authorization: 123 } }) } }],
+      headerMessages,
+      () => {},
+      { supportsVision: false },
+      null,
+      new Set(['fetch_url']),
+      2,
+    );
+    assert.equal(dispatches, 0, `${label}: invalid fetch_url headers reached executeTool`);
+    const headerResult = JSON.parse(headerMessages.find(message => message.role === 'tool')?.content || '{}');
+    assert.equal(headerResult.invalidArguments, true, `${label}: invalid header result marker missing`);
+    assert.equal(headerResult.noDispatch, true, `${label}: invalid header noDispatch marker missing`);
   }
 });
 
