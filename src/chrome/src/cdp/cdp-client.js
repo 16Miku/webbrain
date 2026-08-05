@@ -28,6 +28,22 @@ const WEBMCP_IFRAME_TARGET_FILTER = [
   { type: 'iframe', exclude: false },
   { exclude: true },
 ];
+// Text-entry verification proves an edit landed by comparing the field's value
+// before and after. We hash instead of shipping the raw value to the service
+// worker so page content never leaves the tab. 32-bit FNV-1a via Math.imul:
+// the append proof recomputes this once per candidate insertion point, so a
+// BigInt hash made a long contenteditable an O(n*m) freeze inside the page.
+const TEXT_ENTRY_SIGNATURE_SOURCE = `function (value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
+  }
+  return value.length + ':' + hash.toString(16);
+}`;
+// Above this length the per-candidate rescan stops being worth its cost. The
+// edit still succeeds; it is reported unproven, which is not a failure signal.
+const TEXT_ENTRY_PROOF_MAX_CHARS = 65536;
+
 const WEBMCP_CONTEXT_DISCOVERY_EXPRESSION = `
   (async () => {
     const context = document.modelContext;
@@ -63,6 +79,41 @@ export class CDPClient {
     this.webMcpSessions = new Map(); // tabId -> WebMCP tools + pending invocations
     this.runtimeContexts = new Map(); // tabId -> session/context key -> default context
     this.fileChooserGuards = new Map(); // tabId -> temporary protocol interception
+  }
+
+  /**
+   * Source of the shared rich-text toolbar heuristic, read from the packaged
+   * file and cached for the worker's lifetime.
+   *
+   * The main world this gets evaluated in cannot import modules and cannot see
+   * the content script's isolated world, so the scoring has to travel as text.
+   * Reading the same file the content scripts load is what keeps the CDP probe
+   * and the content probe from ever scoring an element differently.
+   */
+  static async _richTextToolbarHeuristicSource() {
+    // Harnesses that drive this client outside an extension (the fixtures
+    // runner) have no chrome.runtime to read packaged files through, so they
+    // supply the same file's text directly.
+    if (typeof CDPClient._heuristicSourceOverride === 'string') {
+      return CDPClient._heuristicSourceOverride;
+    }
+    if (CDPClient._heuristicSourcePromise) return CDPClient._heuristicSourcePromise;
+    CDPClient._heuristicSourcePromise = (async () => {
+      try {
+        const url = chrome.runtime.getURL('src/content/rich-text-toolbar-heuristic.js');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Packaged toolbar classifier returned HTTP ${response.status}`);
+        const source = await response.text();
+        if (!source.trim()) throw new Error('Packaged toolbar classifier was empty');
+        return source;
+      } catch {
+        // The selector preflight treats a missing packaged classifier as
+        // unresolved and fails closed before any text-entry dispatch.
+        CDPClient._heuristicSourcePromise = null;
+        return '';
+      }
+    })();
+    return CDPClient._heuristicSourcePromise;
   }
 
   /**
@@ -3166,6 +3217,246 @@ export class CDPClient {
     return lastResult;
   }
 
+  /**
+   * Resolve a selector through the exact open/closed-shadow path used by
+   * typeText(), then inspect that resolved element without dispatching input.
+   * The content-script probe cannot see closed shadow roots, so selector-based
+   * type_text preflight must live beside the trusted CDP resolver.
+   */
+  async probeRichTextToolbarSelector(tabId, selector) {
+    if (typeof selector !== 'string' || !selector.trim()) return { resolved: false };
+    const info = await this.resolveSelector(tabId, selector);
+    if (!info) return { resolved: false };
+    if (info.error) return { resolved: false, error: info.error };
+
+    let objectId = null;
+    let objectGroup = null;
+    let releaseObject = false;
+    try {
+      if (info.nodeId) {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+        objectId = resolved?.object?.objectId || null;
+        releaseObject = !!objectId;
+      } else {
+        const pierced = await this.querySelectorPierce(tabId, selector);
+        objectId = pierced?.objectIds?.[0] || null;
+        objectGroup = pierced?.objectGroup || null;
+      }
+      if (!objectId) return { resolved: false };
+
+      await this.sendCommand(tabId, 'DOM.enable');
+      const described = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }).catch(() => null);
+      const selectorBackendNodeId = Number(described?.node?.backendNodeId) || null;
+      if (!selectorBackendNodeId) return { resolved: false };
+
+      const heuristicSource = await CDPClient._richTextToolbarHeuristicSource();
+      if (!heuristicSource.trim()) {
+        return {
+          resolved: false,
+          error: 'The packaged rich-text toolbar classifier could not be loaded.',
+        };
+      }
+      const heuristicPrelude = heuristicSource
+        ? `
+          const __wbInstallRichTextToolbarHeuristicGlobal = false;
+          ${heuristicSource}
+          const __wbTrustedRichTextToolbarHeuristic = __wbRichTextToolbarHeuristic;
+        `
+        : 'const __wbTrustedRichTextToolbarHeuristic = null;';
+      const inspected = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId,
+        returnByValue: true,
+        awaitPromise: true,
+        functionDeclaration: `async function () {
+          ${heuristicPrelude}
+          const el = this;
+          if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+          const settledRect = async (shouldScroll) => {
+            if (shouldScroll) {
+              try {
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+              } catch {
+                try { el.scrollIntoView(); } catch {}
+              }
+            }
+            let previous = el.getBoundingClientRect();
+            let stableFrames = 0;
+            const deadline = performance.now() + 750;
+            while (stableFrames < 2 && performance.now() < deadline) {
+              await new Promise(resolve => {
+                let finished = false;
+                const finish = () => {
+                  if (finished) return;
+                  finished = true;
+                  resolve();
+                };
+                setTimeout(finish, 40);
+                try { requestAnimationFrame(finish); } catch {}
+              });
+              if (!el.isConnected) return null;
+              const next = el.getBoundingClientRect();
+              const delta = Math.max(
+                Math.abs(next.x - previous.x),
+                Math.abs(next.y - previous.y),
+                Math.abs(next.width - previous.width),
+                Math.abs(next.height - previous.height),
+              );
+              stableFrames = delta <= 0.5 ? stableFrames + 1 : 0;
+              previous = next;
+            }
+            return el.isConnected ? el.getBoundingClientRect() : null;
+          };
+          const visible = node => {
+            try {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return rect.width > 0 && rect.height > 0
+                && style.display !== 'none'
+                && style.visibility !== 'hidden';
+            } catch { return false; }
+          };
+          const composedClosest = (node, selector) => {
+            let current = node;
+            const seen = new Set();
+            while (current && !seen.has(current)) {
+              seen.add(current);
+              try { if (current.matches?.(selector)) return current; } catch {}
+              current = current.assignedSlot
+                || current.parentElement
+                || current.getRootNode?.()?.host
+                || null;
+            }
+            return null;
+          };
+          const composedParent = node => {
+            if (!node) return null;
+            return node.assignedSlot || node.parentElement || node.getRootNode?.()?.host || null;
+          };
+          const toolbarRegionKey = node => {
+            try {
+              if (!node?.isConnected) return '';
+              const region = node.getBoundingClientRect();
+              return [
+                'rtb',
+                String(node.tagName || '').toLowerCase(),
+                Math.round(region.x + window.scrollX),
+                Math.round(region.y + window.scrollY),
+                Math.round(region.width),
+                Math.round(region.height),
+              ].join(':');
+            } catch { return ''; }
+          };
+          const root = el.getRootNode?.() || document;
+          const findById = id => {
+            if (!id) return null;
+            try {
+              if (typeof root.getElementById === 'function') {
+                const local = root.getElementById(id);
+                if (local) return local;
+              }
+            } catch {}
+            try {
+              const escaped = globalThis.CSS?.escape ? CSS.escape(id) : id.replace(/["\\\\]/g, '\\\\$&');
+              const local = root.querySelector?.('#' + escaped);
+              if (local) return local;
+            } catch {}
+            try { return document.getElementById(id); } catch { return null; }
+          };
+          const labelledByText = (() => {
+            try {
+              const ids = String(el.getAttribute?.('aria-labelledby') || '').trim().split(/\\s+/).filter(Boolean);
+              const text = ids.map(findById).filter(Boolean)
+                .map(node => String(node.textContent || '').trim()).filter(Boolean)
+                .join(' ').replace(/\\s+/g, ' ').trim();
+              return text ? text.slice(0, 120) : null;
+            } catch { return null; }
+          })();
+          let labelText = null;
+          try {
+            if (el.id) {
+              const escaped = globalThis.CSS?.escape ? CSS.escape(el.id) : el.id.replace(/["\\\\]/g, '\\\\$&');
+              const label = root.querySelector?.('label[for="' + escaped + '"]')
+                || document.querySelector?.('label[for="' + escaped + '"]');
+              if (label) labelText = String(label.textContent || '').trim().slice(0, 120);
+            }
+            if (!labelText) {
+              const wrapping = composedClosest(el, 'label');
+              if (wrapping) labelText = String(wrapping.textContent || '').trim().slice(0, 120);
+            }
+          } catch {}
+          const tag = String(el.tagName || '').toLowerCase();
+          const fieldType = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
+          const fieldMeta = {
+            tag,
+            type: fieldType,
+            contentEditable: el.isContentEditable === true,
+            name: el.getAttribute?.('name') || null,
+            id: el.id || null,
+            role: el.getAttribute?.('role') || null,
+            autocomplete: el.getAttribute?.('autocomplete') || null,
+            ariaLabel: el.getAttribute?.('aria-label') || null,
+            ariaLabelledByText: labelledByText,
+            placeholder: el.getAttribute?.('placeholder') || null,
+            title: el.getAttribute?.('title') || null,
+            labelText,
+          };
+          // Still needed by the payload below, which reports toolbar context
+          // even when the element itself does not score as a candidate.
+          const semanticToolbar = composedClosest(el, '[role="toolbar"]');
+          // Scoring comes from the shared heuristic module, injected above,
+          // so this main-world probe and the content script cannot disagree
+          // about whether an element is a toolbar control. No axRef is passed:
+          // the isolated-world ref registry is unreachable from here, so the
+          // candidate carries no refs and blocking falls back to regionKey.
+          const candidate = __wbTrustedRichTextToolbarHeuristic
+            ? __wbTrustedRichTextToolbarHeuristic.candidate(el, fieldMeta)
+            : null;
+          if (candidate) fieldMeta.toolbarCandidate = candidate;
+          // Measure last, and only scroll for a candidate that will be
+          // annotated into a screenshot. Ordinary selector typing must not
+          // move the page to centre its target.
+          const rect = await settledRect(Number(candidate?.score) >= 4);
+          if (!rect) return null;
+          return {
+            pageUrl: location.href,
+            rect: {
+              x: Math.round(rect.x), y: Math.round(rect.y),
+              w: Math.round(rect.width), h: Math.round(rect.height),
+              pageX: Math.round(rect.x + window.scrollX),
+              pageY: Math.round(rect.y + window.scrollY),
+            },
+            fieldMeta,
+            toolbarContext: !!semanticToolbar || !!candidate,
+            toolbarRegionKey: semanticToolbar
+              ? toolbarRegionKey(semanticToolbar)
+              : (candidate?.regionKey || ''),
+          };
+        }`,
+      });
+      const value = inspected?.result?.value;
+      if (!value?.rect || !value?.fieldMeta) return { resolved: false };
+      return {
+        resolved: true,
+        refId: '',
+        documentToken: '',
+        refScopeUrl: String(value.pageUrl || ''),
+        rect: value.rect,
+        fieldMeta: value.fieldMeta,
+        toolbarContext: value.toolbarContext === true,
+        toolbarRegionRef: '',
+        toolbarRegionKey: String(value.toolbarRegionKey || ''),
+        shadowPierced: true,
+        selectorBackendNodeId,
+      };
+    } finally {
+      if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
+      if (releaseObject && objectId) {
+        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      }
+    }
+  }
+
   async _resolveSelectorOnce(tabId, selector, options = {}) {
     await this.sendCommand(tabId, 'Runtime.enable');
 
@@ -3297,11 +3588,6 @@ export class CDPClient {
       return jsInfo;
     }
 
-    // One-shot content markers are only created in document/open-shadow DOM.
-    // Do not fall back to first-match closed-shadow traversal for a selector
-    // whose caller requires a unique identity at dispatch time.
-    if (requireUnique) return null;
-
     // ---- Strategy 2: CDP traversal (closed shadow roots) ----
     try {
       await this.sendCommand(tabId, 'DOM.enable');
@@ -3323,14 +3609,37 @@ export class CDPClient {
       };
       walk(root);
 
-      let foundNodeId = null;
+      const foundNodeIds = [];
       for (const rootId of searchRoots) {
         try {
-          const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
-          if (nodeId) { foundNodeId = nodeId; break; }
+          if (requireUnique) {
+            // querySelector reports only the first hit in a root, so two
+            // matches inside one closed shadow root would pass the uniqueness
+            // check below as a single identity. Count them all.
+            const { nodeIds } = await this.sendCommand(tabId, 'DOM.querySelectorAll', { nodeId: rootId, selector });
+            for (const nodeId of nodeIds || []) {
+              if (nodeId && !foundNodeIds.includes(nodeId)) foundNodeIds.push(nodeId);
+            }
+            if (foundNodeIds.length > 1) break;
+          } else {
+            const { nodeId } = await this.sendCommand(tabId, 'DOM.querySelector', { nodeId: rootId, selector });
+            if (nodeId && !foundNodeIds.includes(nodeId)) {
+              foundNodeIds.push(nodeId);
+              break;
+            }
+          }
         } catch (e) { /* invalid selector for this root, keep going */ }
       }
 
+      if (requireUnique && foundNodeIds.length !== 1) {
+        return {
+          found: false,
+          error: `Trusted selector matched ${foundNodeIds.length} elements; expected exactly one.`,
+          nonUnique: true,
+          matchCount: foundNodeIds.length,
+        };
+      }
+      const foundNodeId = foundNodeIds[0] || null;
       if (!foundNodeId) return null;
 
       // Scroll into view and measure.
@@ -3559,6 +3868,246 @@ export class CDPClient {
     return fallbackResult;
   }
 
+  async textEntrySignature(tabId, { selector = '', nodeId = null, focused = false } = {}) {
+    const signatureFunction = `function () {
+      const el = this;
+      if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
+    }`;
+    if (Number.isInteger(nodeId) && nodeId > 0) {
+      let objectId = null;
+      try {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        objectId = resolved?.object?.objectId || null;
+        if (!objectId) return null;
+        const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: signatureFunction,
+        });
+        return typeof result?.result?.value === 'string' ? result.result.value : null;
+      } catch {
+        return null;
+      } finally {
+        if (objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+    const selectorJSON = JSON.stringify(String(selector || ''));
+    const result = await this.evaluate(tabId, `
+      (() => {
+        const selector = ${selectorJSON};
+        const queryDeep = (root) => {
+          try { const match = root.querySelector(selector); if (match) return match; } catch (e) { return null; }
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node = walker.currentNode;
+          while (node) {
+            if (node.shadowRoot) {
+              const inner = queryDeep(node.shadowRoot);
+              if (inner) return inner;
+            }
+            node = walker.nextNode();
+          }
+          return null;
+        };
+        const activeDeep = () => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          return active;
+        };
+        const el = ${focused === true} ? activeDeep() : (selector ? queryDeep(document) : null);
+        if (!el || !el.isConnected) return null;
+        const tag = String(el.tagName || '').toUpperCase();
+        if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
+        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
+      })()
+    `).catch(() => null);
+    return typeof result?.result?.value === 'string' ? result.result.value : null;
+  }
+
+  /**
+   * Prove a text edit landed. Returns `true` when proven and `null` when it
+   * could not be proven — never `false`.
+   *
+   * The distinction matters well beyond this file: `verified === false` is read
+   * as an action failure by the loop detector, the delivery-progress checkpoint
+   * and the observation boundary. Masked inputs, `maxlength` truncation, React
+   * controlled reformatting and whitespace-normalizing contenteditables all
+   * fail an exact-match proof on edits that actually worked, and a CDP hiccup
+   * fails it too. Reporting those as unproven keeps them out of the failure
+   * path; only a positive `true` is ever asserted.
+   */
+  async verifyTextEntry(tabId, {
+    selector = '', nodeId = null, text = '', clear = false, focused = false, beforeSignature = null,
+  } = {}) {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const expected = String(text || '');
+    const verifyFunction = `function (expected, shouldClear, beforeSignature) {
+      const el = this;
+      if (!el || el.nodeType !== 1 || !el.isConnected) return { found: false, verified: false };
+      const tag = String(el.tagName || '').toUpperCase();
+      const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
+      if (!typeable) return { found: true, verified: false };
+      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
+      const exactInsertion = () => {
+        if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
+        const separator = beforeSignature.indexOf(':');
+        const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+        if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
+        let index = value.indexOf(expected);
+        while (index >= 0) {
+          if (signatureOf(value.slice(0, index) + value.slice(index + expected.length)) === beforeSignature) return true;
+          index = value.indexOf(expected, index + 1);
+        }
+        return false;
+      };
+      return {
+        found: true,
+        verified: shouldClear
+          ? value === expected
+          : !!beforeSignature && exactInsertion(),
+      };
+    }`;
+
+    if (Number.isInteger(nodeId) && nodeId > 0) {
+      let objectId = null;
+      try {
+        await this.sendCommand(tabId, 'DOM.enable');
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        objectId = resolved?.object?.objectId || null;
+        if (!objectId) return null;
+        const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: verifyFunction,
+          arguments: [
+            { value: expected },
+            { value: clear === true },
+            { value: typeof beforeSignature === 'string' ? beforeSignature : '' },
+          ],
+        });
+        return result?.result?.value?.verified === true ? true : null;
+      } catch {
+        return null;
+      } finally {
+        if (objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+
+    const selectorJSON = JSON.stringify(String(selector || ''));
+    const expectedJSON = JSON.stringify(expected);
+    const result = await this.evaluate(tabId, `
+      (() => {
+        const selector = ${selectorJSON};
+        const expected = ${expectedJSON};
+        const shouldClear = ${clear === true};
+        const beforeSignature = ${JSON.stringify(typeof beforeSignature === 'string' ? beforeSignature : '')};
+        const queryDeep = (root) => {
+          try { const match = root.querySelector(selector); if (match) return match; } catch (e) { return null; }
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node = walker.currentNode;
+          while (node) {
+            if (node.shadowRoot) {
+              const inner = queryDeep(node.shadowRoot);
+              if (inner) return inner;
+            }
+            node = walker.nextNode();
+          }
+          return null;
+        };
+        const activeDeep = () => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          return active;
+        };
+        const el = ${focused === true} ? activeDeep() : (selector ? queryDeep(document) : null);
+        if (!el || !el.isConnected) return { found: false, verified: false };
+        const tag = String(el.tagName || '').toUpperCase();
+        const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
+        if (!typeable) return { found: true, verified: false };
+        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
+        const exactInsertion = () => {
+          if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
+          const separator = beforeSignature.indexOf(':');
+          const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+          if (!expected || !Number.isInteger(beforeLength) || value.length !== beforeLength + expected.length) return false;
+          let index = value.indexOf(expected);
+          while (index >= 0) {
+            if (signatureOf(value.slice(0, index) + value.slice(index + expected.length)) === beforeSignature) return true;
+            index = value.indexOf(expected, index + 1);
+          }
+          return false;
+        };
+        return {
+          found: true,
+          verified: shouldClear
+            ? value === expected
+            : !!beforeSignature && exactInsertion(),
+        };
+      })()
+    `).catch(() => null);
+    return result?.result?.value?.verified === true ? true : null;
+  }
+
+  async _cleanupRichTextToolbarTargetMarker(tabId, attribute, marker, { includeClosed = false } = {}) {
+    await this.evaluate(tabId, `
+      (() => {
+        const selector = ${JSON.stringify(`[${attribute}="${marker}"]`)};
+        const roots = [document];
+        const seen = new Set();
+        while (roots.length) {
+          const root = roots.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          for (const match of root.querySelectorAll(selector)) match.removeAttribute(${JSON.stringify(attribute)});
+          for (const element of root.querySelectorAll('*')) {
+            if (element.shadowRoot && !seen.has(element.shadowRoot)) roots.push(element.shadowRoot);
+          }
+        }
+      })()
+    `).catch(() => null);
+    if (!includeClosed) return;
+    try {
+      await this.sendCommand(tabId, 'DOM.enable');
+      const { root } = await this.sendCommand(tabId, 'DOM.getDocument', { depth: -1, pierce: true });
+      const roots = [];
+      const walk = node => {
+        if (!node) return;
+        if (node.nodeName === '#document' || node.nodeType === 9) roots.push(node.nodeId);
+        for (const shadowRoot of node.shadowRoots || []) {
+          roots.push(shadowRoot.nodeId);
+          walk(shadowRoot);
+        }
+        for (const child of node.children || []) walk(child);
+        if (node.contentDocument) walk(node.contentDocument);
+      };
+      walk(root);
+      const selector = `[${attribute}="${marker}"]`;
+      const matches = new Set();
+      for (const rootNodeId of roots) {
+        const result = await this.sendCommand(tabId, 'DOM.querySelectorAll', {
+          nodeId: rootNodeId,
+          selector,
+        }).catch(() => null);
+        for (const nodeId of result?.nodeIds || []) matches.add(nodeId);
+      }
+      await Promise.all(Array.from(matches, nodeId => this.sendCommand(tabId, 'DOM.removeAttribute', {
+        nodeId,
+        name: attribute,
+      }).catch(() => null)));
+    } catch {}
+  }
+
   /**
    * Type text into an element.
    *
@@ -3575,10 +4124,94 @@ export class CDPClient {
    *      (e.g. element isn't focusable through CDP because it's in a closed
    *      shadow root with no usable hit point).
    */
-  async typeText(tabId, selector, text, clear = false) {
-    const info = await this.resolveSelector(tabId, selector);
+  async typeText(tabId, selector, text, clear = false, expectedBackendNodeId = null, resolveOptions = {}) {
+    const expectedNodeId = Number(expectedBackendNodeId);
+    if (Number.isInteger(expectedNodeId) && expectedNodeId > 0) {
+      const currentInfo = await this.resolveSelector(tabId, selector);
+      if (!currentInfo) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
+      if (currentInfo.error) return { success: false, dispatched: false, noDispatch: true, error: currentInfo.error };
+
+      let objectId = null;
+      let objectGroup = null;
+      let releaseObject = false;
+      const markerAttribute = 'data-webbrain-dispatch-binding';
+      const entropy = new Uint32Array(3);
+      globalThis.crypto.getRandomValues(entropy);
+      const marker = `wbdb_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+      try {
+        if (currentInfo.nodeId) {
+          await this.sendCommand(tabId, 'DOM.enable');
+          const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: currentInfo.nodeId });
+          objectId = resolved?.object?.objectId || null;
+          releaseObject = !!objectId;
+        } else {
+          const pierced = await this.querySelectorPierce(tabId, selector);
+          objectId = pierced?.objectIds?.[0] || null;
+          objectGroup = pierced?.objectGroup || null;
+        }
+        if (!objectId) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.' };
+        }
+        await this.sendCommand(tabId, 'DOM.enable');
+        const described = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }).catch(() => null);
+        const currentBackendNodeId = Number(described?.node?.backendNodeId) || null;
+        if (currentBackendNodeId !== expectedNodeId) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.' };
+        }
+        const marked = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: `function (attribute, marker) {
+            if (!this || this.nodeType !== 1 || !this.isConnected) return false;
+            const tokenKey = Symbol.for('webbrain.dispatchBinding');
+            try {
+              Object.defineProperty(this, tokenKey, { value: marker, configurable: true });
+            } catch {
+              this[tokenKey] = marker;
+            }
+            this.setAttribute(attribute, marker);
+            return this.getAttribute(attribute) === marker && this[tokenKey] === marker;
+          }`,
+          arguments: [{ value: markerAttribute }, { value: marker }],
+        }).catch(() => null);
+        if (marked?.result?.value !== true) {
+          return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'Could not preserve the selector target for safe typing. Re-read the page and retry.' };
+        }
+        const trustedSelector = `[${markerAttribute}="${marker}"]`;
+        return await this.typeText(tabId, trustedSelector, text, clear, null, {
+          requireUnique: true,
+          dispatchBindingToken: marker,
+        });
+      } finally {
+        if (objectId) {
+          await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+            objectId,
+            returnByValue: true,
+            functionDeclaration: `function (attribute, marker) {
+              const tokenKey = Symbol.for('webbrain.dispatchBinding');
+              if (this?.getAttribute?.(attribute) === marker) this.removeAttribute(attribute);
+              if (this?.[tokenKey] === marker) {
+                try { delete this[tokenKey]; } catch {}
+              }
+              return true;
+            }`,
+            arguments: [{ value: markerAttribute }, { value: marker }],
+          }).catch(() => null);
+        }
+        await this._cleanupRichTextToolbarTargetMarker(tabId, markerAttribute, marker, {
+          includeClosed: Number.isInteger(currentInfo.nodeId) && currentInfo.nodeId > 0,
+        });
+        if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
+        if (releaseObject && objectId) {
+          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        }
+      }
+    }
+
+    const info = await this.resolveSelector(tabId, selector, resolveOptions);
     if (!info) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, noDispatch: true, error: info.error };
+    const dispatchBindingToken = String(resolveOptions?.dispatchBindingToken || '');
 
     // ── <select> fast-path ──────────────────────────────────────────────
     // Native <select> elements CANNOT be typed into via Input.insertText.
@@ -3589,10 +4222,12 @@ export class CDPClient {
     if (info.tag === 'SELECT') {
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify((text || '').trim());
+      const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
           const needle = ${textJSON};
+          const targetToken = ${targetTokenJSON};
           const queryDeep = (root) => {
             try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
             const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -3602,6 +4237,9 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el || el.tagName !== 'SELECT') return { success: false, error: 'Select element not found' };
+          if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
+            return { success: false, targetChanged: true, error: 'The selector target changed after safety preflight' };
+          }
           el.focus();
           const opts = Array.from(el.options);
           const match = opts.find(o => o.value === needle)
@@ -3626,6 +4264,7 @@ export class CDPClient {
           ...(sInfo || { success: false, error: 'Select interaction failed' }),
           dispatched: false,
           noDispatch: true,
+          ...(sInfo?.targetChanged ? { retryable: true } : {}),
         };
       }
 
@@ -3649,8 +4288,38 @@ export class CDPClient {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
       }
+      const selectorJSONAfter = JSON.stringify(selector);
+      const verifiedResult = await this.evaluate(tabId, `
+        (() => {
+          const sel = ${selectorJSONAfter};
+          const queryDeep = (root) => {
+            try { const match = root.querySelector(sel); if (match) return match; } catch (e) { return null; }
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+            let node = walker.currentNode;
+            while (node) {
+              if (node.shadowRoot) {
+                const inner = queryDeep(node.shadowRoot);
+                if (inner) return inner;
+              }
+              node = walker.nextNode();
+            }
+            return null;
+          };
+          const el = queryDeep(document);
+          if (!el || el.tagName !== 'SELECT') return { verified: false };
+          const option = el.options[el.selectedIndex];
+          return {
+            verified: el.value === ${JSON.stringify(sInfo.targetValue)}
+              || String(option?.text || '').trim() === ${JSON.stringify(sInfo.targetText)},
+          };
+        })()
+      `).catch(() => null);
       return {
         success: true,
+        // Positive proof only — see verifyTextEntry. A `false` here would be
+        // read as a failed action by the loop detector and the delivery
+        // checkpoint, and this evaluate returns null on any CDP hiccup.
+        ...(verifiedResult?.result?.value?.verified === true ? { verified: true } : {}),
         method: 'select-keyboard',
         selectedText: sInfo.targetText,
         selectedValue: sInfo.targetValue,
@@ -3658,11 +4327,84 @@ export class CDPClient {
       };
     }
 
+    const beforeSignature = await this.textEntrySignature(tabId, {
+      selector,
+      nodeId: info.nodeId,
+    });
     let focused = false;
     let dispatched = false;
 
+    if (dispatchBindingToken) {
+      let guardedFocus = null;
+      if (Number.isInteger(info.nodeId) && info.nodeId > 0) {
+        let objectId = null;
+        try {
+          const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId });
+          objectId = resolved?.object?.objectId || null;
+          if (objectId) {
+            guardedFocus = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+              objectId,
+              returnByValue: true,
+              functionDeclaration: `function (targetToken) {
+                if (!this || !this.isConnected || this[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
+                try { this.focus(); } catch { return false; }
+                const root = this.getRootNode?.();
+                return root?.activeElement === this || document.activeElement === this;
+              }`,
+              arguments: [{ value: dispatchBindingToken }],
+            }).catch(() => null);
+          }
+        } finally {
+          if (objectId) {
+            try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          }
+        }
+      } else {
+        const selectorJSON = JSON.stringify(selector);
+        const targetTokenJSON = JSON.stringify(dispatchBindingToken);
+        guardedFocus = await this.evaluate(tabId, `
+          (() => {
+            const sel = ${selectorJSON};
+            const targetToken = ${targetTokenJSON};
+            const queryDeep = (root) => {
+              try { const match = root.querySelector(sel); if (match) return match; } catch (e) { return null; }
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node = walker.currentNode;
+              while (node) {
+                if (node.shadowRoot) {
+                  const inner = queryDeep(node.shadowRoot);
+                  if (inner) return inner;
+                }
+                node = walker.nextNode();
+              }
+              return null;
+            };
+            const activeDeep = () => {
+              let active = document.activeElement;
+              while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+              return active;
+            };
+            const el = queryDeep(document);
+            if (!el || !el.isConnected || el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) return false;
+            try { el.focus(); } catch { return false; }
+            return activeDeep() === el;
+          })()
+        `).catch(() => null);
+      }
+      if (guardedFocus?.result?.value !== true) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: 'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+        };
+      }
+      focused = true;
+    }
+
     // Focus path A: real mouse click (most reliable, fires trusted events).
-    if (info.inViewport && info.hitOk) {
+    if (!focused && info.inViewport && info.hitOk) {
       try {
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
@@ -3739,11 +4481,13 @@ export class CDPClient {
       // JS fallback using native setter. Properly escape via JSON.
       const selectorJSON = JSON.stringify(selector);
       const textJSON = JSON.stringify(text);
+      const targetTokenJSON = JSON.stringify(dispatchBindingToken);
       dispatched = true;
       const result = await this.evaluate(tabId, `
         (() => {
           const sel = ${selectorJSON};
           const txt = ${textJSON};
+          const targetToken = ${targetTokenJSON};
           const queryDeep = (root) => {
             try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
             const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -3753,6 +4497,9 @@ export class CDPClient {
           };
           const el = queryDeep(document);
           if (!el) return { success: false, error: 'Element not found (fallback)' };
+          if (targetToken && el[Symbol.for('webbrain.dispatchBinding')] !== targetToken) {
+            return { success: false, dispatched: false, noDispatch: true, retryable: true, error: 'The selector target changed after safety preflight' };
+          }
           try { el.focus(); } catch (e) {}
 
           if (el.isContentEditable) {
@@ -3790,11 +4537,30 @@ export class CDPClient {
       if (fallbackResult.success === false && fallbackResult.dispatched == null) {
         fallbackResult.dispatched = dispatched;
       }
+      if (fallbackResult.success === true) {
+        // Only ever assert a positive proof — see verifyTextEntry.
+        const fallbackVerified = await this.verifyTextEntry(tabId, {
+          selector,
+          nodeId: info.nodeId,
+          text,
+          clear,
+          beforeSignature,
+        });
+        if (fallbackVerified === true) fallbackResult.verified = true;
+      }
       return fallbackResult;
     }
 
+    const verified = await this.verifyTextEntry(tabId, {
+      selector,
+      nodeId: info.nodeId,
+      text,
+      clear,
+      beforeSignature,
+    });
     return {
       success: true,
+      ...(verified === true ? { verified: true } : {}),
       method: 'cdp-insert-text',
       tag: info.tag,
       rect: {

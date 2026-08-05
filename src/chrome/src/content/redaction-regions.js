@@ -49,6 +49,8 @@
     let viewport = {
       width: Math.max(1, Math.round(window.innerWidth || 1)),
       height: Math.max(1, Math.round(window.innerHeight || 1)),
+      scrollX: window.scrollX || window.pageXOffset || 0,
+      scrollY: window.scrollY || window.pageYOffset || 0,
     };
     if (space === 'page') {
       viewport = {
@@ -108,8 +110,131 @@
     return { elements: selected, viewport, childFrames };
   }
 
+  function waitForExactChildFrameRect(params) {
+    const token = String(params?.token || '');
+    if (!token) return Promise.resolve({ found: false });
+    return new Promise(resolve => {
+      // A single claim is answered after this quiet window so a second frame
+      // racing the same token is seen before the geometry is trusted.
+      const CLAIM_CONTENTION_MS = 30;
+      let settled = false;
+      let timer = null;
+      let contentionTimer = null;
+      let claimant = null;
+      let claimedFrame = null;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(contentionTimer);
+        window.removeEventListener('message', onMessage);
+        resolve(value);
+      };
+      const toRect = rect => ({
+        x: rect.left,
+        y: rect.top,
+        w: rect.width,
+        h: rect.height,
+      });
+      const reachableFrames = () => {
+        const frames = [];
+        const roots = [document];
+        const seenRoots = new Set();
+        while (roots.length) {
+          const root = roots.shift();
+          if (!root || seenRoots.has(root)) continue;
+          seenRoots.add(root);
+          for (const frame of root.querySelectorAll?.('iframe, frame') || []) frames.push(frame);
+          for (const element of root.querySelectorAll?.('*') || []) {
+            try {
+              if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) roots.push(element.shadowRoot);
+            } catch {}
+          }
+        }
+        return frames;
+      };
+      const onMessage = event => {
+        if (event?.data?.__webbrainExactFrameRectToken !== token) return;
+        const frame = reachableFrames()
+          .find(candidate => candidate.contentWindow === event.source);
+        if (!frame) return;
+        // The agent announces this token to exactly one child frame, so a
+        // second distinct claimant is a frame answering for a token that was
+        // never sent to it. Resolving the first arrival would let it decide
+        // which iframe the geometry describes, so contention fails closed.
+        if (claimant && claimant !== event.source) {
+          finish({ found: false, contended: true });
+          return;
+        }
+        if (!claimant) {
+          claimant = event.source;
+          claimedFrame = frame;
+          contentionTimer = setTimeout(() => resolveClaim(), CLAIM_CONTENTION_MS);
+          return;
+        }
+        resolveClaim();
+      };
+      const resolveClaim = () => {
+        const frame = claimedFrame;
+        if (!frame || !frame.isConnected) {
+          finish({ found: false });
+          return;
+        }
+        let outer = frame.getBoundingClientRect();
+        const offscreen = outer.right <= 0 || outer.bottom <= 0
+          || outer.left >= window.innerWidth || outer.top >= window.innerHeight;
+        const scrolled = params?.scrollIntoView === true && offscreen;
+        if (scrolled) {
+          try { frame.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); } catch {}
+          outer = frame.getBoundingClientRect();
+        }
+        const transformX = outer.width / (frame.offsetWidth || outer.width || 1);
+        const transformY = outer.height / (frame.offsetHeight || outer.height || 1);
+        finish({
+          found: true,
+          scrolled,
+          outerRect: {
+            ...toRect(outer),
+            pageX: outer.left + (window.scrollX || window.pageXOffset || 0),
+            pageY: outer.top + (window.scrollY || window.pageYOffset || 0),
+          },
+          contentRect: {
+            x: outer.left + (frame.clientLeft || 0) * transformX,
+            y: outer.top + (frame.clientTop || 0) * transformY,
+            w: (frame.clientWidth || outer.width) * transformX,
+            h: (frame.clientHeight || outer.height) * transformY,
+          },
+          ownerMeta: {
+            tag: String(frame.tagName || '').toLowerCase(),
+            id: frame.id || null,
+            name: frame.getAttribute?.('name') || null,
+            role: frame.getAttribute?.('role') || null,
+          },
+        });
+      };
+      window.addEventListener('message', onMessage);
+      timer = setTimeout(() => finish({ found: false }), 750);
+    });
+  }
+
+  function announceExactChildFrame(params) {
+    const token = String(params?.token || '');
+    if (!token || window.parent === window) return { announced: false };
+    try {
+      window.parent.postMessage({ __webbrainExactFrameRectToken: token }, '*');
+      return { announced: true };
+    } catch { return { announced: false }; }
+  }
+
   runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.target !== 'redaction-content' || msg.action !== 'get_redaction_regions') return;
-    sendResponse(collectRedactionRegions(msg.params || {}));
+    if (msg?.target !== 'redaction-content') return;
+    if (msg.action === 'get_redaction_regions') {
+      sendResponse(collectRedactionRegions(msg.params || {}));
+    } else if (msg.action === 'wait_for_exact_child_frame_rect') {
+      waitForExactChildFrameRect(msg.params || {}).then(sendResponse);
+      return true;
+    } else if (msg.action === 'announce_exact_child_frame') {
+      sendResponse(announceExactChildFrame(msg.params || {}));
+    }
   });
 })();
