@@ -4,6 +4,23 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [26.1.0] - 2026-08-05
+
+### Added
+- Added a Chrome and Firefox rich-text editor safety system that identifies formatting controls before text entry, uses visual confirmation when available, and requires a corrected, verified editor-body edit before a run can complete.
+
+### Changed
+- Unified toolbar classification across content scripts, DevTools Protocol targeting, iframe dispatch, and recovery so the same control is judged consistently through navigation and extension reinjection.
+- Bounded safety captures within the configured per-turn screenshot budget while reserving the first guarded edit for structural or visual inspection.
+
+### Fixed
+- Prevented ordinary toolbar searches, compact composers, trusted focused fields, and labelled controls from being mistaken for formatting targets without supporting editor evidence.
+- Kept recovery obligations attached to the correct editor, route, and frame across rerenders and navigation while preserving distinct live sibling frames.
+- Failed closed on ambiguous cross-frame responses, conflicting geometry claims, and page-owned classifier substitutions without stranding a run in unrecoverable toolbar debt.
+
+### Tests
+- Expanded mirrored Chrome/Firefox regression and vision-probe coverage for toolbar variants, shadow DOM, nested iframes, navigation, screenshot limits, recovery deduplication, and verified corrected edits.
+
 ## [26.0.11] - 2026-08-05
 
 ### Changed
