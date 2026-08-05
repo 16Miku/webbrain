@@ -55893,14 +55893,20 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(disposable, /browser conversation\/session until the user runs `\/reset`/i, `${label}: disposable email skill should disclose session retention`);
     assert.match(disposable, /use `clarify` to confirm the user understands/i, `${label}: disposable email skill should require explicit user confirmation`);
     assert.match(disposable, /Continue only after the user confirms/i, `${label}: disposable email skill should stop without confirmation`);
+    assert.match(disposable, /visible browser UI first/i, `${label}: disposable email skill should prefer the Mail.tm UI`);
+    assert.match(disposable, /`navigate` to `https:\/\/mail\.tm\/en\/`/i, `${label}: disposable email skill should open Mail.tm in the active run tab`);
+    assert.match(disposable, /UI-first route does not require `\/allow-api`/i, `${label}: disposable email skill should not require API approval for the default route`);
+    assert.match(disposable, /Request `\/allow-api` at that point, not preemptively/i, `${label}: disposable email skill should defer API approval until fallback`);
+    assert.doesNotMatch(disposable, /will be deleted automatically/i, `${label}: UI-provided mailbox should not promise automatic deletion`);
     assert.match(disposable, /Never write the password or bearer token to the scratchpad/i, `${label}: disposable email skill should keep secrets out of the scratchpad`);
     assert.doesNotMatch(disposable, /Keep the address, password, token/i, `${label}: disposable email skill should not pin secrets`);
     assert.match(disposable, /confirm its hostname matches the signup site/i, `${label}: disposable email skill should validate verification-link destinations`);
-    assert.match(disposable, /before every normal success or failure exit/i, `${label}: disposable email skill should clean up failed flows too`);
+    assert.match(disposable, /If the API fallback created the mailbox[\s\S]*before every normal success or failure exit/i, `${label}: API fallback should clean up failed flows too`);
+    assert.match(disposable, /UI-provided mailbox was not explicitly deleted and may remain active/i, `${label}: UI-first completion should disclose retained mailbox state`);
     assert.match(disposable, /use `schedule_resume` for a later inbox check/i, `${label}: disposable email skill should schedule external inbox waits`);
     assert.doesNotMatch(disposable, /Poll every 5-10 seconds/i, `${label}: disposable email skill should not recommend tight polling`);
-    assert.match(disposable, /fetch_url/, `${label}: disposable email skill should use fetch_url in normal runs`);
-    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain API mutation approval`);
+    assert.match(disposable, /API fallback `fetch_url` examples \(not the default route\)/i, `${label}: disposable email skill should retain an explicit API fallback`);
+    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain fallback API mutation approval`);
     assert.match(disposable, new RegExp(String.raw`"url": "https:\/\/api\.mail\.tm\/accounts"`), `${label}: disposable email skill should document account creation`);
     assert.match(disposable, /\"Authorization\": \"Bearer REPLACE_TOKEN\"/, `${label}: disposable email skill should document authenticated message reads`);
     assert.match(disposable, /accounts\/REPLACE_ACCOUNT_ID/, `${label}: disposable email skill should document account deletion`);
@@ -64795,6 +64801,41 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
     assert.equal(rejectedLang.result.noDispatch, true, `${label}: rejected lang argument did not fail closed`);
     assert.equal(rejectedLang.result.errorCode, 'invalid_tool_arguments', `${label}: unstable invalid-argument code`);
 
+    const fetchUrl = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'fetch_url');
+    const acceptedHeaders = argumentModule.validateToolArguments(
+      'fetch_url',
+      {
+        url: 'https://api.example.com/items',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+          'X-Custom-Header': 'custom-value',
+        },
+        body: '{}',
+      },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(acceptedHeaders.ok, true, `${label}: string-valued fetch_url headers were rejected`);
+
+    for (const invalidValue of [42, true, null, ['application/json'], { value: 'application/json' }]) {
+      const rejectedHeaders = argumentModule.validateToolArguments(
+        'fetch_url',
+        { url: 'https://api.example.com/items', headers: { 'Content-Type': invalidValue } },
+        fetchUrl.function.parameters,
+      );
+      assert.equal(rejectedHeaders.ok, false, `${label}: non-string fetch_url header value was accepted`);
+      assert.ok(rejectedHeaders.result.invalidArgumentNames.includes('$.headers.Content-Type'), `${label}: invalid header path was not reported`);
+    }
+
+    const rejectedFetchTopLevel = argumentModule.validateToolArguments(
+      'fetch_url',
+      { url: 'https://api.example.com/items', timeout: 5000 },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(rejectedFetchTopLevel.ok, false, `${label}: undeclared fetch_url top-level argument was accepted`);
+    assert.ok(rejectedFetchTopLevel.result.invalidArgumentNames.includes('$.timeout'), `${label}: undeclared fetch_url argument path was not reported`);
+
     const click = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'click');
     for (const args of [
       { index: 3, x: 0, y: 0 },
@@ -64840,6 +64881,22 @@ test('built-in tool schemas are closed and invalid arguments never dispatch', as
     assert.equal(result.invalidArguments, true, `${label}: structured invalidArguments marker missing`);
     assert.equal(result.noDispatch, true, `${label}: structured noDispatch marker missing`);
     assert.ok(updates.some(update => update.type === 'tool_result' && update.data?.result?.noDispatch === true), `${label}: UI did not receive the rejected tool result`);
+
+    const headerMessages = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'bad_headers', function: { name: 'fetch_url', arguments: JSON.stringify({ url: 'https://api.example.com/items', headers: { Authorization: 123 } }) } }],
+      headerMessages,
+      () => {},
+      { supportsVision: false },
+      null,
+      new Set(['fetch_url']),
+      2,
+    );
+    assert.equal(dispatches, 0, `${label}: invalid fetch_url headers reached executeTool`);
+    const headerResult = JSON.parse(headerMessages.find(message => message.role === 'tool')?.content || '{}');
+    assert.equal(headerResult.invalidArguments, true, `${label}: invalid header result marker missing`);
+    assert.equal(headerResult.noDispatch, true, `${label}: invalid header noDispatch marker missing`);
   }
 });
 
