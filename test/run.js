@@ -27675,8 +27675,13 @@ test('Chrome toolbar preflight probes closed-shadow type_text selectors through 
       );
       assert.match(
         params.functionDeclaration,
-        /supportedInput && !formattingLabel && !numericPreset && !semanticToolbar/,
+        /if \(!formattingEvidence && !editorBackedToolbar\)/,
         'CDP toolbar probes must exempt ordinary compact fields without formatting evidence even near an editor',
+      );
+      assert.match(
+        params.functionDeclaration,
+        /const editorBackedToolbar = !!semanticToolbar && !!associatedEditor/,
+        'toolbar ancestry alone must not qualify a control through the CDP probe either',
       );
       assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
       return {
@@ -27807,6 +27812,10 @@ function richTextToolbarElement({
     textContent: value,
     isContentEditable: contentEditable,
     isConnected: true,
+    // _composedClosestElement checks nodeType before calling matches, so
+    // without this the ancestor walk silently never matched and no case in
+    // this suite could express [role="toolbar"] ancestry.
+    nodeType: 1,
     id: attrs.id || '',
     children,
     parentNode: parent,
@@ -27884,11 +27893,65 @@ test('rich-text toolbar heuristic leaves ordinary fields alone', () => {
       label: 'a zero-size control',
       element: richTextToolbarElement({ rect: { x: 0, y: 0, width: 0, height: 0 } }),
     },
+    {
+      // [role=toolbar] scores +4 by itself, which clears the escalation
+      // threshold, and it used to satisfy the final guard too. Plenty of
+      // ordinary app toolbars hold a labelled rename or filter field with no
+      // editor anywhere near them, and blocking prose in one costs the run.
+      label: 'a labelled ordinary field inside an app toolbar with no editor',
+      element: richTextToolbarElement({
+        attrs: { 'aria-label': 'Rename document' },
+        parent: richTextToolbarElement({
+          tag: 'div',
+          type: 'div',
+          attrs: { role: 'toolbar' },
+          rect: { x: 0, y: 0, width: 900, height: 40 },
+        }),
+      }),
+    },
+    {
+      label: 'a labelled ordinary select inside an app toolbar with no editor',
+      element: richTextToolbarElement({
+        tag: 'select',
+        type: 'select',
+        attrs: { 'aria-label': 'Sort order' },
+        parent: richTextToolbarElement({
+          tag: 'div',
+          type: 'div',
+          attrs: { role: 'toolbar' },
+          rect: { x: 0, y: 0, width: 900, height: 40 },
+        }),
+      }),
+    },
   ];
 
   for (const { label, element } of cases) {
     assert.equal(score(element), null, `${label} must not be treated as a toolbar control`);
   }
+});
+
+test('rich-text toolbar heuristic still catches a labelled formatting control in a toolbar', () => {
+  // The counterweight to the two toolbar cases above: dropping toolbar
+  // ancestry as standalone evidence must not stop the heuristic from catching
+  // a control that says what it is, even when no editor body resolves.
+  const heuristic = richTextToolbarHeuristicSandbox();
+  const fontSize = richTextToolbarElement({
+    attrs: { 'aria-label': 'Font size' },
+    rect: { x: 12, y: 8, width: 64, height: 22 },
+    parent: richTextToolbarElement({
+      tag: 'div',
+      type: 'div',
+      attrs: { role: 'toolbar' },
+      rect: { x: 0, y: 0, width: 900, height: 40 },
+    }),
+  });
+  const candidate = heuristic.candidate(fontSize, richTextToolbarBaseMeta(fontSize));
+  assert.ok(candidate, 'a labelled formatting control must still score');
+  assert.ok(candidate.score >= 4, `expected an escalating score, got ${candidate?.score}`);
+  assert.ok(
+    candidate.reasons.includes('formatting_control_label'),
+    `expected the formatting label reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
 });
 
 test('rich-text toolbar heuristic still catches an unlabelled preset control', () => {
@@ -29007,6 +29070,60 @@ test('Chrome selector type reports post-edit value verification', async () => {
   const persisted = await client.typeText(42, '#field', 'hello', true);
   assert.equal(persisted.success, true);
   assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
+});
+
+test('toolbar safety captures share the per-turn screenshot cap after a reserved first', async () => {
+  // The setting says further auto-screenshots are skipped once the budget is
+  // spent, and a classifier capture is a vision capture. It used to increment
+  // a counter no gate consulted, so a run that kept hitting guarded targets
+  // billed an unbounded number of extra screenshots and vision calls against
+  // a cap of 1. The turn's first safety capture stays reserved so a low cap
+  // degrades the guard instead of blinding it on the first guarded edit.
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = 909;
+
+    agent.maxScreenshotsPerTurn = 0;
+    agent.autoScreenshotCount.set(tabId, 12);
+    agent.toolbarAuditScreenshotCount.set(tabId, 12);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: an unlimited budget must never gate the safety check`,
+    );
+
+    agent.maxScreenshotsPerTurn = 1;
+    agent.autoScreenshotCount.set(tabId, 1);
+    agent.toolbarAuditScreenshotCount.delete(tabId);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: the turn's first safety capture is reserved even at a spent cap`,
+    );
+
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      false,
+      `${label}: the second safety capture must compete against the same cap`,
+    );
+
+    // Headroom in the shared budget still admits a second one.
+    agent.maxScreenshotsPerTurn = 4;
+    assert.equal(agent._canTakeToolbarAuditScreenshot(tabId), true);
+    agent.toolbarAuditScreenshotCount.set(tabId, 3);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      false,
+      `${label}: model-facing and safety captures must count against one cap`,
+    );
+
+    // Both counters, and the once-per-turn skip notice, reset with the turn.
+    agent.toolbarAuditBudgetNotified.add(tabId);
+    agent._cleanupTab(tabId);
+    assert.equal(agent.toolbarAuditScreenshotCount.has(tabId), false, `${label}: audit count must reset`);
+    assert.equal(agent.toolbarAuditBudgetNotified.has(tabId), false, `${label}: skip notice must reset`);
+  }
 });
 
 test('a rejected hydrate releases the run marker instead of wedging the tab', async () => {

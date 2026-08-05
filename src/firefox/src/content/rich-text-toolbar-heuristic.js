@@ -399,7 +399,20 @@ var __wbRichTextToolbarHeuristic = (() => {
         }
       }
       const associatedEditor = _associatedRichTextEditor(regionNode);
-      if (supportedInput && !formattingLabel && !numericPreset && !semanticToolbar) {
+      // A formatting affordance the control declares itself, or an ARIA
+      // toolbar that demonstrably belongs to an editor. [role=toolbar] alone
+      // is not evidence of a rich-text editor: ordinary app toolbars hold
+      // labelled rename, filter and date fields, and ancestry by itself used
+      // to clear both this guard and the +4 escalation score. Blocking prose
+      // in one of those costs a whole run, because the obligation refuses
+      // done(success) until a corrected editor-body edit that will never come
+      // discharges it. Selects go through here now too; supportedInput never
+      // covered them. Proximity to an editor is deliberately not sufficient
+      // on its own, or every compact field in a cluster beside a composer
+      // would escalate.
+      const formattingEvidence = formattingLabel || numericPreset;
+      const editorBackedToolbar = !!semanticToolbar && !!associatedEditor;
+      if (!formattingEvidence && !editorBackedToolbar) {
         return null;
       }
 

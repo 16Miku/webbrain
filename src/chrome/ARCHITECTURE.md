@@ -589,6 +589,16 @@ Score ≥ 4 escalates. Ordinary fields exit early: search boxes, labelled filter
 fields, and labelled non-formatting inputs are rejected before the expensive
 ancestor walk.
 
+Score alone is not enough to escalate. A candidate must also carry evidence
+that the control belongs to an editor: a recognised formatting label, a
+numeric preset value, or an ARIA toolbar with an editor body the region
+resolves to. Toolbar ancestry by itself clears the threshold on its own +4,
+and ordinary app toolbars hold labelled rename, filter and date fields, so
+accepting it unaccompanied blocked legitimate form entry whenever the visual
+classifier was unavailable. Proximity to an editor is likewise not sufficient
+on its own, or every compact field in a cluster beside a composer would
+escalate.
+
 This file is the **only** copy of the heuristic. Both browser builds load it
 ahead of `content.js`, and `cdp-client.js` fetches its source and prepends it
 to the function it evaluates in the page's main world, so an element scores

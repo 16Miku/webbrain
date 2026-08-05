@@ -379,6 +379,10 @@ export class Agent extends LoopDetector {
     // separate counter their screenshot and vision cost was invisible to a
     // user who capped the budget precisely to control spend.
     this.toolbarAuditScreenshotCount = new Map();
+    // tabIds already told that a toolbar safety check was skipped for budget.
+    // Shares the per-turn lifecycle of the counter above so the notice lands
+    // once instead of on every guarded edit for the rest of the turn.
+    this.toolbarAuditBudgetNotified = new Set();
     // tabId -> {scaleX, scaleY} image-pixel→CSS-pixel factors for the most
     // recent screenshot shown to the model. Set when maxImageDimension forced
     // a downscale; cleared when the last capture was 1:1. Consumed by
@@ -2083,9 +2087,11 @@ export class Agent extends LoopDetector {
       || (!Number.isInteger(probe.frameId) || probe.frameId === 0 ? probe.rect : null);
     let dedicatedVision = null;
     try { dedicatedVision = await this.providerManager.getVisionProvider(); } catch {}
+    const visionAvailable = !!(dedicatedVision || provider?.supportsVision);
+    const visualAuditBudgetOk = this._canTakeToolbarAuditScreenshot(tabId);
     const visualAuditEligible = this._shouldAutoScreenshot(toolName)
-      && this._canTakeAutoScreenshot(tabId)
-      && (dedicatedVision || provider?.supportsVision);
+      && visualAuditBudgetOk
+      && visionAvailable;
     if (visualAuditEligible && toolName === 'iframe_type' && !annotationRect) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return {
@@ -2100,6 +2106,28 @@ export class Agent extends LoopDetector {
         probe,
       };
     }
+    if (!visualAuditBudgetOk && visionAvailable && this._shouldAutoScreenshot(toolName)) {
+      // The visual check is the half of this guard that can tell a formatting
+      // control from an ordinary field. Say so when the budget retires it,
+      // rather than letting the run quietly fall back to structural scoring.
+      if (!this.toolbarAuditBudgetNotified.has(tabId)) {
+        this.toolbarAuditBudgetNotified.add(tabId);
+        if (typeof captureOptions?.onUpdate === 'function') {
+          captureOptions.onUpdate('warning', {
+            message: `The per-turn screenshot budget (${Number(this.maxScreenshotsPerTurn) || 0}) is spent, so rich-text toolbar safety checks fall back to structural scoring for the rest of this turn.`,
+          });
+        }
+        const skipRunId = this.currentRunId.get(tabId);
+        if (skipRunId) {
+          trace.recordNote(skipRunId, null, 'rich_text_toolbar_audit_budget_skip', {
+            toolName,
+            screenshotCap: Number(this.maxScreenshotsPerTurn) || 0,
+            modelFacingCaptures: this.autoScreenshotCount.get(tabId) || 0,
+            auditCaptures: this.toolbarAuditScreenshotCount.get(tabId) || 0,
+          });
+        }
+      }
+    }
     if (visualAuditEligible && annotationRect) {
       await new Promise(resolve => setTimeout(resolve, 120));
       // This image is consumed only by the internal target classifier. Keep
@@ -2110,14 +2138,18 @@ export class Agent extends LoopDetector {
         coordAligned: true,
       });
       if (shot?.dataUrl) {
-        // Counted separately from the model-facing budget, but not silently:
-        // each of these also costs a vision call.
+        // Kept in its own counter so it does not consume the slot that shows
+        // the model its own post-edit page, but both counters share one cap.
         const auditCaptures = (this.toolbarAuditScreenshotCount.get(tabId) || 0) + 1;
         this.toolbarAuditScreenshotCount.set(tabId, auditCaptures);
         const cap = Number(this.maxScreenshotsPerTurn) || 0;
-        if (cap > 0 && auditCaptures === cap + 1 && typeof captureOptions?.onUpdate === 'function') {
+        const modelFacing = this.autoScreenshotCount.get(tabId) || 0;
+        // The reserved first capture is the only one allowed past the cap, so
+        // this fires at most once a turn, and only when the budget was
+        // already spent. Every later safety capture is gated instead.
+        if (cap > 0 && modelFacing + auditCaptures > cap && typeof captureOptions?.onUpdate === 'function') {
           captureOptions.onUpdate('warning', {
-            message: `Rich-text toolbar safety checks have now taken ${auditCaptures} extra screenshots and vision calls this turn, beyond the ${cap} you configured for model-facing captures.`,
+            message: `A rich-text toolbar safety check took one screenshot and vision call beyond the ${cap} per turn you configured, so the agent would not have to guess at a formatting control blind.`,
           });
         }
         const auditRunId = this.currentRunId.get(tabId);
@@ -2125,7 +2157,8 @@ export class Agent extends LoopDetector {
           trace.recordNote(auditRunId, null, 'rich_text_toolbar_audit_capture', {
             toolName,
             auditCaptures,
-            modelFacingCap: cap,
+            modelFacingCaptures: modelFacing,
+            screenshotCap: cap,
           });
         }
         const cssViewport = {
@@ -6087,6 +6120,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const cap = Number(this.maxScreenshotsPerTurn) || 0;
     if (cap <= 0) return true;
     return (this.autoScreenshotCount.get(tabId) || 0) < cap;
+  }
+
+  /**
+   * Budget gate for the rich-text toolbar classifier's own captures.
+   *
+   * These are vision captures like any other, and the setting the user picked
+   * says further auto-screenshots are skipped once the budget is spent. They
+   * used to be counted in a separate map that no gate consulted, so a run that
+   * kept hitting guarded targets could bill an unbounded number of extra
+   * screenshots and vision calls against a cap of 1.
+   *
+   * The turn's first safety capture is still reserved, so a low cap degrades
+   * the guard to structural scoring instead of switching its visual check off
+   * on the first guarded edit. Every later capture competes with the
+   * model-facing ones against the same cap, which bounds the overage at one
+   * capture per turn.
+   */
+  _canTakeToolbarAuditScreenshot(tabId) {
+    const cap = Number(this.maxScreenshotsPerTurn) || 0;
+    if (cap <= 0) return true;
+    const audits = this.toolbarAuditScreenshotCount.get(tabId) || 0;
+    if (audits === 0) return true;
+    return (this.autoScreenshotCount.get(tabId) || 0) + audits < cap;
   }
 
   /**
@@ -10918,6 +10974,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.lastAutoScreenshotTs.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
+    this.toolbarAuditBudgetNotified.delete(tabId);
     this.screenshotClickScale.delete(tabId);
     void this._clearBackgroundFocusEmulation(tabId);
     this._foregroundCaptureTabs.delete(tabId);
@@ -21040,6 +21097,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
+    this.toolbarAuditBudgetNotified.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
@@ -21873,6 +21931,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
+    this.toolbarAuditBudgetNotified.delete(tabId);
     this._prepareClarificationAuthorizationForRun(tabId);
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);

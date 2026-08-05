@@ -2616,12 +2616,36 @@ export function registerRichTextToolbarFixtures({
         toolbarContext: true,
         toolbarRegionRef: 'ref_10',
       });
-      const visualPreflight = await agent._preflightRichTextToolbarTarget(
+      const budgetWarnings = [];
+      const guardedPreflight = () => agent._preflightRichTextToolbarTarget(
         tabId,
         'type_text',
         { selector: '#font-family', text: 'This document sentence is intentionally much too long to be a font family value.' },
         { supportsVision: true },
+        { onUpdate: (kind, payload) => { if (kind === 'warning') budgetWarnings.push(payload.message); } },
       );
+
+      // The model-facing budget is already spent. The turn's first safety
+      // capture is reserved anyway, so the guard is never blinded on the first
+      // guarded edit, and the overage is disclosed.
+      const reservedPreflight = await guardedPreflight();
+      if (
+        !reservedPreflight.block?.wrongTarget
+        || classifierArgCount === 0
+        || classifierCaptureCount !== 1
+        || agent.toolbarAuditScreenshotCount.get(tabId) !== 1
+        || agent.autoScreenshotCount.get(tabId) !== 1
+        || !budgetWarnings.some(message => message.includes('beyond the 1 per turn'))
+      ) {
+        throw new Error(`the turn's first toolbar safety capture must be reserved and disclosed: ${JSON.stringify({ reservedPreflight, classifierArgCount, classifierCaptureCount, budgetWarnings })}`);
+      }
+
+      // Every later one competes against the same cap, so the guard falls back
+      // to structural scoring instead of billing another vision call.
+      agent._resetRichTextToolbarAudit(tabId);
+      classifierArgCount = 0;
+      budgetWarnings.length = 0;
+      const visualPreflight = await guardedPreflight();
       if (
         visualPreflight.shot
         || !visualPreflight.block?.wrongTarget
@@ -2630,13 +2654,17 @@ export function registerRichTextToolbarFixtures({
         || !visualPreflight.block.fieldMeta?.toolbarCandidate
         || visualPreflight.traceCapture
         || classifierArgCount !== 0
-        || classifierCaptureCount !== 0
+        || classifierCaptureCount !== 1
+        || agent.toolbarAuditScreenshotCount.get(tabId) !== 1
         || agent.autoScreenshotCount.get(tabId) !== 1
+        || !budgetWarnings.some(message => message.includes('structural scoring'))
       ) {
-        throw new Error(`exhausted screenshot budget must use structural toolbar preflight without capture: ${JSON.stringify({ visualPreflight, classifierArgCount, classifierCaptureCount, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
+        throw new Error(`exhausted screenshot budget must use structural toolbar preflight without capture: ${JSON.stringify({ visualPreflight, classifierArgCount, classifierCaptureCount, budgetWarnings, screenshotCount: agent.autoScreenshotCount.get(tabId) })}`);
       }
       agent._resetRichTextToolbarAudit(tabId);
       agent.autoScreenshotCount.delete(tabId);
+      agent.toolbarAuditScreenshotCount.delete(tabId);
+      agent.toolbarAuditBudgetNotified.delete(tabId);
 
       let annotationOptions = null;
       classifierArgCount = 0;
@@ -2729,6 +2757,11 @@ export function registerRichTextToolbarFixtures({
         toolbarContext: true,
         toolbarRegionRef: 'ref_10',
       });
+      // The reserved safety capture is per turn, and the cases above have
+      // spent this turn's. Start a fresh one so the property under test here
+      // is the model-facing slot, not the audit budget.
+      agent.toolbarAuditScreenshotCount.delete(tabId);
+      agent.toolbarAuditBudgetNotified.delete(tabId);
       const allowedPreflight = await agent._preflightRichTextToolbarTarget(
         tabId,
         'set_field',
