@@ -8,6 +8,8 @@
  * must be resolved against the current document at replay time.
  */
 
+import { secureRandomBase36Token } from './random-token.js';
+
 export const SAVED_WORKFLOWS_STORAGE_KEY = 'wb_saved_workflows_v1';
 export const SAVED_WORKFLOW_SCHEMA = 'webbrain-workflow/1';
 export const WORKFLOW_PARAM_REF_KEY = '$workflowParam';
@@ -41,7 +43,7 @@ const TARGET_FIELDS = [
 ];
 
 function nowMs() { return Date.now(); }
-function randomId() { return Math.random().toString(36).slice(2, 10); }
+function randomId() { return secureRandomBase36Token(8); }
 
 function cleanText(value, max = MAX_TEXT) {
   const text = String(value ?? '')

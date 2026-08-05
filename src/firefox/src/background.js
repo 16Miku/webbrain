@@ -2043,7 +2043,10 @@ async function handleMessage(msg, sender) {
               stepIndex: replay.stepIndex,
               reason: replay.reason,
             });
-            result = await agent.processMessage(tabId, replay.prompt, publishUpdate, 'act', [], runOptions);
+            result = await agent.processMessage(tabId, replay.prompt, publishUpdate, 'act', [], {
+              ...runOptions,
+              preserveRichTextToolbarAudit: true,
+            });
           }
         } else {
           result = await agent.processMessage(tabId, msg.text, publishUpdate, mode, msg.attachments, runOptions);

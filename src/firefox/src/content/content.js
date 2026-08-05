@@ -483,6 +483,7 @@
 
   function _composedParent(node) {
     if (!node) return null;
+    if (node.assignedSlot) return node.assignedSlot;
     const parent = node.parentNode;
     if (parent) {
       return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)
@@ -505,14 +506,18 @@
   }
 
   function _hasComposedClosest(el, selector) {
+    return !!_composedClosestElement(el, selector);
+  }
+
+  function _composedClosestElement(el, selector) {
     let cur = el;
     while (cur) {
       try {
-        if (cur.nodeType === Node.ELEMENT_NODE && cur.matches(selector)) return true;
+        if (cur.nodeType === Node.ELEMENT_NODE && cur.matches(selector)) return cur;
       } catch {}
       cur = _composedParent(cur);
     }
-    return false;
+    return null;
   }
 
   function isVisiblyInteractive(el) {
@@ -1755,6 +1760,16 @@
       el = document.elementFromPoint(params.x, params.y);
     }
 
+    if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+      };
+    }
+
     // ── Auto-select: if click text matches a <select> option, select it ──
     // Runs when text matching resolved NO element, resolved the <select>
     // itself (a select's innerText contains its options, so the contains
@@ -1965,7 +1980,7 @@
     return _typeTextInner(params);
   }
 
-  function _typeTextInner(params) {
+  async function _typeTextInner(params) {
     const noDispatchFailure = (error, extra = {}) => ({
       success: false,
       error,
@@ -1973,6 +1988,16 @@
       dispatched: false,
       noDispatch: true,
     });
+    const exactInsertion = (before, after, inserted) => _richTextToolbarExactInsertion(before, after, inserted);
+    const verifyValue = async (target, expected, clear, beforeValue) => {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (!target?.isConnected) return false;
+      const value = String(target.isContentEditable ? (target.textContent || '') : (target.value || ''));
+      return clear
+        ? value === expected
+        : typeof beforeValue === 'string' && exactInsertion(beforeValue, value, expected);
+    };
+    const typedText = String(params.text || '');
     let el;
     if (params.selector) {
       el = safeQuerySelector(params.selector);
@@ -1986,7 +2011,7 @@
     } else {
       // No selector and no index → type into the currently focused element.
       // Most reliable for click-then-type flows on forms with weird selectors.
-      el = document.activeElement;
+      el = _deepActiveElement();
       if (!el || el === document.body || el === document.documentElement) {
         el = _recentEditableTarget();
       }
@@ -2008,6 +2033,13 @@
 
     if (!el) return noDispatchFailure('Element not found');
 
+    if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
+      return noDispatchFailure(
+        'The selector target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+        { retryable: true },
+      );
+    }
+
     if (!_isTypeableElement(el)) {
       const tag = (el.tagName || '').toLowerCase();
       return noDispatchFailure(`Cannot type into <${tag}> — it is not an editable field. If you wanted to activate it, use click instead. If the real target is a nearby input, click the input first, then call type_text({text: "..."}) with no selector.`);
@@ -2015,6 +2047,7 @@
 
     el.focus();
     showAgentWorkingTarget(el, 'type_text');
+    const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
 
     // contenteditable path (Notion, Google Docs comments, Lexical,
     // ProseMirror, Slate, Draft — all need the beforeinput → input →
@@ -2026,7 +2059,8 @@
       el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, method: 'contenteditable', value: el.textContent.slice(0, 100) };
+      const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
+      return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100) };
     }
 
     // <select>: match by value or option text.
@@ -2045,7 +2079,8 @@
       else el.value = match.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, method: 'select', value: el.value };
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
     }
 
     if (params.clear) {
@@ -2066,6 +2101,7 @@
 
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
 
     // Duplicate-field detection
     const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
@@ -2075,7 +2111,7 @@
     }
     _lastTypeFieldIdent = fieldIdent;
 
-    return { success: true, value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
+    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
 
   /**
@@ -2222,6 +2258,9 @@
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
     const SUPPORTED_KEYS = ['Escape', 'Tab', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ';'];
     if (!SUPPORTED_KEYS.includes(key)) {
+      if (params?.dispatchBinding?.token) {
+        _releaseDispatchBinding(params);
+      }
       return {
         success: false,
         dispatched: false,
@@ -2247,8 +2286,13 @@
       ArrowDown: { code: 'ArrowDown', keyCode: 40 },
       ';': { code: 'Semicolon', keyCode: 59 },
     }[key];
-    const target = (document.activeElement && document.activeElement !== document.body)
-      ? document.activeElement
+    const focusedTarget = _deepActiveElement();
+    if (params?.dispatchBinding?.token) {
+      const validation = _consumeFocusedDispatchBinding(params);
+      if (validation.success !== true) return validation;
+    }
+    const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
+      ? focusedTarget
       : document;
 
     const moveTabFocus = () => {
@@ -2944,6 +2988,85 @@
     return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
   }
 
+  // Above this length the per-candidate rescan below stops being worth its
+  // cost. The edit still succeeds; it is reported unproven, which the callers
+  // treat as "no positive proof", not as a failure.
+  const RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS = 65536;
+
+  // 32-bit FNV-1a. The append proof recomputes this once per candidate
+  // insertion point, so a BigInt hash made a long contenteditable an O(n*m)
+  // freeze inside the page.
+  function _richTextToolbarValueSignature(value) {
+    const text = String(value || '');
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+    }
+    return `${text.length}:${hash.toString(16)}`;
+  }
+
+  /**
+   * Prove `after` is exactly `before` with `inserted` spliced in at one point.
+   * Shared by the direct-value path (which still holds `before`) and the
+   * signature path (which only kept a hash of it), so the two cannot drift.
+   */
+  function _richTextToolbarExactInsertion(before, after, inserted, beforeSignature = null) {
+    if (!inserted || after.length > RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS) return false;
+    const expectedLength = typeof before === 'string'
+      ? before.length + inserted.length
+      : (() => {
+          const separator = String(beforeSignature || '').indexOf(':');
+          const beforeLength = separator > 0 ? Number(beforeSignature.slice(0, separator)) : NaN;
+          return Number.isInteger(beforeLength) ? beforeLength + inserted.length : NaN;
+        })();
+    if (after.length !== expectedLength) return false;
+    const matches = candidate => (typeof before === 'string'
+      ? candidate === before
+      : _richTextToolbarValueSignature(candidate) === beforeSignature);
+    let index = after.indexOf(inserted);
+    while (index >= 0) {
+      if (matches(after.slice(0, index) + after.slice(index + inserted.length))) return true;
+      index = after.indexOf(inserted, index + 1);
+    }
+    return false;
+  }
+
+  // The rich-text toolbar heuristic lives in one file shared by both builds
+  // and by the CDP main-world probe — see
+  // src/content/rich-text-toolbar-heuristic.js. Delegating keeps the scoring
+  // from drifting between the dispatch routes.
+  const _richTextToolbarHeuristic = () => globalThis.__wbRichTextToolbarHeuristic;
+
+  function _visibleFieldContextNode(node) {
+    return _richTextToolbarHeuristic()?.visibleFieldContextNode(node) ?? false;
+  }
+
+  function _ariaLabelledByText(el) {
+    return _richTextToolbarHeuristic()?.ariaLabelledByText(el) ?? null;
+  }
+
+  function _richTextToolbarQueryAcrossOpenShadowRoots(scope, selector, limit = 200) {
+    return _richTextToolbarHeuristic()?.queryAcrossOpenShadowRoots(scope, selector, limit) ?? [];
+  }
+
+  function _richTextEditorsAcrossOpenShadowRoots(scope) {
+    return _richTextToolbarHeuristic()?.editorsAcrossOpenShadowRoots(scope) ?? [];
+  }
+
+  function _richTextToolbarRegionKey(regionNode) {
+    return _richTextToolbarHeuristic()?.regionKey(regionNode) ?? '';
+  }
+
+  function _richTextToolbarAvailablePresetValues(el) {
+    return _richTextToolbarHeuristic()?.availablePresetValues(el) ?? [];
+  }
+
+  function _richTextToolbarCandidate(el, baseMeta) {
+    return _richTextToolbarHeuristic()?.candidate(el, baseMeta, {
+      axRef: typeof window.__wb_ax_ref === 'function' ? window.__wb_ax_ref : null,
+    }) ?? null;
+  }
+
   function _fieldMeta(el) {
     try {
       const tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -2955,7 +3078,9 @@
           const escapedId = window.CSS && CSS.escape
             ? CSS.escape(elId)
             : elId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-          const label = document.querySelector(`label[for="${escapedId}"]`);
+          const root = el.getRootNode?.() || document;
+          const label = root.querySelector?.(`label[for="${escapedId}"]`)
+            || (root === document ? null : document.querySelector(`label[for="${escapedId}"]`));
           if (label) labelText = (label.textContent || '').trim().slice(0, 120);
         }
         if (!labelText && el.closest) {
@@ -2963,17 +3088,23 @@
           if (wrappingLabel) labelText = (wrappingLabel.textContent || '').trim().slice(0, 120);
         }
       } catch {}
-      return {
+      const meta = {
         tag,
         type: fieldType,
         contentEditable: !!el.isContentEditable,
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
+        role: el.getAttribute ? el.getAttribute('role') : null,
         autocomplete: el.getAttribute ? el.getAttribute('autocomplete') : null,
         ariaLabel: el.getAttribute ? el.getAttribute('aria-label') : null,
+        ariaLabelledByText: _ariaLabelledByText(el),
         placeholder: el.getAttribute ? el.getAttribute('placeholder') : null,
+        title: el.getAttribute ? el.getAttribute('title') : null,
         labelText,
       };
+      const toolbarCandidate = _richTextToolbarCandidate(el, meta);
+      if (toolbarCandidate) meta.toolbarCandidate = toolbarCandidate;
+      return meta;
     } catch { return null; }
   }
 
@@ -3010,6 +3141,318 @@
     } catch { return false; }
   }
 
+  function _richTextToolbarContextForElement(el) {
+    try {
+      if (!el || !el.isConnected) return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' };
+      const semanticToolbar = _composedClosestElement(el, '[role="toolbar"]');
+      if (semanticToolbar) {
+        let toolbarRegionRef = '';
+        try { if (typeof window.__wb_ax_ref === 'function') toolbarRegionRef = window.__wb_ax_ref(semanticToolbar) || ''; } catch {}
+        return {
+          toolbarContext: true,
+          toolbarRegionRef,
+          toolbarRegionKey: _richTextToolbarRegionKey(semanticToolbar),
+        };
+      }
+      const targetRect = el.getBoundingClientRect();
+      const cx = targetRect.x + targetRect.width / 2;
+      const cy = targetRect.y + targetRect.height / 2;
+      let node = _composedParent(el);
+      for (let depth = 0; node && depth < 6; depth++, node = _composedParent(node)) {
+        for (const field of _richTextToolbarQueryAcrossOpenShadowRoots(
+          node,
+          'input:not([type="hidden"]),select,[contenteditable]:not([contenteditable="false"])',
+          80,
+        )) {
+          const candidate = _fieldMeta(field)?.toolbarCandidate;
+          const region = candidate?.regionRect;
+          if (!region) continue;
+          if (cx >= region.x && cx <= region.x + region.w && cy >= region.y && cy <= region.y + region.h) {
+            return {
+              toolbarContext: true,
+              toolbarRegionRef: candidate.regionRef || '',
+              toolbarRegionKey: candidate.regionKey || '',
+            };
+          }
+        }
+      }
+      return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' };
+    } catch { return { toolbarContext: false, toolbarRegionRef: '', toolbarRegionKey: '' }; }
+  }
+
+  function _deepActiveElement() {
+    let active = document.activeElement;
+    const seen = new Set();
+    while (active && !seen.has(active)) {
+      seen.add(active);
+      let inner = null;
+      try { inner = active.shadowRoot?.activeElement || null; } catch {}
+      if (!inner || inner === active) break;
+      active = inner;
+    }
+    return active;
+  }
+
+  const _dispatchBindings = new Map();
+
+  function _rememberDispatchBinding(el) {
+    if (!el?.isConnected) return '';
+    const entropy = new Uint32Array(3);
+    globalThis.crypto.getRandomValues(entropy);
+    const token = `wbdb_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const record = { el, pageUrl: location.href, timer: null };
+    _dispatchBindings.set(token, record);
+    record.timer = setTimeout(() => {
+      if (_dispatchBindings.get(token) === record) {
+        _dispatchBindings.delete(token);
+      }
+    }, 60000);
+    return token;
+  }
+
+  function _consumeDispatchBinding(token, resolvedTarget) {
+    const normalized = String(token || '');
+    if (!normalized) return true;
+    const expected = _dispatchBindings.get(normalized);
+    _dispatchBindings.delete(normalized);
+    if (expected?.timer) clearTimeout(expected.timer);
+    return !!expected
+      && expected.el === resolvedTarget
+      && expected.el.isConnected
+      && expected.pageUrl === location.href;
+  }
+
+  function _consumeFocusedDispatchBinding(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
+    const active = _deepActiveElement();
+    if (
+      !token
+      || !active
+      || active === document.body
+      || active === document.documentElement
+      || !_consumeDispatchBinding(token, active)
+    ) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        error: 'The focused target changed after the rich-text toolbar safety preflight. Focus the intended field again and retry.',
+      };
+    }
+    return { success: true, matched: true };
+  }
+
+  function _releaseDispatchBinding(params = {}) {
+    const token = String(params.dispatchBinding?.token || '');
+    const record = token ? _dispatchBindings.get(token) : null;
+    if (record?.timer) clearTimeout(record.timer);
+    if (token) _dispatchBindings.delete(token);
+    return { success: true };
+  }
+
+  async function _settledRichTextToolbarRect(el, shouldScroll) {
+    if (shouldScroll) {
+      try {
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      } catch {
+        try { el.scrollIntoView(); } catch {}
+      }
+    }
+    let previous = el.getBoundingClientRect();
+    let stableFrames = 0;
+    const deadline = performance.now() + 750;
+    while (stableFrames < 2 && performance.now() < deadline) {
+      await new Promise(resolve => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          resolve();
+        };
+        setTimeout(finish, 40);
+        try { requestAnimationFrame(finish); } catch {}
+      });
+      if (!el.isConnected) return null;
+      const next = el.getBoundingClientRect();
+      const delta = Math.max(
+        Math.abs(next.x - previous.x),
+        Math.abs(next.y - previous.y),
+        Math.abs(next.width - previous.width),
+        Math.abs(next.height - previous.height),
+      );
+      stableFrames = delta <= 0.5 ? stableFrames + 1 : 0;
+      previous = next;
+    }
+    return el.isConnected ? el.getBoundingClientRect() : null;
+  }
+
+  async function _probeRichTextToolbarRetryTarget(params = {}) {
+    try {
+      const toolName = String(params.toolName || '');
+      const args = params.args || {};
+      let el = null;
+      let coordinateTarget = false;
+      if (['click_ax', 'type_ax', 'set_checked', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
+        el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
+      } else if (toolName === 'type_text') {
+        if (args.selector) el = safeQuerySelector(args.selector);
+        else if (args.index != null) el = queryInteractiveForToolIndex()[args.index] || null;
+        else {
+          // Follow open shadow roots and mirror typeText's recent-target
+          // recovery. Parent frames legitimately expose their active iframe
+          // without :focus; non-frame targets must still own document focus
+          // so stale child-frame state is ignored.
+          el = _deepActiveElement();
+          if (!_isTypeableElement(el)) {
+            const recentEditable = _recentEditableTarget();
+            const focusHost = document.activeElement;
+            if (recentEditable && _isShadowHostForTarget(focusHost, recentEditable)) {
+              el = recentEditable;
+            }
+          }
+          const tag = String(el?.tagName || '').toLowerCase();
+          if (!['iframe', 'frame'].includes(tag) && el?.matches && !el.matches(':focus')) {
+            return { resolved: false };
+          }
+        }
+      } else if (toolName === 'click') {
+        if (args.selector) {
+          el = safeQuerySelector(args.selector);
+        } else if (args.index != null) {
+          el = queryInteractiveForToolIndex()[args.index] || null;
+        } else if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) {
+          el = document.elementFromPoint(Number(args.x), Number(args.y));
+          coordinateTarget = true;
+        } else if (typeof args.text === 'string' && args.text.trim()) {
+          const needle = args.text.trim().toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const selector = 'button,a[href],input,textarea,select,[role="button"],[role="textbox"],[role="combobox"],[tabindex],label';
+          const candidates = Array.from(scope.querySelectorAll(selector))
+            .map(candidate => ({ candidate, text: _siteInteractionText(candidate).trim().toLowerCase() }))
+            .filter(item => item.text);
+          for (const match of [
+            item => item.text === needle,
+            item => item.text.startsWith(needle),
+            item => item.text.includes(needle),
+          ]) {
+            const matches = candidates.filter(match);
+            if (matches.length === 1) {
+              el = _resolveInteractiveAncestor(matches[0].candidate);
+              break;
+            }
+            if (matches.length > 1) break;
+          }
+        }
+      }
+      if (!el || el === document.body || el === document.documentElement || !el.isConnected) {
+        return { resolved: false };
+      }
+      // Score before measuring. Only an escalating candidate gets annotated
+      // into a screenshot, and only that needs the target centred in the
+      // viewport. A click probe still scrolls, because dispatching the click
+      // scrolls anyway; text entry does not, so centring the page on every
+      // type_text would move it under the user purely for the guard, and on
+      // an animating page would spend the settle loop's full deadline doing
+      // it. Settling in place is what keeps recovery geometry comparable.
+      const fieldMeta = _fieldMeta(el);
+      const escalating = Number(fieldMeta?.toolbarCandidate?.score) >= 4;
+      const rect = await _settledRichTextToolbarRect(
+        el,
+        !coordinateTarget && (escalating || toolName === 'click'),
+      );
+      if (!rect) return { resolved: false };
+      let refId = '';
+      try { if (typeof window.__wb_ax_ref === 'function') refId = window.__wb_ax_ref(el) || ''; } catch {}
+      const toolbarContext = _richTextToolbarContextForElement(el);
+      const probedTag = String(el.tagName || '').toLowerCase();
+      const dispatchBindingToken = (toolName === 'click' || (
+        toolName === 'type_text' && args.index == null
+      ))
+        && !['iframe', 'frame'].includes(probedTag)
+        ? _rememberDispatchBinding(el)
+        : '';
+      return {
+        resolved: true,
+        refId,
+        documentToken: _axDocumentToken(),
+        refScopeUrl: location.href,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          pageX: Math.round(rect.x + window.scrollX),
+          pageY: Math.round(rect.y + window.scrollY),
+          w: Math.round(rect.width),
+          h: Math.round(rect.height),
+        },
+        fieldMeta,
+        ...(dispatchBindingToken ? { dispatchBinding: { token: dispatchBindingToken } } : {}),
+        ...toolbarContext,
+      };
+    } catch {
+      return { resolved: false };
+    }
+  }
+
+  function _waitForRichTextToolbarFocusedChildFrame(params = {}) {
+    const token = String(params.token || '');
+    const focusedFrame = _deepActiveElement();
+    const tag = String(focusedFrame?.tagName || '').toLowerCase();
+    if (!token || !focusedFrame?.isConnected || !['iframe', 'frame'].includes(tag)) {
+      return Promise.resolve({ matched: false });
+    }
+    return new Promise(resolve => {
+      let settled = false;
+      let timer = null;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve(value);
+      };
+      const onMessage = event => {
+        if (event?.data?.__webbrainFocusedFrameToken !== token) return;
+        // Only the focused frame's own announcement resolves this. Another
+        // frame posting the token could never make the walk select it, but
+        // answering `matched: false` on its behalf would end the wait before
+        // the real child replied. Ignore it and let the timeout decide.
+        if (event.source !== focusedFrame.contentWindow) return;
+        finish({ matched: true });
+      };
+      window.addEventListener('message', onMessage);
+      timer = setTimeout(() => finish({ matched: false }), 750);
+    });
+  }
+
+  function _announceRichTextToolbarFocusedChildFrame(params = {}) {
+    const token = String(params.token || '');
+    if (!token || window.parent === window) return { announced: false };
+    try {
+      window.parent.postMessage({ __webbrainFocusedFrameToken: token }, '*');
+      return { announced: true };
+    } catch {
+      return { announced: false };
+    }
+  }
+
+  function _blurRichTextToolbarTarget(params = {}) {
+    try {
+      const active = document.activeElement;
+      if (!active || active === document.body || active === document.documentElement) return { success: true, blurred: false };
+      const refTarget = typeof params.ref_id === 'string' && typeof window.__wb_ax_lookup === 'function'
+        ? window.__wb_ax_lookup(params.ref_id)
+        : null;
+      if (active === refTarget || refTarget?.contains?.(active)) {
+        active.blur?.();
+        return { success: true, blurred: document.activeElement !== active };
+      }
+      return { success: true, blurred: false };
+    } catch {
+      return { success: false, blurred: false };
+    }
+  }
+
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
@@ -3022,6 +3465,12 @@
       'click': () => clickElement(msg.params || {}),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),
+      'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
+      'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
+      'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
+      'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
+      'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
+      'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}),
       'scroll': () => scrollPage(msg.params || {}),
       'extract_data': () => extractData(msg.params || {}),

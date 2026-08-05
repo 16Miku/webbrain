@@ -814,11 +814,11 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_type',
-      description: 'Type text into an input/textarea inside an iframe — INCLUDING cross-origin iframes. Use this for filling forms inside embedded widgets (Stripe checkout, payment forms, etc.).',
+      description: 'Type text into an input/textarea inside an iframe — INCLUDING cross-origin iframes. Use this for filling forms inside embedded widgets (Stripe checkout, payment forms, etc.). If a rich-text editor recovery is pending and several frames match the selector, this fails and names the candidate frames; pass a urlFilter selecting exactly one of them.',
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on.' },
+          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on. Required to disambiguate when several frames match and a rich-text editor recovery is pending.' },
           selector: { type: 'string', description: 'CSS selector for the input element inside the iframe.' },
           text: { type: 'string', description: 'Text to type into the field.' },
           clear: { type: 'boolean', description: 'Whether to clear the field before typing. Default false.' },

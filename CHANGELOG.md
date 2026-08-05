@@ -24,6 +24,31 @@ This changelog was generated from the repository Git history and release tags. V
 ### Tests
 - Added mirrored Chrome/Firefox coverage for closed schemas, disabled skill arguments, Act/planner enforcement, nested errors, Copy deduplication, replay boundaries, multi-tab quota exhaustion, attachment/screenshot compaction, and fail-closed reconnect durability.
 
+
+## [26.0.10] - 2026-08-04
+
+### Added
+- Added a rich-text toolbar safety preflight that stops the agent from typing document text into an editor's formatting controls (font size, font family, style preset, colour, link). The target is scored structurally, confirmed against an annotated screenshot where a vision model is available, and blocked before dispatch; the run cannot report success until the edit is redone in the editor body and verified.
+
+### Changed
+- Text-entry tools now report verification as a positive proof only. `type_text`, `set_field`, and `iframe_type` mark an edit `verified` when the field's final value proves it landed and stay silent otherwise, instead of reporting an unproven edit as refuted. Masked inputs, `maxlength` truncation, framework-reformatted fields, and whitespace-normalising rich-text bodies no longer register as failed actions.
+- `iframe_type` now binds its dispatch to a single resolved frame when a toolbar recovery is pending, and reports the candidate frame URLs so a `urlFilter` can disambiguate them. Ordinary calls keep the previous all-frames behaviour, so pages with repeated same-origin frames continue to work unchanged.
+- Moved the toolbar heuristic into one shared module used by both browser builds and by the DevTools Protocol probe, so an element scores the same whichever dispatch route reaches it.
+
+### Fixed
+- Fixed the toolbar preflight taking a screenshot that was then discarded, which cost an extra capture and vision call on every guarded edit.
+- Fixed the toolbar preflight treating `[role="toolbar"]` ancestry as evidence on its own. An ordinary labelled field in an app toolbar scored high enough to escalate, so with no vision model available the guard blocked prose typed into it and held the run open on a recovery that could never be discharged. A control now also needs a formatting label, a numeric preset value, or a toolbar whose editor body resolves.
+- Fixed the append verification rescanning a field's full contents at every candidate position with arbitrary-precision arithmetic, which could stall a page holding a large rich-text document.
+- Fixed the cross-frame geometry handshake accepting whichever frame answered first; a second frame claiming the same exchange now fails it closed.
+- Fixed toolbar classifier screenshots escaping the per-turn screenshot budget. They now share the cap with the captures the model sees, so the number you configure bounds the vision spend. The first safety capture of a turn is still reserved, so a low cap degrades the check to structural scoring rather than blinding it on the first guarded edit, and both the reserved capture and the fall-back are surfaced.
+- Fixed a navigation during an open toolbar recovery stranding the debt without the state that discharges it, which left the guard inactive for the rest of the run while completion stayed blocked and no corrected edit could clear it. An editor whose only recovery handle was a page-scoped ref now carries across as unknown-target recovery instead of being dropped.
+- Fixed selector preflights trusting a page-owned toolbar-classifier global; the DevTools Protocol path now captures only the packaged classifier and fails closed when that source cannot be loaded.
+- Fixed navigation and extension-recovery paths duplicating one semantic editor obligation or reinjecting `content.js` without its toolbar classifier. Child-frame scope survives navigation while live sibling frames remain distinct.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for the verification contract, the `iframe_type` fallback, the toolbar heuristic's false positives, and the recovery contract, and pinned the heuristic to a single implementation across both builds and the DevTools Protocol probe.
+- Added mirrored Chrome/Firefox coverage for the debt and state maps agreeing across a navigation, in both directions: an obligation that loses its ref stays dischargeable, and a debt nothing can discharge is dropped with its state.
+
 ## [26.0.0] - 2026-07-26
 
 ### Added
