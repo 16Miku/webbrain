@@ -49357,6 +49357,27 @@ test('text tool-call parser is production code with format and allowlist coverag
       ],
     },
     {
+      label: 'unclosed prose brace does not swallow the following call',
+      raw: [
+        'Template: {unclosed',
+        '{"name":"click","arguments":{"text":"Save"}}',
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'unbalanced code snippet does not swallow the following call',
+      raw: [
+        'if (ready) { submit();',
+        '{"name":"read_page","arguments":{}}',
+      ].join('\n'),
+      expected: [{ name: 'read_page', args: {} }],
+    },
+    {
+      label: 'nested object of a disallowed outer call stays rejected',
+      raw: '{"name":"execute_js","arguments":{"name":"click","code":"alert(1)"}}',
+      expected: [],
+    },
+    {
       label: 'XML typed parameters',
       raw: [
         '<tool_call><function=click>',
@@ -49416,6 +49437,16 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('x'.repeat(10001), allowed),
       [],
       'oversized model text was parsed',
+    );
+    const startedAt = Date.now();
+    assert.deepEqual(
+      parser.parseToolCallsFromText('{'.repeat(9000), allowed),
+      [],
+      'unbalanced brace flood produced calls',
+    );
+    assert.ok(
+      Date.now() - startedAt < 1000,
+      'unbalanced brace flood was not bounded by the restart cap',
     );
   }
 });

@@ -2,46 +2,66 @@
 // instead of using the provider's structured tool_calls field. This file is
 // mirrored in the Firefox tree; keep both copies byte-identical.
 
+// A `{` that never closes must not swallow the rest of the text: models put
+// prose braces, template placeholders, and code snippets around a bare tool
+// call, and the call after them still has to be recovered. Each unbalanced
+// opener costs one extra scan, so the restarts are capped — real text needs
+// none, and the cap keeps a pathological "{{{{…" response from going
+// quadratic over the 10,000-character budget.
+const MAX_UNBALANCED_RESTARTS = 16;
+
 /**
- * Parse common text tool-call formats into OpenAI-style tool call objects.
- * Only names in allowedNames are accepted.
+ * Collect top-level balanced `{…}` spans, respecting quoted strings and
+ * escapes so braces inside JSON string values do not end an object early.
  */
 function extractBalancedJsonObjects(text) {
   const objects = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  let searchFrom = 0;
+  let restarts = 0;
 
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (start < 0) {
-      if (char === '{') {
-        start = i;
-        depth = 1;
+  while (searchFrom < text.length) {
+    const start = text.indexOf('{', searchFrom);
+    if (start < 0) break;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
       }
+      if (char === '"') inString = true;
+      else if (char === '{') depth++;
+      else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+
+    if (end < 0) {
+      if (++restarts > MAX_UNBALANCED_RESTARTS) break;
+      searchFrom = start + 1;
       continue;
     }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') inString = true;
-    else if (char === '{') depth++;
-    else if (char === '}') {
-      depth--;
-      if (depth === 0) {
-        objects.push(text.slice(start, i + 1));
-        start = -1;
-      }
-    }
+    objects.push(text.slice(start, end + 1));
+    searchFrom = end + 1;
   }
 
   return objects;
 }
 
+/**
+ * Parse common text tool-call formats into OpenAI-style tool call objects.
+ * Only names in allowedNames are accepted.
+ */
 export function parseToolCallsFromText(text, allowedNames) {
   if (!text || text.length > 10000) return [];
 
