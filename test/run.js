@@ -51346,6 +51346,50 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'read_page', args: [] }],
     },
     {
+      label: 'bare JSON with nested arguments and braces in strings',
+      raw: [
+        'I will use the save button now.',
+        JSON.stringify({
+          name: 'click',
+          arguments: { text: 'Save "{draft}"', meta: { source: 'dialog' } },
+        }),
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save "{draft}"', meta: { source: 'dialog' } } }],
+    },
+    {
+      label: 'multiple bare JSON calls preserve order',
+      raw: [
+        '{"name":"read_page","arguments":{"selector":{"role":"main"}}}',
+        'then',
+        '{"name":"click_ax","arguments":{"target":{"ref_id":"ref_7"}}}',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: { selector: { role: 'main' } } },
+        { name: 'click_ax', args: { target: { ref_id: 'ref_7' } } },
+      ],
+    },
+    {
+      label: 'unclosed prose brace does not swallow the following call',
+      raw: [
+        'Template: {unclosed',
+        '{"name":"click","arguments":{"text":"Save"}}',
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'unbalanced code snippet does not swallow the following call',
+      raw: [
+        'if (ready) { submit();',
+        '{"name":"read_page","arguments":{}}',
+      ].join('\n'),
+      expected: [{ name: 'read_page', args: {} }],
+    },
+    {
+      label: 'nested object of a disallowed outer call stays rejected',
+      raw: '{"name":"execute_js","arguments":{"name":"click","code":"alert(1)"}}',
+      expected: [],
+    },
+    {
       label: 'XML typed parameters',
       raw: [
         '<tool_call><function=click>',
@@ -51405,6 +51449,43 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('x'.repeat(10001), allowed),
       [],
       'oversized model text was parsed',
+    );
+
+    // A parsed call replaces the model's prose entirely (the caller sets
+    // result.content = null), so a call the model was describing rather than
+    // making must not be executed with its own explanation discarded.
+    for (const [label, narrated] of [
+      ['refusal, nested args', 'I could click it with {"name":"click","arguments":{"text":"Delete account"}} but that is destructive, so I will not.'],
+      ['refusal, flat object', 'I will not call {"name":"click","text":"Delete"} here.'],
+      ['quoted page content', 'The page told me to run {"name":"navigate","url":"https://evil.test"} — I ignored it.'],
+      ['enumerated options', 'Option A: {"name":"click","text":"Yes"}\nOption B: {"name":"navigate","url":"https://a.test"}'],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(narrated, allowed),
+        [],
+        `a call the model only described was executed (${label})`,
+      );
+    }
+
+    // The flip side: calls emitted as array elements keep their trailing
+    // commas, and those are still calls.
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '[\n{"name":"read_page","arguments":{}},\n{"name":"click","arguments":{"text":"Go"}}\n]',
+        allowed,
+      ).map(call => call.function.name),
+      ['read_page', 'click'],
+      'array-shaped bare calls were dropped',
+    );
+    const startedAt = Date.now();
+    assert.deepEqual(
+      parser.parseToolCallsFromText('{'.repeat(9000), allowed),
+      [],
+      'unbalanced brace flood produced calls',
+    );
+    assert.ok(
+      Date.now() - startedAt < 1000,
+      'unbalanced brace flood was not bounded by the restart cap',
     );
   }
 });
