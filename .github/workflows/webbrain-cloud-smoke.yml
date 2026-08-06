@@ -10,6 +10,7 @@ on:
       - ".github/workflows/webbrain-cloud-smoke.yml"
       - "ci/**"
       - "src/chrome/src/agent/**"
+      - "src/chrome/src/background.js"
       - "src/chrome/src/offscreen/cloud-bridge.js"
       - "src/chrome/src/cloud-runs.js"
       - "src/firefox/src/agent/**"

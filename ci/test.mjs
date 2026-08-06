@@ -48,6 +48,7 @@ assert.equal(googleFormsScenario.verify.scheduledJobs.definitions[1].afterSecond
 assert.equal(googleFormsScenario.session_settings.scheduledRequireConsequentialConfirmation, false);
 assert.match(googleFormsScenario.task, /after_seconds=0/);
 assert.match(googleFormsScenario.task, /after_seconds=60/);
+assert.match(smokeWorkflow, /- "src\/chrome\/src\/background\.js"/);
 assert.match(smokeWorkflow, /- "src\/chrome\/src\/offscreen\/cloud-bridge\.js"/);
 assert.match(smokeWorkflow, /timeout-minutes:\s*120/);
 assert.match(manualWorkflow, /timeout-minutes:\s*120/);
