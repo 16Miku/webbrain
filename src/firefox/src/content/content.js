@@ -960,6 +960,39 @@
     return '';
   }
 
+  // Internal Compact-upload discovery. This is intentionally not a model
+  // tool: it returns only file inputs, and the agent replaces each selector
+  // with a run-scoped opaque targetId before the result reaches the model.
+  function getFileInputTargets() {
+    const targets = [];
+    const seen = new Set();
+    const visit = (root, inShadowDOM = false) => {
+      try {
+        root.querySelectorAll('input').forEach(el => {
+          if (!(el instanceof HTMLInputElement) || el.type !== 'file' || seen.has(el)) return;
+          seen.add(el);
+          const selector = _uniqueFileInputSelector(el);
+          targets.push({
+            tag: 'input',
+            type: 'file',
+            text: _siteInteractionText(el).slice(0, 100),
+            id: el.id || '',
+            name: el.name || '',
+            accept: el.getAttribute('accept'),
+            multiple: el.hasAttribute('multiple'),
+            inShadowDOM,
+            ...(selector ? { selector } : {}),
+          });
+        });
+        root.querySelectorAll('*').forEach(host => {
+          if (host.shadowRoot) visit(host.shadowRoot, true);
+        });
+      } catch {}
+    };
+    visit(document);
+    return targets;
+  }
+
   window.__wb_resolve_click_target_for_submit_probe = function resolveClickTargetForSubmitProbe(params = {}) {
     if (params?.index == null) return null;
     const index = Number(params.index);
@@ -3491,6 +3524,7 @@
       'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
+      'get_file_input_targets': () => getFileInputTargets(),
       'click': () => clickElement(msg.params || {}),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),

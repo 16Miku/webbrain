@@ -449,6 +449,8 @@ export class Agent extends LoopDetector {
     this._richTextToolbarGuard = new RichTextToolbarGuard();
     this._richTextToolbarProbe = new RichTextToolbarProbe(this);
     this._uploadSelectorRecoveryRequired = new Map(); // tabId -> prior ambiguous match count; cleared only by inspection/navigation/cleanup
+    this._compactUploadTargets = new Map(); // tabId -> { pageUrl, targets: Map(targetId, internal candidate) }
+    this._compactUploadTargetCounter = 0;
     // Productive browsing often mixes reads and scrolling, so exact-call loop
     // detection cannot tell when the agent already has enough evidence to
     // answer. Track long observation-only streaks and remind it to deliver a
@@ -1720,6 +1722,7 @@ export class Agent extends LoopDetector {
   _clearPageLoopState(tabId) {
     super._clearPageLoopState(tabId);
     this._uploadSelectorRecoveryRequired.delete(tabId);
+    this._compactUploadTargets.delete(tabId);
     this.deliveryObservationStreaks.delete(tabId);
     this.bulkApiMutationClicks.delete(tabId);
     this.bulkApiMutationHints.delete(tabId);
@@ -1743,6 +1746,164 @@ export class Agent extends LoopDetector {
     this._uploadSelectorRecoveryRequired.delete(tabId);
     return true;
   }
+
+  // COMPACT_UPLOAD_TARGET_HELPERS_START
+  _toolResultTrustName(name, result) {
+    return name === 'upload_file' && result?.discoveryOnly
+      ? 'get_file_input_targets'
+      : name;
+  }
+
+  async _readCompactUploadFileInputs(tabId) {
+    const response = await this.executeTool(tabId, 'get_file_input_targets', {});
+    if (!Array.isArray(response)) {
+      return {
+        ok: false,
+        error: response?.error || 'Could not inspect this page for file inputs.',
+      };
+    }
+    const fileInputs = response.filter(element => (
+      element?.tag === 'input'
+      && String(element.type || '').toLowerCase() === 'file'
+    ));
+    return {
+      ok: true,
+      fileInputs,
+      usable: fileInputs.filter(element => (
+        typeof element.selector === 'string' && element.selector.trim().length > 0
+      )),
+    };
+  }
+
+  _compactUploadTargetKey(element) {
+    return JSON.stringify([
+      String(element?.selector || ''),
+      String(element?.id || ''),
+      String(element?.name || ''),
+      element?.accept == null ? null : String(element.accept),
+      element?.multiple === true,
+      element?.inShadowDOM === true,
+    ]);
+  }
+
+  async _publishCompactUploadTargets(tabId, inventory, prefix = '') {
+    this._compactUploadTargets.delete(tabId);
+    if (!inventory?.ok) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        discoveryOnly: true,
+        requiresTarget: true,
+        error: `${prefix}${inventory?.error || 'Could not inspect this page for file inputs.'}`,
+      };
+    }
+
+    const maxCandidates = 12;
+    const pageUrl = await this._currentUrl(tabId);
+    const targets = new Map();
+    const candidates = inventory.usable.slice(0, maxCandidates).map((element, index) => {
+      const targetId = `file_target_${(++this._compactUploadTargetCounter).toString(36)}`;
+      targets.set(targetId, {
+        selector: element.selector.trim(),
+        key: this._compactUploadTargetKey(element),
+      });
+      const label = String(element.text || element.name || element.id || `File input ${index + 1}`)
+        .replace(/[\r\n]+/g, ' ')
+        .trim()
+        .slice(0, 100);
+      return {
+        targetId,
+        label: label || `File input ${index + 1}`,
+        ...(element.name ? { name: String(element.name).slice(0, 100) } : {}),
+        ...(element.accept != null ? { accept: String(element.accept).slice(0, 200) } : {}),
+        multiple: element.multiple === true,
+        inShadowDOM: element.inShadowDOM === true,
+      };
+    });
+
+    if (targets.size) this._compactUploadTargets.set(tabId, { pageUrl, targets });
+    const candidateCount = inventory.fileInputs.length;
+    const addressableCount = inventory.usable.length;
+    if (!candidates.length) {
+      const foundButUnsafe = candidateCount > 0;
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        discoveryOnly: true,
+        requiresTarget: true,
+        candidateCount,
+        addressableCount,
+        candidates: [],
+        initializerSuggested: !foundButUnsafe,
+        error: `${prefix}${foundButUnsafe
+          ? 'File inputs were found, but none had a verified unique target. Re-read the page and expose the intended upload widget before repeating upload_file without targetId.'
+          : 'No file input is currently available. If the upload widget creates one lazily, make one guarded click on its add-files control, re-read the page, then repeat upload_file without targetId.'}`,
+      };
+    }
+
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      discoveryOnly: true,
+      requiresTarget: true,
+      candidateCount,
+      addressableCount,
+      candidates,
+      truncated: addressableCount > candidates.length,
+      error: `${prefix}Choose the intended file input from candidates, then retry upload_file with that exact targetId and the same attachmentId if one was provided. Never guess or modify a targetId.`,
+    };
+  }
+
+  async _discoverCompactUploadTargets(tabId, prefix = '') {
+    return this._publishCompactUploadTargets(
+      tabId,
+      await this._readCompactUploadFileInputs(tabId),
+      prefix,
+    );
+  }
+
+  async _resolveCompactUploadTarget(tabId, targetId) {
+    const normalizedTargetId = typeof targetId === 'string' ? targetId.trim() : '';
+    const state = this._compactUploadTargets.get(tabId);
+    const saved = normalizedTargetId ? state?.targets?.get(normalizedTargetId) : null;
+    if (!saved) {
+      return {
+        ok: false,
+        result: await this._discoverCompactUploadTargets(
+          tabId,
+          'That targetId is missing, expired, or was not returned by the latest discovery. ',
+        ),
+      };
+    }
+
+    const pageUrl = await this._currentUrl(tabId);
+    const inventory = await this._readCompactUploadFileInputs(tabId);
+    const current = inventory?.ok
+      ? inventory.usable.find(element => (
+          element.selector.trim() === saved.selector
+          && this._compactUploadTargetKey(element) === saved.key
+        ))
+      : null;
+    if (this._normalizeUrl(pageUrl) !== this._normalizeUrl(state.pageUrl) || !current) {
+      return {
+        ok: false,
+        result: await this._publishCompactUploadTargets(
+          tabId,
+          inventory,
+          'The page changed and that targetId expired. ',
+        ),
+      };
+    }
+
+    // Compact target handles are one-use. A retry must rediscover so a page
+    // that consumed or replaced the input cannot receive a stale attachment.
+    this._compactUploadTargets.delete(tabId);
+    return { ok: true, selector: saved.selector };
+  }
+  // COMPACT_UPLOAD_TARGET_HELPERS_END
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
     const next = {
@@ -4780,6 +4941,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate,
           {
             completionBatchStartState,
+            promptTier,
             dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
             iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
           },
@@ -5190,7 +5352,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Wrap page-derived results as untrusted DATA BEFORE appending any of
       // our own trusted notes (the loop nudge), so the nudge stays outside the
       // <untrusted_page_content> box and is read as an instruction, not data.
-      let resultContent = this._wrapUntrusted(fnName, this._limitToolResult(toolResult));
+      const resultTrustName = this._toolResultTrustName(fnName, toolResult);
+      let resultContent = this._wrapUntrusted(resultTrustName, this._limitToolResult(toolResult));
       if (toolResult?.errorCode === 'chrome_protected_page') {
         resultContent += '\n[TRUSTED RUNTIME ROUTING: Chrome blocks extension DOM/debugger access on this dashboard. Do not call another DOM, accessibility, wait, script, iframe, WebMCP, or upload_file tool here. Continue manually in the dashboard.]';
         onUpdate('warning', { message: 'Chrome-protected dashboard detected; DOM automation is unavailable.' });
@@ -17694,7 +17857,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'upload_file') {
       args = args || {};
-      if (this._uploadSelectorRecoveryRequired.has(tabId)) {
+      const compactUpload = (
+        executionContext?.promptTier || this._resolvePromptTier()
+      ) === 'compact';
+      let attachmentPayload = null;
+      if (compactUpload) {
+        if (
+          args.selector != null
+          || args.downloadId != null
+          || args.filePath != null
+        ) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            denied: true,
+            error: 'Compact upload_file accepts only attachmentId and a targetId returned by its own discovery phase. Do not provide selector, downloadId, or filePath.',
+          };
+        }
+        if (args.attachmentId == null || !String(args.attachmentId).trim()) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            error: 'Compact Chrome upload_file requires attachmentId from the current user-attachment notice.',
+          };
+        }
+        const resolvedAttachment = this._resolveUserAttachment(tabId, args.attachmentId);
+        if (!resolvedAttachment.ok) return { success: false, error: resolvedAttachment.error };
+        attachmentPayload = resolvedAttachment;
+        if (args.targetId == null || !String(args.targetId).trim()) {
+          return await this._discoverCompactUploadTargets(tabId);
+        }
+        const resolvedTarget = await this._resolveCompactUploadTarget(tabId, args.targetId);
+        if (!resolvedTarget.ok) return resolvedTarget.result;
+        args = {
+          attachmentId: String(args.attachmentId),
+          selector: resolvedTarget.selector,
+        };
+      }
+      if (!compactUpload && this._uploadSelectorRecoveryRequired.has(tabId)) {
         return {
           success: false,
           dispatched: false,
@@ -17705,8 +17907,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'A previous upload selector matched multiple file inputs. Call get_interactive_elements now and use the exact selector returned on the intended file-input record before retrying upload_file; do not guess another selector variant.',
         };
       }
-      let attachmentPayload = null;
-      if (args.attachmentId != null) {
+      if (!attachmentPayload && args.attachmentId != null) {
         if (args.downloadId != null || (typeof args.filePath === 'string' && args.filePath.trim())) {
           return { success: false, error: 'upload_file accepts only one source when attachmentId is used. Remove downloadId/filePath and retry with the current attachmentId.' };
         }
@@ -17758,9 +17959,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         uploadQuery = await cdpClient.querySelectorPierce(tabId, args.selector);
         const objectIds = uploadQuery?.objectIds || [];
         if (objectIds.length === 0) {
+          if (compactUpload) {
+            return await this._discoverCompactUploadTargets(
+              tabId,
+              'The selected file input changed before attachment. ',
+            );
+          }
           return { success: false, error: `File input not found for selector "${args.selector}". Re-inspect the page with get_interactive_elements or get_accessibility_tree to find the real <input type=file> (some upload widgets hide it until you click their "add files" button first).` };
         }
         if (objectIds.length > 1) {
+          if (compactUpload) {
+            return await this._discoverCompactUploadTargets(
+              tabId,
+              'The selected file input became ambiguous before attachment. ',
+            );
+          }
           this._uploadSelectorRecoveryRequired.set(tabId, objectIds.length);
           return {
             success: false,
@@ -19724,6 +19937,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const actionMap = {
       'read_page': 'get_page_info_cdp',
       'get_interactive_elements': 'get_interactive_elements_cdp',
+      // Internal only: Compact upload_file turns these selectors into opaque,
+      // one-use targetIds before exposing the bounded candidate list.
+      'get_file_input_targets': 'get_file_input_targets',
       // Accessibility-tree path (preferred). Ported from Claude for Chrome —
       // flat indented text output with persistent WeakRef-backed ref_ids.
       'get_accessibility_tree': 'get_accessibility_tree',
@@ -19780,6 +19996,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           name === 'type_text' || name === 'type_ax' || name === 'set_field' ||
           name === 'press_keys' || name === 'scroll' ||
           name === 'get_accessibility_tree' || name === 'get_interactive_elements' ||
+          name === 'get_file_input_targets' ||
           name === 'extract_data' || name === 'inspect_element_styles' ||
           name === 'wait_for_element' || name === 'wait_for_stable' ||
           name === 'get_selection' || name === 'find_text'

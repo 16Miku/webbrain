@@ -995,6 +995,7 @@ export const COMPACT_TOOL_NAMES = new Set([
   'click', 'type_text', 'press_keys',
   'navigate', 'new_tab', 'wait_for_element',
   'fetch_url',
+  'upload_file',
   'scratchpad_write', 'progress_update', 'progress_read', 'clarify', 'done',
 ]);
 
@@ -1116,6 +1117,34 @@ const WATCH_BEEP_TOOL = {
   },
 };
 
+// Compact has no download tools, so the only file it can legitimately reach is
+// the one the user attached to this run, or one the user picks themselves.
+// Compact replaces selector with an opaque targetId returned by upload_file's
+// own discovery phase, so a small model never has to choose another inspection
+// tool or construct CSS. Firefox never had filePath (no CDP).
+const COMPACT_UPLOAD_HIDDEN_PARAMS = ['selector', 'downloadId', 'filePath'];
+
+function compactUploadFileTool(tool) {
+  const properties = { ...tool.function.parameters.properties };
+  for (const key of COMPACT_UPLOAD_HIDDEN_PARAMS) delete properties[key];
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      description: 'Attach a file through a two-step Compact workflow. First call without targetId: this is read-only and returns opaque targetId choices for the page\'s file inputs. Then call again with one returned targetId and the current attachmentId, or omit attachmentId on that second call to open WebBrain\'s user-controlled picker. Never invent or modify a targetId. This proves only local page attachment, not remote upload or submission. If no file input exists because a widget creates it lazily, make one guarded click on its add-files control, then repeat the discovery call.',
+      parameters: {
+        ...tool.function.parameters,
+        properties: {
+          ...properties,
+          attachmentId: { type: 'string', description: 'Opaque id from the current user-attachment notice. Omit only to ask the user through WebBrain\'s file picker; never guess an id.' },
+          targetId: { type: 'string', description: 'Opaque file-input target returned by a prior upload_file discovery call in this run. Never guess or modify it.' },
+        },
+        required: [],
+      },
+    },
+  };
+}
+
 /**
  * Get tools filtered by mode.
  *
@@ -1134,7 +1163,9 @@ export function getToolsForMode(mode, opts = {}) {
   } else if (devCompactBlocked) {
     base = [];
   } else if (tier === 'compact') {
-    base = AGENT_TOOLS.filter(t => COMPACT_TOOL_NAMES.has(t.function.name));
+    base = AGENT_TOOLS
+      .filter(t => COMPACT_TOOL_NAMES.has(t.function.name))
+      .map(t => (t.function.name === 'upload_file' ? compactUploadFileTool(t) : t));
   } else if (tier === 'mid') {
     base = AGENT_TOOLS.filter(t => MID_TOOL_NAMES.has(t.function.name));
   } else {
@@ -1234,6 +1265,7 @@ TOOLS - use only these:
 - new_tab({url}): Open a URL in a background tab for user reference. It does not activate or retarget the current run, so never use it as a site-permission workaround.
 - wait_for_element({selector}): Wait for an element to appear.
 - fetch_url({url}): Fetch other URLs for reading only; do not use it to re-read the active tab.
+- upload_file({attachmentId?, targetId?}): Two steps: first call without targetId to discover file inputs; then call again with one returned targetId and the current attachmentId, or omit attachmentId on the second call for WebBrain's picker. Never guess a targetId. If discovery finds no input because the widget creates it lazily, make one guarded initializer click and repeat discovery. Verify the page shows the attachment before submitting.
 - scratchpad_write({text}): Save notes that persist across steps.
 - progress_update({items}) / progress_read({status}): Structured progress ledger for the active repeated item/action task. On GitHub stargazers, only "Follow USER" buttons are follow targets when following is allowed by the task; "Unfollow USER" means skip/already followed unless the ledger shows acted.
 - clarify({question, options?}): Ask the user only when materially blocked or ambiguous. Unanswered clarifies auto-select options[0] after timeout (source=timeout is not user approval for high-risk steps; source=auto Instant is intentional auto-approve).
