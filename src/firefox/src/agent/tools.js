@@ -1,5 +1,5 @@
 import { closeToolDefinitions } from './tool-arguments.js';
-import { isJsonSchemaSpec } from './cloud-output.js';
+import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1139,6 +1139,13 @@ function nullableSchema(schema) {
 }
 
 function doneJsonResultSchema(spec) {
+  // An explicit `$schema` says the caller wrote real JSON Schema, so advertise
+  // it verbatim rather than guessing node by node. The marker itself is dropped
+  // — it describes the document, not the argument being validated.
+  if (hasJsonSchemaMarker(spec)) {
+    const { $schema: _marker, ...jsonSchema } = spec;
+    return jsonSchema;
+  }
   const convert = (value) => {
     if (typeof value === 'string') {
       let shorthand = value.trim();

@@ -32,7 +32,18 @@ const JSON_SCHEMA_KEYWORD_SHAPES = {
   // never what a caller means by `{ const: 'ok' }` or `{ $ref: '#/$defs/x' }`.
   const: (value) => !isShorthandToken(value),
   $ref: (value) => typeof value === 'string' && !isShorthandToken(value),
+  $schema: (value) => typeof value === 'string' && value.length > 0,
 };
+
+/**
+ * The bare `{ const: 'string' }` is genuinely ambiguous — a shorthand field
+ * named `const`, or the JSON Schema literal `"string"` — and the heuristic above
+ * has to pick one. A caller who means the second says so with `$schema`, which
+ * turns off shorthand interpretation for the whole tree.
+ */
+export function hasJsonSchemaMarker(spec) {
+  return isSchemaObject(spec) && typeof spec.$schema === 'string' && spec.$schema.length > 0;
+}
 
 /**
  * An output_schema node is either real JSON Schema or the shorthand form
@@ -55,6 +66,9 @@ export function validateCloudOutput(value, schema) {
   const errors = [];
   const push = (path, message) => errors.push(`${path}: ${message}`);
   const isObject = item => !!item && typeof item === 'object' && !Array.isArray(item);
+  // Set once for the whole tree: a marked document has no shorthand nodes in
+  // it, so no node has to be guessed at.
+  const jsonSchemaOnly = hasJsonSchemaMarker(schema);
 
   const validate = (item, spec, path = '$') => {
     if (typeof spec === 'string') {
@@ -91,7 +105,7 @@ export function validateCloudOutput(value, schema) {
     }
 
     if (!isObject(spec)) return;
-    if (!isJsonSchemaSpec(spec)) {
+    if (!jsonSchemaOnly && !isJsonSchemaSpec(spec)) {
       if (!isObject(item)) {
         push(path, 'expected object');
         return;

@@ -75,9 +75,23 @@ The regex: `pwd|password|passwd|secret|token|api[-_\s]?key|otp|2fa|mfa|credentia
 
 When enabled (Settings → "Strict secret handling"), the agent:
 
-- **Never quotes credentials** in summaries, assistant text, or tool-call arguments — even when the user explicitly asks
+- **Is instructed never to quote credentials** in summaries, assistant text, or tool-call arguments — even when the user explicitly asks
 - The `done` tool description is swapped for `DONE_TOOL_STRICT`, which adds a hard prohibition
 - After filling a sensitive field, `CREDENTIAL_NOTE_STRICT` is injected into the tool result
+
+Those three are prompt-level, so they hold only as far as the model complies.
+Cloud runs add a redaction layer underneath that does not:
+
+- Tool results are cut down to success and HTTP status, tool arguments to the few scalar fields a caller needs to score the run, and streamed or final model prose is replaced outright
+- Any value the run **types into a page, sends in a request body, or reads from a field with a credential-shaped name** is remembered and struck by exact match from everything published afterwards — clarification questions, warnings, the final answer, the structured result
+- The trace and persistence copies of a structured result go further and replace every string and number, since no caller contract depends on them
+
+**Where it stops.** A secret the model only ever *reads* out of ordinary page
+text — a one-time code in the body of an inbox message, say — is never seen in a
+form the redactor can recognize. If the model then repeats it in a clarification
+or a final answer, only the prompt-level rules above stand in the way. Strict
+mode raises the cost of a leak considerably; it is not a guarantee that survives
+a model that ignores its instructions.
 
 When disabled (the default — this is a personal-computer tool, not a third-party deployment):
 
@@ -119,7 +133,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Universal preamble** | Every system prompt includes guidance on cookie banners and paywalls — two common injection vectors that look like benign page content. |
 | **Loop detection** | Three independent detectors stop the agent if it's repeating the same action or oscillating. Repeated click loops may include an exact same-tab XHR/fetch URL+method hint so the agent can switch to `fetch_url` instead of clicking forever. Limits damage from a persistently injected prompt. |
 | **Finance adapters** | Adapters with `category: 'finance'` inject extra confirmation guidance and a warning banner. |
-| **Strict secret handling** | Prevents credential exfiltration even if the model is jailbroken into quoting secrets. |
+| **Strict secret handling** | Instructs the model not to quote credentials, and in cloud runs strikes every credential it typed, sent, or read from a labelled field out of what gets published. A secret it only saw in page prose still depends on the instruction. |
 | **Local network blocking** | When disabled (default), `fetch_url` cannot reach private/RFC1918 addresses. Cloud-metadata endpoints (169.254.169.254) are always blocked. |
 
 ### What is NOT defended

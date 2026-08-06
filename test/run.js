@@ -11039,6 +11039,41 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
         `${label}: ${JSON.stringify(schemaSpec)} was misread as shorthand`,
       );
     }
+    // `{ const: 'string' }` is genuinely ambiguous: a shorthand field named
+    // `const`, or the JSON Schema literal "string". The heuristic picks
+    // shorthand, so a caller who means the literal says so with `$schema`,
+    // which disables shorthand for the whole tree.
+    const DRAFT = 'https://json-schema.org/draft/2020-12/schema';
+    assert.equal(
+      cloudModule.validateCloudOutput('string', { $schema: DRAFT, const: 'string' }).ok,
+      true,
+      `${label}: a marked const literal was not honoured`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('other', { $schema: DRAFT, const: 'string' }).ok,
+      false,
+      `${label}: a marked const literal accepted the wrong value`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        { title: 'T' },
+        { $schema: DRAFT, type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
+      ).ok,
+      true,
+      `${label}: a marked document was still read as shorthand`,
+    );
+    // The marker describes the document, not the argument, so it is not
+    // advertised on the done_json parameter.
+    const markedDone = advertised({ $schema: DRAFT, const: 'string' });
+    assert.equal(
+      Object.hasOwn(markedDone.function.parameters.properties.result, '$schema'),
+      false,
+      `${label}: the $schema marker leaked into the advertised tool schema`,
+    );
+    // Unmarked stays shorthand, so the earlier disambiguation fix still holds.
+    assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
+      `${label}: an unmarked shorthand const field changed meaning`);
+
     // ...and the shorthand reading has to actually be applied end to end.
     assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
       `${label}: a shorthand field named const was not validated as shorthand`);
