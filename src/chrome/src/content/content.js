@@ -1114,6 +1114,21 @@
     return null;
   }
 
+  function safeQuerySelectorAll(selector) {
+    if (typeof selector !== 'string' || !selector) return [];
+    try { return Array.from(document.querySelectorAll(selector)); } catch {}
+    const fallback = safeQuerySelector(selector);
+    return fallback ? [fallback] : [];
+  }
+
+  function safeIndexedQuerySelector(selector, matchIndex) {
+    const matches = safeQuerySelectorAll(selector);
+    const requested = Number.isInteger(Number(matchIndex)) && Number(matchIndex) >= 0
+      ? Number(matchIndex)
+      : 0;
+    return { element: matches[requested] || null, matchCount: matches.length, matchIndex: requested };
+  }
+
   /**
    * Run one synthetic agent click while suppressing any immediate or deferred
    * <input type=file>.click() it triggers. Uploads should go through
@@ -1504,7 +1519,7 @@
         el = _resolveInteractiveAncestor(resolved);
       }
     } else if (params.selector) {
-      el = safeQuerySelector(params.selector);
+      el = safeIndexedQuerySelector(params.selector, params.matchIndex).element;
     } else if (params.index != null) {
       // Must use the SAME traversal as get_interactive_elements so the
       // index the agent saw is the index we resolve.
@@ -1747,7 +1762,7 @@
     const typedText = String(params.text || '');
     let el;
     if (params.selector) {
-      el = safeQuerySelector(params.selector);
+      el = safeIndexedQuerySelector(params.selector, params.matchIndex).element;
     } else if (params.index != null) {
       // Same index space as get_interactive_elements / clickElement.
       const interactive = queryInteractiveForToolIndex();
@@ -4115,13 +4130,20 @@
       const args = params.args || {};
       let el = null;
       let coordinateTarget = false;
+      let selectorMatchCount = null;
+      let selectorMatchIndex = null;
       if (['click_ax', 'type_ax', 'set_checked', 'set_field'].includes(toolName) && typeof args.ref_id === 'string') {
         el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(args.ref_id) : null;
       } else if (toolName === 'type_text') {
         // Chrome Agent routes selector-based type_text through the same CDP
         // open/closed-shadow resolver used for dispatch before reaching this
         // light-DOM fallback.
-        if (args.selector) el = safeQuerySelector(args.selector);
+        if (args.selector) {
+          const selected = safeIndexedQuerySelector(args.selector, args.matchIndex);
+          el = selected.element;
+          selectorMatchCount = selected.matchCount;
+          selectorMatchIndex = selected.matchIndex;
+        }
         else if (args.index != null) el = queryInteractiveForToolIndex()[args.index] || null;
         else {
           // Follow open shadow roots to the element browser text insertion
@@ -4204,6 +4226,7 @@
           h: Math.round(rect.height),
         },
         fieldMeta,
+        ...(selectorMatchCount != null ? { selectorMatchCount, selectorMatchIndex } : {}),
         ...(dispatchBindingToken ? { dispatchBinding: { token: dispatchBindingToken } } : {}),
         ...toolbarContext,
       };

@@ -177,6 +177,36 @@ Only **open** shadow roots (`element.shadowRoot`) are accessible. Closed roots c
 
 The tree builder does **not** recurse into iframes by default. The agent must explicitly call `iframe_read` or `get_frames` to discover and read iframe content.
 
+When an embedded app or form remains difficult to inspect or target reliably,
+`promote_iframe` navigates the **current run tab** to that child frame's own
+standalone URL. Subsequent tools operate on the standalone page, and normal
+browser Back history is preserved so `go_back` or the browser Back button can
+return to the embedding page. This is a same-tab handoff, not a background
+`new_tab`.
+
+Use this workflow **before editing** the iframe:
+
+1. Discover and read the embedded page with `iframe_read` or `get_frames`.
+2. If direct iframe targeting is still unreliable, call `promote_iframe` with
+   a required `urlFilter` that identifies the intended frame host and URL
+   substring, for example `airtable.com/embed/`.
+3. If several child frames match, no navigation occurs. Inspect the returned
+   frame URLs, then retry with the zero-based `matchIndex` for the intended one.
+4. Re-read the resulting standalone page, then use the normal page tools and
+   refs to continue.
+
+Promotion fails closed if the selected iframe has an unverified edit, attached
+files, changed fields, or state that cannot be inspected safely. Finish or
+verify the embedded form first. `force: true` discards that state and should be
+used only when the user explicitly intends to discard it.
+
+Unlike generic `navigate`, `promote_iframe` first discovers the authoritative
+child-frame URL from the browser's frame inventory and applies the ambiguity
+and iframe-draft checks atomically. Only after those checks pass does it
+delegate the same-tab navigation to the normal `navigate` path. It is available
+in Mid and Full Act, and is inherited by Mid/Full Dev; it is not available in
+Ask or Compact.
+
 ---
 
 ## Common Failure Modes
@@ -186,7 +216,7 @@ The tree builder does **not** recurse into iframes by default. The agent must ex
 | Element removed from DOM | `click_ax` returns "not found" | Re-read the tree; the page may have re-rendered |
 | Stale ref after SPA nav | All refs miss | Agent should read the tree again after `/navigate` or `wait_for_stable` |
 | Shadow DOM closed root | Tree shows `<my-component>` but not its children | Use `get_shadow_dom` + `shadow_dom_query` on Chrome; Firefox cannot pierce a closed root |
-| iframe not in tree | Agent can't find iframe content | Call `get_frames` then `iframe_read` / `iframe_click` |
+| iframe not in tree | Agent can't find iframe content | Call `get_frames`, then use `iframe_read` / `iframe_click`; before editing, use `promote_iframe` if direct targeting stays unreliable |
 | Truncated tree | `truncated: true` + `hasMore: true` | Call `get_accessibility_tree` with `page: nextPage` or `ref_id` to zoom in |
 | Portaled overlay not visible | Tree shows the combobox but not the dropdown | The overlay is hoisted to the `[open overlays]` section — re-read with `filter: 'all'` |
 

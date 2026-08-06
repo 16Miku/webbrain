@@ -172,6 +172,30 @@ await cdpClient.evaluate(tabId, `
 
 树构建器默认**不会**递归进入 iframe。代理必须显式调用 `iframe_read` 或 `get_frames` 来发现和读取 iframe 内容。
 
+如果嵌入式应用或表单仍然难以可靠检查或定位，`promote_iframe` 会让**当前运行
+标签页**导航到该子框架自己的独立 URL。后续工具会在独立页面上运行，同时保留正常
+的浏览器后退历史，因此可用 `go_back` 或浏览器的后退按钮返回嵌入页面。这是在同一
+标签页内切换，不是在后台打开 `new_tab`。
+
+请在 iframe 中进行**编辑之前**使用以下流程：
+
+1. 使用 `iframe_read` 或 `get_frames` 发现并读取嵌入页面。
+2. 如果直接定位 iframe 仍不可靠，调用 `promote_iframe`，并提供必需的
+   `urlFilter` 来标识目标框架的主机和 URL 子字符串，例如
+   `airtable.com/embed/`。
+3. 如果有多个子框架匹配，则不会发生导航。先检查返回的框架 URL，再用目标框架
+   从零开始的 `matchIndex` 重试。
+4. 重新读取得到的独立页面，然后使用常规页面工具和引用继续操作。
+
+如果所选 iframe 有未经验证的编辑、已附加文件、已更改字段，或者其状态无法安全
+检查，提升操作会按失败关闭原则阻止导航。请先完成或验证嵌入表单。`force: true`
+会丢弃这些状态，仅当用户明确希望丢弃时才应使用。
+
+与通用 `navigate` 不同，`promote_iframe` 会先从浏览器的框架清单中发现权威的子框架
+URL，并以原子方式执行歧义和 iframe 草稿检查。只有检查通过后，它才把同标签页导航
+委托给常规 `navigate` 路径。该工具在 Mid 和 Full Act 中可用，Mid/Full Dev 会继承
+它；Ask 和 Compact 不提供该工具。
+
 ---
 
 ## 常见故障模式
@@ -181,7 +205,7 @@ await cdpClient.evaluate(tabId, `
 | 元素从 DOM 中移除 | `click_ax` 返回"未找到" | 重新读取树；页面可能已重新渲染 |
 | SPA 导航后引用过期 | 所有引用失效 | 代理应在 `/navigate` 或 `wait_for_stable` 后重新读取树 |
 | Shadow DOM 封闭 root | 树显示 `<my-component>` 但不显示子元素 | 在 Chrome 中使用 `get_shadow_dom` + `shadow_dom_query`；Firefox 无法穿透封闭 root |
-| iframe 不在树中 | 代理找不到 iframe 内容 | 调用 `get_frames`，然后使用 `iframe_read` / `iframe_click` |
+| iframe 不在树中 | 代理找不到 iframe 内容 | 调用 `get_frames`，然后使用 `iframe_read` / `iframe_click`；如果直接定位仍不可靠，请在编辑前使用 `promote_iframe` |
 | 树被截断 | `truncated: true` + `hasMore: true` | 使用 `page: nextPage` 或 `ref_id` 调用 `get_accessibility_tree` 以放大查看 |
 | Portal 叠加层不可见 | 树显示组合框但不显示下拉菜单 | 叠加层已被提升到 `[open overlays]` 部分——使用 `filter: 'all'` 重新读取 |
 

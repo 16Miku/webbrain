@@ -2257,33 +2257,40 @@ export class Agent extends LoopDetector {
       && typeof args?.selector === 'string'
       && !!args.selector.trim();
     const focusedType = toolName === 'type_text' && !selectorBackedType && args?.index == null;
-    // An unresolvable iframe target only fails closed once a recovery is
-    // pending. Single-frame resolution is stricter than the pre-guard
-    // behaviour: repeated same-origin frames and frames content.js cannot
-    // enter never resolve to exactly one, and those calls have to keep
-    // reaching the legacy all-frames dispatch in executeTool.
+    // Ambiguous iframe targets always fail closed. A missing content-script
+    // probe may still reach executeTool's two-phase census fallback, which
+    // mutates only after it proves exactly one frame/element target.
     const recoveryPending = this._richTextToolbarGuard.hasPending(tabId);
     const probe = toolName === 'iframe_type'
       ? await this._probeRichTextToolbarIframeTarget(tabId, args)
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
-      return (toolName === 'iframe_type' && recoveryPending) || selectorBackedType || focusedType
+      const ambiguousIframeTarget = toolName === 'iframe_type' && probe?.ambiguous === true;
+      return ambiguousIframeTarget || (toolName === 'iframe_type' && recoveryPending) || selectorBackedType || focusedType
         ? {
             block: {
               success: false,
               dispatched: false,
               noDispatch: true,
               retryable: true,
+              ...(ambiguousIframeTarget ? {
+                ambiguous: true,
+                matchCount: probe.matchCount,
+                frameUrls: probe.matchedFrameUrls || [],
+                candidateFrames: probe.candidateFrames || [],
+              } : {}),
               error: toolName === 'iframe_type'
-                ? 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.'
+                ? ambiguousIframeTarget
+                  ? `The iframe selector matched ${probe.matchCount} elements, so nothing was typed. Call iframe_read with this selector, then retry with a specific urlFilter and the intended matchIndex.`
+                  : 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.'
                 : focusedType
                   ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
                   : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
             },
             shot: null,
           }
-        // The probe already swept every frame; tell executeTool so the legacy
-        // fallback does not repeat that sweep before dispatching.
+        // The content-script probe already swept every frame; tell executeTool
+        // so its fallback can move directly to the browser-level census.
         : { block: null, shot: null, iframeTargetUnresolved: toolName === 'iframe_type' };
     }
     if ((toolName === 'iframe_type' || selectorBackedType || focusedType) && !probe.dispatchBinding?.token) {
@@ -3032,7 +3039,7 @@ export class Agent extends LoopDetector {
     ].filter(Boolean).join('\n\n');
   }
 
-  static NAV_TOOLS = new Set(['navigate', 'new_tab', 'go_back', 'go_forward']);
+  static NAV_TOOLS = new Set(['navigate', 'new_tab', 'promote_iframe', 'go_back', 'go_forward']);
   static STATE_CHANGE_TOOLS = SHARED_STATE_CHANGE_TOOLS;
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
@@ -3211,6 +3218,52 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } catch { /* probe failed (e.g. privileged page) — nothing to protect, allow navigation */ }
     return null;
+  }
+
+  async _probeIframeUnsavedChanges(tabId, frameId, knownPendingEdit = false) {
+    let details = null;
+    try {
+      const code = `
+        (() => {
+          let attachedFiles = 0;
+          let dirtyFields = 0;
+          for (const el of document.querySelectorAll('input, textarea, select')) {
+            const type = String(el.type || '').toLowerCase();
+            if (type === 'file') {
+              attachedFiles += el.files?.length || 0;
+              continue;
+            }
+            if (['hidden', 'submit', 'button', 'reset'].includes(type)) continue;
+            if (type === 'checkbox' || type === 'radio') {
+              if (el.checked !== el.defaultChecked) dirtyFields += 1;
+            } else if (String(el.tagName || '').toLowerCase() === 'select') {
+              if (Array.from(el.options || []).some(option => option.selected !== option.defaultSelected)) dirtyFields += 1;
+            } else if (el.value !== el.defaultValue) {
+              dirtyFields += 1;
+            }
+          }
+          return { attachedFiles, dirtyFields };
+        })()
+      `;
+      details = (await browser.tabs.executeScript(tabId, { code, frameId }))?.[0]
+        || { attachedFiles: 0, dirtyFields: 0 };
+    } catch (error) {
+      details = { inspectionFailed: true, error: error?.message || String(error) };
+    }
+    if (!knownPendingEdit && !details.inspectionFailed && !details.attachedFiles && !details.dirtyFields) return null;
+    const parts = [];
+    if (knownPendingEdit) parts.push('an unverified iframe edit');
+    if (details.attachedFiles) parts.push(`${details.attachedFiles} attached file(s)`);
+    if (details.dirtyFields) parts.push(`${details.dirtyFields} changed field(s)`);
+    if (details.inspectionFailed) parts.push('iframe state could not be inspected safely');
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      blockedUnsavedChanges: true,
+      ...(details.inspectionFailed ? { inspectionFailed: true } : {}),
+      error: `Iframe promotion blocked: ${parts.join(', ')} would be discarded by replacing the current tab. Finish or verify the embedded form first. Only if discarding it is explicitly intended, call promote_iframe again with force:true.`,
+    };
   }
 
   async _getVisibleInteractiveElements(tabId) {
@@ -3940,6 +3993,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (
       toolResult?.pageUrlChanged === true
       || toolName === 'navigate'
+      || toolName === 'promote_iframe'
       || toolName === 'go_back'
       || toolName === 'go_forward'
     ) {
@@ -12779,12 +12833,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         break;
       }
+      case 'promote_iframe':
       case 'navigate': {
         if (parsed.blockedUnsavedChanges) return `navigation blocked: unsaved changes on current page (use force:true to discard)`;
         if (parsed.navigationPending && parsed.confirmationPossible === false) return `navigation pending: tab is still loading; wait for stability and inspect the page`;
         if (parsed.navigationPending) return `navigation pending: still on previous page; browser confirmation may require the user`;
-        if (parsed.success === false) return `navigation failed: ${this._truncate(parsed.error || '', 110)}`;
-        if (parsed.url) return `now on ${this._truncate(parsed.url, 110)}`;
+        if (parsed.success === false) return `${name === 'promote_iframe' ? 'iframe promotion' : 'navigation'} failed: ${this._truncate(parsed.error || '', 110)}`;
+        if (parsed.url) return `${name === 'promote_iframe' ? 'promoted iframe; now' : 'now'} on ${this._truncate(parsed.url, 110)}`;
         break;
       }
       case 'go_back':
@@ -14034,6 +14089,93 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         authorized,
         requiresExplicitConfirmation: !authorized,
         note,
+      };
+    }
+
+    // Promote a child frame into the run's current tab. Unlike new_tab, this
+    // deliberately retargets subsequent tools while preserving a Back entry.
+    // Resolve from the browser's frame inventory and fail closed when the
+    // filter is not unique so page-authored frame URLs cannot choose a target
+    // by accident.
+    if (name === 'promote_iframe') {
+      const urlFilter = String(args?.urlFilter || '').trim();
+      if (!urlFilter) {
+        return { success: false, dispatched: false, noDispatch: true, error: 'promote_iframe: urlFilter is required' };
+      }
+      let frames = [];
+      try {
+        frames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+      } catch (error) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          error: `promote_iframe: could not enumerate frames (${error?.message || String(error)})`,
+        };
+      }
+      const matches = frames.filter(frame => (
+        Number(frame?.frameId) !== 0
+        && typeof frame?.url === 'string'
+        && frameHostMatches(frame.url, urlFilter)
+        && frame.url.includes(urlFilter)
+      ));
+      const hasMatchIndex = args?.matchIndex !== undefined && args?.matchIndex !== null;
+      const matchIndex = hasMatchIndex ? Number(args.matchIndex) : 0;
+      if (hasMatchIndex && (!Number.isInteger(matchIndex) || matchIndex < 0)) {
+        return { success: false, dispatched: false, noDispatch: true, error: 'promote_iframe: matchIndex must be a non-negative integer' };
+      }
+      if (matches.length === 0) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          error: `promote_iframe: no child frame matched urlFilter "${urlFilter}"`,
+        };
+      }
+      if (!hasMatchIndex && matches.length > 1) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          ambiguous: true,
+          matchCount: matches.length,
+          frameUrls: matches.map(frame => frame.url).slice(0, 10),
+          error: 'promote_iframe: multiple child frames matched. Inspect get_frames and pass matchIndex to choose one explicitly.',
+        };
+      }
+      const selected = matches[matchIndex];
+      if (!selected) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          matchCount: matches.length,
+          error: `promote_iframe: matchIndex ${matchIndex} is out of range for ${matches.length} matching frame(s)`,
+        };
+      }
+      if (args?.force !== true) {
+        const knownPendingEdit = (this.completionInvariants.get(tabId)?.iframeFormVerificationObligations || [])
+          .some(target => (
+            target?.frameId === selected.frameId
+            || (
+              !Number.isInteger(target?.frameId)
+              && frameHostMatches(selected.url, String(target?.scope || ''))
+              && selected.url.includes(String(target?.scope || ''))
+            )
+          ));
+        const blocked = await this._probeIframeUnsavedChanges(tabId, selected.frameId, knownPendingEdit);
+        if (blocked) return blocked;
+      }
+      const navigation = await this.executeTool(tabId, 'navigate', {
+        url: selected.url,
+        force: args?.force === true,
+      }, onUpdate, executionContext);
+      return {
+        ...navigation,
+        promoted: navigation?.success === true,
+        promotedFrameId: selected.frameId,
+        promotedFrameUrl: selected.url,
+        sourceUrlFilter: urlFilter,
       };
     }
 
@@ -15604,6 +15746,180 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'verify_form') {
       try {
+        const iframeUrlFilter = String(args.urlFilter || '').trim();
+        if (iframeUrlFilter) {
+          const selector = String(args.selector || '');
+          const pendingTargets = (this.completionInvariants.get(tabId)?.iframeFormVerificationObligations || [])
+            .filter(target => String(target?.scope || '').trim().toLowerCase() === iframeUrlFilter.toLowerCase())
+            .map(target => ({
+              frameId: Number.isInteger(target?.frameId) ? target.frameId : null,
+              selector: String(target?.selector || ''),
+              matchIndex: Number.isInteger(target?.matchIndex) ? target.matchIndex : 0,
+              expectedValue: String(target?.expectedValue || '').slice(0, 100),
+              matchMode: target?.matchMode === 'suffix' ? 'suffix' : 'exact',
+            }))
+            .filter(target => target.selector);
+          const verificationTargets = pendingTargets.map(target => ({
+            selector: target.selector,
+            matchIndex: target.matchIndex,
+          }));
+          const code = `
+            (() => {
+              try {
+                const formSelector = ${JSON.stringify(selector)};
+                const verificationTargets = ${JSON.stringify(verificationTargets)};
+                let form;
+                if (formSelector) form = document.querySelector(formSelector);
+                else form = document.activeElement?.closest?.('form') || document.querySelector('form');
+                if (!form) return { found: false, url: location.href, isTop: window.top === window, error: 'No form found in frame' };
+                const fields = [];
+                const semanticLabel = (el) => {
+                  const direct = Array.from(el.labels || [])
+                    .map(item => (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim())
+                    .find(Boolean);
+                  if (direct) return direct.slice(0, 240);
+                  const aria = String(el.getAttribute?.('aria-label') || '').replace(/\\s+/g, ' ').trim();
+                  if (aria) return aria.slice(0, 240);
+                  const labelledBy = String(el.getAttribute?.('aria-labelledby') || '').trim();
+                  if (!labelledBy) return '';
+                  return labelledBy.split(/\\s+/).map(id => document.getElementById(id))
+                    .filter(Boolean).map(node => node.innerText || node.textContent || '').join(' ')
+                    .replace(/\\s+/g, ' ').trim().slice(0, 240);
+                };
+                const controls = form.querySelectorAll('input, select, textarea, [contenteditable="true"]');
+                for (const [matchIndex, el] of Array.from(controls).entries()) {
+                  const tag = String(el.tagName || '').toLowerCase();
+                  const type = String(el.getAttribute?.('type') || (el.isContentEditable ? 'contenteditable' : tag)).toLowerCase();
+                  if (type === 'hidden' || type === 'submit') continue;
+                  const label = semanticLabel(el);
+                  let value = '';
+                  if (type === 'password') value = '[redacted]';
+                  else if (type === 'checkbox' || type === 'radio') value = el.checked ? String(el.value || 'on') : '(unchecked)';
+                  else if (tag === 'select') {
+                    const option = el.options?.[el.selectedIndex];
+                    value = option ? String(option.text) + ' [' + String(option.value) + ']' : '';
+                  } else if (el.isContentEditable) value = String(el.textContent || '');
+                  else value = String(el.value || '');
+                  fields.push({
+                    matchIndex,
+                    tag,
+                    type,
+                    id: String(el.id || ''),
+                    name: String(el.getAttribute?.('name') || ''),
+                    label,
+                    ariaLabel: String(el.getAttribute?.('aria-label') || ''),
+                    placeholder: String(el.getAttribute?.('placeholder') || ''),
+                    value: value.slice(0, 1000),
+                    ...((type === 'checkbox' || type === 'radio') ? { checked: !!el.checked } : {}),
+                  });
+                }
+                const targetChecks = verificationTargets.map(target => {
+                  try {
+                    const el = document.querySelectorAll(target.selector)[target.matchIndex];
+                    const matched = !!el && form.contains(el);
+                    let currentValue = '';
+                    if (matched && el.isContentEditable) currentValue = String(el.textContent || '');
+                    else if (matched) currentValue = String(el.value || '');
+                    return {
+                      selector: target.selector,
+                      matchIndex: target.matchIndex,
+                      matched,
+                      valuePrefix: matched ? currentValue.slice(0, 100) : '',
+                      valueSuffix: matched ? currentValue.slice(-100) : '',
+                    };
+                  } catch (error) {
+                    return {
+                      selector: target.selector,
+                      matchIndex: target.matchIndex,
+                      matched: false,
+                      valueMatchesExpected: false,
+                      error: error.message,
+                    };
+                  }
+                });
+                return {
+                  found: true,
+                  url: location.href,
+                  isTop: window.top === window,
+                  action: String(form.action || ''),
+                  method: String(form.method || 'get'),
+                  fieldCount: fields.length,
+                  fields,
+                  targetChecks,
+                };
+              } catch (error) {
+                return { found: false, url: location.href, isTop: window.top === window, error: error.message };
+              }
+            })()
+          `;
+          const navigationFrames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+          const matchingNavigationFrames = navigationFrames.filter(frame => (
+            Number(frame?.frameId) !== 0
+            && typeof frame?.url === 'string'
+            && frameHostMatches(frame.url, iframeUrlFilter)
+            && frame.url.includes(iframeUrlFilter)
+          ));
+          const observations = await Promise.all(matchingNavigationFrames.map(async frame => {
+            try {
+              const result = (await browser.tabs.executeScript(tabId, { code, frameId: frame.frameId }))?.[0];
+              return result ? { frameId: frame.frameId, ...result } : null;
+            } catch (error) {
+              return { frameId: frame.frameId, url: frame.url, found: false, error: error.message };
+            }
+          }));
+          const matchingFrames = observations.filter(frame => (
+            frame
+            && frameHostMatches(frame.url, iframeUrlFilter)
+            && frame.url.includes(iframeUrlFilter)
+          ));
+          const verifiedFrames = matchingFrames.filter(frame => frame?.found);
+          const fields = verifiedFrames.flatMap(frame => frame.fields.map(field => ({
+            ...field,
+            frameId: frame.frameId,
+            frameUrl: frame.url,
+          })));
+          const targetChecks = verifiedFrames.flatMap(frame => (frame.targetChecks || [])
+            .map(check => {
+              const target = pendingTargets.find(item => (
+                item.selector === check.selector
+                && item.matchIndex === check.matchIndex
+                && (!Number.isInteger(item.frameId) || item.frameId === frame.frameId)
+              ));
+              if (!target) return null;
+              return {
+                selector: check.selector,
+                matchIndex: check.matchIndex,
+                matched: check.matched === true,
+                valueMatchesExpected: check.matched === true && (
+                  target.matchMode === 'suffix'
+                    ? check.valueSuffix === target.expectedValue
+                    : check.valuePrefix === target.expectedValue
+                ),
+                ...(check.error ? { error: check.error } : {}),
+                scope: iframeUrlFilter.toLowerCase(),
+                frameId: frame.frameId,
+                frameUrl: frame.url,
+              };
+            })
+            .filter(Boolean));
+          const publicFrames = verifiedFrames.map(({ targetChecks: _targetChecks, ...frame }) => frame);
+          return {
+            success: verifiedFrames.length > 0 && fields.length > 0,
+            found: verifiedFrames.length > 0,
+            scope: 'iframe',
+            urlFilter: iframeUrlFilter,
+            selector,
+            matchingFrameCount: matchingFrames.length,
+            frameCount: verifiedFrames.length,
+            fieldCount: fields.length,
+            fields,
+            targetChecks,
+            frames: publicFrames,
+            ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
+            ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
+          };
+        }
+
         const code = `
           (() => {
             const sel = ${JSON.stringify(args.selector || '')};
@@ -15703,6 +16019,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         result.success = !!result.found;
+        result.scope = 'top';
         if (this._formValidationBlocks.has(tabId)) {
           const currentStates = await this._captureFormValidationState(tabId);
           this._applyVerifyFormRecovery(tabId, result, currentStates);
@@ -15713,6 +16030,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
+    if (name === 'get_frames') {
+      try {
+        const frames = await browser.webNavigation.getAllFrames({ tabId });
+        return {
+          success: true,
+          source: 'webNavigation',
+          frames: (frames || []).map(frame => ({
+            id: String(frame.frameId),
+            frameId: frame.frameId,
+            parentFrameId: frame.parentFrameId,
+            url: frame.url || '',
+          })),
+        };
+      } catch (e) {
+        return { success: false, error: `Failed to get frames: ${e.message}` };
+      }
+    }
+
     // Iframe tools — use browser.tabs.executeScript with allFrames:true.
     // Extensions with <all_urls> permission can inject into any frame
     // regardless of origin, bypassing the same-origin policy.
@@ -15720,23 +16055,69 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         const urlFilter = args.urlFilter || '';
         const selector = args.selector || 'body';
+        const limit = Math.max(1, Math.min(50, Math.floor(Number(args.limit) || 25)));
         const code = `
           (() => {
             try {
-              const el = document.querySelector(${JSON.stringify(selector)});
+              const all = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
+              const semanticLabel = (el) => {
+                const direct = Array.from(el.labels || [])
+                  .map(label => (label.innerText || label.textContent || '').replace(/\\s+/g, ' ').trim())
+                  .find(Boolean);
+                if (direct) return direct.slice(0, 240);
+                const aria = String(el.getAttribute?.('aria-label') || '').replace(/\\s+/g, ' ').trim();
+                if (aria) return aria.slice(0, 240);
+                const labelledBy = String(el.getAttribute?.('aria-labelledby') || '').trim();
+                if (labelledBy) {
+                  const text = labelledBy.split(/\\s+/).map(id => document.getElementById(id))
+                    .filter(Boolean).map(node => node.innerText || node.textContent || '').join(' ')
+                    .replace(/\\s+/g, ' ').trim();
+                  if (text) return text.slice(0, 240);
+                }
+                return '';
+              };
+              const matches = all.slice(0, ${limit}).map((el, matchIndex) => {
+                const tag = String(el.tagName || '').toLowerCase();
+                const type = String(el.getAttribute?.('type') || el.type || '').toLowerCase();
+                let value = '';
+                if (type === 'password') value = '[redacted]';
+                else if (type === 'checkbox' || type === 'radio') value = el.checked ? String(el.value || 'on') : '(unchecked)';
+                else if (tag === 'select') value = String(el.options?.[el.selectedIndex]?.text || el.value || '');
+                else if ('value' in el) value = String(el.value || '');
+                else if (el.isContentEditable) value = String(el.textContent || '');
+                return {
+                  matchIndex,
+                  tag,
+                  type,
+                  role: String(el.getAttribute?.('role') || ''),
+                  id: String(el.id || ''),
+                  name: String(el.getAttribute?.('name') || ''),
+                  label: semanticLabel(el),
+                  ariaLabel: String(el.getAttribute?.('aria-label') || ''),
+                  placeholder: String(el.getAttribute?.('placeholder') || ''),
+                  value: value.slice(0, 500),
+                  text: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500),
+                };
+              });
+              const el = all[0] || null;
               return {
                 ok: !!el,
                 url: location.href,
+                isTop: window.top === window,
                 title: document.title || '',
+                selector: ${JSON.stringify(selector)},
+                matchCount: all.length,
+                truncated: all.length > matches.length,
+                matches,
                 text: el ? (el.innerText || '').slice(0, 4000) : '',
                 html: el ? (el.innerHTML || '').slice(0, 4000) : '',
                 tag: el ? el.tagName : null,
               };
-            } catch (e) { return { ok: false, url: location.href, error: e.message }; }
+            } catch (e) { return { ok: false, url: location.href, isTop: window.top === window, error: e.message }; }
           })()
         `;
         const results = await browser.tabs.executeScript(tabId, { code, allFrames: true });
-        const frames = (results || []).filter(r => r && (!urlFilter || frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter)));
+        const frames = (results || []).filter(r => r && !r.isTop && (!urlFilter || frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter)));
         return { success: true, frameCount: frames.length, frames };
       } catch (e) {
         return { success: false, error: `Iframe read failed: ${e.message}` };
@@ -15756,37 +16137,95 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'selector is required',
           };
         }
-        const binding = dispatchBinding;
+        const hasExplicitMatchIndex = args.matchIndex !== undefined && args.matchIndex !== null;
+        const requestedMatchIndex = hasExplicitMatchIndex ? Number(args.matchIndex) : 0;
+        if (!Number.isInteger(requestedMatchIndex) || requestedMatchIndex < 0) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            error: 'matchIndex must be a non-negative integer',
+          };
+        }
+        let binding = dispatchBinding;
+        if (!binding?.token || !Number.isInteger(binding.frameId)) {
+          const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          if (targetProbe?.ambiguous) {
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              ambiguous: true,
+              matchCount: targetProbe.matchCount || targetProbe.candidateFrames?.length || 0,
+              candidateFrames: targetProbe.candidateFrames || [],
+              error: 'iframe_click matched multiple elements. Call iframe_read with the same selector and urlFilter, then pass a specific matchIndex or narrower selector.',
+            };
+          }
+          binding = targetProbe?.dispatchBinding || null;
+        }
         if (binding?.token && Number.isInteger(binding.frameId)) {
           dispatched = true;
           const response = await browser.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'click',
-            params: { selector, dispatchBinding: binding },
+            params: { selector, matchIndex: requestedMatchIndex, dispatchBinding: binding },
           }, { frameId: binding.frameId });
           return {
             ...(response || { success: false, dispatched: false, noDispatch: true, error: 'Iframe click returned no response' }),
             frameId: binding.frameId,
           };
         }
-        const code = `
+
+        const frames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+        const candidates = [];
+        let invalidSelector = '';
+        for (const frame of frames) {
+          if (frame.frameId === 0) continue;
+          if (urlFilter && (!frameHostMatches(frame.url, urlFilter) || !frame.url.includes(urlFilter))) continue;
+          const censusCode = `
+            (() => {
+              try {
+                const count = document.querySelectorAll(${JSON.stringify(selector)}).length;
+                return { ok: count > ${requestedMatchIndex}, url: location.href, count, matchIndex: ${requestedMatchIndex} };
+              } catch (e) {
+                return { ok: false, url: location.href, invalidSelector: true, error: e.message };
+              }
+            })()
+          `;
+          const results = await browser.tabs.executeScript(tabId, { code: censusCode, frameId: frame.frameId });
+          const result = results?.[0];
+          if (result?.invalidSelector) {
+            invalidSelector = result.error || 'invalid selector';
+            break;
+          }
+          if (result?.ok) candidates.push({ frameId: frame.frameId, ...result });
+        }
+        if (invalidSelector) {
+          return { success: false, dispatched: false, noDispatch: true, error: `Invalid selector: ${invalidSelector}` };
+        }
+        const targetCount = hasExplicitMatchIndex
+          ? candidates.length
+          : candidates.reduce((sum, candidate) => sum + Number(candidate.count || 0), 0);
+        if (targetCount !== 1) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            ...(targetCount > 1 ? { ambiguous: true } : {}),
+            matchCount: targetCount,
+            frameUrls: candidates.map(candidate => candidate.url).slice(0, 10),
+            error: targetCount > 1
+              ? 'iframe_click matched multiple elements. Call iframe_read and pass the intended matchIndex or narrow urlFilter before clicking.'
+              : 'Element not found in any matching iframe',
+          };
+        }
+        const selected = candidates[0];
+        const clickCode = `
           (() => {
-            const filter = ${JSON.stringify(urlFilter)};
-            if (filter) {
-              // Require BOTH host match (anti-substring) AND the original
-              // substring (so a caller-supplied path disambiguates same-host
-              // frames).
-              let _w = String(filter).toLowerCase().trim();
-              try { _w = new URL(/^[a-z][a-z0-9+.\\-]*:\\/\\//i.test(_w) ? _w : 'https://' + _w).hostname; } catch (e) {}
-              _w = _w.replace(/^www\\./, '');
-              const _h = location.hostname.toLowerCase().replace(/^www\\./, '');
-              const _hostOk = !_w || _h === _w || _h.endsWith('.' + _w);
-              if (!_hostOk || !location.href.includes(filter)) return { ok: false, skipped: 'url-filter', url: location.href };
-            }
             let targetDispatched = false;
             try {
-              const el = document.querySelector(${JSON.stringify(selector)});
-              if (!el) return { ok: false, url: location.href, reason: 'not-found' };
+              const el = document.querySelectorAll(${JSON.stringify(selector)})[${requestedMatchIndex}];
+              if (!el) return { ok: false, url: location.href, reason: 'not-found-after-census' };
               el.scrollIntoView({ block: 'center', inline: 'center' });
               const rect = el.getBoundingClientRect();
               const opts = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width/2, clientY: rect.top + rect.height/2, button: 0 };
@@ -15801,20 +16240,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           })()
         `;
         dispatched = true;
-        const results = await browser.tabs.executeScript(tabId, { code, allFrames: true });
-        const successes = (results || []).filter(r => r && r.ok);
-        if (successes.length > 0) return { success: true, dispatched: true, method: 'iframe-click', frame: successes[0] };
-        const candidates = (results || []).filter(r => r && !r.skipped);
-        const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
-        return {
-          success: false,
-          ...(targetDispatched
-            ? { dispatched: true }
-            : { dispatched: false, noDispatch: true }),
-          error: 'Element not found in any matching iframe',
-          searchedFrames: candidates.length,
-          frameUrls: candidates.map(c => c.url).slice(0, 5),
-        };
+        const clicked = await browser.tabs.executeScript(tabId, { code: clickCode, frameId: selected.frameId });
+        const result = clicked?.[0];
+        return result?.ok
+          ? { success: true, dispatched: true, method: 'iframe-click', frameId: selected.frameId, frame: result }
+          : { success: false, dispatched: true, error: result?.error || 'Iframe click target changed before dispatch' };
       } catch (e) {
         return {
           success: false,
@@ -15850,6 +16280,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && dispatchContext.iframeTargetUnresolved !== true
         ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          if (targetProbe?.ambiguous) {
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              ambiguous: true,
+              matchCount: targetProbe.matchCount || targetProbe.candidateFrames?.length || 0,
+              frameUrls: targetProbe.matchedFrameUrls || [],
+              candidateFrames: targetProbe.candidateFrames || [],
+              error: 'iframe_type matched multiple elements, so nothing was typed. Call iframe_read with the same selector and urlFilter, then retry with a specific matchIndex or narrower urlFilter.',
+            };
+          }
           binding = targetProbe?.dispatchBinding || null;
           targetFrameId = binding?.frameId;
         }
@@ -15860,6 +16302,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             text,
             clear,
             urlFilter: args.urlFilter || '',
+            matchIndex: args.matchIndex,
           });
         }
         dispatched = true;
@@ -15871,6 +16314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               selector,
               text,
               clear,
+              matchIndex: args.matchIndex,
               dispatchBinding: binding,
             },
           }, { frameId: targetFrameId });

@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 26.2.0 · Manifest V3 · Service Worker background
+> Version 26.2.1 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -466,7 +466,9 @@ tier:
 > whitespace-normalising rich-text bodies. Only the toolbar recovery contract
 > requires a positive `true`.
 
-`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
+`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
+
+Iframe reads enumerate semantic labels, values, and stable per-selector `matchIndex` values. Iframe click/type calls first resolve exactly one frame and element and fail before dispatch on ambiguity. `promote_iframe` is the current-tab escape hatch for unreliable embeds: it resolves a child-frame URL from `webNavigation`, applies the normal navigation and unsaved-state guards, and preserves Back history. An `iframe_type` action opens a completion obligation that only `verify_form({urlFilter})` against the same iframe scope can clear.
 
 Full Act also adds advanced UI/DOM fallbacks: `resize_window`, `hover` (CDP-trusted, for reveal-on-hover menus), `drag_drop` (CDP-trusted pointer sequence, for Trello/Linear-style reordering), `get_shadow_dom`, `shadow_dom_query`, and `get_frames`. Mid Dev gets the shadow/frame inspection tools as Dev-extended debugging tools, but not hover/drag-drop.
 

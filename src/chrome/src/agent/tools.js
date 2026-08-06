@@ -704,6 +704,22 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'promote_iframe',
+      description: 'Navigate the current run tab to one embedded iframe\'s own standalone URL, preserving the browser Back history. Use this before editing when an embedded app/form is difficult to inspect or target reliably. The call fails closed if several frames match, and navigation is blocked when the current page already has unsaved form state.',
+      parameters: {
+        type: 'object',
+        properties: {
+          urlFilter: { type: 'string', description: 'Required iframe host or URL substring, for example "airtable.com/embed/".' },
+          matchIndex: { type: 'number', description: 'Zero-based matching-frame index. Omit unless promote_iframe reports several candidate frame URLs.' },
+          force: { type: 'boolean', description: 'Discard unsaved state on the current page before promotion. Default false; use only when the user explicitly intends to discard it.' },
+        },
+        required: ['urlFilter'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'done',
       description: 'Signal that the task is finished for this run. Only call this when you have successfully accomplished the user\'s request OR have exhausted every reasonable alternative (at least 3-4 different approaches). The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: do not needlessly repeat credentials the user supplied or volunteer existing credentials discovered on a page. If WebBrain generated a new credential for this task and the user needs it to use the result, include it once in the summary. If the user explicitly asked to see an exact credential, including it is the answer and you should include it.',
       parameters: {
@@ -784,12 +800,13 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_read',
-      description: 'Read content from iframes — INCLUDING cross-origin iframes (Stripe dashboards, embedded forms, etc.). Returns text content from all frames matching the optional URL filter, or all frames if no filter given. Works on cross-origin iframes because the extension injects directly into each frame, bypassing same-origin policy.',
+      description: 'Enumerate matching elements inside iframes — INCLUDING cross-origin frames. Returns every matched element (bounded by limit) with its matchIndex, semantic label, attributes, text, and current value, plus frame URLs. Reuse the returned selector + matchIndex for iframe_click/iframe_type; broad mutating selectors are rejected when ambiguous.',
       parameters: {
         type: 'object',
         properties: {
           urlFilter: { type: 'string', description: 'Optional substring to filter frames by URL (e.g. "stripe.com" to only read Stripe iframes). Omit to read all frames.' },
           selector: { type: 'string', description: 'Optional CSS selector to extract specific elements within each frame. Omit to get the full body text.' },
+          limit: { type: 'number', description: 'Maximum matching elements returned per frame. Default 25; maximum 50.' },
         },
         required: [],
       },
@@ -799,12 +816,13 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_click',
-      description: 'Click an element inside an iframe — INCLUDING cross-origin iframes. Use this when the target is inside an embedded form (Stripe, payment widgets, embedded apps, etc.). Works on cross-origin frames via extension script injection.',
+      description: 'Click exactly one element inside an iframe — INCLUDING cross-origin frames. Fails without dispatch when the selector matches multiple elements or frames. First call iframe_read with the same selector, then pass its matchIndex when needed.',
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on (e.g. "stripe.com"). If omitted, the first frame containing a matching selector is used.' },
+          urlFilter: { type: 'string', description: 'Required iframe host or URL substring (e.g. "stripe.com"). This scopes both target resolution and the permission gate.' },
           selector: { type: 'string', description: 'CSS selector for the element to click inside the iframe.' },
+          matchIndex: { type: 'number', description: 'Zero-based element index from iframe_read. Omit only when the selector uniquely matches one element across the selected frames.' },
         },
         required: ['selector'],
       },
@@ -814,12 +832,13 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_type',
-      description: 'Type text into an input/textarea inside an iframe — INCLUDING cross-origin iframes. Use this for filling forms inside embedded widgets (Stripe checkout, payment forms, etc.). If a rich-text editor recovery is pending and several frames match the selector, this fails and names the candidate frames; pass a urlFilter selecting exactly one of them.',
+      description: 'Type into exactly one input/textarea inside an iframe — INCLUDING cross-origin frames. Fails without dispatch when the selector matches multiple elements or frames. First call iframe_read with the same selector, then pass its matchIndex when needed. After iframe form edits, call verify_form with the same urlFilter before claiming completion.',
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on. Required to disambiguate when several frames match and a rich-text editor recovery is pending.' },
+          urlFilter: { type: 'string', description: 'Required iframe host or URL substring. This scopes both target resolution and the permission gate.' },
           selector: { type: 'string', description: 'CSS selector for the input element inside the iframe.' },
+          matchIndex: { type: 'number', description: 'Zero-based element index from iframe_read. Omit only when the selector uniquely matches one element across the selected frames.' },
           text: { type: 'string', description: 'Text to type into the field.' },
           clear: { type: 'boolean', description: 'Whether to clear the field before typing. Default false.' },
         },
@@ -1008,13 +1027,17 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'verify_form',
-      description: 'Read all form field values and capture a viewport screenshot. Call this BEFORE submitting important forms to confirm every field has the intended value. Returns field names, types, current values, plus a screenshot.',
+      description: 'Read all form field labels and values and capture a viewport screenshot. Also use this before ending a task that edited an iframe form, even when submission is intentionally left to the user. Pass urlFilter to verify forms inside matching cross-origin iframes.',
       parameters: {
         type: 'object',
         properties: {
           selector: {
             type: 'string',
             description: 'CSS selector for the <form> element. If omitted, uses the form containing the focused element, or the first form on the page.',
+          },
+          urlFilter: {
+            type: 'string',
+            description: 'Optional iframe host or URL substring. When supplied, verifies forms inside matching child frames instead of the top document.',
           },
         },
         required: [],
@@ -1507,7 +1530,7 @@ Available tools:
 - get_selection: Get highlighted text
 - find_text: Select one literal page-text match instead of Ctrl/Cmd+F. Each call replaces the previous selection; it does not open browser Find UI or keep multiple terms highlighted.
 - press_keys: Press only unmodified Escape/Tab/Enter/arrows or ; (semicolon). Modifier combinations and browser shortcuts are unsupported.
-- new_tab: Open a background reference tab; the current run stays on its original tab
+- new_tab: Open a background reference tab; the current run stays on its original tab. promote_iframe({urlFilter}): move the current run tab into one child frame's standalone page before editing when the embed is unreliable.
 - clarify: Pause and ask the user a question. Use ONLY for material ambiguity that you cannot resolve by reading the page (e.g. "my API key" on a site with multiple plugins that each have one). Unanswered clarifies auto-select options[0] after the timeout (default 60s) with source=timeout (not high-risk approval); Settings Instant yields source=auto (intentional auto-approve — continue). Put the safe/default first. Do NOT use to confirm correct actions; do NOT call before every step. Budget 1-2 per run, max.
 - done: Signal task completion
 - verify_form: Verify form fields before submitting
@@ -1618,9 +1641,10 @@ UI vs API — read this carefully:
 IFRAMES — read this:
 - Cross-origin iframes (Stripe dashboard, payment widgets, embedded apps, third-party forms, etc.) are NOT a blocker. You CAN interact with them. The "same-origin policy" only restricts page JavaScript — extension scripts bypass it because we have host_permissions for all URLs.
 - If a tool returns content that mentions "iframe" or "embedded" or you see iframe content in a screenshot, use the iframe-specific tools:
-  - \`iframe_read({urlFilter, selector})\` reads text/HTML from inside any iframe (including cross-origin).
-  - \`iframe_click({urlFilter, selector})\` clicks an element inside any iframe.
-  - \`iframe_type({urlFilter, selector, text, clear})\` types into a form field inside any iframe.
+  - \`iframe_read({urlFilter, selector})\` enumerates matches with labels, values, and matchIndex inside any iframe (including cross-origin).
+  - \`iframe_click({urlFilter, selector, matchIndex})\` clicks exactly one element and refuses ambiguous matches.
+  - \`iframe_type({urlFilter, selector, matchIndex, text, clear})\` types into exactly one form field and refuses ambiguous matches.
+- If the embedded UI remains unreliable and no fields have been changed, call \`promote_iframe({urlFilter})\` to navigate the current run tab to that frame's standalone URL. After any iframe form edits, call \`verify_form({urlFilter})\` and compare labels/values before done, even when the user will submit later.
 - The \`urlFilter\` parameter is a substring match against the iframe's URL. Use it to disambiguate when multiple iframes are present (e.g. \`urlFilter: "stripe.com"\` to target a Stripe widget specifically).
 - Coordinate clicks via \`click({x, y})\` ALSO work inside iframes — they dispatch at the OS level via CDP and don't care about origin boundaries — but selector-based iframe tools are more reliable.
 - DO NOT refuse a task by saying "I can't access cross-origin iframes" or "Stripe's security restrictions prevent this". Those refusals are wrong in this environment. Try the iframe tools instead.
@@ -1811,7 +1835,7 @@ export const MID_TOOL_NAMES = new Set([
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
   'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'go_back', 'go_forward',
   'extract_data', 'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
-  'new_tab', 'done', 'clarify', 'schedule_resume', 'schedule_task',
+  'new_tab', 'promote_iframe', 'done', 'clarify', 'schedule_resume', 'schedule_task',
   'iframe_read', 'iframe_click', 'iframe_type',
   'fetch_url', 'research_url', 'list_downloads', 'read_downloaded_file',
   'download_files', 'download_resource_from_page', 'upload_file', 'download_social_media',
@@ -1847,13 +1871,13 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
-- read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run.
+- read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run; promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
 - get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.
 - extract_data: tables/headings/images/links. get_selection: read highlighted text. find_text({text}): select one literal page-text match; each call replaces the previous selection and never creates simultaneous highlights or browser Find UI. read_pdf: read a PDF.
 - wait_for_element({selector}) / wait_for_stable({quietMs}): wait for an element / for the page to go quiet after an action.
 - schedule_resume({after_seconds|run_at, reason, resume_instruction}): terminal durable pause for this current task.
 - schedule_task({title, prompt, schedule, target, mode}): create one-shot or fixed-minute-interval future work only when explicitly requested by the user. Calendar/cron recurrence is unsupported and must not be approximated. Prefer target.type:"url" for monitors/repeatable automations; use current_tab only for exact current-tab state.
-- iframe_read / iframe_click / iframe_type ({urlFilter, selector, text}): interact inside cross-origin iframes (Stripe, payment widgets, embeds).
+- iframe_read / iframe_click / iframe_type ({urlFilter, selector, matchIndex, text}): enumerate and interact inside cross-origin iframes. iframe_read returns matchIndex values; iframe_click/type reject ambiguous selectors. After iframe form edits, verify_form({urlFilter}) is required before success.
 - fetch_url({url}) / research_url({url}): read OTHER URLs (not the active tab). list_downloads, download_files, download_resource_from_page, read_downloaded_file, upload_file({selector, attachmentId}) or upload_file({selector, downloadId}): file workflows. Use attachmentId for a current user-supplied file; use downloadId for a downloaded file. Use download_files for direct URLs and download_resource_from_page when the resource is attached to a visible page element or a blob: URL. Successful downloads auto-pin each file's downloadId to the scratchpad as an \`[auto]\` line — attach with upload_file({downloadId, selector}) and re-read with read_downloaded_file({downloadId}); no need to recall the path.
 - download_public_media (if enabled) / download_social_media: one-shot image/video download from supported public social sites; purpose-built download tools should be tried before manual DOM/resource workflows.
 - verify_form: check a form's field values before submitting. scratchpad_write({text}): pin facts that survive context summarization. progress_update/progress_read: track repeated item/action progress.
@@ -1888,7 +1912,7 @@ FORMS & MODALS:
 - CAPTCHAs: never dismiss or resubmit a verification dialog. With a [CAPTCHA SOLVER] note, follow the runtime's one-solve route and verify clearance with a root accessibility-tree read before submitting; otherwise stop for manual completion.
 
 IFRAMES & UI-vs-API:
-- Cross-origin iframes (Stripe, payment widgets, embedded forms) are NOT a blocker — extension scripts bypass same-origin. Use iframe_read / iframe_click / iframe_type with a urlFilter substring. Don't refuse with "I can't access cross-origin iframes".
+- Cross-origin iframes (Stripe, payment widgets, embedded forms) are NOT a blocker. Start with iframe_read to enumerate labels and matchIndex values; iframe_click/type fail closed on ambiguity. If the embed remains hard to target and no fields have been changed, use promote_iframe({urlFilter}) to load it standalone in the current run tab. After iframe form edits, call verify_form({urlFilter}) and compare labels/values before done, even when the user will submit later.
 - For anything that creates, modifies, deletes, sends, submits, buys, transfers, or posts: go through the visible UI unless /allow-api is enabled and either UI is failing/unworkable or WebBrain reports a [BULK API MUTATION PATTERN]. Do NOT call REST/GraphQL endpoints via fetch_url with POST/PUT/PATCH/DELETE without /allow-api. Reading data (fetch_url / research_url GET) is fine.
 
 SCRATCHPAD & DON'T REDO WORK:

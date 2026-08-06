@@ -12413,6 +12413,116 @@ test('completion invariant state machine enforces post-action observation with C
     );
     assert.equal(downloadState.verificationDebt, false, `${label}: list_downloads did not verify download state`);
 
+    let iframeFormState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-iframe-form`),
+      'iframe_type',
+      { urlFilter: 'airtable.com/embed', selector: 'input', matchIndex: 2, text: 'United States' },
+      { success: true, dispatched: true, verified: true, frameId: 7, value: 'United States' },
+    );
+    assert.equal(iframeFormState.iframeFormVerificationDebt, true, `${label}: iframe typing did not open semantic form-verification debt`);
+    iframeFormState = invariant.recordCompletionToolResult(
+      iframeFormState,
+      'iframe_read',
+      { urlFilter: 'airtable.com/embed', selector: 'input' },
+      { success: true, frameCount: 1, frames: [{ matchCount: 3 }] },
+    );
+    assert.equal(iframeFormState.verificationDebt, false, `${label}: iframe_read did not satisfy general observation debt`);
+    assert.equal(
+      invariant.completionDoneBlock(iframeFormState, 'done', { outcome: 'success' })?.reason,
+      'iframe_form_verification_required',
+      `${label}: generic iframe inspection allowed a form-fill success claim`,
+    );
+    iframeFormState = invariant.recordCompletionToolResult(
+      iframeFormState,
+      'verify_form',
+      {},
+      { success: true, scope: 'top', fieldCount: 3 },
+    );
+    assert.equal(iframeFormState.iframeFormVerificationDebt, true, `${label}: top-page form verification cleared iframe debt`);
+    iframeFormState = invariant.recordCompletionToolResult(
+      iframeFormState,
+      'verify_form',
+      { urlFilter: 'airtable.com/other' },
+      { success: true, scope: 'iframe', urlFilter: 'airtable.com/other', fieldCount: 3 },
+    );
+    assert.equal(iframeFormState.iframeFormVerificationDebt, true, `${label}: another iframe scope cleared form debt`);
+    iframeFormState = invariant.recordCompletionToolResult(
+      iframeFormState,
+      'verify_form',
+      { urlFilter: 'airtable.com/embed' },
+      {
+        success: true,
+        scope: 'iframe',
+        urlFilter: 'airtable.com/embed',
+        fieldCount: 3,
+        targetChecks: [{
+          scope: 'airtable.com/embed',
+          frameId: 7,
+          selector: 'input',
+          matchIndex: 2,
+          matched: true,
+          valueMatchesExpected: true,
+        }],
+      },
+    );
+    assert.equal(iframeFormState.iframeFormVerificationDebt, false, `${label}: matching iframe verify_form did not clear form debt`);
+    assert.equal(invariant.completionDoneBlock(iframeFormState, 'done', { outcome: 'success' }), null);
+
+    let multiIframeState = invariant.createCompletionInvariantState(`${label}-multi-iframe-form`);
+    multiIframeState = invariant.recordCompletionToolResult(
+      multiIframeState,
+      'iframe_type',
+      { urlFilter: 'forms.example/a', selector: '#first', matchIndex: 0, text: 'Alpha', clear: true },
+      { success: true, dispatched: true, frameId: 7, value: 'Alpha' },
+    );
+    multiIframeState = invariant.recordCompletionToolResult(
+      multiIframeState,
+      'iframe_type',
+      { urlFilter: 'forms.example/b', selector: '#second', matchIndex: 0, text: 'Beta', clear: true },
+      { success: true, dispatched: true, frameId: 9, value: 'Beta' },
+    );
+    assert.equal(multiIframeState.iframeFormVerificationObligations.length, 2, `${label}: a later iframe edit replaced an earlier obligation`);
+    multiIframeState = invariant.recordCompletionToolResult(
+      multiIframeState,
+      'verify_form',
+      { urlFilter: 'forms.example/b' },
+      {
+        success: true,
+        scope: 'iframe',
+        urlFilter: 'forms.example/b',
+        fieldCount: 4,
+        targetChecks: [{ scope: 'forms.example/b', frameId: 9, selector: '#second', matchIndex: 0, matched: true, valueMatchesExpected: true }],
+      },
+    );
+    assert.equal(multiIframeState.iframeFormVerificationDebt, true, `${label}: verifying the latest iframe erased another iframe obligation`);
+    assert.equal(multiIframeState.iframeFormVerificationObligations.length, 1, `${label}: exact iframe verification did not clear only its own target`);
+    multiIframeState = invariant.recordCompletionToolResult(
+      multiIframeState,
+      'verify_form',
+      { urlFilter: 'forms.example/a' },
+      {
+        success: true,
+        scope: 'iframe',
+        urlFilter: 'forms.example/a',
+        fieldCount: 4,
+        targetChecks: [{ scope: 'forms.example/a', frameId: 7, selector: '#unrelated', matchIndex: 0, matched: true, valueMatchesExpected: true }],
+      },
+    );
+    assert.equal(multiIframeState.iframeFormVerificationDebt, true, `${label}: unrelated field evidence cleared a target-specific obligation`);
+    multiIframeState = invariant.recordCompletionToolResult(
+      multiIframeState,
+      'verify_form',
+      { urlFilter: 'forms.example/a' },
+      {
+        success: true,
+        scope: 'iframe',
+        urlFilter: 'forms.example/a',
+        fieldCount: 4,
+        targetChecks: [{ scope: 'forms.example/a', frameId: 7, selector: '#first', matchIndex: 0, matched: true, valueMatchesExpected: true }],
+      },
+    );
+    assert.equal(multiIframeState.iframeFormVerificationDebt, false, `${label}: all exact target checks did not clear iframe debt`);
+
     for (const [caseName, result] of [
       ['noProgress', { success: false, noProgress: true, verified: false }],
       ['fallbackAttempted', { success: false, fallbackAttempted: true, verified: false }],
@@ -12464,7 +12574,7 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       },
       tabs: {
         get: async () => ({ url: 'chrome://settings' }),
-        sendMessage: async (_tabId, message) => message.action === 'type'
+        sendMessage: async (_tabId, message) => (message.action === 'type' || message.action === 'click')
           ? chromeIframeTypeResponse
           : ({
               resolved: true,
@@ -12544,7 +12654,7 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       tabs: {
         executeScript: async () => [{ ok: false, reason: 'not-found', url: 'https://example.test/frame' }],
         get: async () => ({ url: 'about:config' }),
-        sendMessage: async (_tabId, message) => message.action === 'type'
+        sendMessage: async (_tabId, message) => (message.action === 'type' || message.action === 'click')
           ? firefoxIframeTypeResponse
           : ({
               resolved: true,
@@ -28462,6 +28572,11 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
       if (message.params?.args?.selector === '#ambiguous-field') {
         return ordinaryProbe;
       }
+      if (message.params?.args?.selector === '#same-frame-many') {
+        return options.frameId === 7
+          ? { ...ordinaryProbe, selectorMatchCount: 3, selectorMatchIndex: 0 }
+          : { resolved: false };
+      }
       if (message.params?.args?.selector === '#shared-field') {
         sharedProbeFrameIds.push(options.frameId);
         return options.frameId === 9 ? { resolved: false } : ordinaryProbe;
@@ -28557,23 +28672,23 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(ambiguousChromeProbe.ambiguous, true);
     assert.equal(ambiguousChromeProbe.matchCount, 2);
     assert.deepEqual(ambiguousChromeProbe.matchedFrameIds, [7, 9]);
+    const repeatedChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#same-frame-many',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(repeatedChromeProbe.ambiguous, true);
+    assert.equal(repeatedChromeProbe.matchCount, 3, 'Chrome: one-frame selector multiplicity must fail closed');
+    assert.equal(repeatedChromeProbe.candidateFrames[0]?.elementCount, 3);
     const preflightAmbiguousIframe = () => chromeAgent._preflightRichTextToolbarTarget(
       42,
       'iframe_type',
       { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
       null,
     );
-    // Ambiguity is only unsafe once a recovery is pending. Blocking it
-    // unconditionally would strand every page with repeated same-origin
-    // frames, because the tool loop returns the preflight block instead of
-    // ever reaching the legacy all-frames fallback in executeTool.
     const ambiguousChromePreflight = await preflightAmbiguousIframe();
-    assert.equal(ambiguousChromePreflight.block, null, 'Chrome: ambiguous frames with no debt must reach the all-frames fallback');
-    assert.equal(
-      ambiguousChromePreflight.iframeTargetUnresolved,
-      true,
-      'Chrome: the preflight must tell executeTool the frame sweep already failed',
-    );
+    assert.equal(ambiguousChromePreflight.block?.noDispatch, true, 'Chrome: ambiguous iframe mutation must fail closed without toolbar debt');
+    assert.equal(ambiguousChromePreflight.block?.ambiguous, true);
     chromeAgent._richTextToolbarGuard.restore(42, {
       recoveryObligations: [{
         toolName: 'type_ax',
@@ -28657,23 +28772,23 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
     assert.equal(ambiguousFirefoxProbe.ambiguous, true);
     assert.equal(ambiguousFirefoxProbe.matchCount, 2);
     assert.deepEqual(ambiguousFirefoxProbe.matchedFrameIds, [7, 9]);
+    const repeatedFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#same-frame-many',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(repeatedFirefoxProbe.ambiguous, true);
+    assert.equal(repeatedFirefoxProbe.matchCount, 3, 'Firefox: one-frame selector multiplicity must fail closed');
+    assert.equal(repeatedFirefoxProbe.candidateFrames[0]?.elementCount, 3);
     const preflightAmbiguousFirefoxIframe = () => firefoxAgent._preflightRichTextToolbarTarget(
       42,
       'iframe_type',
       { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
       null,
     );
-    // Ambiguity is only unsafe once a recovery is pending. Blocking it
-    // unconditionally would strand every page with repeated same-origin
-    // frames, because the tool loop returns the preflight block instead of
-    // ever reaching the legacy all-frames fallback in executeTool.
     const ambiguousFirefoxPreflight = await preflightAmbiguousFirefoxIframe();
-    assert.equal(ambiguousFirefoxPreflight.block, null, 'Firefox: ambiguous frames with no debt must reach the all-frames fallback');
-    assert.equal(
-      ambiguousFirefoxPreflight.iframeTargetUnresolved,
-      true,
-      'Firefox: the preflight must tell executeTool the frame sweep already failed',
-    );
+    assert.equal(ambiguousFirefoxPreflight.block?.noDispatch, true, 'Firefox: ambiguous iframe mutation must fail closed without toolbar debt');
+    assert.equal(ambiguousFirefoxPreflight.block?.ambiguous, true);
     firefoxAgent._richTextToolbarGuard.restore(42, {
       recoveryObligations: [{
         toolName: 'type_ax',
@@ -28716,11 +28831,11 @@ test('iframe_type toolbar probes use the matching frame and map its target into 
   }
 });
 
-test('iframe_type falls back to all-frames dispatch until a toolbar recovery is pending', async () => {
-  // Single-frame resolution is stricter than the pre-guard behavior and is
-  // what the target token binds to, but it cannot resolve pages with repeated
-  // same-origin frames or frames content.js cannot enter. Those calls used to
-  // work, so they keep working until a debt makes ambiguity unsafe.
+test('iframe_type never mutates multiple matching frames', async () => {
+  // A broad selector used to type into every matching child frame and return
+  // the first success. That can overwrite the same field repeatedly or mutate
+  // several unrelated forms, so ambiguity now fails before dispatch in every
+  // recovery state.
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   const frames = [
@@ -28766,17 +28881,24 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
     try {
       const agent = new AgentClass({});
 
-      const fallback = await agent.executeTool(42, 'iframe_type', {
+      const blockedWithoutDebt = await agent.executeTool(42, 'iframe_type', {
         urlFilter: 'frame.example.test',
         selector: '#shared-field',
         text: 'hello',
       });
-      assert.equal(fallback.success, true, `${label}: ambiguous frames with no debt must still type`);
-      assert.equal(fallback.resolution, 'all-frames', `${label}: the fallback path must be identifiable in the result`);
-      assert.ok(legacyArgs, `${label}: the legacy all-frames dispatch must have run`);
+      assert.equal(blockedWithoutDebt.success, false, `${label}: ambiguous frames typed without toolbar debt`);
+      assert.equal(blockedWithoutDebt.noDispatch, true, `${label}: ambiguous frames did not fail before dispatch`);
+      assert.equal(blockedWithoutDebt.ambiguous, true, `${label}: ambiguity was not surfaced`);
+      assert.deepEqual(
+        blockedWithoutDebt.frameUrls,
+        ['https://frame.example.test/editor', 'https://frame.example.test/editor'],
+        `${label}: ambiguous result omitted candidate frames`,
+      );
+      assert.match(blockedWithoutDebt.error, /iframe_read|matchIndex|urlFilter/, `${label}: ambiguity did not provide a disambiguation path`);
+      assert.equal(legacyArgs, null, `${label}: ambiguous no-debt call reached a mutating fallback`);
 
-      // Once a recovery is pending, ambiguity must fail closed and say which
-      // frames matched so the agent can pick a urlFilter instead of guessing.
+      // The same fail-closed behavior remains in force while toolbar recovery
+      // is pending.
       legacyArgs = null;
       agent._richTextToolbarGuard.restore(42, {
         recoveryObligations: [{
@@ -28791,7 +28913,7 @@ test('iframe_type falls back to all-frames dispatch until a toolbar recovery is 
         selector: '#shared-field',
         text: 'hello',
       });
-      assert.equal(blocked.success, false, `${label}: a pending recovery must not type into an unvetted frame`);
+      assert.equal(blocked.success, false, `${label}: pending recovery typed into an unvetted frame`);
       assert.equal(blocked.noDispatch, true, `${label}: the blocked call must not dispatch`);
       assert.equal(blocked.ambiguous, true, `${label}: the blocked call must report ambiguity`);
       assert.deepEqual(
@@ -39441,6 +39563,62 @@ test('provider docs describe cache-aware cost semantics and configuration', () =
   assert.match(docs[0], /final cumulative usage snapshot/);
 });
 
+test('promote_iframe documentation is mirrored across public languages', () => {
+  const mirrors = [
+    {
+      label: 'English',
+      root: 'docs',
+      availabilityRow: '| `promote_iframe` | No | No | Yes | Yes | - |',
+      historyPattern: /Back history[\s\S]*go_back/,
+      counts: [/Chrome: 62 core tools\./, /Firefox: 53 core tools\./],
+    },
+    {
+      label: 'French',
+      root: 'docs/fr',
+      availabilityRow: '| `promote_iframe` | Non | Non | Oui | Oui | - |',
+      historyPattern: /historique Retour[\s\S]*go_back/,
+      counts: [/Chrome : 62 outils de base\./, /Firefox : 53 outils de base\./],
+    },
+    {
+      label: 'Chinese',
+      root: 'docs/zh-CN',
+      availabilityRow: '| `promote_iframe` | 否 | 否 | 是 | 是 | - |',
+      historyPattern: /后退历史[\s\S]*go_back/,
+      counts: [/Chrome：62 个核心工具。/, /Firefox：53 个核心工具。/],
+    },
+  ];
+
+  for (const mirror of mirrors) {
+    const tools = fs.readFileSync(path.join(ROOT, mirror.root, 'agent-tools.md'), 'utf8');
+    const accessibility = fs.readFileSync(path.join(ROOT, mirror.root, 'accessibility-tree-and-refs.md'), 'utf8');
+    const comparison = fs.readFileSync(path.join(ROOT, mirror.root, 'claude-chrome-comparison.md'), 'utf8');
+
+    assert.ok(tools.includes(mirror.availabilityRow), `${mirror.label}: availability row is missing or incorrect`);
+    assert.match(tools, /promote_iframe[\s\S]*(?:Mid\/Full|Mid or Full|Mid 或 Full)[\s\S]*Dev/, `${mirror.label}: Act-to-Dev inheritance guidance is missing`);
+
+    const promoteSectionStart = accessibility.indexOf('promote_iframe');
+    const workflowStart = accessibility.indexOf('1.', promoteSectionStart);
+    const workflowEnd = accessibility.indexOf('\n---', workflowStart);
+    assert.ok(promoteSectionStart >= 0 && workflowStart > promoteSectionStart && workflowEnd > workflowStart, `${mirror.label}: iframe workflow section is missing`);
+    const workflow = accessibility.slice(workflowStart, workflowEnd);
+    assert.match(
+      workflow,
+      /1\.[\s\S]*iframe_read[\s\S]*get_frames[\s\S]*2\.[\s\S]*promote_iframe[\s\S]*urlFilter[\s\S]*3\.[\s\S]*matchIndex[\s\S]*4\./,
+      `${mirror.label}: discover, promote, disambiguate, and re-read workflow is incomplete`,
+    );
+    assert.match(accessibility, mirror.historyPattern, `${mirror.label}: same-tab Back-history behavior is missing`);
+    assert.match(accessibility, /force: true/, `${mirror.label}: explicit draft-discard override is missing`);
+    assert.match(accessibility, /promote_iframe[\s\S]*navigate/, `${mirror.label}: navigate distinction is missing`);
+
+    for (const countPattern of mirror.counts) assert.match(comparison, countPattern);
+    for (const omittedTool of ['set_checked', 'find_text', 'list_webmcp_tools', 'execute_webmcp_tool']) {
+      assert.match(comparison, new RegExp(`\\b${omittedTool}\\b`), `${mirror.label}: ${omittedTool} is missing from the reconciled inventory`);
+    }
+    const promoteMentions = comparison.match(/promote_iframe/g) || [];
+    assert.ok(promoteMentions.length >= 4, `${mirror.label}: promote_iframe must appear in inventory, navigation/frame families, and iframe comparison`);
+  }
+});
+
 console.log('\nsheets-tools: A1 parsing');
 
 test('parseA1: single cell A1', () => {
@@ -42960,6 +43138,8 @@ test('capabilityFor: screenshot is read-only, but save:true is a download', () =
 test('capabilityFor: state-changing tools map to capabilities', () => {
   assert.equal(capabilityFor('navigate', { url: 'https://x.com' }), Capability.NAVIGATE);
   assert.equal(capabilityFor('new_tab', { url: 'https://x.com' }), Capability.NAVIGATE);
+  assert.equal(capabilityFor('promote_iframe', { urlFilter: 'airtable.com' }), Capability.NAVIGATE);
+  assert.equal(capabilityForCh('promote_iframe', { urlFilter: 'airtable.com' }), CapabilityCh.NAVIGATE);
   assert.equal(capabilityFor('go_back', {}), Capability.NAVIGATE);
   assert.equal(capabilityFor('go_forward', { steps: 2 }), Capability.NAVIGATE);
   assert.equal(capabilityFor('click', {}), Capability.CLICK);
@@ -54393,10 +54573,276 @@ test('iframe actions are gated on the frame host (urlFilter), not the top page',
     hostForCapability(Capability.TYPE, { urlFilter: 'https://checkout.paypal.com/x' }, top, 'iframe_type'),
     'checkout.paypal.com'
   );
+  assert.equal(
+    hostForCapability(Capability.NAVIGATE, { urlFilter: 'airtable.com/embed' }, top, 'promote_iframe'),
+    'airtable.com'
+  );
+  assert.equal(
+    hostForCapabilityCh(CapabilityCh.NAVIGATE, { urlFilter: 'airtable.com/embed' }, top, 'promote_iframe'),
+    'airtable.com'
+  );
   // No urlFilter → host can't be identified → return '' so the agent fails closed
   assert.equal(hostForCapability(Capability.CLICK, {}, top, 'iframe_click'), '');
   // A normal (non-iframe) click still uses the current page host
   assert.equal(hostForCapability(Capability.CLICK, { ref_id: 'ref_1' }, top, 'click'), 'merchant.com');
+});
+
+test('promote_iframe resolves one child frame and fails closed on ambiguity', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const top = { frameId: 0, parentFrameId: -1, url: 'https://host.example/form-page' };
+  const frameA = { frameId: 7, parentFrameId: 0, url: 'https://airtable.com/embed/form-a' };
+  const frameB = { frameId: 9, parentFrameId: 0, url: 'https://airtable.com/embed/form-b' };
+
+  try {
+    for (const [label, AgentClass, globalKey] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const api = {
+        webNavigation: { getAllFrames: async () => [top, frameA, frameB] },
+        tabs: {
+          get: async () => ({ id: 42, url: top.url }),
+          executeScript: async () => [{ attachedFiles: 0, dirtyFields: 1 }],
+        },
+        scripting: {
+          executeScript: async ({ target }) => [{
+            frameId: target.frameIds?.[0] ?? 0,
+            result: { attachedFiles: 0, dirtyFields: 1 },
+          }],
+        },
+      };
+      globalThis[globalKey] = api;
+      const agent = new AgentClass({});
+      const execute = agent.executeTool.bind(agent);
+      let delegatedNavigation = null;
+      agent.executeTool = async (tabId, name, args, ...rest) => {
+        if (name === 'navigate') {
+          delegatedNavigation = { tabId, args };
+          return { success: true, dispatched: true, verified: true, url: args.url };
+        }
+        return execute(tabId, name, args, ...rest);
+      };
+
+      const ambiguous = await execute(42, 'promote_iframe', { urlFilter: 'airtable.com/embed' });
+      assert.equal(ambiguous.success, false, `${label}: ambiguous iframe promotion succeeded`);
+      assert.equal(ambiguous.noDispatch, true, `${label}: ambiguous iframe promotion dispatched`);
+      assert.equal(ambiguous.ambiguous, true, `${label}: promotion ambiguity was hidden`);
+      assert.equal(delegatedNavigation, null, `${label}: ambiguous promotion delegated navigation`);
+
+      const blocked = await execute(42, 'promote_iframe', {
+        urlFilter: 'airtable.com/embed',
+        matchIndex: 1,
+      });
+      assert.equal(blocked.success, false, `${label}: dirty iframe promotion succeeded without force`);
+      assert.equal(blocked.blockedUnsavedChanges, true, `${label}: dirty iframe promotion omitted the draft-state block`);
+      assert.equal(delegatedNavigation, null, `${label}: dirty iframe promotion delegated navigation`);
+
+      const promoted = await execute(42, 'promote_iframe', {
+        urlFilter: 'airtable.com/embed',
+        matchIndex: 1,
+        force: true,
+      });
+      assert.equal(promoted.success, true, `${label}: selected iframe was not promoted`);
+      assert.equal(promoted.promoted, true, `${label}: promotion result omitted promoted state`);
+      assert.equal(promoted.promotedFrameId, 9, `${label}: wrong child frame was promoted`);
+      assert.equal(promoted.promotedFrameUrl, frameB.url, `${label}: wrong frame URL was promoted`);
+      assert.deepEqual(
+        delegatedNavigation,
+        { tabId: 42, args: { url: frameB.url, force: true } },
+        `${label}: promotion did not delegate to guarded current-tab navigation`,
+      );
+      assert.equal(
+        agent._browserActionFreshTurnReason('full', 'promote_iframe', promoted),
+        'navigation_changed',
+        `${label}: promotion did not force a fresh browser-action turn`,
+      );
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('verify_form returns semantic iframe-scoped field evidence', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const matchingFrame = {
+    found: true,
+    url: 'https://airtable.com/embed/form-a',
+    action: 'https://airtable.com/submit',
+    method: 'post',
+    fieldCount: 2,
+    fields: [
+      { matchIndex: 0, label: 'WebBrain', name: 'product', type: 'text', value: 'WebBrain' },
+      { matchIndex: 1, label: 'Website URL', name: 'url', type: 'url', value: 'https://webbrain.app' },
+    ],
+  };
+  const ignoredFrame = {
+    found: true,
+    url: 'https://evil.example/?next=airtable.com/embed/form-a',
+    fieldCount: 1,
+    fields: [{ matchIndex: 0, label: 'Injected', value: 'wrong frame' }],
+  };
+
+  try {
+    globalThis.chrome = {
+      tabs: { get: async () => ({ id: 42, url: 'https://host.example/form-page' }) },
+      scripting: {
+        executeScript: async () => [
+          { frameId: 7, result: matchingFrame },
+          { frameId: 9, result: ignoredFrame },
+        ],
+      },
+    };
+    const chromeResult = await new AgentCh({}).executeTool(42, 'verify_form', { urlFilter: 'airtable.com/embed' });
+    assert.equal(chromeResult.success, true);
+    assert.equal(chromeResult.scope, 'iframe');
+    assert.equal(chromeResult.fieldCount, 2);
+    assert.deepEqual(chromeResult.fields.map(field => [field.label, field.value, field.frameId]), [
+      ['WebBrain', 'WebBrain', 7],
+      ['Website URL', 'https://webbrain.app', 7],
+    ]);
+
+    globalThis.browser = {
+      webNavigation: {
+        getAllFrames: async () => [
+          { frameId: 0, url: 'https://host.example/form-page' },
+          { frameId: 7, url: matchingFrame.url },
+          { frameId: 9, url: ignoredFrame.url },
+        ],
+      },
+      tabs: {
+        get: async () => ({ id: 42, url: 'https://host.example/form-page' }),
+        executeScript: async (_tabId, options) => options.frameId === 7 ? [matchingFrame] : [ignoredFrame],
+      },
+    };
+    const firefoxResult = await new AgentFx({}).executeTool(42, 'verify_form', { urlFilter: 'airtable.com/embed' });
+    assert.equal(firefoxResult.success, true);
+    assert.equal(firefoxResult.scope, 'iframe');
+    assert.equal(firefoxResult.fieldCount, 2);
+    assert.deepEqual(firefoxResult.fields.map(field => [field.label, field.value, field.frameId]), [
+      ['WebBrain', 'WebBrain', 7],
+      ['Website URL', 'https://webbrain.app', 7],
+    ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('verify_form checks pending iframe values without exposing raw comparison evidence', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const secretValue = 'private-form-value';
+  const iframeUrl = 'https://forms.example/embed/a';
+  const typeArgs = {
+    urlFilter: 'forms.example/embed',
+    selector: 'input[type=password]',
+    matchIndex: 0,
+    text: secretValue,
+    clear: true,
+  };
+  const frameResult = {
+    found: true,
+    url: iframeUrl,
+    action: 'https://forms.example/submit',
+    method: 'post',
+    fieldCount: 1,
+    fields: [{ matchIndex: 0, label: 'Password', type: 'password', value: '[redacted]' }],
+    targetChecks: [{
+      selector: typeArgs.selector,
+      matchIndex: 0,
+      matched: true,
+      valuePrefix: secretValue,
+      valueSuffix: secretValue,
+    }],
+  };
+
+  try {
+    for (const [label, AgentClass, installApi] of [
+      ['chrome', AgentCh, () => {
+        globalThis.chrome = {
+          scripting: {
+            executeScript: async options => {
+              assert.equal(JSON.stringify(options.args || []).includes(secretValue), false, 'Chrome injected the expected value into page arguments');
+              return [{ frameId: 7, result: frameResult }];
+            },
+          },
+        };
+      }],
+      ['firefox', AgentFx, () => {
+        globalThis.browser = {
+          webNavigation: { getAllFrames: async () => [{ frameId: 7, url: iframeUrl }] },
+          tabs: {
+            executeScript: async (_tabId, options) => {
+              assert.equal(String(options.code || '').includes(secretValue), false, 'Firefox injected the expected value into page code');
+              return [frameResult];
+            },
+          },
+        };
+      }],
+    ]) {
+      installApi();
+      const agent = new AgentClass({});
+      agent._beginCompletionInvariant(42);
+      agent._recordCompletionToolResult(42, 'iframe_type', typeArgs, {
+        success: true,
+        dispatched: true,
+        frameId: 7,
+        value: secretValue,
+      });
+      const result = await agent.executeTool(42, 'verify_form', { urlFilter: typeArgs.urlFilter });
+      assert.equal(result.success, true, `${label}: target verification failed`);
+      assert.equal(result.targetChecks[0]?.valueMatchesExpected, true, `${label}: exact target value was not compared`);
+      assert.equal(JSON.stringify(result).includes(secretValue), false, `${label}: raw target comparison value escaped into the tool result`);
+      agent._recordCompletionToolResult(42, 'verify_form', { urlFilter: typeArgs.urlFilter }, result);
+      assert.equal(agent.completionInvariants.get(42)?.iframeFormVerificationDebt, false, `${label}: exact runtime evidence did not discharge iframe debt`);
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('Chrome iframe_click fallback never treats the top document as an iframe target', async () => {
+  const previousChrome = globalThis.chrome;
+  let dispatchCount = 0;
+  try {
+    globalThis.chrome = {
+      tabs: {
+        get: async () => ({ id: 42, url: 'https://host.example/form-page' }),
+      },
+      scripting: {
+        executeScript: async ({ target }) => {
+          if (target.allFrames) {
+            return [
+              { frameId: 0, result: { ok: true, url: 'https://host.example/form-page', count: 1, matchIndex: 0 } },
+              { frameId: 7, result: { ok: false, url: 'https://airtable.com/embed/form-a', count: 0, matchIndex: 0 } },
+            ];
+          }
+          dispatchCount += 1;
+          return [{ frameId: target.frameIds?.[0], result: { ok: true, dispatched: true } }];
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    agent._probeRichTextToolbarIframeTarget = async () => null;
+    const result = await agent.executeTool(42, 'iframe_click', { selector: 'button[type=submit]' });
+    assert.equal(result.success, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.matchCount, 0);
+    assert.equal(dispatchCount, 0, 'top-frame census result reached click dispatch');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
 });
 
 test('downloads are charged to the target URL host, not the current page', () => {

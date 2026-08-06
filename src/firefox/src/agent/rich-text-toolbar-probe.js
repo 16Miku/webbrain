@@ -158,22 +158,60 @@ export class RichTextToolbarProbe {
     return geometry?.annotationRect || null;
   }
 
-  async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter }) {
+  async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex }) {
+    const matchIndex = Number.isInteger(Number(requestedMatchIndex)) && Number(requestedMatchIndex) >= 0
+      ? Number(requestedMatchIndex)
+      : null;
+    let navigationFrames = [];
+    try { navigationFrames = await browser.webNavigation.getAllFrames({ tabId }); } catch {}
+    const matchingFrames = (navigationFrames || []).filter(frame => (
+      frame?.frameId !== 0
+      && (!urlFilter || (frameHostMatches(frame.url || '', urlFilter) && String(frame.url || '').includes(urlFilter)))
+    ));
+    const countCode = `
+      (() => {
+        try {
+          return { ok: true, url: location.href, matchCount: document.querySelectorAll(${JSON.stringify(selector)}).length };
+        } catch (error) {
+          return { ok: false, url: location.href, error: error.message };
+        }
+      })()
+    `;
+    const frames = await Promise.all(matchingFrames.map(async frame => {
+      try {
+        const values = await browser.tabs.executeScript(tabId, { frameId: frame.frameId, code: countCode });
+        return { frameId: frame.frameId, url: frame.url || '', ...(values?.[0] || {}) };
+      } catch (error) {
+        return { frameId: frame.frameId, url: frame.url || '', ok: false, error: error.message };
+      }
+    }));
+    const candidates = frames.filter(frame => matchIndex == null ? frame.matchCount > 0 : frame.matchCount > matchIndex);
+    const targetCount = matchIndex == null
+      ? candidates.reduce((sum, frame) => sum + Number(frame.matchCount || 0), 0)
+      : candidates.length;
+    if (targetCount !== 1) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        ...(targetCount > 1 ? { ambiguous: true } : {}),
+        matchCount: targetCount,
+        searchedFrames: frames.length,
+        frameUrls: candidates.map(frame => frame.url).slice(0, 10),
+        candidates: candidates.map(frame => ({ frameId: frame.frameId, url: frame.url, elementCount: frame.matchCount })).slice(0, 10),
+        error: targetCount > 1
+          ? `The iframe selector matched ${targetCount} elements, so nothing was typed. Call iframe_read with this selector and retry with the intended matchIndex.`
+          : 'Input not found in any matching iframe',
+      };
+    }
+    const selected = candidates[0];
+    const selectedIndex = matchIndex == null ? 0 : matchIndex;
     const code = `
       (() => {
-        const filter = ${JSON.stringify(urlFilter || '')};
-        if (filter) {
-          let wanted = String(filter).toLowerCase().trim();
-          try { wanted = new URL(/^[a-z][a-z0-9+.\\-]*:\\/\\//i.test(wanted) ? wanted : 'https://' + wanted).hostname; } catch (error) {}
-          wanted = wanted.replace(/^www\\./, '');
-          const host = location.hostname.toLowerCase().replace(/^www\\./, '');
-          const hostOk = !wanted || host === wanted || host.endsWith('.' + wanted);
-          if (!hostOk || !location.href.includes(filter)) return { ok: false, skipped: 'url-filter', url: location.href };
-        }
         let targetDispatched = false;
         try {
-          const el = document.querySelector(${JSON.stringify(selector)});
-          if (!el) return { ok: false, url: location.href, reason: 'not-found' };
+          const el = document.querySelectorAll(${JSON.stringify(selector)})[${selectedIndex}];
+          if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
           targetDispatched = true;
           el.focus();
           if (el.isContentEditable) {
@@ -194,19 +232,20 @@ export class RichTextToolbarProbe {
         }
       })()
     `;
-    const results = await browser.tabs.executeScript(tabId, { code, allFrames: true });
-    const successes = (results || []).filter(result => result && result.ok);
-    if (successes.length > 0) {
-      return { success: true, dispatched: true, frame: successes[0], resolution: 'all-frames' };
+    let result = null;
+    try {
+      result = (await browser.tabs.executeScript(tabId, { frameId: selected.frameId, code }))?.[0] || null;
+    } catch (error) {
+      return { success: false, dispatched: false, noDispatch: true, retryable: true, error: `The iframe target changed before typing: ${error.message}` };
     }
-    const candidates = (results || []).filter(result => result && !result.skipped);
-    const targetDispatched = candidates.some(candidate => candidate.dispatched === true);
+    if (result?.ok) {
+      return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
+    }
     return {
       success: false,
-      ...(targetDispatched ? { dispatched: true } : { dispatched: false, noDispatch: true }),
-      error: 'Input not found in any matching iframe',
-      searchedFrames: candidates.length,
-      frameUrls: candidates.map(candidate => candidate.url).slice(0, 5),
+      ...(result?.dispatched ? { dispatched: true } : { dispatched: false, noDispatch: true }),
+      retryable: true,
+      error: result?.error || 'The iframe target changed before typing. Re-read the iframe and retry.',
     };
   }
 
@@ -260,17 +299,26 @@ export class RichTextToolbarProbe {
     });
     const probes = (await Promise.all(matchingFrames.map(frame => this._requestFrameProbe(tabId, frame, {
       toolName: 'type_text',
-      args: { selector, text: args?.text || '' },
+      args: { selector, text: args?.text || '', matchIndex: args?.matchIndex },
     })))).filter(Boolean);
     if (!probes.length) return null;
-    if (probes.length !== 1) {
+    const explicitMatchIndex = Number.isInteger(Number(args?.matchIndex)) && Number(args.matchIndex) >= 0;
+    const matchedElementCount = probes.reduce((sum, probe) => (
+      sum + (explicitMatchIndex ? 1 : Math.max(1, Number(probe.selectorMatchCount) || 1))
+    ), 0);
+    if (probes.length !== 1 || matchedElementCount !== 1) {
       await Promise.all(probes.map(probe => this.release(tabId, probe)));
       return {
         resolved: false,
         ambiguous: true,
-        matchCount: probes.length,
+        matchCount: matchedElementCount,
         matchedFrameIds: probes.map(probe => probe.frameId),
         matchedFrameUrls: probes.map(probe => probe.frameUrl || '').filter(Boolean).slice(0, 5),
+        candidateFrames: probes.map(probe => ({
+          frameId: probe.frameId,
+          url: probe.frameUrl || '',
+          elementCount: Math.max(1, Number(probe.selectorMatchCount) || 1),
+        })).slice(0, 10),
       };
     }
     const selected = probes[0];

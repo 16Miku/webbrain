@@ -24,6 +24,7 @@ const DIRECT_ACTION_TOOLS = new Set([
 
 const NAVIGATION_ACTION_TOOLS = new Set([
   'navigate',
+  'promote_iframe',
   'new_tab',
   'go_back',
   'go_forward',
@@ -78,6 +79,50 @@ function normalizedMethod(args = {}) {
 function normalizedOutcome(value) {
   const outcome = String(value || '').trim().toLowerCase();
   return DONE_OUTCOMES.has(outcome) ? outcome : '';
+}
+
+function normalizedIframeScope(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizedIframeMatchIndex(value) {
+  const matchIndex = value === undefined || value === null ? 0 : Number(value);
+  return Number.isInteger(matchIndex) && matchIndex >= 0 ? matchIndex : 0;
+}
+
+function iframeFormObligation(args = {}, result = {}) {
+  const selector = String(args?.selector || '').trim();
+  const finalValue = typeof result?.value === 'string'
+    ? result.value
+    : (typeof result?.frame?.value === 'string' ? result.frame.value : null);
+  if (!selector) return null;
+  const matchMode = finalValue !== null || args?.clear === true ? 'exact' : 'suffix';
+  const rawExpectedValue = String(finalValue ?? args?.text ?? '');
+  return {
+    scope: normalizedIframeScope(args?.urlFilter),
+    frameId: Number.isInteger(result?.frameId) ? result.frameId : null,
+    selector,
+    matchIndex: normalizedIframeMatchIndex(result?.matchIndex ?? args?.matchIndex),
+    expectedValue: matchMode === 'suffix' ? rawExpectedValue.slice(-100) : rawExpectedValue.slice(0, 100),
+    matchMode,
+  };
+}
+
+function iframeFormObligationKey(obligation = {}) {
+  return JSON.stringify([
+    obligation.scope || '',
+    Number.isInteger(obligation.frameId) ? obligation.frameId : null,
+    obligation.selector || '',
+    normalizedIframeMatchIndex(obligation.matchIndex),
+  ]);
+}
+
+function syncIframeFormDebt(next, obligations) {
+  const pending = Array.isArray(obligations) ? obligations : [];
+  const scopes = [...new Set(pending.map(item => normalizedIframeScope(item?.scope)).filter(Boolean))];
+  next.iframeFormVerificationObligations = pending;
+  next.iframeFormVerificationDebt = pending.length > 0;
+  next.iframeFormScope = scopes.length === 1 ? scopes[0] : '';
 }
 
 function keyText(args = {}) {
@@ -313,6 +358,9 @@ export function createCompletionInvariantState(runToken = '') {
     lastObservation: null,
     consumedActionSequence: 0,
     consumedObservationSequence: 0,
+    iframeFormVerificationDebt: false,
+    iframeFormScope: '',
+    iframeFormVerificationObligations: [],
   };
 }
 
@@ -344,12 +392,50 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
         || result?.error
       ),
     };
+    if (name === 'iframe_type') {
+      const obligation = iframeFormObligation(args, result);
+      const obligations = Array.isArray(current.iframeFormVerificationObligations)
+        ? [...current.iframeFormVerificationObligations]
+        : [];
+      if (obligation) {
+        const key = iframeFormObligationKey(obligation);
+        const existingIndex = obligations.findIndex(item => iframeFormObligationKey(item) === key);
+        if (existingIndex >= 0) obligations[existingIndex] = obligation;
+        else obligations.push(obligation);
+      }
+      syncIframeFormDebt(next, obligations);
+    }
     return next;
   }
 
   if (isCompletionObservationTool(name, args, result)) {
     next.lastObservation = { name, sequence };
     if (current.verificationDebt) next.verificationDebt = false;
+    if (
+      name === 'verify_form'
+      && result?.success === true
+      && result?.scope === 'iframe'
+      && Array.isArray(result?.targetChecks)
+    ) {
+      const verifiedScope = normalizedIframeScope(result?.urlFilter || args?.urlFilter);
+      const checks = result.targetChecks.filter(check => (
+        check?.matched === true
+        && check?.valueMatchesExpected === true
+        && normalizedIframeScope(check?.scope || verifiedScope) === verifiedScope
+      ));
+      const obligations = (Array.isArray(current.iframeFormVerificationObligations)
+        ? current.iframeFormVerificationObligations
+        : []).filter(obligation => !checks.some(check => (
+          normalizedIframeScope(obligation?.scope) === verifiedScope
+          && String(check?.selector || '') === String(obligation?.selector || '')
+          && normalizedIframeMatchIndex(check?.matchIndex) === normalizedIframeMatchIndex(obligation?.matchIndex)
+          && (
+            !Number.isInteger(obligation?.frameId)
+            || Number(check?.frameId) === obligation.frameId
+          )
+        )));
+      syncIframeFormDebt(next, obligations);
+    }
   }
   return next;
 }
@@ -404,6 +490,17 @@ export function completionDoneBlock(state, toolName, args = {}) {
     };
   }
   if (outcome === 'partial' || outcome === 'failed') return null;
+  if (state?.iframeFormVerificationDebt) {
+    const pendingCount = Array.isArray(state.iframeFormVerificationObligations)
+      ? state.iframeFormVerificationObligations.length
+      : 1;
+    return {
+      reason: 'iframe_form_verification_required',
+      error: `${pendingCount} iframe form target${pendingCount === 1 ? '' : 's'} have not been semantically verified. Call verify_form for each edited iframe host, compare the returned labels and values with the intended answers, correct any mismatch, then call done again.`,
+      urlFilter: state.iframeFormScope || null,
+      pendingTargetCount: pendingCount,
+    };
+  }
   if (state?.verificationDebt) {
     return {
       reason: 'verification_required',

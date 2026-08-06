@@ -52,8 +52,8 @@ sidepanel quick-command prompt.
 
 Current static core tools from the local source:
 
-- Chrome: 57 core tools.
-- Firefox: 48 core tools.
+- Chrome: 62 core tools.
+- Firefox: 53 core tools.
 - Chrome-only core tools: `shadow_dom_query` plus the reversible/diagnostic Dev tools `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, and `highlight_element`.
 - `execute_js` is shared: Chrome Dev uses CDP evaluation and Firefox Dev uses its MV2 content-script evaluator.
 - Dynamic skill tools can add more schemas at runtime and are not included in those counts.
@@ -63,22 +63,24 @@ Ask-mode core tools:
 ```text
 get_accessibility_tree, read_page, read_pdf,
 get_window_info, get_interactive_elements, scroll, extract_data,
-get_selection, done, wait_for_stable,
+get_selection, find_text, done, wait_for_stable,
 fetch_url, research_url, list_downloads
 ```
 
 Chrome static core tool list (the union across modes and tiers):
 
 ```text
-get_accessibility_tree, click_ax, type_ax, set_field, hover, drag_drop,
+get_accessibility_tree, click_ax, type_ax, set_field, set_checked, hover, drag_drop,
 read_page, read_pdf, read_page_source, get_window_info, resize_window,
 get_interactive_elements, click, type_text, press_keys, scroll, navigate,
 go_back, go_forward, extract_data, inspect_element_styles, wait_for_element,
 inject_css, remove_injected_css, patch_element, revert_patch, execute_js,
 read_console, inspect_network_requests, inspect_event_listeners,
-highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, new_tab,
+highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, find_text, new_tab,
+promote_iframe,
 done, clarify, get_shadow_dom, shadow_dom_query, get_frames, iframe_read,
 iframe_click, iframe_type, fetch_url, research_url, list_downloads,
+list_webmcp_tools, execute_webmcp_tool,
 read_downloaded_file, download_resource_from_page, download_files,
 upload_file, scratchpad_write, progress_update, progress_read,
 verify_form, download_social_media, solve_captcha
@@ -91,12 +93,13 @@ core surface, including Dev-only `execute_js`, is shared.
 
 | Family | Tools |
 |---|---|
-| AX-first DOM control | `get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`, `hover`, `drag_drop` |
+| AX-first DOM control | `get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`, `set_checked`, `hover`, `drag_drop` |
 | Legacy DOM fallback | `get_interactive_elements`, `click`, `type_text`, `press_keys`, `scroll`, `wait_for_element`, `wait_for_stable` |
-| Navigation and tabs | `navigate`, `go_back`, `go_forward`, `new_tab` |
-| Reading/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection` |
+| Navigation and tabs | `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe` |
+| Reading/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection`, `find_text` |
 | Dev editing and diagnostics | `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `execute_js`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, `highlight_element` |
-| Shadow DOM and frames | `get_shadow_dom`, `shadow_dom_query` on Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` |
+| Shadow DOM and frames | `get_shadow_dom`, `shadow_dom_query` on Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type`, `promote_iframe` |
+| WebMCP (experimental) | `list_webmcp_tools`, `execute_webmcp_tool` on supported Chrome builds when enabled |
 | Network and files | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` |
 | Long-running work | `schedule_resume`, `schedule_task`, `scratchpad_write`, `progress_update`, `progress_read` |
 | Safety/workflow | `verify_form`, `clarify`, `done`, `solve_captcha` |
@@ -191,7 +194,7 @@ fresh screenshot.
 | PDF reading | `read_pdf` extracts PDF text directly. | No equivalent recovered. |
 | Raw source reading | `read_page_source` exposes server-delivered HTML and asset URLs. | No equivalent recovered. |
 | Network fetch | `fetch_url` / `research_url`, with WebBrain-specific API mutation rules and `/allow-api` for mutating methods. | No generic fetch tool recovered. Debug network logs exist through `read_network_requests`. |
-| Console/network inspection | No dedicated console log reader in the core WebBrain tool list. Network shortcuts exist for API observation, but not a model-facing request-log reader in the same way. | Dedicated `read_console_messages` and `read_network_requests`. |
+| Console/network inspection | Chrome Dev exposes `read_console`, `inspect_network_requests`, and `inspect_event_listeners`; Firefox does not expose these Chrome-only diagnostics. | Dedicated `read_console_messages` and `read_network_requests`. |
 | Downloads | Several browser download/file tools plus dynamic download-job skill tools. | `downloads` permission exists and `gif_creator` can download exports, but no general download manager equivalent was recovered. |
 | Media download | `download_public_media` skill first; `download_social_media` browser fallback. | No public-media download equivalent recovered. |
 | File upload | Both browsers have `upload_file`. Chrome supports `downloadId` and absolute `filePath`; Firefox supports `downloadId` re-fetch and a sidepanel user file picker (no arbitrary local paths without CDP). | `file_upload` directly sets local absolute paths on a file input; `upload_image` uploads captured/user images by ref or coordinate. |
@@ -199,7 +202,7 @@ fresh screenshot.
 | CAPTCHA | `solve_captcha` when CapSolver is configured. | Explicit security prompt says respect CAPTCHAs and never bypass; no solver tool recovered. |
 | Persistent agent memory | `scratchpad_write`, `progress_update`, `progress_read`. | Conversation compaction exists; no equivalent scratchpad/progress tools recovered. |
 | Form safety | `verify_form` for important forms. | `form_input` can set values; no dedicated verify-form tool recovered. |
-| Iframes | Dedicated `get_frames`, `iframe_read`, `iframe_click`, `iframe_type`. | No dedicated iframe tools recovered; actions are likely through coordinates/JS where permitted. |
+| Iframes | Dedicated `get_frames`, `iframe_read`, `iframe_click`, and `iframe_type`, plus `promote_iframe` to move a discovered child frame into the current tab as a standalone page with ambiguity and unsaved-draft checks. | No dedicated iframe tools recovered; actions are likely through coordinates/JS where permitted. |
 | Shortcuts/workflows | Custom skills are Markdown plus optional tool manifests. | `shortcuts_list` / `shortcuts_execute` expose saved shortcuts/workflows. |
 | GIF/video workflow | Slash-driven recording exists in WebBrain Chrome, but not as model-callable tools. | `gif_creator` is model-callable and can record/export browser automation sessions as GIF. |
 
