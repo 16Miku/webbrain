@@ -14,6 +14,10 @@ import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mj
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const scenarios = JSON.parse(await fs.readFile(path.join(root, 'catalog', 'scenarios.json'), 'utf8'));
+const smokeWorkflow = await fs.readFile(
+  path.join(root, '..', '.github', 'workflows', 'webbrain-cloud-smoke.yml'),
+  'utf8',
+);
 
 assert.equal(new Set(scenarios.map((scenario) => scenario.id)).size, scenarios.length);
 assert.ok(scenarios.every((scenario) => scenario.output_schema?.type === 'object'));
@@ -37,6 +41,8 @@ assert.equal(googleFormsScenario.verify.scheduledJobs.count, 2);
 assert.equal(googleFormsScenario.session_settings.scheduledRequireConsequentialConfirmation, false);
 assert.match(googleFormsScenario.task, /after_seconds=0/);
 assert.match(googleFormsScenario.task, /after_seconds=60/);
+assert.match(smokeWorkflow, /- "src\/chrome\/src\/offscreen\/cloud-bridge\.js"/);
+assert.match(smokeWorkflow, /timeout-minutes:\s*120/);
 
 assert.equal(resolveCloudRunId({ run_id: 'snake-case' }), 'snake-case');
 assert.equal(resolveCloudRunId({ runId: 'camel-case' }), 'camel-case');
