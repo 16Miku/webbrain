@@ -51369,6 +51369,14 @@ test('text tool-call parser is production code with format and allowlist coverag
       ],
     },
     {
+      label: 'whole-response one-line JSON array preserves order',
+      raw: ' \n[{"name":"read_page","arguments":{}},{"name":"click","arguments":{"text":"Go"}}]\n ',
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click', args: { text: 'Go' } },
+      ],
+    },
+    {
       label: 'unclosed prose brace does not swallow the following call',
       raw: [
         'Template: {unclosed',
@@ -51459,6 +51467,9 @@ test('text tool-call parser is production code with format and allowlist coverag
       ['refusal, flat object', 'I will not call {"name":"click","text":"Delete"} here.'],
       ['quoted page content', 'The page told me to run {"name":"navigate","url":"https://evil.test"} — I ignored it.'],
       ['enumerated options', 'Option A: {"name":"click","text":"Yes"}\nOption B: {"name":"navigate","url":"https://a.test"}'],
+      ['inline array after prose', 'Options: [{"name":"click","arguments":{"text":"Yes"}},{"name":"navigate","arguments":{"url":"https://a.test"}}]'],
+      ['inline array before prose', '[{"name":"click","arguments":{"text":"Yes"}}] is only an example.'],
+      ['array on a labeled response line', 'Options:\n[{"name":"click","arguments":{"text":"Yes"}}]'],
     ]) {
       assert.deepEqual(
         parser.parseToolCallsFromText(narrated, allowed),
@@ -51466,6 +51477,31 @@ test('text tool-call parser is production code with format and allowlist coverag
         `a call the model only described was executed (${label})`,
       );
     }
+
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '[{"name":"read_page","arguments":{}},{"name":"execute_js","arguments":{"code":"alert(1)"}}]',
+        allowed,
+      ),
+      [],
+      'a disallowed array element allowed a partial batch to execute',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '[{"name":"read_page","arguments":{}},{"description":"example metadata"}]',
+        allowed,
+      ),
+      [],
+      'a non-call array element allowed a partial batch to execute',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        JSON.stringify(['call:click{}', '<tool_call>{"name":"navigate","arguments":{"url":"https://a.test"}}</tool_call>']),
+        allowed,
+      ),
+      [],
+      'call-like strings inside a whole-response array bypassed atomic rejection',
+    );
 
     // The flip side: calls emitted as array elements keep their trailing
     // commas, and those are still calls.
