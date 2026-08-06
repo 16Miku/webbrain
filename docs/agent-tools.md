@@ -57,6 +57,7 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `navigate` | No | Yes | Yes | Yes | - |
 | `wait_for_element` | No | Yes | Yes | Yes | - |
 | `new_tab` | No | Yes | Yes | Yes | - |
+| `promote_iframe` | No | No | Yes | Yes | - |
 | `scratchpad_write` | No | Yes | Yes | Yes | - |
 | `progress_update` | No | Yes | Yes | Yes | - |
 | `progress_read` | No | Yes | Yes | Yes | - |
@@ -88,6 +89,11 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `inspect_network_requests` | No | No | No | No | C |
 | `inspect_event_listeners` | No | No | No | No | C |
 | `highlight_element` | No | No | No | No | C |
+
+`promote_iframe` is a normal Mid/Full Act tool, not a Dev-only add-on. Dev
+sessions using a Mid or Full provider inherit it from the selected Act tier.
+See [iframe targeting](accessibility-tree-and-refs.md#iframe-targeting) for the
+standalone-frame workflow and safety checks.
 
 > **Shadow DOM note:** The accessibility tree only traverses light DOM. On Web
 > Component-heavy pages (Stripe, Salesforce, Shopify), use

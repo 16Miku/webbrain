@@ -3534,6 +3534,52 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
+  async _probeIframeUnsavedChanges(tabId, frameId, knownPendingEdit = false) {
+    let details = null;
+    try {
+      const probeResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        func: () => {
+          let attachedFiles = 0;
+          let dirtyFields = 0;
+          for (const el of document.querySelectorAll('input, textarea, select')) {
+            const type = String(el.type || '').toLowerCase();
+            if (type === 'file') {
+              attachedFiles += el.files?.length || 0;
+              continue;
+            }
+            if (['hidden', 'submit', 'button', 'reset'].includes(type)) continue;
+            if (type === 'checkbox' || type === 'radio') {
+              if (el.checked !== el.defaultChecked) dirtyFields += 1;
+            } else if (String(el.tagName || '').toLowerCase() === 'select') {
+              if (Array.from(el.options || []).some(option => option.selected !== option.defaultSelected)) dirtyFields += 1;
+            } else if (el.value !== el.defaultValue) {
+              dirtyFields += 1;
+            }
+          }
+          return { attachedFiles, dirtyFields };
+        },
+      });
+      details = probeResults?.[0]?.result || { attachedFiles: 0, dirtyFields: 0 };
+    } catch (error) {
+      details = { inspectionFailed: true, error: error?.message || String(error) };
+    }
+    if (!knownPendingEdit && !details.inspectionFailed && !details.attachedFiles && !details.dirtyFields) return null;
+    const parts = [];
+    if (knownPendingEdit) parts.push('an unverified iframe edit');
+    if (details.attachedFiles) parts.push(`${details.attachedFiles} attached file(s)`);
+    if (details.dirtyFields) parts.push(`${details.dirtyFields} changed field(s)`);
+    if (details.inspectionFailed) parts.push('iframe state could not be inspected safely');
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      blockedUnsavedChanges: true,
+      ...(details.inspectionFailed ? { inspectionFailed: true } : {}),
+      error: `Iframe promotion blocked: ${parts.join(', ')} would be discarded by replacing the current tab. Finish or verify the embedded form first. Only if discarding it is explicitly intended, call promote_iframe again with force:true.`,
+    };
+  }
+
   /**
    * Execute one assistant turn's worth of tool calls. Both the non-streaming
    * and streaming paths call this so they share identical loop-detection,
@@ -4299,6 +4345,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (
       toolResult?.pageUrlChanged === true
       || toolName === 'navigate'
+      || toolName === 'promote_iframe'
       || toolName === 'go_back'
       || toolName === 'go_forward'
     ) {
@@ -15941,6 +15988,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: `promote_iframe: matchIndex ${matchIndex} is out of range for ${matches.length} matching frame(s)`,
         };
       }
+      if (args?.force !== true) {
+        const knownPendingEdit = (this.completionInvariants.get(tabId)?.iframeFormVerificationObligations || [])
+          .some(target => (
+            target?.frameId === selected.frameId
+            || (
+              !Number.isInteger(target?.frameId)
+              && frameHostMatches(selected.url, String(target?.scope || ''))
+              && selected.url.includes(String(target?.scope || ''))
+            )
+          ));
+        const blocked = await this._probeIframeUnsavedChanges(tabId, selected.frameId, knownPendingEdit);
+        if (blocked) return blocked;
+      }
       const navigation = await this.executeTool(tabId, 'navigate', {
         url: selected.url,
         force: args?.force === true,
@@ -17304,9 +17364,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const iframeUrlFilter = String(args.urlFilter || '').trim();
         if (iframeUrlFilter) {
           const selector = String(args.selector || '');
+          const pendingTargets = (this.completionInvariants.get(tabId)?.iframeFormVerificationObligations || [])
+            .filter(target => String(target?.scope || '').trim().toLowerCase() === iframeUrlFilter.toLowerCase())
+            .map(target => ({
+              frameId: Number.isInteger(target?.frameId) ? target.frameId : null,
+              selector: String(target?.selector || ''),
+              matchIndex: Number.isInteger(target?.matchIndex) ? target.matchIndex : 0,
+              expectedValue: String(target?.expectedValue || '').slice(0, 100),
+              matchMode: target?.matchMode === 'suffix' ? 'suffix' : 'exact',
+            }))
+            .filter(target => target.selector);
+          const verificationTargets = pendingTargets.map(target => ({
+            selector: target.selector,
+            matchIndex: target.matchIndex,
+          }));
           const observations = await chrome.scripting.executeScript({
             target: { tabId, allFrames: true },
-            func: (formSelector) => {
+            func: (formSelector, verificationTargets) => {
               try {
                 let form;
                 if (formSelector) form = document.querySelector(formSelector);
@@ -17353,6 +17427,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     ...((type === 'checkbox' || type === 'radio') ? { checked: !!el.checked } : {}),
                   });
                 }
+                const targetChecks = verificationTargets.map(target => {
+                  try {
+                    const el = document.querySelectorAll(target.selector)[target.matchIndex];
+                    const matched = !!el && form.contains(el);
+                    let currentValue = '';
+                    if (matched && el.isContentEditable) currentValue = String(el.textContent || '');
+                    else if (matched) currentValue = String(el.value || '');
+                    return {
+                      selector: target.selector,
+                      matchIndex: target.matchIndex,
+                      matched,
+                      valuePrefix: matched ? currentValue.slice(0, 100) : '',
+                      valueSuffix: matched ? currentValue.slice(-100) : '',
+                    };
+                  } catch (error) {
+                    return {
+                      selector: target.selector,
+                      matchIndex: target.matchIndex,
+                      matched: false,
+                      valueMatchesExpected: false,
+                      error: error.message,
+                    };
+                  }
+                });
                 return {
                   found: true,
                   url: location.href,
@@ -17361,12 +17459,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   method: String(form.method || 'get'),
                   fieldCount: fields.length,
                   fields,
+                  targetChecks,
                 };
               } catch (error) {
                 return { found: false, url: location.href, isTop: window.top === window, error: error.message };
               }
             },
-            args: [selector],
+            args: [selector, verificationTargets],
           });
           const matchingFrames = observations
             .map(item => item?.result ? { frameId: item.frameId, ...item.result } : null)
@@ -17377,6 +17476,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameId: frame.frameId,
             frameUrl: frame.url,
           })));
+          const targetChecks = verifiedFrames.flatMap(frame => (frame.targetChecks || [])
+            .map(check => {
+              const target = pendingTargets.find(item => (
+                item.selector === check.selector
+                && item.matchIndex === check.matchIndex
+                && (!Number.isInteger(item.frameId) || item.frameId === frame.frameId)
+              ));
+              if (!target) return null;
+              return {
+                selector: check.selector,
+                matchIndex: check.matchIndex,
+                matched: check.matched === true,
+                valueMatchesExpected: check.matched === true && (
+                  target.matchMode === 'suffix'
+                    ? check.valueSuffix === target.expectedValue
+                    : check.valuePrefix === target.expectedValue
+                ),
+                ...(check.error ? { error: check.error } : {}),
+                scope: iframeUrlFilter.toLowerCase(),
+                frameId: frame.frameId,
+                frameUrl: frame.url,
+              };
+            })
+            .filter(Boolean));
+          const publicFrames = verifiedFrames.map(({ targetChecks: _targetChecks, ...frame }) => frame);
           return {
             success: verifiedFrames.length > 0 && fields.length > 0,
             found: verifiedFrames.length > 0,
@@ -17387,7 +17511,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameCount: verifiedFrames.length,
             fieldCount: fields.length,
             fields,
-            frames: verifiedFrames,
+            targetChecks,
+            frames: publicFrames,
             ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
             ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
           };
@@ -17759,7 +17884,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, dispatched: false, noDispatch: true, error: `Invalid selector: ${invalidSelector.error}` };
         }
         const candidates = census
-          .map(item => item?.result?.ok ? { frameId: item.frameId, ...item.result } : null)
+          .map(item => item?.frameId !== 0 && item?.result?.ok ? { frameId: item.frameId, ...item.result } : null)
           .filter(Boolean);
         const targetCount = hasExplicitMatchIndex
           ? candidates.length

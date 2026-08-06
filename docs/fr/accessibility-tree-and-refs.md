@@ -172,6 +172,39 @@ Seules les racines shadow **ouvertes** (`element.shadowRoot`) sont accessibles. 
 
 Le constructeur d'arbre ne **descend pas** dans les iframes par défaut. L'agent doit appeler explicitement `iframe_read` ou `get_frames` pour découvrir et lire le contenu des iframes.
 
+Lorsqu'une application ou un formulaire intégré reste difficile à inspecter ou
+à cibler de façon fiable, `promote_iframe` fait naviguer **l'onglet d'exécution
+courant** vers l'URL autonome de cette frame enfant. Les outils suivants agissent
+sur la page autonome, et l'historique Retour normal du navigateur est conservé :
+`go_back` ou le bouton Retour permet de revenir à la page qui contenait
+l'iframe. Il s'agit d'un transfert dans le même onglet, et non d'un `new_tab` en
+arrière-plan.
+
+Utilisez ce flux de travail **avant toute modification** dans l'iframe :
+
+1. Découvrir et lire la page intégrée avec `iframe_read` ou `get_frames`.
+2. Si le ciblage direct de l'iframe reste peu fiable, appeler `promote_iframe`
+   avec le `urlFilter` obligatoire qui identifie l'hôte et la sous-chaîne d'URL
+   de la frame voulue, par exemple `airtable.com/embed/`.
+3. Si plusieurs frames enfants correspondent, aucune navigation n'a lieu.
+   Examiner les URL retournées, puis réessayer avec le `matchIndex` indexé à
+   partir de zéro de la frame voulue.
+4. Relire la page autonome obtenue, puis continuer avec les outils et les refs
+   de page ordinaires.
+
+La promotion échoue de manière fermée si l'iframe sélectionnée contient une
+modification non vérifiée, des fichiers joints, des champs modifiés ou un état
+qui ne peut pas être inspecté en toute sécurité. Terminez ou vérifiez d'abord le
+formulaire intégré. `force: true` abandonne cet état et ne doit être utilisé que
+si l'utilisateur veut explicitement le perdre.
+
+Contrairement à un `navigate` générique, `promote_iframe` découvre d'abord l'URL
+de frame enfant faisant autorité dans l'inventaire des frames du navigateur,
+puis applique de façon atomique les contrôles d'ambiguïté et de brouillon de
+l'iframe. Ce n'est qu'après leur réussite qu'il délègue la navigation dans le
+même onglet au chemin `navigate` normal. L'outil est disponible en Mid et Full
+Act, ainsi que par héritage en Dev Mid/Full ; il ne l'est pas en Ask ni Compact.
+
 ---
 
 ## Modes d'échec courants
@@ -181,7 +214,7 @@ Le constructeur d'arbre ne **descend pas** dans les iframes par défaut. L'agent
 | Élément supprimé du DOM | `click_ax` retourne « non trouvé » | Relire l'arbre ; la page a peut-être été régénérée |
 | Ref obsolète après navigation SPA | Tous les refs échouent | L'agent doit relire l'arbre après `/navigate` ou `wait_for_stable` |
 | Racine shadow fermée | L'arbre montre `<my-component>` mais pas ses enfants | Utiliser `get_shadow_dom` + `shadow_dom_query` sur Chrome ; Firefox ne peut pas traverser une racine fermée |
-| iframe absente de l'arbre | L'agent ne trouve pas le contenu de l'iframe | Appeler `get_frames` puis `iframe_read` / `iframe_click` |
+| iframe absente de l'arbre | L'agent ne trouve pas le contenu de l'iframe | Appeler `get_frames`, puis utiliser `iframe_read` / `iframe_click` ; avant toute modification, utiliser `promote_iframe` si le ciblage direct reste peu fiable |
 | Arbre tronqué | `truncated: true` + `hasMore: true` | Appeler `get_accessibility_tree` avec `page: nextPage` ou `ref_id` pour zoomer |
 | Superposition par portail non visible | L'arbre montre la combobox mais pas le menu déroulant | La superposition est remontée dans la section `[open overlays]` — relire avec `filter: 'all'` |
 

@@ -54,8 +54,8 @@ latéral.
 
 Outils statiques de base actuels de la source locale :
 
-- Chrome : 57 outils de base.
-- Firefox : 48 outils de base.
+- Chrome : 62 outils de base.
+- Firefox : 53 outils de base.
 - Outils de base Chrome uniquement : `shadow_dom_query` ainsi que les outils Dev réversibles/de diagnostic `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `read_console`, `inspect_network_requests`, `inspect_event_listeners` et `highlight_element`.
 - `execute_js` est partagé : Chrome Dev utilise l'évaluation CDP et Firefox Dev son évaluateur de script de contenu MV2.
 - Les outils de compétences dynamiques peuvent ajouter d'autres schémas à l'exécution et ne sont pas inclus dans ces décomptes.
@@ -65,22 +65,24 @@ Outils de base du mode Demander :
 ```text
 get_accessibility_tree, read_page, read_pdf,
 get_window_info, get_interactive_elements, scroll, extract_data,
-get_selection, done, wait_for_stable,
+get_selection, find_text, done, wait_for_stable,
 fetch_url, research_url, list_downloads
 ```
 
 Liste statique des outils de base Chrome (union de tous les modes et niveaux) :
 
 ```text
-get_accessibility_tree, click_ax, type_ax, set_field, hover, drag_drop,
+get_accessibility_tree, click_ax, type_ax, set_field, set_checked, hover, drag_drop,
 read_page, read_pdf, read_page_source, get_window_info, resize_window,
 get_interactive_elements, click, type_text, press_keys, scroll, navigate,
 go_back, go_forward, extract_data, inspect_element_styles, wait_for_element,
 inject_css, remove_injected_css, patch_element, revert_patch, execute_js,
 read_console, inspect_network_requests, inspect_event_listeners,
-highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, new_tab,
+highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, find_text, new_tab,
+promote_iframe,
 done, clarify, get_shadow_dom, shadow_dom_query, get_frames, iframe_read,
 iframe_click, iframe_type, fetch_url, research_url, list_downloads,
+list_webmcp_tools, execute_webmcp_tool,
 read_downloaded_file, download_resource_from_page, download_files,
 upload_file, scratchpad_write, progress_update, progress_read,
 verify_form, download_social_media, solve_captcha
@@ -93,12 +95,13 @@ de la surface de base, y compris `execute_js` réservé au mode Dev, est partag�
 
 | Famille | Outils |
 |---|---|
-| Contrôle DOM AX prioritaire | `get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`, `hover`, `drag_drop` |
+| Contrôle DOM AX prioritaire | `get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`, `set_checked`, `hover`, `drag_drop` |
 | Repli DOM hérité | `get_interactive_elements`, `click`, `type_text`, `press_keys`, `scroll`, `wait_for_element`, `wait_for_stable` |
-| Navigation et onglets | `navigate`, `go_back`, `go_forward`, `new_tab` |
-| Lecture/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection` |
+| Navigation et onglets | `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe` |
+| Lecture/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection`, `find_text` |
 | Édition et diagnostic Dev | `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `execute_js`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, `highlight_element` |
-| Shadow DOM et cadres | `get_shadow_dom`, `shadow_dom_query` sur Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` |
+| Shadow DOM et cadres | `get_shadow_dom`, `shadow_dom_query` sur Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type`, `promote_iframe` |
+| WebMCP (expérimental) | `list_webmcp_tools`, `execute_webmcp_tool` sur les versions Chrome compatibles lorsque l'option est activée |
 | Réseau et fichiers | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` |
 | Travail longue durée | `schedule_resume`, `schedule_task`, `scratchpad_write`, `progress_update`, `progress_read` |
 | Sécurité/flux de travail | `verify_form`, `clarify`, `done`, `solve_captcha` |
@@ -195,7 +198,7 @@ synthétiques avec une nouvelle capture d'écran.
 | Lecture PDF | `read_pdf` extrait le texte PDF directement. | Aucun équivalent trouvé. |
 | Lecture de source brute | `read_page_source` expose le HTML fourni par le serveur et les URLs des ressources. | Aucun équivalent trouvé. |
 | Requête réseau | `fetch_url` / `research_url`, avec des règles de mutation d'API spécifiques à WebBrain et `/allow-api` pour les méthodes mutantes. | Aucun outil de requête générique trouvé. Des logs réseau de débogage existent via `read_network_requests`. |
-| Inspection console/réseau | Pas de lecteur de logs console dédié dans la liste des outils de base WebBrain. Des raccourcis réseau existent pour l'observation d'API, mais pas un lecteur de logs de requêtes orienté modèle. | `read_console_messages` et `read_network_requests` dédiés. |
+| Inspection console/réseau | Chrome Dev expose `read_console`, `inspect_network_requests` et `inspect_event_listeners` ; Firefox n'expose pas ces diagnostics exclusifs à Chrome. | `read_console_messages` et `read_network_requests` dédiés. |
 | Téléchargements | Plusieurs outils de téléchargement/fichier navigateur plus des outils de compétences de tâche de téléchargement dynamiques. | La permission `downloads` existe et `gif_creator` peut télécharger des exports, mais aucun gestionnaire de téléchargement général équivalent n'a été trouvé. |
 | Téléchargement média | Compétence `download_public_media` d'abord ; `download_social_media` en repli navigateur. | Aucun équivalent de téléchargement de média public trouvé. |
 | Téléchargement de fichier | Les deux navigateurs ont `upload_file`. Chrome accepte `downloadId` et un `filePath` absolu ; Firefox accepte le re-fetch par `downloadId` et un sélecteur de fichier dans le panneau latéral (pas de chemins locaux arbitraires sans CDP). | `file_upload` définit directement des chemins absolus locaux sur une entrée fichier ; `upload_image` télécharge des images capturées/utilisateur par référence ou coordonnée. |
@@ -203,7 +206,7 @@ synthétiques avec une nouvelle capture d'écran.
 | CAPTCHA | `solve_captcha` lorsque CapSolver est configuré. | L'invite de sécurité explicite demande de respecter les CAPTCHA et de ne jamais les contourner ; aucun outil de résolution trouvé. |
 | Mémoire persistante de l'agent | `scratchpad_write`, `progress_update`, `progress_read`. | La compaction de conversation existe ; aucun outil équivalent de bloc-notes/progression trouvé. |
 | Sécurité des formulaires | `verify_form` pour les formulaires importants. | `form_input` peut définir des valeurs ; aucun outil de vérification de formulaire dédié trouvé. |
-| Iframes | `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` dédiés. | Aucun outil iframe dédié trouvé ; les actions se font probablement par coordonnées/JS lorsque c'est permis. |
+| Iframes | `get_frames`, `iframe_read`, `iframe_click` et `iframe_type` dédiés, plus `promote_iframe` pour déplacer une frame enfant découverte dans l'onglet courant sous forme de page autonome, avec contrôles d'ambiguïté et de brouillon non enregistré. | Aucun outil iframe dédié trouvé ; les actions se font probablement par coordonnées/JS lorsque c'est permis. |
 | Raccourcis/flux de travail | Les compétences personnalisées sont du Markdown avec des manifestes d'outils optionnels. | `shortcuts_list` / `shortcuts_execute` exposent les raccourcis/flux de travail sauvegardés. |
 | Flux de travail GIF/vidéo | L'enregistrement via slash existe dans WebBrain Chrome, mais pas en tant qu'outils appelables par le modèle. | `gif_creator` est appelable par le modèle et peut enregistrer/exporter des sessions d'automatisation navigateur en GIF. |
 
