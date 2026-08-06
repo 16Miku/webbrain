@@ -269,6 +269,25 @@ function collectSensitiveStrings(value, into, depth = 0) {
   }
 }
 
+// A request body is a string argument, so the key-walk above cannot see into
+// it. Both encodings a mutating call realistically uses are cheap to parse.
+function collectRequestBodySecrets(body, into) {
+  if (typeof body !== 'string' || !body || body.length > WORKFLOW_PARAMETER_VALUE_LIMIT) return;
+  try {
+    collectSensitiveStrings(JSON.parse(body), into);
+    return;
+  } catch {
+    // Not JSON — fall through to the form encoding.
+  }
+  try {
+    for (const [key, value] of new URLSearchParams(body)) {
+      if (isSensitiveCloudKey(key)) into.push(value);
+    }
+  } catch {
+    // Undecodable body: nothing to register, and the argument is dropped anyway.
+  }
+}
+
 function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workflow parameter]') {
   if (value == null) return value;
   const variants = new Set();
@@ -312,7 +331,12 @@ function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workfl
   }, input);
   try {
     return JSON.parse(JSON.stringify(value, (_key, item) => (
-      typeof item === 'string' ? redactString(item) : item
+      // A secret typed as text can come back as a JSON number — a six-digit OTP
+      // is the obvious case. Match on the number's exact string form: a
+      // substring rule would strike an unrelated `3` out of `481920`.
+      typeof item === 'number' && values.includes(String(item))
+        ? label
+        : (typeof item === 'string' ? redactString(item) : item)
     )));
   } catch {
     return { unserializable: true };
@@ -576,9 +600,15 @@ export function createCloudRunController({
   function rememberStrictSecrets(run, type, data) {
     const name = String(data?.name || data?.tool || '');
     const candidates = [];
-    if (type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
+    if (type === 'tool_call') {
       const args = data?.args && typeof data.args === 'object' ? data.args : {};
-      candidates.push(args.text, args.value);
+      if (CLOUD_TEXT_ENTRY_TOOLS.has(name)) candidates.push(args.text, args.value);
+      // A credential does not have to be typed into a page to exist. The
+      // disposable-signup scenario mints its account password inside the JSON
+      // body of `POST /accounts` and never types it, so registering only
+      // text-entry arguments left it unknown to the value redactor.
+      collectSensitiveStrings(args, candidates);
+      collectRequestBodySecrets(args.body, candidates);
     } else if (type === 'tool_result') {
       // The value under a sensitive key is already known to be a secret; the
       // key-based scrubber only masks it in place, so register the literal and
@@ -655,18 +685,26 @@ export function createCloudRunController({
     if (type === 'tool_result' && scrubbedData?.name === 'done_json') {
       const result = data.result || {};
       const safeResult = scrubbedData.result || {};
+      // Two different jobs, so two different redactors. The update row above is
+      // trace and persistence with no contract to honour, and takes the blunt
+      // leaf-type redaction. `run.result` and `run.summary` are the caller's
+      // answer — the schema they asked for — so they take value redaction:
+      // registered credentials are struck and everything else the contract
+      // declares survives. Redacting those by leaf type returned `completed`
+      // with every string and number replaced by a placeholder, which satisfies
+      // strict mode by making the run useless.
+      const publicSummary = strictSecretMode
+        ? redactStrictSecretValues(run, result.summary, true)
+        : safeResult.summary;
       if (result.cloudFailed) {
         run.status = 'failed';
         run.error = safeResult.error || 'done_json failed';
-        run.summary = safeResult.summary || run.summary;
+        run.summary = publicSummary || run.summary;
       } else if (Object.prototype.hasOwnProperty.call(result, 'cloudResult')) {
-        // Strict mode must publish the redacted result, not the raw one: the
-        // structured field is exactly where a model is most likely to park a
-        // credential, and run.result is persisted and bridged verbatim.
-        // String leaves become placeholders; booleans and numbers — what
-        // scenario grading actually reads — survive intact.
-        run.result = strictSecretMode ? safeResult.cloudResult : result.cloudResult;
-        run.summary = safeResult.summary || run.summary;
+        run.result = strictSecretMode
+          ? redactStrictSecretValues(run, result.cloudResult, true)
+          : result.cloudResult;
+        run.summary = publicSummary || run.summary;
       }
     }
     if (type === 'captcha_gate') {

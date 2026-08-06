@@ -197,7 +197,9 @@ assert.equal(JSON.stringify(storedRows).includes(OTP), false, 'a strict run must
 // Booleans are what scenario grading reads, so redaction must leave them alone.
 assert.equal(strictLeakSnapshot.result.signup_completed, true);
 assert.equal(strictLeakSnapshot.result.otp_submitted, true);
-assert.equal(strictLeakSnapshot.result.note, '[redacted strict value]');
+// The caller's own field survives with only the credential struck out of it —
+// the public result is the contract they asked for, not a wall of placeholders.
+assert.equal(strictLeakSnapshot.result.note, 'code [redacted strict value]');
 // Grading evidence that does not carry page content still survives.
 const strictCalls = strictLeakSnapshot.updates.filter(update => update.type === 'tool_call');
 assert.equal(strictCalls.find(update => update.data.name === 'load_skill').data.args.skill_id, 'otp-verification-code-helper');
@@ -285,12 +287,13 @@ assert.equal(JSON.stringify(storedRows).includes(OTP), false);
 assert.match(strictProseSnapshot.content, /^Signup finished\. The code was \[redacted strict value\]\.$/);
 assert.equal(strictProseSnapshot.result, strictProseSnapshot.content);
 
-// A secret is not always a string. Sweep every JSON leaf type through a
-// structured strict payload: only booleans and null may survive, because
-// neither can encode a credential — and a boolean outcome flag is what
-// scenario grading reads.
+// A secret is not always a string: an OTP typed as text comes back as a JSON
+// number. The trace row takes the blunt leaf-type redaction, while the public
+// result keeps every schema-valid value and strikes only the registered
+// credential — a strict run has to stay useful to its caller.
 storedRows = [];
 const NUMERIC_OTP = 481920;
+const BODY_PASSWORD = 'Tr0ub4dor-correct-horse';
 const strictLeafController = createCloudRunController({
   chromeApi,
   agent: {
@@ -299,9 +302,22 @@ const strictLeafController = createCloudRunController({
     setApiMutationsAllowed() {},
     abort() {},
     async processMessage(_tabId, _task, publishUpdate) {
+      // Minted in a request body and never typed, so only the body parser can
+      // register it; and typed into the page, so the numeric form is known too.
+      publishUpdate('tool_call', {
+        name: 'fetch_url',
+        args: {
+          url: 'https://api.mail.tm/accounts',
+          method: 'POST',
+          body: JSON.stringify({ address: 'ci@mail.tm', password: BODY_PASSWORD }),
+        },
+      });
+      publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_otp', text: OTP } });
       const payload = {
         verification_code: NUMERIC_OTP,
-        nested: { pin_digits: [NUMERIC_OTP, 7], note: `code ${OTP}` },
+        nested: { pin_digits: [NUMERIC_OTP, 7], note: `code ${OTP}`, account: BODY_PASSWORD },
+        item_name: 'widget',
+        item_count: 3,
         signup_completed: true,
         opted_out: false,
         absent: null,
@@ -330,13 +346,24 @@ assert.equal(strictLeafSnapshot.status, 'completed');
 for (const source of [JSON.stringify(strictLeafSnapshot), JSON.stringify(storedRows)]) {
   assert.equal(source.includes(String(NUMERIC_OTP)), false, 'a numeric secret escaped strict mode');
   assert.equal(source.includes(OTP), false, 'a string secret escaped strict mode');
+  assert.equal(source.includes(BODY_PASSWORD), false, 'a request-body credential escaped strict mode');
 }
-assert.equal(strictLeafSnapshot.result.verification_code, '[redacted strict number]');
-assert.deepEqual(strictLeafSnapshot.result.nested.pin_digits, ['[redacted strict number]', '[redacted strict number]']);
-assert.equal(strictLeafSnapshot.result.nested.note, '[redacted strict value]');
+// Public result: registered credentials struck, the caller's contract intact.
+assert.equal(strictLeafSnapshot.result.verification_code, '[redacted strict value]');
+assert.deepEqual(strictLeafSnapshot.result.nested.pin_digits, ['[redacted strict value]', 7]);
+assert.equal(strictLeafSnapshot.result.nested.note, 'code [redacted strict value]');
+assert.equal(strictLeafSnapshot.result.nested.account, '[redacted strict value]');
+assert.equal(strictLeafSnapshot.result.item_name, 'widget', 'a schema-valid string must survive');
+assert.equal(strictLeafSnapshot.result.item_count, 3, 'a schema-valid number must survive');
 assert.equal(strictLeafSnapshot.result.signup_completed, true, 'grading reads booleans; they must survive');
 assert.equal(strictLeafSnapshot.result.opted_out, false);
 assert.equal(strictLeafSnapshot.result.absent, null);
+// Trace row: no contract to honour, so the blunt leaf-type redaction stands.
+const strictLeafTrace = strictLeafSnapshot.updates
+  .find(update => update.type === 'tool_result' && update.data.name === 'done_json').data.result;
+assert.equal(strictLeafTrace.cloudResult.item_name, '[redacted strict value]');
+assert.equal(strictLeafTrace.cloudResult.item_count, '[redacted strict number]');
+assert.equal(strictLeafTrace.cloudResult.signup_completed, true);
 
 // A strict run that schedules a child task must not publish that child's raw
 // prompt, result, or target URL through the scheduled-jobs query.
