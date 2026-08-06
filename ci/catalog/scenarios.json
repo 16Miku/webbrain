@@ -281,6 +281,83 @@
     "timeout_ms": 360000
   },
   {
+    "id": "nytimes-gated-article-read",
+    "title": "NYTimes: gated article read",
+    "pack": "cloud-smoke",
+    "mode": "ask",
+    "preload_url": "https://www.nytimes.com/2026/08/05/science/butterflies-climate-change-extreme-weather.html",
+    "start_url": "https://www.nytimes.com/2026/08/05/science/butterflies-climate-change-extreme-weather.html",
+    "task": "The current page is a New York Times Science article about butterflies and extreme weather. Stay read-only. Call read_page first and inspect its structured pageGate. When pageGate.blocking is true, explicitly load the freeskillz-xyz skill and call fetch_nytimes_article for the current URL. Do not read hidden DOM content and do not retry the fallback if it fails. Return the headline, byline, three concise key points grounded in the fetched article, the source URL, and fallback_used=true. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "headline": { "type": "string" },
+        "byline": { "type": "string" },
+        "key_points": { "type": "array", "minItems": 3, "items": { "type": "string" } },
+        "source_url": { "type": "string" },
+        "fallback_used": { "type": "boolean" }
+      },
+      "required": ["headline", "byline", "key_points", "source_url", "fallback_used"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "ask",
+      "skills": ["freeskillz-xyz"],
+      "tools": ["read_page"],
+      "successfulTools": ["fetch_nytimes_article"],
+      "result": [
+        { "path": "headline", "contains": "Butterflies", "weight": 20 },
+        { "path": "byline", "truthy": true, "weight": 10 },
+        { "path": "key_points.2", "truthy": true, "weight": 15 },
+        { "path": "source_url", "contains": "/science/butterflies-climate-change-extreme-weather.html", "weight": 10 },
+        { "path": "fallback_used", "equals": true, "weight": 15 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "www.nytimes.com"
+    },
+    "timeout_ms": 600000
+  },
+  {
+    "id": "youtube-short-video-download",
+    "title": "YouTube: short public video download",
+    "pack": "cloud-smoke",
+    "mode": "act",
+    "start_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+    "capture": false,
+    "task": "Open {{START_URL}}. This is a public 19-second video selected to keep the smoke test fast. Explicitly load the freeskillz-xyz skill, call resolve_public_media with the exact video URL, then call download_public_media with the exact URL, kind=video, and max_height=360. After the download tool succeeds, call list_downloads and verify that the completed MP4 is present. Return downloaded=true only after that verification, along with the title, duration_seconds, file_name, and file_type. Do not upload or play the downloaded file. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "downloaded": { "type": "boolean" },
+        "title": { "type": "string" },
+        "duration_seconds": { "type": "number" },
+        "file_name": { "type": "string" },
+        "file_type": { "type": "string" }
+      },
+      "required": ["downloaded", "title", "duration_seconds", "file_name", "file_type"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "skills": ["freeskillz-xyz"],
+      "successfulTools": ["resolve_public_media", "download_public_media", "list_downloads"],
+      "toolResults": [
+        { "tool": "download_public_media", "path": "downloadId", "truthy": true, "label": "Download returned a browser download ID", "weight": 10 },
+        { "tool": "list_downloads", "path": "downloads.0.filename", "matches": "\\.mp4$", "label": "Newest browser download is an MP4", "weight": 15 },
+        { "tool": "list_downloads", "path": "downloads.0.state", "equals": "complete", "label": "Newest browser download completed", "weight": 10 }
+      ],
+      "result": [
+        { "path": "downloaded", "equals": true, "weight": 20 },
+        { "path": "title", "contains": "Me at the zoo", "weight": 15 },
+        { "path": "duration_seconds", "equals": 19, "weight": 10 },
+        { "path": "file_name", "matches": "\\.mp4$", "weight": 15 },
+        { "path": "file_type", "contains": "mp4", "weight": 10 }
+      ],
+      "finalUrlHost": "www.youtube.com"
+    },
+    "timeout_ms": 480000
+  },
+  {
     "id": "gnippets-signup-otp-disposable",
     "title": "Gnippets: disposable-email signup",
     "pack": "cloud-smoke",

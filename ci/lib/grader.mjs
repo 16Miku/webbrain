@@ -104,6 +104,30 @@ export function gradeScenario({
     const used = calls.some((call) => call.name === toolName);
     add(`tool:${toolName}`, `Used ${toolName}`, 10, used, used ? 'observed' : 'not observed');
   }
+  for (const toolName of scenario.verify?.successfulTools || []) {
+    const completed = calls.find((call) => call.name === toolName && call.result?.success === true);
+    const attempted = calls.findLast((call) => call.name === toolName);
+    add(
+      `tool_success:${toolName}`,
+      `Completed ${toolName}`,
+      10,
+      Boolean(completed),
+      completed ? 'success' : attempted ? 'failed or missing result' : 'not observed',
+    );
+  }
+  for (const expected of scenario.verify?.toolResults || []) {
+    const call = calls.findLast((candidate) => (
+      candidate.name === expected.tool && candidate.result?.success === true
+    ));
+    const actual = call ? getPath(call.result, expected.path) : undefined;
+    add(
+      `tool_result:${expected.tool}:${expected.path}`,
+      expected.label || `${expected.tool} result field ${expected.path}`,
+      expected.weight || 10,
+      Boolean(call) && checkValue(actual, expected),
+      actual === undefined ? 'not observed' : JSON.stringify(actual),
+    );
+  }
   for (const expected of scenario.verify?.toolRequests || []) {
     const candidates = calls.filter((call) => (
       call.name === expected.tool

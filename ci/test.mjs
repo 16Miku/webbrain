@@ -16,6 +16,17 @@ assert.ok(scenarios.every((scenario) => scenario.verify));
 const signupScenario = scenarios.find((scenario) => scenario.id === 'gnippets-signup-otp-disposable');
 assert.equal(signupScenario.api_mutations_allowed, true);
 assert.match(signupScenario.task, /POST \/accounts/);
+const nytimesScenario = scenarios.find((scenario) => scenario.id === 'nytimes-gated-article-read');
+assert.equal(nytimesScenario.mode, 'ask');
+assert.deepEqual(nytimesScenario.verify.successfulTools, ['fetch_nytimes_article']);
+const youtubeDownloadScenario = scenarios.find((scenario) => scenario.id === 'youtube-short-video-download');
+assert.equal(youtubeDownloadScenario.capture, false);
+assert.equal(youtubeDownloadScenario.start_url, 'https://www.youtube.com/watch?v=jNQXAC9IVRw');
+assert.match(youtubeDownloadScenario.task, /19-second/);
+assert.deepEqual(
+  youtubeDownloadScenario.verify.successfulTools,
+  ['resolve_public_media', 'download_public_media', 'list_downloads'],
+);
 
 assert.equal(resolveCloudRunId({ run_id: 'snake-case' }), 'snake-case');
 assert.equal(resolveCloudRunId({ runId: 'camel-case' }), 'camel-case');
@@ -241,6 +252,74 @@ const skillGrade = gradeScenario({
   },
 });
 assert.equal(skillGrade.passed, true);
+const successfulToolsGrade = gradeScenario({
+  scenario: {
+    id: 'successful-tools-fixture',
+    verify: {
+      successfulTools: ['resolve_public_media', 'download_public_media'],
+      toolResults: [
+        { tool: 'download_public_media', path: 'downloadId', equals: 42 },
+      ],
+    },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [
+        { type: 'tool_call', data: { name: 'resolve_public_media', args: {} } },
+        { type: 'tool_result', data: { name: 'resolve_public_media', result: { success: true } } },
+        { type: 'tool_call', data: { name: 'download_public_media', args: {} } },
+        {
+          type: 'tool_result',
+          data: { name: 'download_public_media', result: { success: true, downloadId: 42 } },
+        },
+      ],
+    },
+  },
+});
+assert.equal(successfulToolsGrade.passed, true);
+const invalidToolResultGrade = gradeScenario({
+  scenario: {
+    id: 'invalid-tool-result-fixture',
+    verify: {
+      toolResults: [
+        { tool: 'list_downloads', path: 'downloads.0.state', equals: 'complete' },
+      ],
+    },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [
+        { type: 'tool_call', data: { name: 'list_downloads', args: {} } },
+        {
+          type: 'tool_result',
+          data: {
+            name: 'list_downloads',
+            result: { success: true, downloads: [{ filename: 'video.mp4', state: 'in_progress' }] },
+          },
+        },
+      ],
+    },
+  },
+});
+assert.equal(invalidToolResultGrade.passed, false);
+const failedSuccessfulToolGrade = gradeScenario({
+  scenario: {
+    id: 'failed-successful-tool-fixture',
+    verify: { successfulTools: ['download_public_media'] },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [
+        { type: 'tool_call', data: { name: 'download_public_media', args: {} } },
+        { type: 'tool_result', data: { name: 'download_public_media', result: { success: false } } },
+      ],
+    },
+  },
+});
+assert.equal(failedSuccessfulToolGrade.passed, false);
 const mailTmGrade = gradeScenario({
   scenario: {
     id: 'mailtm-fixture',
