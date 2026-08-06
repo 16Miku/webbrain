@@ -39,9 +39,25 @@ export function sanitizeTrace(trace) {
       mode: trace.run.mode || 'act',
       final_url: trace.run.final_url || '',
       updates: (trace.run.updates || [])
-        .filter((update) => update.type === 'tool_call')
+        .filter((update) => update.type === 'tool_call' || update.type === 'tool_result')
         .map((update) => {
           const name = update.data?.name || update.data?.tool || '';
+          if (update.type === 'tool_result') {
+            const result = update.data?.result && typeof update.data.result === 'object'
+              ? update.data.result
+              : {};
+            const status = Number(result.status);
+            return {
+              type: 'tool_result',
+              data: {
+                name,
+                result: {
+                  success: result.success === true,
+                  ...(name === 'fetch_url' && Number.isInteger(status) ? { status } : {}),
+                },
+              },
+            };
+          }
           const args = update.data?.args || update.data?.arguments || {};
           return {
             type: 'tool_call',

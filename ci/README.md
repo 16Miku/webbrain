@@ -62,8 +62,9 @@ The signup checkpoint sends a real six-digit OTP to the supplied inbox after
 Turnstile succeeds, but stores only hashes and expiring fixture state. Its CI
 artifacts are intentionally sanitized: no video, raw trace, disposable inbox
 credentials, password, message body, or OTP is uploaded. The sanitized trace
-retains only the Mail.tm request origin, first path segment, and method needed to
-prove that the disposable-account and inbox APIs were actually exercised.
+retains only the Mail.tm request origin, first path segment, method, and matching
+response success/status needed to prove that the disposable-account and inbox
+APIs were actually exercised successfully.
 
 ## Rubric
 

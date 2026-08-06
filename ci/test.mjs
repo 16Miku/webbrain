@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { gradeScenario, inferStuckAt, renderSummary } from './lib/grader.mjs';
 import { sanitizeTrace } from './lib/sanitize.mjs';
 import { buildSessionSettings, resolveCloudRunId, suiteShouldFail } from './lib/suite.mjs';
-import { GnippetsE2EClient } from './lib/webbrain-client.mjs';
+import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const scenarios = JSON.parse(await fs.readFile(path.join(root, 'catalog', 'scenarios.json'), 'utf8'));
@@ -13,6 +13,9 @@ const scenarios = JSON.parse(await fs.readFile(path.join(root, 'catalog', 'scena
 assert.equal(new Set(scenarios.map((scenario) => scenario.id)).size, scenarios.length);
 assert.ok(scenarios.every((scenario) => scenario.output_schema?.type === 'object'));
 assert.ok(scenarios.every((scenario) => scenario.verify));
+const signupScenario = scenarios.find((scenario) => scenario.id === 'gnippets-signup-otp-disposable');
+assert.equal(signupScenario.api_mutations_allowed, true);
+assert.match(signupScenario.task, /POST \/accounts/);
 
 assert.equal(resolveCloudRunId({ run_id: 'snake-case' }), 'snake-case');
 assert.equal(resolveCloudRunId({ runId: 'camel-case' }), 'camel-case');
@@ -31,6 +34,27 @@ assert.deepEqual(
   },
   { enabled: true, key: 'captcha-key' },
 );
+
+let cloudRunRequest;
+const cloudClient = new WebBrainCloudClient({
+  apiKey: 'test-cloud-key',
+  baseUrl: 'https://webbrain.example',
+  fetchImpl: async (_url, options) => {
+    cloudRunRequest = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 202,
+      async text() { return '{"run_id":"run_test"}'; },
+    };
+  },
+});
+await cloudClient.startRun('browser_test', {
+  task: 'Exercise the isolated provider API.',
+  apiMutationsAllowed: true,
+});
+assert.equal(cloudRunRequest.api_mutations_allowed, true);
+await cloudClient.startRun('browser_test', { task: 'Read-only run.' });
+assert.equal(Object.hasOwn(cloudRunRequest, 'api_mutations_allowed'), false);
 
 const diagnosticSecret = 'diagnostic-secret-that-must-not-leak';
 let diagnosticRequest;
@@ -92,6 +116,17 @@ const sensitiveTrace = sanitizeTrace({
           },
         },
       },
+      {
+        type: 'tool_result',
+        data: {
+          name: 'fetch_url',
+          result: {
+            success: true,
+            status: 201,
+            content: '{"token":"provider-secret"}',
+          },
+        },
+      },
       { type: 'tool_call', data: { name: 'set_field', args: { text: '654321' } } },
     ],
   },
@@ -101,8 +136,12 @@ assert.deepEqual(sensitiveTrace.run.updates[0].data.args, {
   url_path_root: '/accounts',
   method: 'POST',
 });
-assert.deepEqual(sensitiveTrace.run.updates[1].data, { name: 'set_field' });
-assert.doesNotMatch(JSON.stringify(sensitiveTrace), /private@example|mailbox-secret|654321/);
+assert.deepEqual(sensitiveTrace.run.updates[1], {
+  type: 'tool_result',
+  data: { name: 'fetch_url', result: { success: true, status: 201 } },
+});
+assert.deepEqual(sensitiveTrace.run.updates[2].data, { name: 'set_field' });
+assert.doesNotMatch(JSON.stringify(sensitiveTrace), /private@example|mailbox-secret|provider-secret|654321/);
 
 const mountainScenario = scenarios.find((scenario) => scenario.id === 'wikipedia-table-extraction');
 const invalidMountainHeights = gradeScenario({
@@ -218,6 +257,46 @@ const mailTmGrade = gradeScenario({
   trace: sensitiveTrace,
 });
 assert.equal(mailTmGrade.passed, true);
+const failedMailTmGrade = gradeScenario({
+  scenario: {
+    id: 'mailtm-failed',
+    verify: {
+      toolRequests: [{
+        tool: 'fetch_url',
+        method: 'POST',
+        origin: 'https://api.mail.tm',
+        pathRoot: '/accounts',
+      }],
+    },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [
+        {
+          type: 'tool_call',
+          data: {
+            name: 'fetch_url',
+            args: {
+              url_origin: 'https://api.mail.tm',
+              url_path_root: '/accounts',
+              method: 'POST',
+            },
+          },
+        },
+        {
+          type: 'tool_result',
+          data: { name: 'fetch_url', result: { success: false, status: 403 } },
+        },
+      ],
+    },
+  },
+});
+assert.equal(failedMailTmGrade.passed, false, 'a rejected Mail.tm request must not count as evidence');
+assert.match(
+  failedMailTmGrade.checks.find((check) => check.id.startsWith('tool_request:')).evidence,
+  /HTTP 403/,
+);
 const missingMailTmGrade = gradeScenario({
   scenario: {
     id: 'mailtm-missing',
@@ -230,6 +309,36 @@ const missingMailTmGrade = gradeScenario({
   trace: { run: { updates: [{ type: 'tool_call', data: { name: 'load_skill', args: { skill_id: 'disposable-email-mailtm' } } }] } },
 });
 assert.equal(missingMailTmGrade.passed, false, 'loading the skill alone must not prove Mail.tm use');
+const unconfirmedMailTmGrade = gradeScenario({
+  scenario: {
+    id: 'mailtm-unconfirmed',
+    verify: {
+      toolRequests: [{
+        tool: 'fetch_url',
+        method: 'POST',
+        origin: 'https://api.mail.tm',
+        pathRoot: '/accounts',
+      }],
+    },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [{
+        type: 'tool_call',
+        data: {
+          name: 'fetch_url',
+          args: {
+            url_origin: 'https://api.mail.tm',
+            url_path_root: '/accounts',
+            method: 'POST',
+          },
+        },
+      }],
+    },
+  },
+});
+assert.equal(unconfirmedMailTmGrade.passed, false, 'a request without a result must not count as evidence');
 const cleanupGrade = gradeScenario({
   scenario,
   run,

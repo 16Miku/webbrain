@@ -170,6 +170,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       outputSchema: scenario.output_schema,
       timeoutMs: scenario.timeout_ms,
       capture: captureRequested ? 'video' : 'none',
+      apiMutationsAllowed: scenario.api_mutations_allowed === true,
     });
     const runId = resolveCloudRunId(started);
     if (!runId) throw new Error('WebBrain Cloud did not return a run id.');

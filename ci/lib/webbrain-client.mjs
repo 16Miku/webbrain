@@ -65,13 +65,14 @@ export class WebBrainCloudClient {
   }
 
   async startRun(sessionId, {
-    task, mode = 'act', tabId, outputSchema, timeoutMs, capture = 'video',
+    task, mode = 'act', tabId, outputSchema, timeoutMs, capture = 'video', apiMutationsAllowed = false,
   }) {
     return await this.request('POST', `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs`, {
       task,
       mode,
       ...(tabId === undefined || tabId === null ? {} : { tab_id: tabId }),
       ...(outputSchema === undefined || outputSchema === null ? {} : { output_schema: outputSchema }),
+      ...(apiMutationsAllowed ? { api_mutations_allowed: true } : {}),
       timeout_ms: timeoutMs,
       capture,
       wait: false,

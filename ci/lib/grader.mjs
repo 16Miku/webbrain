@@ -18,12 +18,34 @@ function getFinalUrl(run, trace) {
 }
 
 function toolCalls(run, trace) {
-  return (trace?.run?.updates || run?.updates || [])
-    .filter((update) => update.type === 'tool_call')
-    .map((update) => ({
-      name: update.data?.name || update.data?.tool || '',
-      args: update.data?.args || update.data?.arguments || {},
-    }));
+  const calls = [];
+  const pending = [];
+  for (const update of trace?.run?.updates || run?.updates || []) {
+    const name = update.data?.name || update.data?.tool || '';
+    if (update.type === 'tool_call') {
+      const call = {
+        name,
+        args: update.data?.args || update.data?.arguments || {},
+        result: null,
+      };
+      calls.push(call);
+      pending.push(call);
+    } else if (update.type === 'tool_result') {
+      const pendingIndex = pending.findIndex((call) => call.name === name);
+      if (pendingIndex >= 0) {
+        pending[pendingIndex].result = update.data?.result || {};
+        pending.splice(pendingIndex, 1);
+      }
+    }
+  }
+  return calls;
+}
+
+function successfulToolRequest(call) {
+  if (call?.result?.success !== true) return false;
+  if (call.name !== 'fetch_url') return true;
+  const status = Number(call.result.status);
+  return Number.isInteger(status) && status >= 200 && status < 300;
 }
 
 export function inferStuckAt({ run, trace, setupError, artifactError, cleanupErrors = [], checks }) {
@@ -83,19 +105,27 @@ export function gradeScenario({
     add(`tool:${toolName}`, `Used ${toolName}`, 10, used, used ? 'observed' : 'not observed');
   }
   for (const expected of scenario.verify?.toolRequests || []) {
-    const matched = calls.some((call) => (
+    const candidates = calls.filter((call) => (
       call.name === expected.tool
       && (!expected.origin || call.args?.url_origin === expected.origin)
       && (!expected.pathRoot || call.args?.url_path_root === expected.pathRoot)
       && (!expected.method || String(call.args?.method || 'GET').toUpperCase() === expected.method.toUpperCase())
     ));
+    const matched = candidates.find(successfulToolRequest);
+    const attempted = candidates.at(-1);
     const target = [expected.method, expected.origin, expected.pathRoot].filter(Boolean).join(' ');
+    const attemptedStatus = Number(attempted?.result?.status);
+    const evidence = matched
+      ? `${target} -> HTTP ${matched.result.status}`
+      : attempted
+        ? `request did not succeed${Number.isInteger(attemptedStatus) ? ` (HTTP ${attemptedStatus})` : ''}`
+        : 'not observed';
     add(
       `tool_request:${expected.tool}:${target}`,
       expected.label || `Observed ${expected.tool} request to ${target}`,
       expected.weight || 10,
-      matched,
-      matched ? target : 'not observed',
+      Boolean(matched),
+      evidence,
     );
   }
   for (const toolName of scenario.verify?.forbiddenTools || []) {

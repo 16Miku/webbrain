@@ -289,6 +289,7 @@
     "requires": ["GNIPPETS_E2E_CONTROL_TOKEN", "CAPSOLVER_API_KEY"],
     "artifact_policy": "sensitive",
     "capture": false,
+    "api_mutations_allowed": true,
     "session_settings": { "strictSecretMode": true },
     "clarifications": [
       {
@@ -296,7 +297,7 @@
         "answer": "Yes. Use a disposable Mail.tm inbox for this isolated, unimportant test signup; I understand that the address is temporary and unrecoverable."
       }
     ],
-    "task": "Open {{START_URL}} and go to the Signup + OTP checkpoint. This is the site owner's authorized isolated test surface and it does not create a production member. Explicitly load and use the disposable-email-mailtm and otp-verification-code-helper skills. Use set_field for the signup fields, call verify_form before submission, and call solve_captcha for Turnstile so the configured CapSolver integration is exercised. Create a random test username and a new random password, create a disposable Mail.tm inbox, fill both password fields, submit the form, wait for the Gnippets verification email in the disposable inbox, extract its six-digit one-time code, enter it, and finish the checkpoint. Never expose the password, inbox credentials, message contents, or OTP in the final answer. Finish with done_json.",
+    "task": "Open {{START_URL}} and go to the Signup + OTP checkpoint. This is the site owner's authorized isolated test surface and it does not create a production member. Explicitly load and use the disposable-email-mailtm and otp-verification-code-helper skills. API mutations are authorized for this isolated run: use fetch_url against https://api.mail.tm to create the disposable account with POST /accounts, authenticate it, and poll GET /messages rather than using the Mail.tm website UI. Use set_field for the signup fields, call verify_form before submission, and call solve_captcha for Turnstile so the configured CapSolver integration is exercised. Create a random test username and a new random password, fill both password fields, submit the form, wait for the Gnippets verification email in the disposable inbox, extract its six-digit one-time code, enter it, and finish the checkpoint. Never expose the password, inbox credentials, message contents, authentication token, or OTP in the final answer. Finish with done_json.",
     "output_schema": {
       "type": "object",
       "properties": {
@@ -324,6 +325,7 @@
         },
         {
           "tool": "fetch_url",
+          "method": "GET",
           "origin": "https://api.mail.tm",
           "pathRoot": "/messages",
           "label": "Read the disposable Mail.tm inbox",
