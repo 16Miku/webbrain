@@ -127,11 +127,19 @@ function redactVerifyFormValues(value) {
   }
 }
 
-function redactStrictStructuredStrings(value) {
+// Every leaf a secret can be encoded in goes, not just strings: a six-digit OTP
+// serialized as `verification_code: 481920` is a number, and no key pattern
+// recognizes that field name. Booleans and null survive because neither can
+// carry a credential — which is also what makes a strict structured run
+// gradable, since a `true` outcome flag comes through intact. A strict run's
+// structured output is therefore assertable on booleans only.
+function redactStrictStructuredValues(value) {
   try {
-    return JSON.parse(JSON.stringify(value, (_key, item) => (
-      typeof item === 'string' ? '[redacted strict value]' : item
-    )));
+    return JSON.parse(JSON.stringify(value, (_key, item) => {
+      if (typeof item === 'string') return '[redacted strict value]';
+      if (typeof item === 'number' || typeof item === 'bigint') return '[redacted strict number]';
+      return item;
+    }));
   } catch {
     return { sensitivePayloadRedacted: true };
   }
@@ -198,7 +206,7 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
       ...data,
       args: {
         ...args,
-        ...(Object.hasOwn(args, 'result') ? { result: redactStrictStructuredStrings(args.result) } : {}),
+        ...(Object.hasOwn(args, 'result') ? { result: redactStrictStructuredValues(args.result) } : {}),
         ...(Object.hasOwn(args, 'summary') ? { summary: '[redacted strict summary]' } : {}),
       },
     };
@@ -209,9 +217,9 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
       ...data,
       result: {
         ...result,
-        ...(Object.hasOwn(result, 'result') ? { result: redactStrictStructuredStrings(result.result) } : {}),
-        ...(Object.hasOwn(result, 'cloudResult') ? { cloudResult: redactStrictStructuredStrings(result.cloudResult) } : {}),
-        ...(Object.hasOwn(result, 'invalidResult') ? { invalidResult: redactStrictStructuredStrings(result.invalidResult) } : {}),
+        ...(Object.hasOwn(result, 'result') ? { result: redactStrictStructuredValues(result.result) } : {}),
+        ...(Object.hasOwn(result, 'cloudResult') ? { cloudResult: redactStrictStructuredValues(result.cloudResult) } : {}),
+        ...(Object.hasOwn(result, 'invalidResult') ? { invalidResult: redactStrictStructuredValues(result.invalidResult) } : {}),
         ...(Object.hasOwn(result, 'summary') ? { summary: '[redacted strict summary]' } : {}),
       },
     };
@@ -605,6 +613,13 @@ export function createCloudRunController({
     return redactWorkflowRuntimeValues(value, known, '[redacted strict value]');
   }
 
+  // run.content / run.result / run.finalUrl / run.error reach the caller by the
+  // same two routes as an update row, so they cannot rely on the update-path
+  // redaction having run.
+  function redactStrictTerminal(run, value, strictSecretMode) {
+    return redactStrictSecretValues(run, value, strictSecretMode);
+  }
+
   function pushUpdate(run, type, data, runtimeValues = []) {
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
@@ -769,6 +784,7 @@ export function createCloudRunController({
 
     (async () => {
       let recordingId = null;
+      const strictSecretMode = agent.strictSecretMode === true;
       try {
         if (run.capture === 'video') {
           try {
@@ -845,10 +861,19 @@ export function createCloudRunController({
           });
         }
         run.pendingInput = null;
-        run.content = agent.strictSecretMode === true && outputSchema
+        // Terminal fields are published over the bridge and persisted just like
+        // update rows, so they get the same strict treatment — structured or
+        // not. An unstructured strict run used to return its final answer raw,
+        // which is where a model is most likely to repeat the credential it was
+        // told not to. Value redaction rather than blanking, because for an
+        // unstructured run this text *is* the result: the answer survives with
+        // the literal struck.
+        run.content = strictSecretMode && outputSchema
           ? (run.summary || '[redacted strict structured completion]')
-          : redactWorkflowValue(content);
-        run.finalUrl = redactWorkflowValue(await getTabUrl(tabId));
+          : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
+        run.finalUrl = redactStrictTerminal(
+          run, redactWorkflowValue(await getTabUrl(tabId)), strictSecretMode,
+        );
         if (run.status === 'aborting') {
           run.status = 'aborted';
           run.error = run.error || 'Aborted by cloud_abort.';
@@ -858,14 +883,20 @@ export function createCloudRunController({
             run.error = 'Structured cloud run finished without a valid done_json result.';
           } else {
             run.status = 'completed';
-            if (!outputSchema) run.result = redactWorkflowValue(content);
+            if (!outputSchema) {
+              run.result = redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
+            }
           }
         }
       } catch (error) {
         run.pendingInput = null;
         run.status = run.status === 'aborting' ? 'aborted' : 'failed';
-        run.error = redactWorkflowValue(error?.message || String(error));
-        run.finalUrl = redactWorkflowValue(await getTabUrl(tabId));
+        run.error = redactStrictTerminal(
+          run, redactWorkflowValue(error?.message || String(error)), strictSecretMode,
+        );
+        run.finalUrl = redactStrictTerminal(
+          run, redactWorkflowValue(await getTabUrl(tabId)), strictSecretMode,
+        );
       } finally {
         // Do not expose a terminal status until the requested recording has
         // finished flushing to Downloads; pollers use terminality as the cue

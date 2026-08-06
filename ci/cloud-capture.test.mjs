@@ -253,6 +253,91 @@ assert.match(
   /Submit code \[redacted strict value\]\?/,
 );
 
+// Terminal fields publish over the same two routes as update rows. An
+// unstructured strict run has no structured result, so its final answer is the
+// result — it must come back readable with the literal struck, not raw.
+storedRows = [];
+const strictProseController = createCloudRunController({
+  chromeApi,
+  agent: {
+    strictSecretMode: true,
+    isRunning() { return false; },
+    setApiMutationsAllowed() {},
+    abort() {},
+    async processMessage(_tabId, _task, publishUpdate) {
+      publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_otp', text: OTP } });
+      return `Signup finished. The code was ${OTP}.`;
+    },
+  },
+  ensureOffscreen: async () => {},
+  makeRunId: () => 'run_strict_prose_fixture',
+});
+await strictProseController.startRun({ task: 'strict prose fixture' }); // no outputSchema
+let strictProseSnapshot;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  strictProseSnapshot = await strictProseController.status({ runId: 'run_strict_prose_fixture' });
+  if (strictProseSnapshot.status === 'completed') break;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+assert.equal(strictProseSnapshot.status, 'completed');
+assert.equal(JSON.stringify(strictProseSnapshot).includes(OTP), false);
+assert.equal(JSON.stringify(storedRows).includes(OTP), false);
+assert.match(strictProseSnapshot.content, /^Signup finished\. The code was \[redacted strict value\]\.$/);
+assert.equal(strictProseSnapshot.result, strictProseSnapshot.content);
+
+// A secret is not always a string. Sweep every JSON leaf type through a
+// structured strict payload: only booleans and null may survive, because
+// neither can encode a credential — and a boolean outcome flag is what
+// scenario grading reads.
+storedRows = [];
+const NUMERIC_OTP = 481920;
+const strictLeafController = createCloudRunController({
+  chromeApi,
+  agent: {
+    strictSecretMode: true,
+    isRunning() { return false; },
+    setApiMutationsAllowed() {},
+    abort() {},
+    async processMessage(_tabId, _task, publishUpdate) {
+      const payload = {
+        verification_code: NUMERIC_OTP,
+        nested: { pin_digits: [NUMERIC_OTP, 7], note: `code ${OTP}` },
+        signup_completed: true,
+        opted_out: false,
+        absent: null,
+      };
+      // The call is published before argument validation can reject it, so the
+      // args are a publication path in their own right.
+      publishUpdate('tool_call', { name: 'done_json', args: { result: payload, summary: `code ${OTP}` } });
+      publishUpdate('tool_result', {
+        name: 'done_json',
+        result: { success: true, cloudResult: payload, summary: `code ${OTP}` },
+      });
+      return 'done';
+    },
+  },
+  ensureOffscreen: async () => {},
+  makeRunId: () => 'run_strict_leaf_fixture',
+});
+await strictLeafController.startRun({ task: 'strict leaf fixture', outputSchema: { type: 'object' } });
+let strictLeafSnapshot;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  strictLeafSnapshot = await strictLeafController.status({ runId: 'run_strict_leaf_fixture' });
+  if (strictLeafSnapshot.status === 'completed') break;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+assert.equal(strictLeafSnapshot.status, 'completed');
+for (const source of [JSON.stringify(strictLeafSnapshot), JSON.stringify(storedRows)]) {
+  assert.equal(source.includes(String(NUMERIC_OTP)), false, 'a numeric secret escaped strict mode');
+  assert.equal(source.includes(OTP), false, 'a string secret escaped strict mode');
+}
+assert.equal(strictLeafSnapshot.result.verification_code, '[redacted strict number]');
+assert.deepEqual(strictLeafSnapshot.result.nested.pin_digits, ['[redacted strict number]', '[redacted strict number]']);
+assert.equal(strictLeafSnapshot.result.nested.note, '[redacted strict value]');
+assert.equal(strictLeafSnapshot.result.signup_completed, true, 'grading reads booleans; they must survive');
+assert.equal(strictLeafSnapshot.result.opted_out, false);
+assert.equal(strictLeafSnapshot.result.absent, null);
+
 // A strict run that schedules a child task must not publish that child's raw
 // prompt, result, or target URL through the scheduled-jobs query.
 const scheduledJob = {
