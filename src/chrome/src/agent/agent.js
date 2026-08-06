@@ -1747,6 +1747,7 @@ export class Agent extends LoopDetector {
     return true;
   }
 
+  // COMPACT_UPLOAD_TARGET_HELPERS_START
   _toolResultTrustName(name, result) {
     return name === 'upload_file' && result?.discoveryOnly
       ? 'get_file_input_targets'
@@ -1852,7 +1853,7 @@ export class Agent extends LoopDetector {
       addressableCount,
       candidates,
       truncated: addressableCount > candidates.length,
-      error: `${prefix}Choose the intended file input from candidates, then retry upload_file with the same attachmentId and that exact targetId. Never guess or modify a targetId.`,
+      error: `${prefix}Choose the intended file input from candidates, then retry upload_file with that exact targetId and the same attachmentId if one was provided. Never guess or modify a targetId.`,
     };
   }
 
@@ -1902,6 +1903,7 @@ export class Agent extends LoopDetector {
     this._compactUploadTargets.delete(tabId);
     return { ok: true, selector: saved.selector };
   }
+  // COMPACT_UPLOAD_TARGET_HELPERS_END
 
   _rememberAxScope(tabId, documentToken, pageUrl = '') {
     const next = {

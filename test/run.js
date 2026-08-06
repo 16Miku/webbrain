@@ -12996,6 +12996,34 @@ test('Compact upload discovery uses a hidden file-input-only page action', async
   }
 });
 
+test('Compact upload target helpers stay byte-identical across Chrome and Firefox', () => {
+  const startMarker = '  // COMPACT_UPLOAD_TARGET_HELPERS_START';
+  const endMarker = '  // COMPACT_UPLOAD_TARGET_HELPERS_END';
+  const helperBlock = (browser) => {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start + startMarker.length);
+    assert.ok(start >= 0 && end > start, `${browser}: Compact upload helper parity markers are missing or reversed`);
+    assert.equal(
+      source.indexOf(startMarker, start + startMarker.length),
+      -1,
+      `${browser}: Compact upload helper start marker must be unique`,
+    );
+    assert.equal(
+      source.indexOf(endMarker, end + endMarker.length),
+      -1,
+      `${browser}: Compact upload helper end marker must be unique`,
+    );
+    return source.slice(start, end + endMarker.length);
+  };
+
+  assert.equal(
+    helperBlock('chrome'),
+    helperBlock('firefox'),
+    'Chrome and Firefox Compact upload target helpers must remain byte-identical',
+  );
+});
+
 test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev tools', () => {
   for (const [label, getTools] of [
     ['chrome', getToolsForModeCh],
