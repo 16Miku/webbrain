@@ -12793,7 +12793,7 @@ test('getToolsForMode: compact mode restricts act tools in both browsers', () =>
   }
 });
 
-test('compact Act exposes a direct-upload-only file workflow in both browsers', () => {
+test('compact Act exposes a self-targeting upload workflow without a general selector tool', () => {
   for (const [label, getTools, prompt] of [
     ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ACT_COMPACT_CH],
     ['firefox', getToolsForModeFx, SYSTEM_PROMPT_ACT_COMPACT_FX],
@@ -12814,18 +12814,23 @@ test('compact Act exposes a direct-upload-only file workflow in both browsers', 
     ]) {
       assert.equal(compactNames.includes(unavailable), false, `[${label}] compact Act exposed ${unavailable}`);
     }
-    assert.match(upload.function.description, /directly to an existing file input/i);
-    assert.match(upload.function.description, /without clicking the page upload control/i);
-    assert.match(upload.function.description, /exact selector/i);
+    assert.match(upload.function.description, /two-step Compact workflow/i);
+    assert.match(upload.function.description, /read-only/i);
+    assert.match(upload.function.description, /targetId choices/i);
+    assert.match(upload.function.description, /Never invent or modify a targetId/i);
     assert.match(upload.function.description, /one guarded click/i);
     assert.doesNotMatch(upload.function.description, /download_files|list_downloads|downloadId/i);
+    assert.doesNotMatch(upload.function.description, /get_interactive_elements|CSS selector/i);
     assert.ok(upload.function.parameters.properties.attachmentId, `[${label}] compact upload must accept attachmentId`);
+    assert.ok(upload.function.parameters.properties.targetId, `[${label}] compact upload must accept its own targetId`);
     assert.ok(fullUpload.function.parameters.properties.downloadId, `[${label}] full upload must retain downloadId`);
+    assert.ok(fullUpload.function.parameters.properties.selector, `[${label}] full upload must retain selector`);
+    assert.equal(fullUpload.function.parameters.properties.targetId, undefined, `[${label}] full upload must not gain compact targetId`);
 
     // Compact can reach only the file the user attached to this run: it has no
     // download tools to produce a downloadId, and no way to learn a local path
     // that the model did not invent.
-    for (const hidden of ['downloadId', 'filePath']) {
+    for (const hidden of ['selector', 'downloadId', 'filePath']) {
       assert.equal(
         upload.function.parameters.properties[hidden],
         undefined,
@@ -12834,56 +12839,105 @@ test('compact Act exposes a direct-upload-only file workflow in both browsers', 
     }
     assert.deepEqual(
       Object.keys(upload.function.parameters.properties).sort(),
-      ['attachmentId', 'selector'],
-      `[${label}] compact upload must expose exactly selector + attachmentId`,
+      ['attachmentId', 'targetId'],
+      `[${label}] compact upload must expose exactly attachmentId + targetId`,
     );
-
-    // An ambiguous selector latches upload_file until get_interactive_elements
-    // returns a verified file-input selector, so the recovery tool has to be in
-    // the catalog the model is given.
-    assert.ok(
+    assert.equal(
       compactNames.includes('get_interactive_elements'),
-      `[${label}] compact Act must expose upload_file's ambiguity-recovery tool`,
+      false,
+      `[${label}] compact upload discovery must not expose the general selector tool`,
     );
-    assert.match(upload.function.description, /get_interactive_elements/);
 
     // Assert on the prompt's own upload_file bullet rather than on character
     // distances, so rewording the neighbouring bullets cannot break these.
     const uploadLine = prompt.split('\n').find(line => line.startsWith('- upload_file('));
     assert.ok(uploadLine, `[${label}] compact prompt must document upload_file`);
-    assert.match(uploadLine, /do not click the page upload control/i);
-    assert.match(uploadLine, /exact selector/i);
+    assert.match(uploadLine, /Two steps/i);
+    assert.match(uploadLine, /targetId/i);
+    assert.match(uploadLine, /Never guess a targetId/i);
     assert.match(uploadLine, /one guarded initializer click/i);
-    assert.match(uploadLine, /get_interactive_elements/);
-    assert.ok(
+    assert.doesNotMatch(uploadLine, /selector|get_interactive_elements/i);
+    assert.equal(
       prompt.split('\n').some(line => line.startsWith('- get_interactive_elements')),
-      `[${label}] compact prompt must document the recovery tool it points at`,
+      false,
+      `[${label}] compact prompt must not advertise the removed general selector tool`,
     );
     assert.doesNotMatch(prompt, /download_files|list_downloads|downloadId/i);
 
     if (label === 'firefox') {
-      assert.match(upload.function.description, /WebBrain's file picker/i);
+      assert.match(upload.function.description, /user-controlled picker/i);
+      assert.deepEqual(upload.function.parameters.required, []);
     } else {
-      assert.doesNotMatch(uploadLine, /filePath/);
+      assert.deepEqual(upload.function.parameters.required, ['attachmentId']);
     }
   }
 });
 
-test('every tier exposing upload_file also exposes its ambiguity-recovery tool', () => {
-  // upload_file latches on an ambiguous selector and only a
-  // get_interactive_elements response carrying a verified file-input selector
-  // clears it (Agent._clearUploadSelectorRecoveryAfterInspection). A tier that
-  // ships upload_file without it can never recover: the handler keeps
-  // returning recoveryRequired:'get_interactive_elements' and the model has no
-  // way to satisfy it until the page is replaced.
+test('upload targeting is tier-scoped: compact self-discovers while mid/full keep selectors', () => {
   for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
-    for (const tier of ['compact', 'mid', 'full']) {
-      const names = new Set(getTools('act', { tier }).map(tool => tool.function.name));
-      if (!names.has('upload_file')) continue;
-      assert.ok(
-        names.has('get_interactive_elements'),
-        `[${label}] act/${tier} exposes upload_file without get_interactive_elements, so an ambiguous selector is unrecoverable`,
-      );
+    const compact = getTools('act', { tier: 'compact' });
+    const compactNames = new Set(compact.map(tool => tool.function.name));
+    assert.equal(compactNames.has('upload_file'), true, `[${label}] compact must keep upload_file`);
+    assert.equal(compactNames.has('get_interactive_elements'), false, `[${label}] compact must avoid the overlapping inspection tool`);
+
+    for (const tier of ['mid', 'full']) {
+      const tools = getTools('act', { tier });
+      const names = new Set(tools.map(tool => tool.function.name));
+      const upload = tools.find(tool => tool.function.name === 'upload_file');
+      assert.equal(names.has('upload_file'), true, `[${label}] act/${tier} must keep upload_file`);
+      assert.equal(names.has('get_interactive_elements'), true, `[${label}] act/${tier} must keep selector recovery`);
+      assert.ok(upload.function.parameters.properties.selector, `[${label}] act/${tier} lost selector`);
+      assert.equal(upload.function.parameters.properties.targetId, undefined, `[${label}] act/${tier} gained compact targetId`);
+      assert.deepEqual(upload.function.parameters.required, ['selector'], `[${label}] act/${tier} selector contract changed`);
+    }
+  }
+});
+
+test('Compact upload discovery uses a hidden file-input-only page action', async () => {
+  for (const [label, AgentClass, getTools, untrustedTools] of [
+    ['chrome', AgentCh, getToolsForModeCh, UNTRUSTED_CONTENT_TOOLS_CH],
+    ['firefox', AgentFx, getToolsForModeFx, UNTRUSTED_CONTENT_TOOLS],
+  ]) {
+    const agent = Object.create(AgentClass.prototype);
+    let invocation = null;
+    agent.executeTool = async (tabId, name, args) => {
+      invocation = { tabId, name, args };
+      return [
+        { tag: 'input', type: 'file', selector: '#avatar' },
+        { tag: 'button', type: 'button', selector: '#submit' },
+      ];
+    };
+
+    const inventory = await agent._readCompactUploadFileInputs(42);
+    assert.deepEqual(invocation, {
+      tabId: 42,
+      name: 'get_file_input_targets',
+      args: {},
+    }, `[${label}] Compact discovery must call the narrow internal action`);
+    assert.equal(inventory.ok, true);
+    assert.deepEqual(inventory.fileInputs, [{ tag: 'input', type: 'file', selector: '#avatar' }]);
+    assert.deepEqual(inventory.usable, [{ tag: 'input', type: 'file', selector: '#avatar' }]);
+    assert.equal(untrustedTools.has('get_file_input_targets'), true);
+    assert.equal(
+      agent._toolResultTrustName('upload_file', { discoveryOnly: true }),
+      'get_file_input_targets',
+      `[${label}] page-derived discovery labels must use the untrusted boundary`,
+    );
+    assert.equal(
+      agent._toolResultTrustName('upload_file', { success: true }),
+      'upload_file',
+      `[${label}] ordinary Mid/Full upload results must retain their existing trust classification`,
+    );
+
+    for (const [mode, tiers] of [['ask', ['full']], ['act', ['compact', 'mid', 'full']], ['dev', ['compact', 'mid', 'full']]]) {
+      for (const tier of tiers) {
+        const names = getTools(mode, { tier }).map(tool => tool.function.name);
+        assert.equal(
+          names.includes('get_file_input_targets'),
+          false,
+          `[${label}] ${mode}/${tier} must not expose the internal discovery action`,
+        );
+      }
     }
   }
 });
@@ -50785,7 +50839,7 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
 
     const agent = new AgentCh({});
     const args = { selector: 'input[type=file]', downloadId: 9123, filePath: stalePath };
-    const result = await agent.executeTool(42, 'upload_file', args);
+    const result = await agent.executeTool(42, 'upload_file', args, null, { promptTier: 'mid' });
 
     assert.equal(result.success, true);
     assert.equal(result.file, realPath);
@@ -50904,6 +50958,197 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
   }
 });
 
+test('Compact Chrome upload_file discovers opaque targets, rejects hidden full-tier inputs, and attaches on retry', async () => {
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+    setFileInputData: cdpClientCh.setFileInputData,
+    getFileInputFiles: cdpClientCh.getFileInputFiles,
+  };
+  let cdpQueries = 0;
+  let attachedPayload = null;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.querySelectorPierce = async (_tabId, selector) => {
+      cdpQueries++;
+      assert.equal(selector, '#resume-upload', 'the model-facing targetId must resolve to the internal verified selector');
+      return { objectIds: ['input-501'], objectGroup: 'compact-upload-query' };
+    };
+    cdpClientCh.releaseObjectGroup = async () => {};
+    cdpClientCh.setFileInputData = async (_tabId, objectId, payload) => {
+      assert.equal(objectId, 'input-501');
+      attachedPayload = payload;
+      return { success: true, dispatched: true };
+    };
+    cdpClientCh.getFileInputFiles = async () => [{ name: 'resume.pdf', size: 42 }];
+
+    const agent = new AgentCh({});
+    agent._currentUrl = async () => 'https://example.com/apply';
+    agent._resolveUserAttachment = (_tabId, attachmentId) => ({
+      ok: true,
+      attachmentId,
+      filename: 'resume.pdf',
+      mimeType: 'application/pdf',
+      base64: 'JVBERi0=',
+    });
+    agent._readCompactUploadFileInputs = async () => ({
+      ok: true,
+      fileInputs: [
+        {
+          tag: 'input',
+          type: 'file',
+          selector: '#resume-upload',
+          text: 'Resume',
+          name: 'resume',
+          accept: '.pdf',
+          multiple: false,
+          inShadowDOM: false,
+        },
+      ],
+      usable: [
+        {
+          tag: 'input',
+          type: 'file',
+          selector: '#resume-upload',
+          text: 'Resume',
+          name: 'resume',
+          accept: '.pdf',
+          multiple: false,
+          inShadowDOM: false,
+        },
+      ],
+    });
+
+    const denied = await agent.executeTool(42, 'upload_file', {
+      attachmentId: 'att_1',
+      selector: '#resume-upload',
+    }, null, { promptTier: 'compact' });
+    assert.equal(denied.denied, true);
+    assert.equal(denied.noDispatch, true);
+    assert.match(denied.error, /only attachmentId and a targetId/i);
+
+    const discovery = await agent.executeTool(42, 'upload_file', {
+      attachmentId: 'att_1',
+    }, null, { promptTier: 'compact' });
+    assert.equal(discovery.success, false);
+    assert.equal(discovery.discoveryOnly, true);
+    assert.equal(discovery.requiresTarget, true);
+    assert.equal(discovery.dispatched, false);
+    assert.equal(discovery.candidates.length, 1);
+    assert.equal(discovery.candidates[0].label, 'Resume');
+    assert.equal(discovery.candidates[0].accept, '.pdf');
+    assert.equal(typeof discovery.candidates[0].targetId, 'string');
+    assert.equal('selector' in discovery.candidates[0], false, 'Compact must never expose CSS to the model');
+    assert.equal(cdpQueries, 0, 'discovery must not attach or query through the upload mutation path');
+
+    const result = await agent.executeTool(42, 'upload_file', {
+      attachmentId: 'att_1',
+      targetId: discovery.candidates[0].targetId,
+    }, null, { promptTier: 'compact' });
+    assert.equal(result.success, true);
+    assert.equal(result.file, 'resume.pdf');
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(cdpQueries, 1);
+    assert.equal(attachedPayload.filename, 'resume.pdf');
+    assert.equal(agent._compactUploadTargets.has(42), false, 'targetId must be one-use');
+
+    const stale = await agent.executeTool(42, 'upload_file', {
+      attachmentId: 'att_1',
+      targetId: discovery.candidates[0].targetId,
+    }, null, { promptTier: 'compact' });
+    assert.equal(stale.discoveryOnly, true);
+    assert.match(stale.error, /missing, expired/i);
+    assert.equal(cdpQueries, 1, 'a stale targetId must fail before attachment');
+
+    agent._clearPageLoopState(42);
+    assert.equal(agent._compactUploadTargets.has(42), false, 'navigation cleanup must clear compact targets');
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+  }
+});
+
+test('Compact Firefox upload_file discovers before opening its picker and attaches only to a returned targetId', async () => {
+  const originalBrowser = globalThis.browser;
+  const scripts = [];
+  let pickerEvent = null;
+  try {
+    globalThis.browser = {
+      tabs: {
+        async executeScript(_tabId, details) {
+          scripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment settle probe')) {
+            return [{ attachmentState: 'input_attached' }];
+          }
+          return [{ success: true, dispatched: true, file: 'resume.pdf', size: 4, attachmentState: 'input_attached' }];
+        },
+      },
+    };
+
+    const candidate = {
+      tag: 'input',
+      type: 'file',
+      selector: '#resume-upload',
+      text: 'Resume',
+      name: 'resume',
+      accept: '.pdf',
+      multiple: false,
+      inShadowDOM: false,
+    };
+    const agent = new AgentFx({});
+    agent._currentUrl = async () => 'https://example.com/apply';
+    agent._readCompactUploadFileInputs = async () => ({
+      ok: true,
+      fileInputs: [candidate],
+      usable: [candidate],
+    });
+
+    const denied = await agent.executeTool(42, 'upload_file', {
+      selector: '#resume-upload',
+    }, null, { promptTier: 'compact' });
+    assert.equal(denied.denied, true);
+    assert.equal(denied.noDispatch, true);
+
+    const discovery = await agent.executeTool(
+      42,
+      'upload_file',
+      {},
+      (evt, data) => { if (evt === 'upload_picker') pickerEvent = data; },
+      { promptTier: 'compact' },
+    );
+    assert.equal(discovery.discoveryOnly, true);
+    assert.equal(discovery.candidates.length, 1);
+    assert.equal(pickerEvent, null, 'read-only discovery must not open Firefox\'s picker');
+    assert.equal(scripts.length, 0, 'discovery must not inject attachment code');
+
+    const uploadPromise = agent.executeTool(
+      42,
+      'upload_file',
+      { targetId: discovery.candidates[0].targetId },
+      (evt, data) => { if (evt === 'upload_picker') pickerEvent = data; },
+      { promptTier: 'compact' },
+    );
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(pickerEvent?.pickerId, 'the picker should open only after a valid targetId is selected');
+    agent.submitUploadPickerResponse(42, pickerEvent.pickerId, {
+      base64: 'JVBERg==',
+      name: 'resume.pdf',
+      type: 'application/pdf',
+      size: 4,
+    });
+    const result = await uploadPromise;
+    assert.equal(result.success, true);
+    assert.equal(result.file, 'resume.pdf');
+    assert.equal(result.attachmentState, 'input_attached');
+    assert.equal(scripts.length, 2);
+    assert.match(scripts[0], /const selector = "#resume-upload"/);
+    assert.equal(agent._compactUploadTargets.has(42), false, 'targetId must be one-use');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('upload_file schema accepts downloadId and no longer hard-requires filePath (firefox)', () => {
   const tools = getToolsForModeFx('act', {});
   const up = tools.find(t => t.function?.name === 'upload_file');
@@ -50966,7 +51211,7 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
     const result = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
       attachmentId,
-    });
+    }, null, { promptTier: 'mid' });
 
     assert.equal(result.success, true);
     assert.equal(result.attachmentId, attachmentId);

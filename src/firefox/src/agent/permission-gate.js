@@ -57,6 +57,8 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'read_page',
   'get_accessibility_tree',
   'get_interactive_elements',
+  // Hidden Compact-upload discovery returns page-authored file-input labels.
+  'get_file_input_targets',
   'get_shadow_dom',
   'shadow_dom_query',
   'get_frames',
