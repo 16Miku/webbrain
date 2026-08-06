@@ -479,14 +479,15 @@ export function createCloudRunController({
       run.updates.splice(0, run.updates.length - CLOUD_UPDATE_LIMIT);
     }
     if (type === 'tool_result' && scrubbedData?.name === 'done_json') {
-      const result = scrubbedData.result || {};
+      const result = data.result || {};
+      const safeResult = scrubbedData.result || {};
       if (result.cloudFailed) {
         run.status = 'failed';
-        run.error = result.error || 'done_json failed';
-        run.summary = result.summary || run.summary;
+        run.error = safeResult.error || 'done_json failed';
+        run.summary = safeResult.summary || run.summary;
       } else if (Object.prototype.hasOwnProperty.call(result, 'cloudResult')) {
         run.result = result.cloudResult;
-        run.summary = result.summary || run.summary;
+        run.summary = safeResult.summary || run.summary;
       }
     }
     if (type === 'captcha_gate') {

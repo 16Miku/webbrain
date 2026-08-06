@@ -76,7 +76,7 @@ const cloudClient = new WebBrainCloudClient({
   apiKey: 'test-cloud-key',
   baseUrl: 'https://webbrain.example',
   fetchImpl: async (url, options = {}) => {
-    if (url.endsWith('/scheduled-jobs')) {
+    if (new URL(url).pathname.endsWith('/scheduled-jobs')) {
       scheduledPolls += 1;
       return {
         ok: true,
