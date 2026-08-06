@@ -25,7 +25,11 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # The cloud-smoke pack budgets ~133 min serially at --concurrency 1
+    # (5 × 10 min provisioning + per-scenario preload/run/scheduled timeouts),
+    # so a 120-minute job was killed before the last scenario could finish or
+    # clean up. Keep this above the catalog's worst case plus npm ci/test:ci.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 

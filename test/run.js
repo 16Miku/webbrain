@@ -10918,6 +10918,76 @@ test('done_json validates Chrome and Firefox cloud results with one repair attem
   }
 });
 
+test('done_json accepts free-form and shorthand output schemas it advertises', async () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    const argumentModule = await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tool-arguments.js`)).href
+    );
+    const cloudModule = await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/cloud-output.js`)).href
+    );
+    const advertised = (outputSchema) => getTools('act', { tier: 'full', cloudRun: true, outputSchema })
+      .find(tool => tool.function.name === 'done_json');
+    const validate = (outputSchema, args) => argumentModule.validateToolArguments(
+      'done_json',
+      args,
+      advertised(outputSchema).function.parameters,
+    );
+
+    // A declared free-form object accepts arbitrary keys. Closing it would have
+    // meant "empty object only", so done_json could never be called at all.
+    assert.equal(
+      validate(
+        { type: 'object', properties: { data: { type: 'object' } }, required: ['data'] },
+        { result: { data: { a: 1, b: [2] } }, summary: 'ok' },
+      ).ok,
+      true,
+      `${label}: a free-form object field rejected its own values`,
+    );
+    assert.equal(
+      validate({ payload: 'any' }, { result: { payload: { deep: { x: 1 } } }, summary: 'ok' }).ok,
+      true,
+      `${label}: an 'any' field rejected its own values`,
+    );
+
+    // `description` is an ordinary field name, not proof of a JSON Schema node.
+    const shorthand = { title: 'string', description: 'string' };
+    assert.equal(
+      validate(shorthand, { result: { title: 'T', description: 'D' }, summary: 'ok' }).ok,
+      true,
+      `${label}: shorthand schema with a description field was read as JSON Schema`,
+    );
+    assert.deepEqual(
+      cloudModule.validateCloudOutput({ title: 'T', description: 'D' }, shorthand),
+      { ok: true, errors: [] },
+      `${label}: shorthand validation disagreed with the advertised schema`,
+    );
+
+    // Declared constraints are still enforced in both directions.
+    const declared = { type: 'object', properties: { n: { type: 'number' } }, required: ['n'] };
+    assert.equal(
+      validate(declared, { result: { n: 1, extra: 2 }, summary: 'ok' }).ok,
+      false,
+      `${label}: an undeclared property slipped past a closed result schema`,
+    );
+    assert.equal(
+      validate(declared, { result: { n: 1 }, summary: 'ok', bogus: 1 }).ok,
+      false,
+      `${label}: an undeclared top-level done_json argument was accepted`,
+    );
+    assert.equal(
+      cloudModule.isJsonSchemaSpec({ type: 'object', properties: {} }),
+      true,
+      `${label}: a real schema node was misread as shorthand`,
+    );
+    assert.equal(
+      cloudModule.isJsonSchemaSpec({ description: 'string', required: 'string' }),
+      false,
+      `${label}: a shorthand object was misread as a schema node`,
+    );
+  }
+});
+
 test('structured Ask cloud runs recover prose finals through done_json', async () => {
   const schema = {
     type: 'object',

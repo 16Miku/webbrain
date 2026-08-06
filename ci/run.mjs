@@ -16,6 +16,29 @@ import {
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACT_ROOT = path.join(ROOT, 'artifacts');
 
+// Cloud browser sessions and Gnippets fixtures outlive this process if it is
+// killed mid-scenario — a job timeout or a cancelled workflow run skips every
+// `finally`, and the sensitive fixture's capability URL then survives the run.
+// Each in-flight scenario keeps its handles here so a signal can release them.
+const liveResources = new Set();
+
+function installSignalCleanup({ cloud, gnippets }) {
+  let releasing = false;
+  const release = async (signal) => {
+    if (releasing) return;
+    releasing = true;
+    console.error(`\nReceived ${signal}; releasing ${liveResources.size} in-flight cloud resource(s).`);
+    await Promise.allSettled([...liveResources].flatMap((entry) => [
+      entry.gnippetsRunId ? gnippets.deleteRun(entry.gnippetsRunId) : null,
+      entry.browserId ? cloud.destroyBrowser(entry.browserId) : null,
+    ].filter(Boolean)));
+    process.exit(130);
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => { void release(signal); });
+  }
+}
+
 function parseArgs(argv) {
   const options = { pack: 'all', concurrency: 2, video: true, dryRun: false, scenarioIds: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -101,7 +124,12 @@ async function mapLimit(values, limit, worker) {
 
 async function waitForRunWithClarifications({ cloud, sessionId, runId, scenario }) {
   const used = new Set();
-  let run = await cloud.waitForRun(sessionId, runId, { timeoutMs: scenario.timeout_ms + 120_000 });
+  const answeredClarifyIds = new Set();
+  // One budget for the whole run, not a fresh one per clarification: five
+  // answered questions on a 10-minute scenario used to license 72 minutes.
+  const deadline = Date.now() + scenario.timeout_ms + 120_000;
+  const remainingMs = () => Math.max(deadline - Date.now(), 0);
+  let run = await cloud.waitForRun(sessionId, runId, { timeoutMs: remainingMs(), answeredClarifyIds });
   for (let count = 0; run.status === 'needs_user_input' && count < 5; count += 1) {
     const pending = run.pending_input || run.pendingInput || {};
     const question = String(pending.question || '');
@@ -112,8 +140,9 @@ async function waitForRunWithClarifications({ cloud, sessionId, runId, scenario 
     const clarifyId = pending.clarify_id || pending.clarifyId;
     if (!clarifyId) return run;
     used.add(ruleIndex);
+    answeredClarifyIds.add(String(clarifyId));
     await cloud.respondToRun(sessionId, runId, clarifyId, scenario.clarifications[ruleIndex].answer);
-    run = await cloud.waitForRun(sessionId, runId, { timeoutMs: scenario.timeout_ms + 120_000 });
+    run = await cloud.waitForRun(sessionId, runId, { timeoutMs: remainingMs(), answeredClarifyIds });
   }
   return run;
 }
@@ -151,12 +180,15 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   const artifacts = {};
   const sensitive = scenario.artifact_policy === 'sensitive';
   const captureRequested = video && scenario.capture !== false && !sensitive;
+  const live = { browserId: null, gnippetsRunId: null };
+  liveResources.add(live);
 
   try {
     let startUrl = scenario.start_url;
     if (scenario.setup === 'gnippets_e2e') {
       const setup = await gnippets.createRun(scenario.id);
       gnippetsRun = setup.run;
+      live.gnippetsRunId = gnippetsRun.run_id;
       startUrl = setup.app_url;
       await writeJson(path.join(scenarioDir, 'gnippets-setup.json'), sensitive
         ? { created: true, expires_at: gnippetsRun.expires_at }
@@ -167,6 +199,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       name: `CI ${scenario.id}`.slice(0, 120),
       settings: buildSessionSettings(process.env.CAPSOLVER_API_KEY || '', scenario.session_settings || {}),
     });
+    live.browserId = browser.id;
     await cloud.waitForBrowser(browser.id);
     let tabId;
     if (scenario.preload_url) {
@@ -256,10 +289,13 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   } finally {
     if (gnippetsRun) {
       await gnippets.deleteRun(gnippetsRun.run_id).catch((error) => cleanupErrors.push(error));
+      live.gnippetsRunId = null;
     }
     if (browser?.id) {
       await cloud.destroyBrowser(browser.id).catch((error) => cleanupErrors.push(error));
+      live.browserId = null;
     }
+    liveResources.delete(live);
   }
 
   const grade = gradeScenario({
@@ -319,6 +355,7 @@ async function main() {
     baseUrl: process.env.GNIPPETS_BASE_URL || 'https://gnippets.com',
     controlToken: process.env.GNIPPETS_E2E_CONTROL_TOKEN || '',
   });
+  installSignalCleanup({ cloud, gnippets });
 
   const suiteId = new Date().toISOString().replace(/[:.]/g, '-');
   const suiteDir = path.join(ARTIFACT_ROOT, suiteId);

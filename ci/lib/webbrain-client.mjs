@@ -80,6 +80,13 @@ export class WebBrainCloudClient {
     });
   }
 
+  #isAnsweredClarification(run, answeredClarifyIds) {
+    if (!answeredClarifyIds?.size || run.status !== 'needs_user_input') return false;
+    const pending = run.pending_input || run.pendingInput || {};
+    const clarifyId = String(pending.clarify_id || pending.clarifyId || '');
+    return Boolean(clarifyId) && answeredClarifyIds.has(clarifyId);
+  }
+
   async respondToRun(sessionId, runId, clarifyId, answer) {
     return await this.request(
       'POST',
@@ -88,7 +95,7 @@ export class WebBrainCloudClient {
     );
   }
 
-  async waitForRun(sessionId, runId, { timeoutMs = 900_000, intervalMs = 3_000 } = {}) {
+  async waitForRun(sessionId, runId, { timeoutMs = 900_000, intervalMs = 3_000, answeredClarifyIds = null } = {}) {
     const deadline = Date.now() + timeoutMs;
     let latest = null;
     while (Date.now() < deadline) {
@@ -96,7 +103,12 @@ export class WebBrainCloudClient {
         'GET',
         `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}`,
       );
-      if (TERMINAL.has(latest.status)) return latest;
+      // A run row read right after an answer may not have flipped back to
+      // `running` yet. Re-reporting a clarification we already answered is a
+      // stale read, not a handoff — keep polling instead of grading it stuck.
+      if (TERMINAL.has(latest.status) && !this.#isAnsweredClarification(latest, answeredClarifyIds)) {
+        return latest;
+      }
       await sleep(intervalMs);
     }
     const error = new Error(`Cloud run did not finish within ${timeoutMs}ms.`);

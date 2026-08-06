@@ -52,7 +52,14 @@ function validateValue(value, schema, path, failures) {
   for (const required of Array.isArray(schema.required) ? schema.required : []) {
     if (!Object.prototype.hasOwnProperty.call(value, required)) failures.push(`${path}.${required}`);
   }
-  if (schema.additionalProperties !== true && typeof schema.additionalProperties !== 'object') {
+  // A schema that declares no properties places no constraints on the object's
+  // keys: `{}` and `{ type: 'object' }` mean "any object", not "empty object".
+  // Only an explicit `additionalProperties: false` closes such a schema. Without
+  // this, a caller-supplied free-form object (a cloud run's output_schema, say)
+  // would reject every key it carries.
+  const closed = schema.additionalProperties === false
+    || (schema.additionalProperties === undefined && isPlainObject(schema.properties));
+  if (closed) {
     for (const key of Object.keys(value)) {
       if (!Object.prototype.hasOwnProperty.call(properties, key)) failures.push(`${path}.${key}`);
     }
@@ -95,7 +102,14 @@ export function closeToolDefinition(tool) {
       closed.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [key, closeSchema(child)]));
     }
     if (schema.items) closed.items = closeSchema(schema.items);
-    if (schema.type === 'object' && schema.additionalProperties === undefined) closed.additionalProperties = false;
+    // Only close an object that declares what it accepts. Stamping
+    // `additionalProperties: false` onto a free-form `{ type: 'object' }` would
+    // advertise "empty object only" and make every value invalid.
+    if (schema.type === 'object'
+        && schema.additionalProperties === undefined
+        && isPlainObject(schema.properties)) {
+      closed.additionalProperties = false;
+    }
     return closed;
   };
   return {

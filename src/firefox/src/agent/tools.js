@@ -1,4 +1,5 @@
 import { closeToolDefinitions } from './tool-arguments.js';
+import { isJsonSchemaSpec } from './cloud-output.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1123,10 +1124,6 @@ const DONE_JSON_TOOL = {
   },
 };
 
-const CLOUD_OUTPUT_SCHEMA_KEYWORDS = new Set([
-  'type', 'properties', 'required', 'items', 'enum', 'description', 'additionalProperties',
-]);
-
 function doneJsonResultSchema(spec) {
   const convert = (value) => {
     if (typeof value === 'string') {
@@ -1147,9 +1144,7 @@ function doneJsonResultSchema(spec) {
       return { schema: { type: 'array', items: convert(value[0] ?? 'any').schema }, optional: false };
     }
     if (!value || typeof value !== 'object') return { schema: {}, optional: false };
-    if (Object.keys(value).some(key => CLOUD_OUTPUT_SCHEMA_KEYWORDS.has(key))) {
-      return { schema: value, optional: false };
-    }
+    if (isJsonSchemaSpec(value)) return { schema: value, optional: false };
     const converted = Object.entries(value).map(([key, child]) => [key, convert(child)]);
     return {
       schema: {

@@ -1,8 +1,25 @@
+const JSON_SCHEMA_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
+const JSON_SCHEMA_COMBINATORS = ['properties', 'items', 'enum', 'const', 'anyOf', 'oneOf', 'allOf', '$ref'];
+
+/**
+ * An output_schema node is either real JSON Schema or the shorthand form
+ * (`{ title: 'string', tags: 'string[]' }`). Only structural keywords
+ * disambiguate them: `description`, `required`, and `additionalProperties` are
+ * ordinary field names too, so a shorthand object that happens to declare a
+ * field called `description` must not be mistaken for a schema node.
+ */
+export function isJsonSchemaSpec(spec) {
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return false;
+  const type = spec.type;
+  if (typeof type === 'string' && JSON_SCHEMA_TYPES.has(type)) return true;
+  if (Array.isArray(type) && type.length && type.every(item => JSON_SCHEMA_TYPES.has(item))) return true;
+  return JSON_SCHEMA_COMBINATORS.some(keyword => Object.hasOwn(spec, keyword));
+}
+
 export function validateCloudOutput(value, schema) {
   const errors = [];
   const push = (path, message) => errors.push(`${path}: ${message}`);
   const isObject = item => !!item && typeof item === 'object' && !Array.isArray(item);
-  const keywords = new Set(['type', 'properties', 'required', 'items', 'enum', 'description', 'additionalProperties']);
 
   const validate = (item, spec, path = '$') => {
     if (typeof spec === 'string') {
@@ -39,8 +56,7 @@ export function validateCloudOutput(value, schema) {
     }
 
     if (!isObject(spec)) return;
-    const jsonSchema = Object.keys(spec).some(key => keywords.has(key));
-    if (!jsonSchema) {
+    if (!isJsonSchemaSpec(spec)) {
       if (!isObject(item)) {
         push(path, 'expected object');
         return;

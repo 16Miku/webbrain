@@ -50,8 +50,39 @@ assert.match(googleFormsScenario.task, /after_seconds=0/);
 assert.match(googleFormsScenario.task, /after_seconds=60/);
 assert.match(smokeWorkflow, /- "src\/chrome\/src\/background\.js"/);
 assert.match(smokeWorkflow, /- "src\/chrome\/src\/offscreen\/cloud-bridge\.js"/);
-assert.match(smokeWorkflow, /timeout-minutes:\s*120/);
-assert.match(manualWorkflow, /timeout-minutes:\s*120/);
+// A job killed by its own timeout skips every cleanup path and leaks the cloud
+// browser session it was driving, so each workflow's timeout must cover the
+// serial budget of the widest pack it can run. Deriving that here means adding
+// a scenario fails this test instead of silently shrinking the margin.
+const PROVISIONING_BUDGET_MS = 600_000;
+const RUN_POLL_GRACE_MS = 120_000;
+function scenarioBudgetMs(scenario) {
+  return PROVISIONING_BUDGET_MS
+    + (scenario.preload_url ? scenario.timeout_ms + RUN_POLL_GRACE_MS : 0)
+    + (scenario.timeout_ms + RUN_POLL_GRACE_MS)
+    + (scenario.verify?.scheduledJobs ? (scenario.scheduled_timeout_ms || scenario.timeout_ms) : 0);
+}
+function packBudgetMinutes(pack) {
+  const selected = pack === 'all' ? scenarios : scenarios.filter((scenario) => scenario.pack === pack);
+  assert.ok(selected.length, `no scenarios in pack ${pack}`);
+  return selected.reduce((total, scenario) => total + scenarioBudgetMs(scenario), 0) / 60_000;
+}
+function workflowTimeoutMinutes(workflow) {
+  const match = workflow.match(/timeout-minutes:\s*(\d+)/);
+  assert.ok(match, 'workflow is missing timeout-minutes');
+  return Number(match[1]);
+}
+// The smoke workflow runs `--pack cloud-smoke --concurrency 1` after npm ci and
+// test:ci, so it needs headroom above the pack budget for those steps.
+assert.ok(
+  workflowTimeoutMinutes(smokeWorkflow) >= packBudgetMinutes('cloud-smoke') + 10,
+  `smoke workflow timeout ${workflowTimeoutMinutes(smokeWorkflow)}m does not cover the cloud-smoke budget of ${packBudgetMinutes('cloud-smoke').toFixed(0)}m plus setup`,
+);
+// Manual dispatch may pick any pack at concurrency 1, so it must cover `all`.
+assert.ok(
+  workflowTimeoutMinutes(manualWorkflow) >= packBudgetMinutes('all'),
+  `manual workflow timeout ${workflowTimeoutMinutes(manualWorkflow)}m does not cover the full catalog budget of ${packBudgetMinutes('all').toFixed(0)}m`,
+);
 
 assert.equal(resolveCloudRunId({ run_id: 'snake-case' }), 'snake-case');
 assert.equal(resolveCloudRunId({ runId: 'camel-case' }), 'camel-case');
@@ -641,5 +672,37 @@ const cleanupGrade = gradeScenario({
 });
 assert.equal(cleanupGrade.passed, false);
 assert.equal(cleanupGrade.stuck_at, 'cleanup');
+
+// A run row read straight after an answer can still say needs_user_input with
+// the clarify_id we just answered. That is a stale read, not a handoff.
+let clarifyPolls = 0;
+const staleClarifyClient = new WebBrainCloudClient({
+  apiKey: 'test-cloud-key',
+  baseUrl: 'https://webbrain.example',
+  fetchImpl: async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      clarifyPolls += 1;
+      return JSON.stringify(clarifyPolls > 2
+        ? { run_id: 'run_clarify', status: 'completed' }
+        : { run_id: 'run_clarify', status: 'needs_user_input', pending_input: { clarify_id: 'clarify_1' } });
+    },
+  }),
+});
+const resumedRun = await staleClarifyClient.waitForRun('browser_test', 'run_clarify', {
+  timeoutMs: 1000,
+  intervalMs: 0,
+  answeredClarifyIds: new Set(['clarify_1']),
+});
+assert.equal(resumedRun.status, 'completed', 'an already-answered clarification must not end the wait');
+// An unanswered clarification still hands off immediately.
+clarifyPolls = 0;
+const handoffRun = await staleClarifyClient.waitForRun('browser_test', 'run_clarify', {
+  timeoutMs: 1000,
+  intervalMs: 0,
+  answeredClarifyIds: new Set(['clarify_other']),
+});
+assert.equal(handoffRun.status, 'needs_user_input', 'a new clarification must still hand off');
 
 console.log(`ci tests passed (${scenarios.length} scenarios validated)`);

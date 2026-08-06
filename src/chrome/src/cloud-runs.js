@@ -18,6 +18,23 @@ const SENSITIVE_CLOUD_KEY_EXACT = new Set(['pin', 'otp', 'cvv', 'cvc', 'ssn']);
 const LARGE_IMAGE_KEY = /(?:attachimage|screenshot|image|imagedata|dataurl)$/i;
 const CLOUD_TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
 const VERIFY_FORM_VALUE_KEYS = new Set(['value', 'controlvalue', 'valueprefix', 'valuesuffix']);
+// Strict-secret mode is deny-by-default: an update leaves the browser carrying
+// only the evidence a cloud caller needs to score the run. A per-tool allowlist
+// is the wrong shape here — a secret typed into a visible field comes straight
+// back out of the next page read, and model prose repeats it in plain text.
+// These are the narrow carve-outs that survive, keyed by what grading reads.
+const CLOUD_STRICT_MODEL_TEXT_TYPES = new Set(['text', 'text_delta']);
+// `error` and `run_status` carry the model's final response as `message`.
+const CLOUD_STRICT_DROPPED_MESSAGE_TYPES = new Set(['error', 'run_status']);
+// done_json and verify_form keep their shape through dedicated value-level
+// redactors below; every other tool result is reduced to a bare envelope.
+const CLOUD_STRICT_STRUCTURED_RESULT_TOOLS = new Set(['done_json', 'verify_form']);
+// Scalar, non-page-derived argument keys. `fetch_url` is handled separately so
+// its URL is reduced to origin + path root rather than dropped.
+const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origin', 'url_path_root']);
+// `clarify` is deliberately not redacted: a caller has to read the question to
+// answer it, so a strict run cannot proceed without it. The strict system
+// prompt is what keeps secrets out of a clarification.
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
 
 function cloudRunError(message, status) {
@@ -117,7 +134,19 @@ function redactStrictStructuredStrings(value) {
 function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
   if (!data || typeof data !== 'object') return data;
   const name = String(data.name || data.tool || '');
-  if (type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
+  if (strictSecretMode && CLOUD_STRICT_MODEL_TEXT_TYPES.has(type)) {
+    return {
+      ...data,
+      ...(Object.hasOwn(data, 'content') ? { content: '[redacted strict text]' } : {}),
+    };
+  }
+  if (strictSecretMode && CLOUD_STRICT_DROPPED_MESSAGE_TYPES.has(type)) {
+    // Dropped rather than replaced so the run-level fallbacks below still pick
+    // their own descriptive constant instead of storing a placeholder.
+    const { message: _message, ...rest } = data;
+    return rest;
+  }
+  if (!strictSecretMode && type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
     const args = data.args && typeof data.args === 'object' ? data.args : {};
     return {
       ...data,
@@ -178,6 +207,29 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
         ...(Object.hasOwn(result, 'cloudResult') ? { cloudResult: redactStrictStructuredStrings(result.cloudResult) } : {}),
         ...(Object.hasOwn(result, 'invalidResult') ? { invalidResult: redactStrictStructuredStrings(result.invalidResult) } : {}),
         ...(Object.hasOwn(result, 'summary') ? { summary: '[redacted strict summary]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_call') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    const evidence = Object.fromEntries(Object.entries(args).filter(([key, value]) => (
+      CLOUD_STRICT_ARG_EVIDENCE_KEYS.has(key) && (typeof value !== 'object' || value === null)
+    )));
+    return {
+      ...data,
+      args: { ...evidence, sensitiveArgsRedacted: true },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && !CLOUD_STRICT_STRUCTURED_RESULT_TOOLS.has(name)) {
+    // Any read tool echoes back whatever was typed into the page, so success
+    // and HTTP status are all a result may carry out of a strict run.
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        success: result.success === true,
+        ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
+        sensitivePayloadRedacted: true,
       },
     };
   }
@@ -280,6 +332,33 @@ function compactCloudRunForPersistence(run) {
     updates: [],
     persistenceTruncated: { omittedUpdates, omittedResult: true, omittedSchema: true },
   });
+}
+
+/**
+ * Scheduled jobs answer a cloud query over the same bridge as run updates, so
+ * they need the same strict-secret treatment: a summarized job otherwise ships
+ * `lastResult`, `lastError`, `pendingClarify`, `target.url`, and
+ * `watch.lastObservation` — a child task's raw prompt and output — straight past
+ * every redaction applied to the parent run. Strict mode keeps only structural
+ * and enumerated fields; free text and URLs are dropped.
+ */
+export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
+  if (!job || !strictSecretMode) return job;
+  return {
+    id: job.id,
+    kind: job.kind,
+    source: job.source || null,
+    status: job.status,
+    scheduledAt: job.scheduledAt,
+    nextRunAt: job.nextRunAt || job.scheduledAt,
+    lastOutcome: job.lastOutcome || null,
+    needsUserInput: job.needsUserInput === true,
+    clarificationRequired: job.clarificationRequired === true,
+    completedAt: job.completedAt || null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    sensitiveFieldsRedacted: true,
+  };
 }
 
 export function buildCloudPersistenceRows(runs) {
@@ -456,23 +535,27 @@ export function createCloudRunController({
   function pushUpdate(run, type, data, runtimeValues = []) {
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
+    const strictSecretMode = agent.strictSecretMode === true;
     // Consecutive text_delta events upsert the same seq: content grows in place
     // and ts advances. Full-array pollers are fine; append-only / seq-cursor
     // clients must re-read that row (or take a full snapshot) rather than
     // assuming each seq is immutable.
     if (type === 'text_delta' && previous?.type === 'text_delta') {
+      // Deltas must pass through the same redaction as any other update: this
+      // branch used to append raw model output straight onto the stored row.
+      const safeDelta = cloudSafeUpdateData(type, data, { strictSecretMode });
       previous.data = scrubCloudValue(redactWorkflowRuntimeValues({
         ...previous.data,
-        content: `${previous.data?.content || ''}${data?.content || ''}`,
+        content: strictSecretMode
+          ? (safeDelta?.content || '')
+          : `${previous.data?.content || ''}${safeDelta?.content || ''}`,
       }, runtimeValues));
       previous.ts = run.updatedAt;
       schedulePersist();
       return;
     }
     run.nextUpdateSeq = (Number(run.nextUpdateSeq) || 0) + 1;
-    const safeData = cloudSafeUpdateData(type, data, {
-      strictSecretMode: agent.strictSecretMode === true,
-    });
+    const safeData = cloudSafeUpdateData(type, data, { strictSecretMode });
     const scrubbedData = scrubCloudValue(redactWorkflowRuntimeValues(safeData, runtimeValues));
     run.updates.push({ seq: run.nextUpdateSeq, type, data: scrubbedData, ts: run.updatedAt });
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
@@ -486,7 +569,12 @@ export function createCloudRunController({
         run.error = safeResult.error || 'done_json failed';
         run.summary = safeResult.summary || run.summary;
       } else if (Object.prototype.hasOwnProperty.call(result, 'cloudResult')) {
-        run.result = result.cloudResult;
+        // Strict mode must publish the redacted result, not the raw one: the
+        // structured field is exactly where a model is most likely to park a
+        // credential, and run.result is persisted and bridged verbatim.
+        // String leaves become placeholders; booleans and numbers — what
+        // scenario grading actually reads — survive intact.
+        run.result = strictSecretMode ? safeResult.cloudResult : result.cloudResult;
         run.summary = safeResult.summary || run.summary;
       }
     }

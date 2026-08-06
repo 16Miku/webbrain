@@ -28,7 +28,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
-import { createCloudRunController } from './cloud-runs.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import {
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -2006,7 +2006,12 @@ async function handleMessage(msg, sender) {
       }
       const expected = new Set(jobIds);
       const jobs = await scheduler.listJobs({ tabId: null });
-      return { ok: true, jobs: jobs.filter(job => expected.has(String(job?.id || ''))) };
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
     }
     case 'cloud_respond':
       return await cloudRunController.respond(msg);
