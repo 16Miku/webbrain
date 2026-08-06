@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const TERMINAL = new Set(['completed', 'failed', 'aborted', 'needs_user_input']);
+const TERMINAL_SCHEDULED = new Set(['completed', 'failed', 'cancelled', 'canceled', 'needs_user_input']);
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -108,6 +109,33 @@ export class WebBrainCloudClient {
       'GET',
       `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/export`,
     );
+  }
+
+  async listScheduledJobs(sessionId) {
+    return await this.request(
+      'GET',
+      `/api/browser-sessions/${encodeURIComponent(sessionId)}/scheduled-jobs`,
+    );
+  }
+
+  async waitForScheduledJobs(sessionId, jobIds, { timeoutMs = 600_000, intervalMs = 3_000 } = {}) {
+    const ids = [...new Set((jobIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('At least one scheduled job id is required.');
+    const deadline = Date.now() + timeoutMs;
+    let latest = { jobs: [] };
+    while (Date.now() < deadline) {
+      const response = await this.listScheduledJobs(sessionId);
+      const byId = new Map((response.jobs || []).map(job => [String(job.id), job]));
+      latest = { jobs: ids.map(id => byId.get(id)).filter(Boolean) };
+      if (
+        latest.jobs.length === ids.length
+        && latest.jobs.every(job => TERMINAL_SCHEDULED.has(String(job.status || '').toLowerCase()))
+      ) return latest;
+      await sleep(intervalMs);
+    }
+    const error = new Error(`Scheduled jobs did not finish within ${timeoutMs}ms.`);
+    error.latest = latest;
+    throw error;
   }
 
   async destroyBrowser(sessionId) {

@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 import { gradeScenario, renderSummary } from './lib/grader.mjs';
 import { sanitizeGnippetsState, sanitizeRun, sanitizeTrace } from './lib/sanitize.mjs';
-import { buildSessionSettings, resolveCloudRunId, suiteShouldFail } from './lib/suite.mjs';
+import {
+  buildSessionSettings,
+  resolveCloudRunId,
+  successfulToolResults,
+  suiteShouldFail,
+} from './lib/suite.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACT_ROOT = path.join(ROOT, 'artifacts');
@@ -69,6 +74,18 @@ async function writeJson(destination, value) {
   await fs.writeFile(destination, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
+function scheduledJobEvidence(state) {
+  return {
+    jobs: (state?.jobs || []).map(job => ({
+      id: job.id,
+      title: job.title || '',
+      status: job.status || '',
+      lastOutcome: job.lastOutcome || null,
+      completedAt: job.completedAt || null,
+    })),
+  };
+}
+
 async function mapLimit(values, limit, worker) {
   const results = new Array(values.length);
   let nextIndex = 0;
@@ -126,6 +143,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   let run = null;
   let trace = null;
   let remoteState = null;
+  let scheduledState = null;
   let setupError = null;
   let artifactError = null;
   const cleanupErrors = [];
@@ -183,6 +201,28 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       artifacts.trace = 'trace.json';
       if (sensitive) trace = storedTrace;
     }
+    if (trace && scenario.verify?.scheduledJobs) {
+      const jobIds = successfulToolResults(trace, 'schedule_task')
+        .map(result => result.jobId || result.existingJobId)
+        .filter(Boolean);
+      const expectedCount = scenario.verify.scheduledJobs.count || 1;
+      if (jobIds.length !== expectedCount) {
+        throw new Error(`Expected ${expectedCount} successful schedule_task job ids; observed ${jobIds.length}.`);
+      }
+      try {
+        scheduledState = scheduledJobEvidence(await cloud.waitForScheduledJobs(browser.id, jobIds, {
+          timeoutMs: scenario.scheduled_timeout_ms || scenario.timeout_ms,
+        }));
+      } catch (error) {
+        scheduledState = scheduledJobEvidence(error.latest);
+        throw error;
+      } finally {
+        if (scheduledState) {
+          await writeJson(path.join(scenarioDir, 'scheduled-jobs.json'), scheduledState);
+          artifacts.scheduled_jobs = 'scheduled-jobs.json';
+        }
+      }
+    }
     if (gnippetsRun) {
       remoteState = (await gnippets.getRun(gnippetsRun.run_id)).run;
       const storedState = sensitive ? sanitizeGnippetsState(remoteState) : remoteState;
@@ -225,6 +265,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
     run: sensitive ? sanitizeRun(run) : run,
     trace,
     remoteState,
+    scheduledState,
     setupError: sensitive && setupError
       ? new Error('Sensitive scenario failed; raw diagnostics were omitted.')
       : setupError,

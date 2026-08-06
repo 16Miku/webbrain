@@ -12,7 +12,7 @@ project; they never touch production members or content.
 
 | Pack | Coverage |
 |---|---|
-| `cloud-smoke` | Ask-mode Wikipedia and NYTimes reads, a short YouTube download, plus the isolated disposable-email, Turnstile, and OTP signup chain |
+| `cloud-smoke` | Ask-mode Wikipedia and NYTimes reads, a short YouTube download, two scheduled Google Form submissions, plus the isolated disposable-email, Turnstile, and OTP signup chain |
 | `public-readonly` | Wikipedia navigation, linked-page reasoning, table extraction |
 | `gnippets-readonly` | Public Gnippets developer/skill discovery |
 | `gnippets-spa` | Hydration, auth, prompt-injection resistance, search races, optimistic rollback, Shadow DOM, iframe, virtual list, modal portal, persistence |

@@ -4,7 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gradeScenario, inferStuckAt, renderSummary } from './lib/grader.mjs';
 import { sanitizeRun, sanitizeTrace } from './lib/sanitize.mjs';
-import { buildSessionSettings, resolveCloudRunId, suiteShouldFail } from './lib/suite.mjs';
+import {
+  buildSessionSettings,
+  resolveCloudRunId,
+  successfulToolResults,
+  suiteShouldFail,
+} from './lib/suite.mjs';
 import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +32,11 @@ assert.deepEqual(
   youtubeDownloadScenario.verify.successfulTools,
   ['resolve_public_media', 'download_public_media', 'list_downloads'],
 );
+const googleFormsScenario = scenarios.find((scenario) => scenario.id === 'google-forms-scheduled-double-submit');
+assert.equal(googleFormsScenario.verify.scheduledJobs.count, 2);
+assert.equal(googleFormsScenario.session_settings.scheduledRequireConsequentialConfirmation, false);
+assert.match(googleFormsScenario.task, /after_seconds=0/);
+assert.match(googleFormsScenario.task, /after_seconds=60/);
 
 assert.equal(resolveCloudRunId({ run_id: 'snake-case' }), 'snake-case');
 assert.equal(resolveCloudRunId({ runId: 'camel-case' }), 'camel-case');
@@ -47,10 +57,27 @@ assert.deepEqual(
 );
 
 let cloudRunRequest;
+let scheduledPolls = 0;
 const cloudClient = new WebBrainCloudClient({
   apiKey: 'test-cloud-key',
   baseUrl: 'https://webbrain.example',
-  fetchImpl: async (_url, options) => {
+  fetchImpl: async (url, options = {}) => {
+    if (url.endsWith('/scheduled-jobs')) {
+      scheduledPolls += 1;
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            jobs: [{
+              id: 'task_1',
+              status: scheduledPolls > 1 ? 'completed' : 'running',
+              lastOutcome: scheduledPolls > 1 ? 'success' : null,
+            }],
+          });
+        },
+      };
+    }
     cloudRunRequest = JSON.parse(options.body);
     return {
       ok: true,
@@ -66,6 +93,27 @@ await cloudClient.startRun('browser_test', {
 assert.equal(cloudRunRequest.api_mutations_allowed, true);
 await cloudClient.startRun('browser_test', { task: 'Read-only run.' });
 assert.equal(Object.hasOwn(cloudRunRequest, 'api_mutations_allowed'), false);
+const completedScheduledJobs = await cloudClient.waitForScheduledJobs(
+  'browser_test',
+  ['task_1'],
+  { timeoutMs: 1000, intervalMs: 0 },
+);
+assert.equal(completedScheduledJobs.jobs[0].lastOutcome, 'success');
+
+const scheduleTraceFixture = {
+  run: {
+    updates: [
+      { type: 'tool_call', data: { name: 'schedule_task', args: { title: 'A' } } },
+      { type: 'tool_result', data: { name: 'schedule_task', result: { success: true, jobId: 'task_1' } } },
+      { type: 'tool_call', data: { name: 'schedule_task', args: { title: 'B' } } },
+      { type: 'tool_result', data: { name: 'schedule_task', result: { success: true, jobId: 'task_2' } } },
+    ],
+  },
+};
+assert.deepEqual(
+  successfulToolResults(scheduleTraceFixture, 'schedule_task').map(result => result.jobId),
+  ['task_1', 'task_2'],
+);
 
 const diagnosticSecret = 'diagnostic-secret-that-must-not-leak';
 let diagnosticRequest;
@@ -318,6 +366,39 @@ const successfulToolsGrade = gradeScenario({
   },
 });
 assert.equal(successfulToolsGrade.passed, true);
+const scheduledJobsGrade = gradeScenario({
+  scenario: {
+    id: 'scheduled-jobs-fixture',
+    verify: {
+      successfulTools: ['schedule_task'],
+      toolCounts: [{ tool: 'schedule_task', successful: true, equals: 2 }],
+      scheduledJobs: { count: 2, status: 'completed', lastOutcome: 'success' },
+    },
+  },
+  run: { status: 'completed' },
+  trace: scheduleTraceFixture,
+  scheduledState: {
+    jobs: [
+      { id: 'task_1', status: 'completed', lastOutcome: 'success' },
+      { id: 'task_2', status: 'completed', lastOutcome: 'success' },
+    ],
+  },
+});
+assert.equal(scheduledJobsGrade.passed, true);
+const failedScheduledJobsGrade = gradeScenario({
+  scenario: {
+    id: 'failed-scheduled-jobs-fixture',
+    verify: { scheduledJobs: { count: 2, status: 'completed', lastOutcome: 'success' } },
+  },
+  run: { status: 'completed' },
+  scheduledState: {
+    jobs: [
+      { id: 'task_1', status: 'completed', lastOutcome: 'success' },
+      { id: 'task_2', status: 'failed', lastOutcome: 'failed' },
+    ],
+  },
+});
+assert.equal(failedScheduledJobsGrade.passed, false);
 const invalidToolResultGrade = gradeScenario({
   scenario: {
     id: 'invalid-tool-result-fixture',

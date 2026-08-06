@@ -11908,7 +11908,7 @@ test('offscreen cloud bridge reconnects with backoff and rejects remote control 
   assert.equal(sockets[0].sent[0].protocolVersion, 2);
   assert.deepEqual(
     JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)),
-    ['saved_workflows_v1', 'run_modes_v1'],
+    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1'],
   );
   sockets[0].close();
   assert.equal(timers[0].delay, 500);
@@ -11973,6 +11973,7 @@ test('offscreen cloud bridge preserves failed run envelopes and rejects unauthor
   for (const [id, action] of [
     ['workflow-compile', 'cloud_workflow_compile'],
     ['workflow-run', 'cloud_workflow_run'],
+    ['scheduled-jobs', 'cloud_scheduled_jobs'],
   ]) {
     socket.emit('message', {
       data: JSON.stringify({ id, action, payload: { runId: 'run_source' } }),

@@ -358,6 +358,53 @@
     "timeout_ms": 480000
   },
   {
+    "id": "google-forms-scheduled-double-submit",
+    "title": "Google Forms: two scheduled submissions",
+    "pack": "cloud-smoke",
+    "mode": "act",
+    "preload_url": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+    "start_url": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+    "capture": false,
+    "session_settings": {
+      "scheduledRequireConsequentialConfirmation": false
+    },
+    "task": "The current page is the public T-Shirt Sign Up Google Form. Do not fill or submit it during this run. Create exactly two independent one-shot schedule_task jobs in Act mode, both targeting URL https://forms.gle/nDSbn2B6Cym4x9Bi8. Schedule the first with after_seconds=0 and title 'Google Form submission A'. Schedule the second with after_seconds=60 and title 'Google Form submission B'. Give each job a distinct prompt that tells the scheduled run to generate a fresh random test name prefixed 'WebBrain CI A' or 'WebBrain CI B' respectively, choose a random shirt size, enter a fresh random harmless comment, use set_field for text fields, call verify_form before submitting, submit exactly once, and call done with outcome=success only after the visible Google Forms confirmation says the response was recorded. The prompts must forbid editing the form, switching accounts, signing in, reusing values from the other job, or submitting again. After both schedule_task calls succeed, return scheduled_count=2 and both returned job IDs. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "scheduled_count": { "type": "number" },
+        "first_job_id": { "type": "string" },
+        "second_job_id": { "type": "string" }
+      },
+      "required": ["scheduled_count", "first_job_id", "second_job_id"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "successfulTools": ["schedule_task"],
+      "toolCounts": [
+        { "tool": "schedule_task", "successful": true, "equals": 2, "label": "Created exactly two scheduled form jobs", "weight": 20 }
+      ],
+      "scheduledJobs": {
+        "count": 2,
+        "status": "completed",
+        "lastOutcome": "success",
+        "countWeight": 15,
+        "statusWeight": 20,
+        "outcomeWeight": 25
+      },
+      "result": [
+        { "path": "scheduled_count", "equals": 2, "weight": 10 },
+        { "path": "first_job_id", "truthy": true, "weight": 5 },
+        { "path": "second_job_id", "truthy": true, "weight": 5 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "docs.google.com"
+    },
+    "scheduled_timeout_ms": 420000,
+    "timeout_ms": 300000
+  },
+  {
     "id": "gnippets-signup-otp-disposable",
     "title": "Gnippets: disposable-email signup",
     "pack": "cloud-smoke",

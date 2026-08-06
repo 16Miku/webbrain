@@ -72,6 +72,7 @@ export function gradeScenario({
   run,
   trace,
   remoteState,
+  scheduledState,
   setupError,
   artifactError,
   cleanupErrors = [],
@@ -127,6 +128,23 @@ export function gradeScenario({
       10,
       Boolean(completed),
       completed ? 'success' : attempted ? 'failed or missing result' : 'not observed',
+    );
+  }
+  for (const expected of scenario.verify?.toolCounts || []) {
+    const candidates = calls.filter((call) => (
+      call.name === expected.tool
+      && (expected.successful === false || call.result?.success === true)
+    ));
+    const count = candidates.length;
+    const passed = Object.hasOwn(expected, 'equals')
+      ? count === expected.equals
+      : count >= (expected.min || 1);
+    add(
+      `tool_count:${expected.tool}`,
+      expected.label || `Completed ${expected.tool} ${expected.equals ?? expected.min ?? 1} time(s)`,
+      expected.weight || 10,
+      passed,
+      `${count} observed`,
     );
   }
   for (const expected of scenario.verify?.toolResults || []) {
@@ -192,6 +210,39 @@ export function gradeScenario({
       matches.length >= (expected.min || 1),
       matches.map((event) => event.detail).join(' | ') || 'event absent',
     );
+  }
+
+  const scheduledExpectation = scenario.verify?.scheduledJobs;
+  if (scheduledExpectation) {
+    const jobs = scheduledState?.jobs || [];
+    const expectedCount = scheduledExpectation.count || 1;
+    add(
+      'scheduled_jobs:count',
+      `Observed ${expectedCount} scheduled job outcome(s)`,
+      scheduledExpectation.countWeight || 15,
+      jobs.length === expectedCount,
+      `${jobs.length} observed`,
+    );
+    if (scheduledExpectation.status) {
+      const matching = jobs.filter(job => job.status === scheduledExpectation.status).length;
+      add(
+        'scheduled_jobs:status',
+        `All scheduled jobs reached ${scheduledExpectation.status}`,
+        scheduledExpectation.statusWeight || 20,
+        jobs.length === expectedCount && matching === expectedCount,
+        `${matching}/${expectedCount}`,
+      );
+    }
+    if (scheduledExpectation.lastOutcome) {
+      const matching = jobs.filter(job => job.lastOutcome === scheduledExpectation.lastOutcome).length;
+      add(
+        'scheduled_jobs:outcome',
+        `All scheduled jobs reported ${scheduledExpectation.lastOutcome}`,
+        scheduledExpectation.outcomeWeight || 25,
+        jobs.length === expectedCount && matching === expectedCount,
+        `${matching}/${expectedCount}`,
+      );
+    }
   }
 
   if (scenario.verify?.finalUrlHost) {

@@ -1997,6 +1997,8 @@ async function handleMessage(msg, sender) {
       return await cloudRunController.startWorkflowRun(msg);
     case 'cloud_status':
       return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs':
+      return { ok: true, jobs: await scheduler.listJobs({ tabId: null }) };
     case 'cloud_respond':
       return await cloudRunController.respond(msg);
     case 'cloud_abort':
