@@ -9934,6 +9934,26 @@ test('update-changelog: rejects duplicate versions and nested release headings',
   assert.throws(() => buildChangelogSection('1.4.0', '2026-06-28', '## [1.4.0] - 2026-06-28'), /must not include/);
 });
 
+test('minor release installs dependencies and validates rebuilt archives before pushing', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/minor-release.yml'), 'utf8');
+  assert.match(workflow, /- name: Install dependencies\s+run: npm ci/);
+
+  const orderedSteps = [
+    'Bump minor version',
+    'Commit release metadata',
+    'Rebuild distribution zips',
+    'Test',
+    'Push release commits',
+    'Create GitHub Release',
+  ];
+  let previousIndex = -1;
+  for (const stepName of orderedSteps) {
+    const stepIndex = workflow.indexOf(`- name: ${stepName}`);
+    assert.ok(stepIndex > previousIndex, `${stepName} must follow ${orderedSteps[orderedSteps.indexOf(stepName) - 1] || 'workflow setup'}`);
+    previousIndex = stepIndex;
+  }
+});
+
 test('repository changelog retains complete, non-empty release history', () => {
   const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
   const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;

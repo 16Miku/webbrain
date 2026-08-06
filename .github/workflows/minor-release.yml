@@ -34,6 +34,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Configure git author
         run: |
           git config user.name "github-actions[bot]"
@@ -154,9 +157,6 @@ jobs:
             --date "${{ steps.release_meta.outputs.release_date }}" \
             --notes-file .release/changelog-body.md
 
-      - name: Test
-        run: npm test
-
       - name: Commit release metadata
         run: |
           git add package.json package-lock.json src/chrome/manifest.json src/firefox/manifest.json src/chrome/src/ui/settings.js src/firefox/src/ui/settings.js src/chrome/ARCHITECTURE.md src/firefox/ARCHITECTURE.md CHANGELOG.md
@@ -168,6 +168,9 @@ jobs:
           node scripts/build-zip.mjs
           git add -A dist
           git commit -m "dist: rebuild submission zips for v${{ steps.release_meta.outputs.new_version }}"
+
+      - name: Test
+        run: npm test
 
       - name: Push release commits
         run: git push origin HEAD:${{ github.ref_name }}
