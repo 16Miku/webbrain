@@ -28,6 +28,15 @@ function httpRequestEvidence(args = {}) {
   };
 }
 
+function httpOrigin(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? `${url.origin}/` : '';
+  } catch {
+    return '';
+  }
+}
+
 export function sanitizeTrace(trace) {
   if (!trace?.run) return null;
   return {
@@ -37,7 +46,7 @@ export function sanitizeTrace(trace) {
       run_id: trace.run.run_id,
       status: trace.run.status,
       mode: trace.run.mode || 'act',
-      final_url: trace.run.final_url || '',
+      final_url: httpOrigin(trace.run.final_url),
       updates: (trace.run.updates || [])
         .filter((update) => update.type === 'tool_call' || update.type === 'tool_result')
         .map((update) => {
@@ -81,7 +90,7 @@ export function sanitizeRun(run) {
     run_id: run.run_id || run.runId || null,
     status: run.status,
     mode: run.mode || 'act',
-    final_url: run.final_url || run.finalUrl || '',
+    final_url: httpOrigin(run.final_url || run.finalUrl),
     result: run.result ?? null,
     error: run.error ? 'Sensitive run reported an error.' : '',
   };

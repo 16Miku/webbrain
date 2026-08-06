@@ -97,12 +97,26 @@ export function gradeScenario({
 
   const calls = toolCalls(run, trace);
   for (const skillId of scenario.verify?.skills || []) {
-    const loaded = calls.some((call) => call.name === 'load_skill' && call.args?.skill_id === skillId);
-    add(`skill:${skillId}`, `Loaded ${skillId}`, 10, loaded, loaded ? skillId : 'not observed');
+    const candidates = calls.filter((call) => call.name === 'load_skill' && call.args?.skill_id === skillId);
+    const loaded = candidates.some((call) => call.result?.success === true);
+    add(
+      `skill:${skillId}`,
+      `Loaded ${skillId}`,
+      10,
+      loaded,
+      loaded ? skillId : candidates.length ? 'failed or missing result' : 'not observed',
+    );
   }
   for (const toolName of scenario.verify?.tools || []) {
-    const used = calls.some((call) => call.name === toolName);
-    add(`tool:${toolName}`, `Used ${toolName}`, 10, used, used ? 'observed' : 'not observed');
+    const candidates = calls.filter((call) => call.name === toolName);
+    const used = candidates.some((call) => call.result?.success === true);
+    add(
+      `tool:${toolName}`,
+      `Completed ${toolName}`,
+      10,
+      used,
+      used ? 'success' : candidates.length ? 'failed or missing result' : 'not observed',
+    );
   }
   for (const toolName of scenario.verify?.successfulTools || []) {
     const completed = calls.find((call) => call.name === toolName && call.result?.success === true);

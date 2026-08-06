@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gradeScenario, inferStuckAt, renderSummary } from './lib/grader.mjs';
-import { sanitizeTrace } from './lib/sanitize.mjs';
+import { sanitizeRun, sanitizeTrace } from './lib/sanitize.mjs';
 import { buildSessionSettings, resolveCloudRunId, suiteShouldFail } from './lib/suite.mjs';
 import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 
@@ -115,6 +115,7 @@ const sensitiveTrace = sanitizeTrace({
     run_id: 'run_sensitive',
     status: 'completed',
     mode: 'act',
+    final_url: 'https://gnippets.com/e2e/capability-secret/signup?token=fixture-secret',
     updates: [
       {
         type: 'tool_call',
@@ -142,6 +143,7 @@ const sensitiveTrace = sanitizeTrace({
     ],
   },
 });
+assert.equal(sensitiveTrace.run.final_url, 'https://gnippets.com/');
 assert.deepEqual(sensitiveTrace.run.updates[0].data.args, {
   url_origin: 'https://api.mail.tm',
   url_path_root: '/accounts',
@@ -152,7 +154,19 @@ assert.deepEqual(sensitiveTrace.run.updates[1], {
   data: { name: 'fetch_url', result: { success: true, status: 201 } },
 });
 assert.deepEqual(sensitiveTrace.run.updates[2].data, { name: 'set_field' });
-assert.doesNotMatch(JSON.stringify(sensitiveTrace), /private@example|mailbox-secret|provider-secret|654321/);
+assert.doesNotMatch(
+  JSON.stringify(sensitiveTrace),
+  /private@example|mailbox-secret|provider-secret|654321|capability-secret|fixture-secret/,
+);
+const sensitiveRun = sanitizeRun({
+  run_id: 'run_sensitive',
+  status: 'completed',
+  mode: 'act',
+  finalUrl: 'https://gnippets.com/e2e/capability-secret/signup?token=fixture-secret',
+  result: { signup_completed: true },
+});
+assert.equal(sensitiveRun.final_url, 'https://gnippets.com/');
+assert.doesNotMatch(JSON.stringify(sensitiveRun), /capability-secret|fixture-secret/);
 
 const mountainScenario = scenarios.find((scenario) => scenario.id === 'wikipedia-table-extraction');
 const invalidMountainHeights = gradeScenario({
@@ -241,17 +255,43 @@ const skillGrade = gradeScenario({
     verify: {
       mode: 'ask',
       skills: ['forms'],
+      tools: ['read_page'],
       forbiddenTools: ['navigate'],
     },
   },
   run: { status: 'completed', mode: 'ask' },
   trace: {
     run: {
-      updates: [{ type: 'tool_call', data: { name: 'load_skill', args: { skill_id: 'forms' } } }],
+      updates: [
+        { type: 'tool_call', data: { name: 'load_skill', args: { skill_id: 'forms' } } },
+        { type: 'tool_result', data: { name: 'load_skill', result: { success: true } } },
+        { type: 'tool_call', data: { name: 'read_page', args: {} } },
+        { type: 'tool_result', data: { name: 'read_page', result: { success: true } } },
+      ],
     },
   },
 });
 assert.equal(skillGrade.passed, true);
+const failedRequiredCallsGrade = gradeScenario({
+  scenario: {
+    id: 'failed-required-calls-fixture',
+    verify: { skills: ['forms'], tools: ['set_field'] },
+  },
+  run: { status: 'completed' },
+  trace: {
+    run: {
+      updates: [
+        { type: 'tool_call', data: { name: 'load_skill', args: { skill_id: 'forms' } } },
+        { type: 'tool_result', data: { name: 'load_skill', result: { success: false } } },
+        { type: 'tool_call', data: { name: 'set_field', args: { ref_id: 'ref_1', text: 'value' } } },
+        { type: 'tool_result', data: { name: 'set_field', result: { success: false } } },
+      ],
+    },
+  },
+});
+assert.equal(failedRequiredCallsGrade.passed, false);
+assert.equal(failedRequiredCallsGrade.checks.find((check) => check.id === 'skill:forms').passed, false);
+assert.equal(failedRequiredCallsGrade.checks.find((check) => check.id === 'tool:set_field').passed, false);
 const successfulToolsGrade = gradeScenario({
   scenario: {
     id: 'successful-tools-fixture',
