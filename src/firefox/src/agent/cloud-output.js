@@ -72,6 +72,26 @@ export function validateCloudOutput(value, schema) {
       return;
     }
 
+    // Keywords this validator classifies as JSON Schema must actually be
+    // enforced. Anything advertised but unevaluated would let done_json publish
+    // a result that violates the caller's contract.
+    if (Object.hasOwn(spec, '$ref')) {
+      push(path, '$ref is not supported in a cloud output schema; inline the definition');
+      return;
+    }
+    if (Object.hasOwn(spec, 'const') && !Object.is(spec.const, item)) {
+      push(path, `expected ${JSON.stringify(spec.const)}`);
+    }
+    if (Array.isArray(spec.anyOf) && !spec.anyOf.some(branch => matches(item, branch))) {
+      push(path, 'does not match any anyOf branch');
+    }
+    if (Array.isArray(spec.oneOf)) {
+      const matched = spec.oneOf.filter(branch => matches(item, branch)).length;
+      if (matched !== 1) push(path, `expected exactly one oneOf branch to match, matched ${matched}`);
+    }
+    if (Array.isArray(spec.allOf) && !spec.allOf.every(branch => matches(item, branch))) {
+      push(path, 'does not match every allOf branch');
+    }
     if (Array.isArray(spec.enum) && !spec.enum.includes(item)) {
       push(path, `expected one of ${JSON.stringify(spec.enum)}`);
     }
@@ -109,6 +129,12 @@ export function validateCloudOutput(value, schema) {
       item.forEach((child, index) => validate(child, spec.items, `${path}[${index}]`));
     }
   };
+
+  // A branch check needs a yes/no answer without polluting the caller's error
+  // list, so it runs its own collection and reports only whether it was empty.
+  function matches(item, branchSpec) {
+    return validateCloudOutput(item, branchSpec).ok;
+  }
 
   validate(value, schema);
   return { ok: errors.length === 0, errors };

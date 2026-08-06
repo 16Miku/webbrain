@@ -10985,6 +10985,53 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       false,
       `${label}: a shorthand object was misread as a schema node`,
     );
+
+    // Every keyword classified as JSON Schema has to be enforced, or done_json
+    // completes a run with a result that violates the caller's contract.
+    const combinators = [
+      [{ anyOf: [{ type: 'string' }, { type: 'boolean' }] }, 7, false],
+      [{ anyOf: [{ type: 'string' }, { type: 'boolean' }] }, true, true],
+      [{ oneOf: [{ type: 'string' }, { type: 'number' }] }, 'x', true],
+      [{ oneOf: [{ type: 'string' }, { type: 'string' }] }, 'x', false],
+      [{ allOf: [{ type: 'number' }, { enum: [1, 2] }] }, 1, true],
+      [{ allOf: [{ type: 'number' }, { enum: [1, 2] }] }, 3, false],
+      [{ const: 'x' }, 'x', true],
+      [{ const: 'x' }, 'y', false],
+      // Unsupported rather than silently permissive.
+      [{ $ref: '#/$defs/thing' }, 'anything', false],
+    ];
+    for (const [spec, value, expected] of combinators) {
+      assert.equal(
+        cloudModule.validateCloudOutput(value, spec).ok,
+        expected,
+        `${label}: ${JSON.stringify(spec)} mis-validated ${JSON.stringify(value)}`,
+      );
+    }
+
+    // `field?` means absent or null, so the advertised type must admit null —
+    // otherwise the argument gate rejects a call the schema itself permits.
+    const optionalSchema = { nickname: 'string?', tags: 'string[]?', name: 'string' };
+    for (const result of [
+      { nickname: null, tags: null, name: 'a' },
+      { name: 'a' },
+      { nickname: 'n', tags: ['t'], name: 'a' },
+    ]) {
+      assert.equal(
+        validate(optionalSchema, { result, summary: 'ok' }).ok,
+        cloudModule.validateCloudOutput(result, optionalSchema).ok,
+        `${label}: advertised schema and cloud validation disagree on ${JSON.stringify(result)}`,
+      );
+      assert.equal(
+        validate(optionalSchema, { result, summary: 'ok' }).ok,
+        true,
+        `${label}: a valid optional-field result was rejected`,
+      );
+    }
+    assert.equal(
+      validate(optionalSchema, { result: { nickname: 42, name: 'a' }, summary: 'ok' }).ok,
+      false,
+      `${label}: nullable optional widened past its declared type`,
+    );
   }
 });
 

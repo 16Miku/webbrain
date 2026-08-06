@@ -1275,6 +1275,20 @@ const DONE_JSON_TOOL = {
   },
 };
 
+// `field?` shorthand means the property may be absent *or* null — that is what
+// validateCloudOutput accepts. Advertising the bare type instead would get an
+// explicit null rejected at the argument gate before the run's own validator
+// ever saw it, failing a done_json call the schema actually permits.
+function nullableSchema(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (typeof schema.type === 'string') return { ...schema, type: [schema.type, 'null'] };
+  if (Array.isArray(schema.type) && !schema.type.includes('null')) {
+    return { ...schema, type: [...schema.type, 'null'] };
+  }
+  // A schema with no declared type (`any`) already permits null.
+  return schema;
+}
+
 function doneJsonResultSchema(spec) {
   const convert = (value) => {
     if (typeof value === 'string') {
@@ -1300,7 +1314,10 @@ function doneJsonResultSchema(spec) {
     return {
       schema: {
         type: 'object',
-        properties: Object.fromEntries(converted.map(([key, child]) => [key, child.schema])),
+        properties: Object.fromEntries(converted.map(([key, child]) => [
+          key,
+          child.optional ? nullableSchema(child.schema) : child.schema,
+        ])),
         required: converted.filter(([, child]) => !child.optional).map(([key]) => key),
         additionalProperties: false,
       },
