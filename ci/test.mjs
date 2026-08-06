@@ -9,6 +9,7 @@ import {
   resolveCloudRunId,
   successfulToolResults,
   suiteShouldFail,
+  unappliedSessionSettings,
 } from './lib/suite.mjs';
 import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 
@@ -704,5 +705,34 @@ const handoffRun = await staleClarifyClient.waitForRun('browser_test', 'run_clar
   answeredClarifyIds: new Set(['clarify_other']),
 });
 assert.equal(handoffRun.status, 'needs_user_input', 'a new clarification must still hand off');
+
+// A scenario that declares session_settings depends on them: strictSecretMode
+// is what keeps the OTP scenario's secrets out of published updates, so an
+// unconfirmed or rejected setting must stop the run rather than downgrade it.
+const strictRequired = signupScenario.session_settings;
+assert.deepEqual(strictRequired, { strictSecretMode: true });
+// A scenario with no declared settings has nothing to confirm.
+assert.equal(unappliedSessionSettings(null, {}), '');
+// Confirmed applied, by echoed value or by name.
+assert.equal(unappliedSessionSettings({ settings: { strictSecretMode: true } }, strictRequired), '');
+assert.equal(unappliedSessionSettings({ applied: ['strictSecretMode'] }, strictRequired), '');
+assert.equal(unappliedSessionSettings({ status: 'ok', applied: ['strictSecretMode'] }, strictRequired), '');
+// Every way provisioning can decline, and silence, must fail closed.
+for (const [label, result] of [
+  ['no result at all', null],
+  ['empty result', {}],
+  ['explicit failure', { ok: false }],
+  ['non-ok status', { status: 'partial', applied: ['strictSecretMode'] }],
+  ['named in ignoredKeys', { ignoredKeys: ['strictSecretMode'], applied: ['strictSecretMode'] }],
+  ['named in rejected', { rejected: [{ key: 'strictSecretMode' }] }],
+  ['echoed with wrong value', { settings: { strictSecretMode: false } }],
+  ['echoed without the key', { settings: { wbLocale: 'en' } }],
+  ['applied list omits it', { applied: ['wbLocale'] }],
+]) {
+  assert.ok(
+    unappliedSessionSettings(result, strictRequired),
+    `${label}: a sensitive run started without confirming strictSecretMode`,
+  );
+}
 
 console.log(`ci tests passed (${scenarios.length} scenarios validated)`);

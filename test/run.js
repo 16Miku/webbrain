@@ -10985,6 +10985,40 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       false,
       `${label}: a shorthand object was misread as a schema node`,
     );
+    // A keyword name alone proves nothing — every one of these is also a legal
+    // shorthand field name, so the value has to have the schema's shape.
+    for (const shorthandSpec of [
+      { const: 'string' }, { anyOf: 'string' }, { oneOf: 'string[]' }, { allOf: 'number?' },
+      { $ref: 'string' }, { items: 'string' }, { enum: 'string' }, { properties: 'string' },
+    ]) {
+      assert.equal(
+        cloudModule.isJsonSchemaSpec(shorthandSpec),
+        false,
+        `${label}: ${JSON.stringify(shorthandSpec)} was misread as a schema node`,
+      );
+    }
+    for (const schemaSpec of [
+      { const: 'ok' }, { const: { a: 1 } }, { $ref: '#/$defs/x' }, { anyOf: [{ type: 'string' }] },
+      { enum: ['a', 'b'] }, { items: { type: 'string' } }, { properties: { a: { type: 'string' } } },
+    ]) {
+      assert.equal(
+        cloudModule.isJsonSchemaSpec(schemaSpec),
+        true,
+        `${label}: ${JSON.stringify(schemaSpec)} was misread as shorthand`,
+      );
+    }
+    // ...and the shorthand reading has to actually be applied end to end.
+    assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
+      `${label}: a shorthand field named const was not validated as shorthand`);
+    assert.equal(cloudModule.validateCloudOutput({ const: 42 }, { const: 'string' }).ok, false,
+      `${label}: a shorthand field named const skipped its type check`);
+    assert.equal(cloudModule.validateCloudOutput({}, { const: 'string' }).ok, false,
+      `${label}: a shorthand field named const skipped its required check`);
+    assert.equal(
+      validate({ const: 'string' }, { result: { const: 'hello' }, summary: 'ok' }).ok,
+      true,
+      `${label}: done_json advertised the wrong contract for a shorthand const field`,
+    );
 
     // Every keyword classified as JSON Schema has to be enforced, or done_json
     // completes a run with a result that violates the caller's contract.
@@ -10999,6 +11033,12 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       [{ const: 'x' }, 'y', false],
       // Unsupported rather than silently permissive.
       [{ $ref: '#/$defs/thing' }, 'anything', false],
+      // A model's argument is separately parsed, so identity never matches an
+      // object or array const.
+      [{ const: { a: 1, b: [2] } }, { b: [2], a: 1 }, true],
+      [{ const: { a: 1 } }, { a: 2 }, false],
+      [{ enum: [{ k: 1 }, { k: 2 }] }, { k: 1 }, true],
+      [{ enum: [{ k: 1 }] }, { k: 3 }, false],
     ];
     for (const [spec, value, expected] of combinators) {
       assert.equal(

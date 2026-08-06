@@ -11,6 +11,7 @@ import {
   resolveCloudRunId,
   successfulToolResults,
   suiteShouldFail,
+  unappliedSessionSettings,
 } from './lib/suite.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -200,6 +201,17 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       settings: buildSessionSettings(process.env.CAPSOLVER_API_KEY || '', scenario.session_settings || {}),
     });
     live.browserId = browser.id;
+    // Fail closed before the run starts. A rejected `strictSecretMode` would
+    // otherwise leave this scenario handling a password, mailbox token, and OTP
+    // with redaction silently off. The `finally` below still tears the session
+    // down, so aborting here does not leak it.
+    const unapplied = unappliedSessionSettings(
+      browser.webbrain_config_result,
+      scenario.session_settings || {},
+    );
+    if (unapplied) {
+      throw new Error(`Required session settings for ${scenario.id} were not applied: ${unapplied}.`);
+    }
     await cloud.waitForBrowser(browser.id);
     let tabId;
     if (scenario.preload_url) {

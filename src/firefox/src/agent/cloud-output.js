@@ -1,19 +1,67 @@
 const JSON_SCHEMA_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
-const JSON_SCHEMA_COMBINATORS = ['properties', 'items', 'enum', 'const', 'anyOf', 'oneOf', 'allOf', '$ref'];
+const SHORTHAND_TYPE_TOKENS = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'any']);
+
+function isSchemaObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The shorthand form's values are always type tokens: `string`, `string[]`,
+// `number?`. A keyword holding one of those is a field declaration, not a
+// schema keyword.
+function isShorthandToken(value) {
+  if (typeof value !== 'string') return false;
+  let token = value.trim();
+  if (token.endsWith('?')) token = token.slice(0, -1).trim();
+  if (token.endsWith('[]')) token = token.slice(0, -2).trim() || 'any';
+  return SHORTHAND_TYPE_TOKENS.has(token);
+}
+
+// A keyword only signals JSON Schema when its value has the shape JSON Schema
+// requires. Presence alone is not enough: `const`, `items`, `enum`, and the
+// rest are all legal shorthand field names.
+const JSON_SCHEMA_KEYWORD_SHAPES = {
+  properties: isSchemaObject,
+  items: (value) => isSchemaObject(value) || Array.isArray(value),
+  enum: Array.isArray,
+  anyOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
+  oneOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
+  allOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
+  // Both take free values, so the only tell is that a shorthand type token is
+  // never what a caller means by `{ const: 'ok' }` or `{ $ref: '#/$defs/x' }`.
+  const: (value) => !isShorthandToken(value),
+  $ref: (value) => typeof value === 'string' && !isShorthandToken(value),
+};
 
 /**
  * An output_schema node is either real JSON Schema or the shorthand form
- * (`{ title: 'string', tags: 'string[]' }`). Only structural keywords
- * disambiguate them: `description`, `required`, and `additionalProperties` are
- * ordinary field names too, so a shorthand object that happens to declare a
- * field called `description` must not be mistaken for a schema node.
+ * (`{ title: 'string', tags: 'string[]' }`). Only structural keywords carrying
+ * schema-shaped values disambiguate them: `description`, `required`, and
+ * `additionalProperties` are ordinary field names too, and even `const` or
+ * `enum` can name a shorthand field, so a shorthand object that happens to
+ * declare one must not be mistaken for a schema node.
  */
 export function isJsonSchemaSpec(spec) {
-  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return false;
+  if (!isSchemaObject(spec)) return false;
   const type = spec.type;
   if (typeof type === 'string' && JSON_SCHEMA_TYPES.has(type)) return true;
   if (Array.isArray(type) && type.length && type.every(item => JSON_SCHEMA_TYPES.has(item))) return true;
-  return JSON_SCHEMA_COMBINATORS.some(keyword => Object.hasOwn(spec, keyword));
+  return Object.entries(JSON_SCHEMA_KEYWORD_SHAPES)
+    .some(([keyword, hasSchemaShape]) => Object.hasOwn(spec, keyword) && hasSchemaShape(spec[keyword]));
+}
+
+// JSON Schema equality for `const` and `enum`: structural, key-order
+// independent, and with no special cases beyond what JSON can express.
+function deepEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length
+      && a.every((item, index) => deepEqual(item, b[index]));
+  }
+  if (!isSchemaObject(a) || !isSchemaObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
 }
 
 export function validateCloudOutput(value, schema) {
@@ -79,7 +127,10 @@ export function validateCloudOutput(value, schema) {
       push(path, '$ref is not supported in a cloud output schema; inline the definition');
       return;
     }
-    if (Object.hasOwn(spec, 'const') && !Object.is(spec.const, item)) {
+    // A model's done_json argument is separately parsed, so an object or array
+    // `const` never passes reference identity even when it is structurally the
+    // value the caller asked for.
+    if (Object.hasOwn(spec, 'const') && !deepEqual(spec.const, item)) {
       push(path, `expected ${JSON.stringify(spec.const)}`);
     }
     if (Array.isArray(spec.anyOf) && !spec.anyOf.some(branch => matches(item, branch))) {
@@ -92,7 +143,8 @@ export function validateCloudOutput(value, schema) {
     if (Array.isArray(spec.allOf) && !spec.allOf.every(branch => matches(item, branch))) {
       push(path, 'does not match every allOf branch');
     }
-    if (Array.isArray(spec.enum) && !spec.enum.includes(item)) {
+    // Same reference-identity trap as `const` above.
+    if (Array.isArray(spec.enum) && !spec.enum.some(candidate => deepEqual(candidate, item))) {
       push(path, `expected one of ${JSON.stringify(spec.enum)}`);
     }
     const types = Array.isArray(spec.type) ? spec.type : (spec.type ? [spec.type] : []);
