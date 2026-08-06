@@ -129,6 +129,19 @@ const strictLeakAgent = {
   async processMessage(_tabId, _task, publishUpdate) {
     publishUpdate('tool_call', { name: 'load_skill', args: { skill_id: 'otp-verification-code-helper' } });
     publishUpdate('tool_result', { name: 'load_skill', result: { success: true } });
+    // Typing a secret registers it, so any later quote of the literal is struck
+    // by value rather than left to a key-name guess.
+    publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_otp', text: OTP } });
+    publishUpdate('tool_result', { name: 'set_field', result: { success: true } });
+    // A clarification cannot be blanked — the caller has to read it to answer —
+    // so it must come through usable but with the literal removed.
+    publishUpdate('clarify', {
+      clarifyId: 'clarify_1',
+      question: `The disposable inbox returned code ${OTP}. Continue with this temporary signup?`,
+      options: ['yes', 'no'],
+      reason: `Confirm before submitting ${OTP}.`,
+    });
+    publishUpdate('warning', { message: `Retrying submission with code ${OTP}.` });
     // The OTP is now sitting in a visible input, so every read echoes it.
     publishUpdate('tool_result', {
       name: 'get_accessibility_tree',
@@ -192,6 +205,53 @@ const strictReads = strictLeakSnapshot.updates.filter(update => (
   update.type === 'tool_result' && update.data.name === 'get_accessibility_tree'
 ));
 assert.deepEqual(strictReads[0].data.result, { success: true, sensitivePayloadRedacted: true });
+// The clarification survives in answerable form — the CI driver regex-matches
+// this question — while the literal is gone.
+const strictClarify = strictLeakSnapshot.updates.find(update => update.type === 'clarify');
+assert.equal(strictClarify.data.clarifyId, 'clarify_1');
+assert.deepEqual(strictClarify.data.options, ['yes', 'no']);
+assert.match(strictClarify.data.question, /disposable inbox|temporary signup/);
+assert.match(strictClarify.data.question, /\[redacted strict value\]/);
+// pendingInput stores this same payload, and the whole-snapshot check above
+// covers it; the run has already cleared it by the time this fixture settles.
+// Free text on other update types is covered by the same value redaction.
+const strictWarning = strictLeakSnapshot.updates.find(update => update.type === 'warning');
+assert.match(strictWarning.data.message, /Retrying submission/);
+assert.equal(strictWarning.data.message.includes(OTP), false);
+
+// A secret surfaced under a key the scrubber already knows is registered too,
+// so a later quote of the literal is struck rather than masked only in place.
+storedRows = [];
+const strictReadController = createCloudRunController({
+  chromeApi,
+  agent: {
+    strictSecretMode: true,
+    isRunning() { return false; },
+    setApiMutationsAllowed() {},
+    abort() {},
+    async processMessage(_tabId, _task, publishUpdate) {
+      publishUpdate('tool_result', { name: 'fetch_url', result: { success: true, otp: OTP } });
+      publishUpdate('clarify', { clarifyId: 'clarify_2', question: `Submit code ${OTP}?`, options: ['yes'] });
+      return 'done';
+    },
+  },
+  ensureOffscreen: async () => {},
+  makeRunId: () => 'run_strict_read_fixture',
+});
+await strictReadController.startRun({ task: 'strict read fixture' });
+let strictReadSnapshot;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  strictReadSnapshot = await strictReadController.status({ runId: 'run_strict_read_fixture' });
+  if (strictReadSnapshot.status === 'completed') break;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+assert.equal(strictReadSnapshot.status, 'completed');
+assert.equal(JSON.stringify(strictReadSnapshot).includes(OTP), false);
+assert.equal(JSON.stringify(storedRows).includes(OTP), false);
+assert.match(
+  strictReadSnapshot.updates.find(update => update.type === 'clarify').data.question,
+  /Submit code \[redacted strict value\]\?/,
+);
 
 // A strict run that schedules a child task must not publish that child's raw
 // prompt, result, or target URL through the scheduled-jobs query.

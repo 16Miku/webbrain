@@ -10963,6 +10963,38 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       `${label}: shorthand validation disagreed with the advertised schema`,
     );
 
+    // The argument gate and the cloud validator both see the caller's schema,
+    // so any keyword they both enforce has to agree. Sweep the shapes where
+    // they could drift rather than spot-checking one at a time.
+    for (const [outputSchema, result] of [
+      // enum and const, scalar and structural
+      [{ type: 'object', properties: { m: { enum: [{ k: 1 }, { k: 2 }] } }, required: ['m'] }, { m: { k: 1 } }],
+      [{ type: 'object', properties: { m: { enum: [{ k: 1 }] } }, required: ['m'] }, { m: { k: 9 } }],
+      [{ type: 'object', properties: { m: { enum: ['a', 'b'] } }, required: ['m'] }, { m: 'a' }],
+      [{ type: 'object', properties: { m: { enum: ['a'] } }, required: ['m'] }, { m: 'z' }],
+      [{ type: 'object', properties: { m: { enum: [[1, 2]] } }, required: ['m'] }, { m: [1, 2] }],
+      // nullable optionals
+      [{ nickname: 'string?' }, { nickname: null }],
+      [{ nickname: 'string?' }, {}],
+      [{ nickname: 'string?' }, { nickname: 42 }],
+      // free-form and shorthand objects
+      [{ type: 'object', properties: { d: { type: 'object' } }, required: ['d'] }, { d: { any: 'thing' } }],
+      [{ payload: 'any' }, { payload: { deep: 1 } }],
+      [{ title: 'string', description: 'string' }, { title: 'T', description: 'D' }],
+      [{ const: 'string' }, { const: 'hello' }],
+      // declared constraints
+      [{ type: 'object', properties: { n: { type: 'number' } }, required: ['n'] }, { n: 1 }],
+      [{ type: 'object', properties: { n: { type: 'number' } }, required: ['n'], additionalProperties: false }, { n: 1, x: 2 }],
+    ]) {
+      const gateOk = validate(outputSchema, { result, summary: 'ok' }).ok;
+      const cloudOk = cloudModule.validateCloudOutput(result, outputSchema).ok;
+      assert.equal(
+        gateOk,
+        cloudOk,
+        `${label}: argument gate and cloud validator disagree on ${JSON.stringify(outputSchema)} / ${JSON.stringify(result)}`,
+      );
+    }
+
     // Declared constraints are still enforced in both directions.
     const declared = { type: 'object', properties: { n: { type: 'number' } }, required: ['n'] };
     assert.equal(

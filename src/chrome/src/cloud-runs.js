@@ -32,9 +32,15 @@ const CLOUD_STRICT_STRUCTURED_RESULT_TOOLS = new Set(['done_json', 'verify_form'
 // Scalar, non-page-derived argument keys. `fetch_url` is handled separately so
 // its URL is reduced to origin + path root rather than dropped.
 const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origin', 'url_path_root']);
-// `clarify` is deliberately not redacted: a caller has to read the question to
-// answer it, so a strict run cannot proceed without it. The strict system
-// prompt is what keeps secrets out of a clarification.
+// A caller has to read a clarification to answer it, so `clarify` cannot be
+// blanked the way model prose is. Prompt instructions are not a redaction
+// boundary either, so strict runs additionally redact by *value*: every secret
+// this run typed into a page is remembered and struck from the text of every
+// later update, clarifications included. That leaves a usable question while
+// removing the literal the key-based scrubber cannot recognize.
+const CLOUD_STRICT_SECRET_VALUE_LIMIT = 32;
+// Short values would mangle ordinary prose on a coincidental substring match.
+const CLOUD_STRICT_SECRET_MIN_LENGTH = 4;
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
 
 function cloudRunError(message, status) {
@@ -236,7 +242,26 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
   return data;
 }
 
-function redactWorkflowRuntimeValues(value, runtimeValues = []) {
+// Walks a raw tool result for string values sitting under a key the scrubber
+// already treats as sensitive. Depth-bounded: a page read can be enormous, and
+// this runs on every update.
+function collectSensitiveStrings(value, into, depth = 0) {
+  if (depth > 6 || into.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectSensitiveStrings(item, into, depth + 1);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === 'string') {
+      if (isSensitiveCloudKey(key)) into.push(item);
+    } else {
+      collectSensitiveStrings(item, into, depth + 1);
+    }
+  }
+}
+
+function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workflow parameter]') {
   if (value == null) return value;
   const variants = new Set();
   for (const parameterValue of runtimeValues) {
@@ -271,7 +296,7 @@ function redactWorkflowRuntimeValues(value, runtimeValues = []) {
     let offset = 0;
     let index = normalizedText.indexOf(normalizedValue, offset);
     while (index !== -1) {
-      result += `${text.slice(offset, index)}[workflow parameter]`;
+      result += `${text.slice(offset, index)}${label}`;
       offset = index + parameterValue.length;
       index = normalizedText.indexOf(normalizedValue, offset);
     }
@@ -532,10 +557,59 @@ export function createCloudRunController({
     }
   }
 
+  // Kept out of the run object so a literal secret can never reach session
+  // storage or a persistence row. Dropped when the run leaves the map.
+  const strictSecretValues = new Map();
+
+  // Whatever a strict run types into a page is a value the caller must never
+  // read back, wherever it later resurfaces — a clarification question, a
+  // warning, a captcha diagnostic. Remember it here, before the redactors drop
+  // the argument that carried it.
+  function rememberStrictSecrets(run, type, data) {
+    const name = String(data?.name || data?.tool || '');
+    const candidates = [];
+    if (type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
+      const args = data?.args && typeof data.args === 'object' ? data.args : {};
+      candidates.push(args.text, args.value);
+    } else if (type === 'tool_result') {
+      // The value under a sensitive key is already known to be a secret; the
+      // key-based scrubber only masks it in place, so register the literal and
+      // strike it from later prose as well.
+      //
+      // Known limit: a secret the model only ever *reads* out of an
+      // unremarkable field — an OTP in the body text of an inbox message — is
+      // never seen here in a form this can recognize, so a clarification that
+      // quotes it is covered by the strict system prompt alone. Closing that
+      // would mean either blanking clarification text, which makes a strict run
+      // unanswerable, or entropy guessing at prose.
+      collectSensitiveStrings(data?.result, candidates);
+    }
+    if (!candidates.length) return;
+    const known = strictSecretValues.get(run.runId) || [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH) continue;
+      if (candidate.length > WORKFLOW_PARAMETER_VALUE_LIMIT) continue;
+      if (known.includes(candidate)) continue;
+      known.push(candidate);
+    }
+    if (known.length) {
+      strictSecretValues.set(run.runId, known.slice(-CLOUD_STRICT_SECRET_VALUE_LIMIT));
+    }
+  }
+
+  function redactStrictSecretValues(run, value, strictSecretMode) {
+    if (!strictSecretMode) return value;
+    const known = strictSecretValues.get(run.runId);
+    if (!known?.length) return value;
+    return redactWorkflowRuntimeValues(value, known, '[redacted strict value]');
+  }
+
   function pushUpdate(run, type, data, runtimeValues = []) {
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
     const strictSecretMode = agent.strictSecretMode === true;
+    if (strictSecretMode) rememberStrictSecrets(run, type, data);
     // Consecutive text_delta events upsert the same seq: content grows in place
     // and ts advances. Full-array pollers are fine; append-only / seq-cursor
     // clients must re-read that row (or take a full snapshot) rather than
@@ -544,19 +618,21 @@ export function createCloudRunController({
       // Deltas must pass through the same redaction as any other update: this
       // branch used to append raw model output straight onto the stored row.
       const safeDelta = cloudSafeUpdateData(type, data, { strictSecretMode });
-      previous.data = scrubCloudValue(redactWorkflowRuntimeValues({
+      previous.data = scrubCloudValue(redactStrictSecretValues(run, redactWorkflowRuntimeValues({
         ...previous.data,
         content: strictSecretMode
           ? (safeDelta?.content || '')
           : `${previous.data?.content || ''}${safeDelta?.content || ''}`,
-      }, runtimeValues));
+      }, runtimeValues), strictSecretMode));
       previous.ts = run.updatedAt;
       schedulePersist();
       return;
     }
     run.nextUpdateSeq = (Number(run.nextUpdateSeq) || 0) + 1;
     const safeData = cloudSafeUpdateData(type, data, { strictSecretMode });
-    const scrubbedData = scrubCloudValue(redactWorkflowRuntimeValues(safeData, runtimeValues));
+    const scrubbedData = scrubCloudValue(
+      redactStrictSecretValues(run, redactWorkflowRuntimeValues(safeData, runtimeValues), strictSecretMode),
+    );
     run.updates.push({ seq: run.nextUpdateSeq, type, data: scrubbedData, ts: run.updatedAt });
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
       run.updates.splice(0, run.updates.length - CLOUD_UPDATE_LIMIT);
@@ -816,6 +892,9 @@ export function createCloudRunController({
         if (terminalStatus) run.status = terminalStatus;
         run.completedAt = isoNow();
         run.updatedAt = run.completedAt;
+        // The run is over, so nothing more can quote these; do not hold the
+        // literals in memory any longer than the run that typed them.
+        strictSecretValues.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         await persist().catch(() => {});
       }

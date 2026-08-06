@@ -735,4 +735,27 @@ for (const [label, result] of [
   );
 }
 
+// A run that times out mid-execution must not be reported as a provisioning
+// failure. inferStuckAt short-circuits on setupError before it reads the run,
+// so run.mjs stops attributing post-startRun throws to setup.
+const timedOutRun = {
+  status: 'running',
+  final_url: 'https://gnippets.com/signup',
+  updates: [{ type: 'tool_call', data: { name: 'set_field' } }],
+};
+assert.equal(inferStuckAt({ run: timedOutRun, checks: [] }), 'execution');
+assert.equal(
+  inferStuckAt({ run: timedOutRun, setupError: new Error('run timed out'), checks: [] }),
+  'setup',
+  'a setup error still wins when provisioning is what actually failed',
+);
+// A verification failure after a completed run keeps its own stage too.
+assert.equal(
+  inferStuckAt({
+    run: { status: 'completed', final_url: 'https://gnippets.com/done', updates: timedOutRun.updates },
+    checks: [{ id: 'result:signup_completed', passed: false }],
+  }),
+  'verification',
+);
+
 console.log(`ci tests passed (${scenarios.length} scenarios validated)`);

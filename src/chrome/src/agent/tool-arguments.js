@@ -2,6 +2,27 @@ function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * JSON Schema equality for `enum` and `const`: structural, key-order
+ * independent. A tool argument arrives as separately parsed JSON, so reference
+ * identity can never match an object- or array-valued member even when it is
+ * exactly the value the schema asked for. Exported so the cloud output
+ * validator compares the same way — the two must agree on every schema they
+ * both see, or a result one accepts gets rejected by the other.
+ */
+export function jsonDeepEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length
+      && a.every((item, index) => jsonDeepEqual(item, b[index]));
+  }
+  if (!isPlainObject(a) || !isPlainObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.hasOwn(b, key) && jsonDeepEqual(a[key], b[key]));
+}
+
 function valueMatchesType(value, type) {
   if (type === 'object') return isPlainObject(value);
   if (type === 'array') return Array.isArray(value);
@@ -36,7 +57,7 @@ function validateValue(value, schema, path, failures) {
     failures.push(path);
     return;
   }
-  if (Array.isArray(schema.enum) && !schema.enum.some(candidate => Object.is(candidate, value))) {
+  if (Array.isArray(schema.enum) && !schema.enum.some(candidate => jsonDeepEqual(candidate, value))) {
     failures.push(path);
     return;
   }

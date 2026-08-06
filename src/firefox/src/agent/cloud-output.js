@@ -1,3 +1,5 @@
+import { jsonDeepEqual } from './tool-arguments.js';
+
 const JSON_SCHEMA_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
 const SHORTHAND_TYPE_TOKENS = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'any']);
 
@@ -47,21 +49,6 @@ export function isJsonSchemaSpec(spec) {
   if (Array.isArray(type) && type.length && type.every(item => JSON_SCHEMA_TYPES.has(item))) return true;
   return Object.entries(JSON_SCHEMA_KEYWORD_SHAPES)
     .some(([keyword, hasSchemaShape]) => Object.hasOwn(spec, keyword) && hasSchemaShape(spec[keyword]));
-}
-
-// JSON Schema equality for `const` and `enum`: structural, key-order
-// independent, and with no special cases beyond what JSON can express.
-function deepEqual(a, b) {
-  if (Object.is(a, b)) return true;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b)
-      && a.length === b.length
-      && a.every((item, index) => deepEqual(item, b[index]));
-  }
-  if (!isSchemaObject(a) || !isSchemaObject(b)) return false;
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length
-    && keys.every(key => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
 }
 
 export function validateCloudOutput(value, schema) {
@@ -130,7 +117,7 @@ export function validateCloudOutput(value, schema) {
     // A model's done_json argument is separately parsed, so an object or array
     // `const` never passes reference identity even when it is structurally the
     // value the caller asked for.
-    if (Object.hasOwn(spec, 'const') && !deepEqual(spec.const, item)) {
+    if (Object.hasOwn(spec, 'const') && !jsonDeepEqual(spec.const, item)) {
       push(path, `expected ${JSON.stringify(spec.const)}`);
     }
     if (Array.isArray(spec.anyOf) && !spec.anyOf.some(branch => matches(item, branch))) {
@@ -144,7 +131,7 @@ export function validateCloudOutput(value, schema) {
       push(path, 'does not match every allOf branch');
     }
     // Same reference-identity trap as `const` above.
-    if (Array.isArray(spec.enum) && !spec.enum.some(candidate => deepEqual(candidate, item))) {
+    if (Array.isArray(spec.enum) && !spec.enum.some(candidate => jsonDeepEqual(candidate, item))) {
       push(path, `expected one of ${JSON.stringify(spec.enum)}`);
     }
     const types = Array.isArray(spec.type) ? spec.type : (spec.type ? [spec.type] : []);

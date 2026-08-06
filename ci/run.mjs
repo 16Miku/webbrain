@@ -177,6 +177,11 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   let scheduledError = null;
   let setupError = null;
   let artifactError = null;
+  // Everything from provisioning through startRun is setup. After that a
+  // throw belongs to the run itself, and forcing it into setupError would make
+  // inferStuckAt report an execution or verification failure as a provisioning
+  // one — it short-circuits on setupError before it ever reads the run.
+  let reachedRunStart = false;
   const cleanupErrors = [];
   const artifacts = {};
   const sensitive = scenario.artifact_policy === 'sensitive';
@@ -238,6 +243,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
     });
     const runId = resolveCloudRunId(started);
     if (!runId) throw new Error('WebBrain Cloud did not return a run id.');
+    reachedRunStart = true;
     run = await waitForRunWithClarifications({ cloud, sessionId: browser.id, runId, scenario });
     await writeJson(path.join(scenarioDir, 'run.json'), sensitive ? sanitizeRun(run) : run);
     if (['completed', 'failed'].includes(run.status)) {
@@ -290,7 +296,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       }
     }
   } catch (error) {
-    if (!scheduledError) setupError = error;
+    if (!scheduledError && !reachedRunStart) setupError = error;
     run ||= error.latest || null;
     await writeJson(path.join(scenarioDir, 'error.json'), {
       name: error.name,
