@@ -1315,19 +1315,27 @@ function doneJsonResultSchema(spec) {
   return convert(spec).schema;
 }
 
-function doneJsonTool(outputSchema) {
+function doneJsonTool(outputSchema, { strictSecretMode = false } = {}) {
   return {
     ...DONE_JSON_TOOL,
     function: {
       ...DONE_JSON_TOOL.function,
+      ...(strictSecretMode ? {
+        description: `${DONE_JSON_TOOL.function.description} CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, or other secrets anywhere in result or summary; report only non-secret status and evidence.`,
+      } : {}),
       parameters: {
         ...DONE_JSON_TOOL.function.parameters,
         properties: {
           ...DONE_JSON_TOOL.function.parameters.properties,
           result: {
-            description: 'Machine-readable result matching the requested output schema.',
+            description: strictSecretMode
+              ? 'Machine-readable result matching the requested output schema. Must not contain credentials, passwords, API keys, tokens, OTPs, recovery codes, or other secrets.'
+              : 'Machine-readable result matching the requested output schema.',
             ...doneJsonResultSchema(outputSchema),
           },
+          ...(strictSecretMode ? {
+            summary: { type: 'string', description: 'Short human-readable completion summary without credentials or secrets.' },
+          } : {}),
         },
       },
     },
@@ -1437,7 +1445,9 @@ export function getToolsForMode(mode, opts = {}) {
     && opts.cloudRun === true
     && !!opts.outputSchema;
   if (useDoneJson) {
-    const structuredDone = doneJsonTool(opts.outputSchema);
+    const structuredDone = doneJsonTool(opts.outputSchema, {
+      strictSecretMode: opts.strictSecretMode === true,
+    });
     return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? structuredDone : tool)));
   }
   const useOutcomeDone = normalizedMode !== 'ask';

@@ -104,6 +104,16 @@ function redactVerifyFormValues(value) {
   }
 }
 
+function redactStrictStructuredStrings(value) {
+  try {
+    return JSON.parse(JSON.stringify(value, (_key, item) => (
+      typeof item === 'string' ? '[redacted strict value]' : item
+    )));
+  } catch {
+    return { sensitivePayloadRedacted: true };
+  }
+}
+
 function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
   if (!data || typeof data !== 'object') return data;
   const name = String(data.name || data.tool || '');
@@ -145,6 +155,30 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
     return {
       ...data,
       result: redactVerifyFormValues(data.result),
+    };
+  }
+  if (strictSecretMode && type === 'tool_call' && name === 'done_json') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    return {
+      ...data,
+      args: {
+        ...args,
+        ...(Object.hasOwn(args, 'result') ? { result: redactStrictStructuredStrings(args.result) } : {}),
+        ...(Object.hasOwn(args, 'summary') ? { summary: '[redacted strict summary]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'done_json') {
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        ...result,
+        ...(Object.hasOwn(result, 'result') ? { result: redactStrictStructuredStrings(result.result) } : {}),
+        ...(Object.hasOwn(result, 'cloudResult') ? { cloudResult: redactStrictStructuredStrings(result.cloudResult) } : {}),
+        ...(Object.hasOwn(result, 'invalidResult') ? { invalidResult: redactStrictStructuredStrings(result.invalidResult) } : {}),
+        ...(Object.hasOwn(result, 'summary') ? { summary: '[redacted strict summary]' } : {}),
+      },
     };
   }
   return data;
@@ -444,8 +478,8 @@ export function createCloudRunController({
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
       run.updates.splice(0, run.updates.length - CLOUD_UPDATE_LIMIT);
     }
-    if (type === 'tool_result' && data?.name === 'done_json') {
-      const result = data.result || {};
+    if (type === 'tool_result' && scrubbedData?.name === 'done_json') {
+      const result = scrubbedData.result || {};
       if (result.cloudFailed) {
         run.status = 'failed';
         run.error = result.error || 'done_json failed';
@@ -646,7 +680,9 @@ export function createCloudRunController({
           });
         }
         run.pendingInput = null;
-        run.content = redactWorkflowValue(content);
+        run.content = agent.strictSecretMode === true && outputSchema
+          ? (run.summary || '[redacted strict structured completion]')
+          : redactWorkflowValue(content);
         run.finalUrl = redactWorkflowValue(await getTabUrl(tabId));
         if (run.status === 'aborting') {
           run.status = 'aborted';
