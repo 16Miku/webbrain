@@ -9,6 +9,7 @@ on:
         default: gnippets-spa
         type: choice
         options:
+          - cloud-smoke
           - gnippets-spa
           - gnippets-captcha
           - gnippets-readonly

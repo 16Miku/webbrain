@@ -17,7 +17,16 @@ function getFinalUrl(run, trace) {
   return run?.final_url || run?.finalUrl || trace?.run?.final_url || trace?.run?.finalUrl || '';
 }
 
-export function inferStuckAt({ run, trace, setupError, artifactError, checks }) {
+function toolCalls(run, trace) {
+  return (trace?.run?.updates || run?.updates || [])
+    .filter((update) => update.type === 'tool_call')
+    .map((update) => ({
+      name: update.data?.name || update.data?.tool || '',
+      args: update.data?.args || update.data?.arguments || {},
+    }));
+}
+
+export function inferStuckAt({ run, trace, setupError, artifactError, cleanupErrors = [], checks }) {
   if (setupError) return 'setup';
   if (!run) return 'run_start';
   if (run.status === 'needs_user_input') return 'user_handoff';
@@ -30,7 +39,8 @@ export function inferStuckAt({ run, trace, setupError, artifactError, checks }) 
     if (!getFinalUrl(run, trace)) return 'navigation';
     return 'execution';
   }
-  if (checks.some((check) => !check.passed && check.id !== 'artifact:video')) return 'verification';
+  if (cleanupErrors.length) return 'cleanup';
+  if (checks.some((check) => !check.passed && !['artifact:video', 'cleanup'].includes(check.id))) return 'verification';
   if (artifactError) return 'artifact_capture';
   return null;
 }
@@ -42,6 +52,7 @@ export function gradeScenario({
   remoteState,
   setupError,
   artifactError,
+  cleanupErrors = [],
   captureRequired = false,
 }) {
   const checks = [];
@@ -56,6 +67,41 @@ export function gradeScenario({
     run?.status === 'completed',
     run?.status || setupError?.message || 'run unavailable',
   );
+
+  if (scenario.verify?.mode) {
+    const actualMode = run?.mode || trace?.run?.mode || 'act';
+    add('mode', `Run used ${scenario.verify.mode} mode`, 10, actualMode === scenario.verify.mode, actualMode);
+  }
+
+  const calls = toolCalls(run, trace);
+  for (const skillId of scenario.verify?.skills || []) {
+    const loaded = calls.some((call) => call.name === 'load_skill' && call.args?.skill_id === skillId);
+    add(`skill:${skillId}`, `Loaded ${skillId}`, 10, loaded, loaded ? skillId : 'not observed');
+  }
+  for (const toolName of scenario.verify?.tools || []) {
+    const used = calls.some((call) => call.name === toolName);
+    add(`tool:${toolName}`, `Used ${toolName}`, 10, used, used ? 'observed' : 'not observed');
+  }
+  for (const expected of scenario.verify?.toolRequests || []) {
+    const matched = calls.some((call) => (
+      call.name === expected.tool
+      && (!expected.origin || call.args?.url_origin === expected.origin)
+      && (!expected.pathRoot || call.args?.url_path_root === expected.pathRoot)
+      && (!expected.method || String(call.args?.method || 'GET').toUpperCase() === expected.method.toUpperCase())
+    ));
+    const target = [expected.method, expected.origin, expected.pathRoot].filter(Boolean).join(' ');
+    add(
+      `tool_request:${expected.tool}:${target}`,
+      expected.label || `Observed ${expected.tool} request to ${target}`,
+      expected.weight || 10,
+      matched,
+      matched ? target : 'not observed',
+    );
+  }
+  for (const toolName of scenario.verify?.forbiddenTools || []) {
+    const used = calls.some((call) => call.name === toolName);
+    add(`tool_forbidden:${toolName}`, `Did not use ${toolName}`, 5, !used, used ? 'observed' : 'absent');
+  }
 
   for (const expected of scenario.verify?.result || []) {
     const actual = getPath(run?.result, expected.path);
@@ -96,6 +142,14 @@ export function gradeScenario({
     );
   }
 
+  add(
+    'cleanup',
+    'Ephemeral resources cleaned up',
+    10,
+    cleanupErrors.length === 0,
+    cleanupErrors.map((error) => error.message).join(' | ') || 'browser and fixture removed',
+  );
+
   const available = checks.reduce((sum, check) => sum + check.weight, 0);
   const earned = checks.filter((check) => check.passed).reduce((sum, check) => sum + check.weight, 0);
   const score = available ? Math.round((earned / available) * 100) : 0;
@@ -106,7 +160,7 @@ export function gradeScenario({
     score,
     earned,
     available,
-    stuck_at: inferStuckAt({ run, trace, setupError, artifactError, checks }),
+    stuck_at: inferStuckAt({ run, trace, setupError, artifactError, cleanupErrors, checks }),
     checks,
     error: setupError?.message || run?.error || '',
     artifact_warning: artifactError?.message || '',

@@ -1274,6 +1274,66 @@ const DONE_JSON_TOOL = {
   },
 };
 
+const CLOUD_OUTPUT_SCHEMA_KEYWORDS = new Set([
+  'type', 'properties', 'required', 'items', 'enum', 'description', 'additionalProperties',
+]);
+
+function doneJsonResultSchema(spec) {
+  const convert = (value) => {
+    if (typeof value === 'string') {
+      let shorthand = value.trim();
+      const optional = shorthand.endsWith('?');
+      if (optional) shorthand = shorthand.slice(0, -1).trim();
+      if (shorthand.endsWith('[]')) {
+        const itemType = shorthand.slice(0, -2).trim() || 'any';
+        return { schema: { type: 'array', items: convert(itemType).schema }, optional };
+      }
+      if (shorthand === 'any') return { schema: {}, optional };
+      if (['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(shorthand)) {
+        return { schema: { type: shorthand }, optional };
+      }
+      return { schema: {}, optional };
+    }
+    if (Array.isArray(value)) {
+      return { schema: { type: 'array', items: convert(value[0] ?? 'any').schema }, optional: false };
+    }
+    if (!value || typeof value !== 'object') return { schema: {}, optional: false };
+    if (Object.keys(value).some(key => CLOUD_OUTPUT_SCHEMA_KEYWORDS.has(key))) {
+      return { schema: value, optional: false };
+    }
+    const converted = Object.entries(value).map(([key, child]) => [key, convert(child)]);
+    return {
+      schema: {
+        type: 'object',
+        properties: Object.fromEntries(converted.map(([key, child]) => [key, child.schema])),
+        required: converted.filter(([, child]) => !child.optional).map(([key]) => key),
+        additionalProperties: false,
+      },
+      optional: false,
+    };
+  };
+  return convert(spec).schema;
+}
+
+function doneJsonTool(outputSchema) {
+  return {
+    ...DONE_JSON_TOOL,
+    function: {
+      ...DONE_JSON_TOOL.function,
+      parameters: {
+        ...DONE_JSON_TOOL.function.parameters,
+        properties: {
+          ...DONE_JSON_TOOL.function.parameters.properties,
+          result: {
+            description: 'Machine-readable result matching the requested output schema.',
+            ...doneJsonResultSchema(outputSchema),
+          },
+        },
+      },
+    },
+  };
+}
+
 const WATCH_BEEP_TOOL = {
   type: 'function',
   function: {
@@ -1372,8 +1432,14 @@ export function getToolsForMode(mode, opts = {}) {
     });
     base = [...base, ...extras];
   }
-  const useDoneJson = normalizedMode === 'act' && tier === 'full' && opts.cloudRun === true && !!opts.outputSchema;
-  if (useDoneJson) return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? DONE_JSON_TOOL : tool)));
+  const useDoneJson = ['ask', 'act'].includes(normalizedMode)
+    && tier === 'full'
+    && opts.cloudRun === true
+    && !!opts.outputSchema;
+  if (useDoneJson) {
+    const structuredDone = doneJsonTool(opts.outputSchema);
+    return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? structuredDone : tool)));
+  }
   const useOutcomeDone = normalizedMode !== 'ask';
   if (!opts.strictSecretMode && !useOutcomeDone) return closeToolDefinitions(base);
   const replacement = opts.strictSecretMode

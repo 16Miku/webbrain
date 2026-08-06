@@ -6,7 +6,7 @@ export function suiteShouldFail(totals = {}) {
   return Number(totals.failed || 0) > 0 || Number(totals.skipped || 0) > 0;
 }
 
-export function buildSessionSettings(capsolverApiKey = '') {
+export function buildSessionSettings(capsolverApiKey = '', overrides = {}) {
   return {
     wbLocale: 'en',
     useSiteAdapters: true,
@@ -18,5 +18,6 @@ export function buildSessionSettings(capsolverApiKey = '') {
     askBeforeConsequentialActions: false,
     captchaSolverEnabled: Boolean(capsolverApiKey),
     ...(capsolverApiKey ? { capsolverApiKey } : {}),
+    ...overrides,
   };
 }

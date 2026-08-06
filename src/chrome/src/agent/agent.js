@@ -21897,6 +21897,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // in the main loop to avoid an infinite empty→nudge→empty→nudge loop.
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
+    let structuredOutputRecoveryAttempted = false;
     let askStreamingDisabledForRun = false;
 
     // Keep trace persistence ordered without putting IndexedDB on the token
@@ -22329,6 +22330,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Second empty in a row: give up with a transparent message.
         finalResponse = '[Agent emitted no output and no tool call, even after a recovery nudge. This usually means the task exceeded the current model\'s capability or context budget. Try a stronger model, raise the step limit in settings, or break the task into smaller parts.]';
         _traceStatus = 'empty_output';
+        messages.push({ role: 'assistant', content: finalResponse });
+        onUpdate('warning', { message: finalResponse });
+        break;
+      }
+      if (mode === 'ask' && runOptions?.cloudRun === true && cloudRunContext?.outputSchema) {
+        if (!structuredOutputRecoveryAttempted) {
+          structuredOutputRecoveryAttempted = true;
+          messages.push(this._withResponseItems(
+            { role: 'assistant', content: result.content },
+            result.responseItems,
+            result.reasoningContent,
+            provider,
+          ));
+          messages.push({
+            role: 'user',
+            content: '[System nudge: this cloud run requires structured output. Do not return a prose final. Call done_json with a result that satisfies the supplied output schema.]',
+          });
+          onUpdate('warning', { message: 'Structured Ask output requires done_json; continuing.' });
+          this._persist(tabId);
+          continue;
+        }
+        finalResponse = '[Structured cloud run stopped because the model returned prose instead of calling done_json after a recovery nudge.]';
+        _traceStatus = 'required_tool_missing';
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;

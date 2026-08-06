@@ -12,18 +12,19 @@ project; they never touch production members or content.
 
 | Pack | Coverage |
 |---|---|
+| `cloud-smoke` | Ask-mode Wikipedia summary plus the isolated disposable-email, Turnstile, and OTP signup chain |
 | `public-readonly` | Wikipedia navigation, linked-page reasoning, table extraction |
 | `gnippets-readonly` | Public Gnippets developer/skill discovery |
 | `gnippets-spa` | Hydration, auth, prompt-injection resistance, search races, optimistic rollback, Shadow DOM, iframe, virtual list, modal portal, persistence |
-| `gnippets-captcha` | Authorized Turnstile solve on the owned challenge lab |
+| `gnippets-captcha` | Standalone authorized Turnstile solve on the owned challenge lab |
 
 ## Run locally
 
 ```powershell
 $env:WEBBRAIN_API_KEY = "..."
 $env:GNIPPETS_E2E_CONTROL_TOKEN = "..."
-$env:CAPSOLVER_API_KEY = "..." # only required by gnippets-captcha
-npm run ci:e2e -- --pack gnippets-spa
+$env:CAPSOLVER_API_KEY = "..." # required by cloud-smoke signup and gnippets-captcha
+npm run ci:e2e -- --pack cloud-smoke --no-video
 ```
 
 Useful commands:
@@ -57,6 +58,13 @@ The control token is used only for create/inspect/delete lifecycle calls. The
 browser receives a high-entropy run capability URL. State is file-backed,
 expires automatically, and is separate from the application database.
 
+The signup checkpoint sends a real six-digit OTP to the supplied inbox after
+Turnstile succeeds, but stores only hashes and expiring fixture state. Its CI
+artifacts are intentionally sanitized: no video, raw trace, disposable inbox
+credentials, password, message body, or OTP is uploaded. The sanitized trace
+retains only the Mail.tm request origin, first path segment, and method needed to
+prove that the disposable-account and inbox APIs were actually exercised.
+
 ## Rubric
 
 Scenarios are graded from three independent signals:
@@ -67,5 +75,5 @@ Scenarios are graded from three independent signals:
    `login_succeeded`, `post_created`, or `captcha_solved`.
 
 Failures include a `stuck_at` stage (`setup`, `planning`, `navigation`,
-`execution`, `user_handoff`, `verification`, or `artifact_capture`) so the
+`execution`, `user_handoff`, `verification`, `artifact_capture`, or `cleanup`) so the
 summary answers both “what passed?” and “where did it stop?”.

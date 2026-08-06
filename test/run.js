@@ -10880,16 +10880,19 @@ test('getToolsForMode: every `done` variant says its summary is the visible answ
   }
 });
 
-test('getToolsForMode: done_json is available only for structured full-tier cloud runs', () => {
+test('getToolsForMode: done_json is available for structured full-tier Ask and Act cloud runs', () => {
   const schema = { title: 'string' };
   for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
     const cloud = getTools('act', { tier: 'full', cloudRun: true, outputSchema: schema }).map(tool => tool.function.name);
     assert.equal(cloud.includes('done_json'), true, `[${label}] structured cloud run should expose done_json`);
     assert.equal(cloud.includes('done'), false, `[${label}] structured cloud run should replace done`);
+    const askCloud = getTools('ask', { tier: 'full', cloudRun: true, outputSchema: schema }).map(tool => tool.function.name);
+    assert.equal(askCloud.includes('done_json'), true, `[${label}] structured Ask cloud run should expose done_json`);
+    assert.equal(askCloud.includes('done'), false, `[${label}] structured Ask cloud run should replace done`);
+    assert.equal(askCloud.includes('navigate'), false, `[${label}] structured Ask cloud run exposed Act tools`);
     for (const tools of [
       getTools('act', { tier: 'full', cloudRun: true }),
       getTools('act', { tier: 'mid', cloudRun: true, outputSchema: schema }),
-      getTools('ask', { tier: 'full', cloudRun: true, outputSchema: schema }),
     ]) {
       const names = tools.map(tool => tool.function.name);
       assert.equal(names.includes('done_json'), false, `[${label}] done_json leaked outside its cloud scope`);
@@ -10912,6 +10915,82 @@ test('done_json validates Chrome and Firefox cloud results with one repair attem
     const failed = handle(exhausted, { result: { title: 42 }, summary: 'Bad' });
     assert.equal(failed.done, true, `[${label}] second invalid result should terminate`);
     assert.equal(failed.cloudFailed, true, `[${label}] second invalid result should fail the cloud run`);
+  }
+});
+
+test('structured Ask cloud runs recover prose finals through done_json', async () => {
+  const schema = {
+    type: 'object',
+    properties: { title: { type: 'string' } },
+    required: ['title'],
+    additionalProperties: false,
+  };
+  for (const [index, [label, AgentClass, handleDoneJson]] of [
+    ['chrome', AgentCh, handleDoneJsonCh],
+    ['firefox', AgentFx, handleDoneJsonFx],
+  ].entries()) {
+    const responses = [
+      { content: 'Draft prose that must not terminate the structured run.', toolCalls: [] },
+      {
+        content: null,
+        toolCalls: [{
+          id: `structured_ask_done_${label}`,
+          function: {
+            name: 'done_json',
+            arguments: JSON.stringify({
+              result: { title: 'Alan Turing' },
+              summary: 'Alan Turing was a pioneering mathematician and computer scientist.',
+            }),
+          },
+        }],
+      },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 10820 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    agent.executeTool = async (_tabId, name, args) => {
+      if (name === 'done_json') return handleDoneJson(agent.cloudRunContexts.get(tabId), args);
+      throw new Error(`unexpected tool ${name}`);
+    };
+    const updates = [];
+
+    const final = await agent.processMessage(
+      tabId,
+      'Summarize the current page.',
+      (type, data) => updates.push({ type, data }),
+      'ask',
+      [],
+      { cloudRun: true, independentRun: true, outputSchema: schema },
+    );
+
+    assert.equal(
+      final,
+      'Alan Turing was a pioneering mathematician and computer scientist.',
+      `${label}: done_json summary was not returned`,
+    );
+    assert.equal(responses.length, 0, `${label}: structured recovery did not take the second model turn`);
+    assert.equal(
+      updates.some(update => update.type === 'warning' && /requires done_json/.test(update.data?.message || '')),
+      true,
+      `${label}: structured prose recovery warning was not emitted`,
+    );
+    assert.equal(
+      updates.some(update => update.type === 'text' && /Draft prose/.test(update.data?.content || '')),
+      false,
+      `${label}: rejected prose was emitted as the cloud result`,
+    );
   }
 });
 
@@ -10965,6 +11044,7 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.deepEqual(apiMutationsAllowedCalls, [[17, true]]);
   assert.equal(processArgs[1], 'Open Google', 'hidden API allowance must not modify the task text');
   assert.equal(processArgs[3], 'act');
+  assert.equal(started.mode, 'act');
   assert.deepEqual(processArgs[4], []);
   assert.equal(processArgs[5].cloudRun, true);
   processArgs[2]('thinking', { step: 1, note: 'Opening the page' });
@@ -10990,8 +11070,25 @@ test('cloud run controller uses the visible tab and persists terminal status', a
     },
   });
   processArgs[2]('tool_result', { name: 'fetch_url', result: { success: true } });
+  processArgs[2]('tool_call', {
+    name: 'set_field',
+    args: { ref_id: 'ref_password', text: 'literal-password-must-not-persist', clear: true },
+  });
+  agent.strictSecretMode = true;
+  processArgs[2]('tool_call', {
+    name: 'fetch_url',
+    args: {
+      url: 'https://api.mail.tm/accounts?address=private%40example.test',
+      method: 'POST',
+      body: JSON.stringify({ address: 'private@example.test', password: 'mailbox-secret' }),
+    },
+  });
+  processArgs[2]('tool_result', {
+    name: 'fetch_url',
+    result: { success: true, status: 201, text: '{"token":"mailbox-token","otp":"654321"}' },
+  });
   const running = await controller.status({ run_id: 'run_test' });
-  assert.deepEqual(running.updates.map(update => update.seq), [1, 2, 3, 4]);
+  assert.deepEqual(running.updates.map(update => update.seq), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(running.updates[1].data.content, 'Opening the page');
   assert.equal(running.updates[2].data.args.authorization, '[redacted]');
   assert.equal(running.updates[2].data.args.nested.apiKey, '[redacted]');
@@ -11004,12 +11101,76 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(running.updates[2].data.args.nested.mapPin, 'also-keep');
   assert.equal(running.updates[2].data.args.nested.headers['x-api-key'], '[redacted]');
   assert.match(running.updates[2].data.args.screenshot, /^\[image omitted:/);
+  assert.equal(running.updates[4].data.args.text, '[redacted typed text]');
+  assert.deepEqual(running.updates[5].data.args, {
+    method: 'POST',
+    url_origin: 'https://api.mail.tm',
+    url_path_root: '/accounts',
+    body: '[redacted request body]',
+  });
+  assert.deepEqual(running.updates[6].data.result, {
+    success: true,
+    status: 201,
+    sensitivePayloadRedacted: true,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(running.updates),
+    /literal-password-must-not-persist|mailbox-secret|mailbox-token|654321/,
+  );
   finishRun('Google');
   await new Promise(resolve => setTimeout(resolve, 0));
   const completed = await controller.status({ run_id: 'run_test' });
   assert.equal(completed.status, 'completed');
   assert.equal(completed.result, 'Google');
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
+});
+
+test('cloud run controller forwards Ask mode and inherits it for continuations', async () => {
+  const session = {};
+  const tab = { id: 81, url: 'https://en.wikipedia.org/wiki/Alan_Turing', active: true, windowId: 8 };
+  const modes = [];
+  let nextRun = 0;
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [tab],
+        get: async () => tab,
+        update: async () => tab,
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        local: { get: async () => ({}) },
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      processMessage: async (_tabId, task, _onUpdate, mode) => {
+        modes.push(mode);
+        return `Finished: ${task}`;
+      },
+    },
+    ensureOffscreen: async () => {},
+    makeRunId: () => (++nextRun === 1 ? 'run_ask_parent' : 'run_ask_child'),
+  });
+
+  const parent = await controller.startRun({ task: 'Summarize this page', mode: 'ask' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const child = await controller.startRun({ task: 'Make it shorter', parentRunId: parent.runId });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(parent.mode, 'ask');
+  assert.equal(child.mode, 'ask');
+  assert.deepEqual(modes, ['ask', 'ask']);
+  await assert.rejects(
+    () => controller.startRun({ task: 'Invalid mode', mode: 'dev' }),
+    /must be `ask` or `act`/,
+  );
 });
 
 test('cloud run controller fails clarification-required terminals without schema fallback', async () => {
@@ -11745,7 +11906,10 @@ test('offscreen cloud bridge reconnects with backoff and rejects remote control 
   sockets[0].emit('open');
   assert.equal(sockets[0].sent[0].type, 'hello');
   assert.equal(sockets[0].sent[0].protocolVersion, 2);
-  assert.deepEqual(JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)), ['saved_workflows_v1']);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)),
+    ['saved_workflows_v1', 'run_modes_v1'],
+  );
   sockets[0].close();
   assert.equal(timers[0].delay, 500);
   timers[0].callback();

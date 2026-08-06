@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { GnippetsE2EClient, WebBrainCloudClient } from './lib/webbrain-client.mjs';
 import { gradeScenario, renderSummary } from './lib/grader.mjs';
+import { sanitizeGnippetsState, sanitizeRun, sanitizeTrace } from './lib/sanitize.mjs';
 import { buildSessionSettings, resolveCloudRunId, suiteShouldFail } from './lib/suite.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +29,7 @@ function parseArgs(argv) {
 function usage() {
   return `Usage: node ci/run.mjs [options]
 
-  --pack <name>         all, public-readonly, gnippets-readonly, gnippets-spa, gnippets-captcha
+  --pack <name>         all, cloud-smoke, public-readonly, gnippets-readonly, gnippets-spa, gnippets-captcha
   --scenario <id>       run one scenario (repeatable)
   --concurrency <n>     parallel isolated browsers (default: 2)
   --no-video            keep trace/rubric artifacts but disable .webm capture
@@ -81,6 +82,25 @@ async function mapLimit(values, limit, worker) {
   return results;
 }
 
+async function waitForRunWithClarifications({ cloud, sessionId, runId, scenario }) {
+  const used = new Set();
+  let run = await cloud.waitForRun(sessionId, runId, { timeoutMs: scenario.timeout_ms + 120_000 });
+  for (let count = 0; run.status === 'needs_user_input' && count < 5; count += 1) {
+    const pending = run.pending_input || run.pendingInput || {};
+    const question = String(pending.question || '');
+    const ruleIndex = (scenario.clarifications || []).findIndex((rule, index) => (
+      !used.has(index) && new RegExp(rule.question_matches, 'i').test(question)
+    ));
+    if (ruleIndex < 0) return run;
+    const clarifyId = pending.clarify_id || pending.clarifyId;
+    if (!clarifyId) return run;
+    used.add(ruleIndex);
+    await cloud.respondToRun(sessionId, runId, clarifyId, scenario.clarifications[ruleIndex].answer);
+    run = await cloud.waitForRun(sessionId, runId, { timeoutMs: scenario.timeout_ms + 120_000 });
+  }
+  return run;
+}
+
 async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   const scenarioDir = path.join(suiteDir, scenario.id);
   await fs.mkdir(scenarioDir, { recursive: true });
@@ -108,7 +128,10 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   let remoteState = null;
   let setupError = null;
   let artifactError = null;
+  const cleanupErrors = [];
   const artifacts = {};
+  const sensitive = scenario.artifact_policy === 'sensitive';
+  const captureRequested = video && scenario.capture !== false && !sensitive;
 
   try {
     let startUrl = scenario.start_url;
@@ -116,39 +139,57 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       const setup = await gnippets.createRun(scenario.id);
       gnippetsRun = setup.run;
       startUrl = setup.app_url;
-      await writeJson(path.join(scenarioDir, 'gnippets-setup.json'), {
-        run_id: gnippetsRun.run_id,
-        app_url: startUrl,
-        expires_at: gnippetsRun.expires_at,
-      });
+      await writeJson(path.join(scenarioDir, 'gnippets-setup.json'), sensitive
+        ? { created: true, expires_at: gnippetsRun.expires_at }
+        : { run_id: gnippetsRun.run_id, app_url: startUrl, expires_at: gnippetsRun.expires_at });
     }
     const task = scenario.task.replaceAll('{{START_URL}}', startUrl);
     browser = await cloud.createIncognitoBrowser({
       name: `CI ${scenario.id}`.slice(0, 120),
-      settings: buildSessionSettings(process.env.CAPSOLVER_API_KEY || ''),
+      settings: buildSessionSettings(process.env.CAPSOLVER_API_KEY || '', scenario.session_settings || {}),
     });
     await cloud.waitForBrowser(browser.id);
+    let tabId;
+    if (scenario.preload_url) {
+      const preload = await cloud.startRun(browser.id, {
+        task: `Open ${scenario.preload_url} and stop after the page is fully loaded.`,
+        mode: 'act',
+        timeoutMs: scenario.timeout_ms,
+        capture: 'none',
+      });
+      const preloadId = resolveCloudRunId(preload);
+      if (!preloadId) throw new Error('WebBrain Cloud did not return a preload run id.');
+      const preloaded = await cloud.waitForRun(browser.id, preloadId, { timeoutMs: scenario.timeout_ms + 120_000 });
+      if (preloaded.status !== 'completed') throw new Error(`Page preload ended with ${preloaded.status}.`);
+      tabId = preloaded.tab_id ?? preloaded.tabId;
+    }
     const started = await cloud.startRun(browser.id, {
       task,
+      mode: scenario.mode || 'act',
+      tabId,
       outputSchema: scenario.output_schema,
       timeoutMs: scenario.timeout_ms,
-      capture: video ? 'video' : 'none',
+      capture: captureRequested ? 'video' : 'none',
     });
     const runId = resolveCloudRunId(started);
     if (!runId) throw new Error('WebBrain Cloud did not return a run id.');
-    run = await cloud.waitForRun(browser.id, runId, { timeoutMs: scenario.timeout_ms + 120_000 });
-    await writeJson(path.join(scenarioDir, 'run.json'), run);
+    run = await waitForRunWithClarifications({ cloud, sessionId: browser.id, runId, scenario });
+    await writeJson(path.join(scenarioDir, 'run.json'), sensitive ? sanitizeRun(run) : run);
     if (['completed', 'failed'].includes(run.status)) {
       trace = await cloud.exportTrace(browser.id, runId);
-      await writeJson(path.join(scenarioDir, 'trace.json'), trace);
+      const storedTrace = sensitive ? sanitizeTrace(trace) : trace;
+      await writeJson(path.join(scenarioDir, 'trace.json'), storedTrace);
       artifacts.trace = 'trace.json';
+      if (sensitive) trace = storedTrace;
     }
     if (gnippetsRun) {
       remoteState = (await gnippets.getRun(gnippetsRun.run_id)).run;
-      await writeJson(path.join(scenarioDir, 'gnippets-state.json'), remoteState);
+      const storedState = sensitive ? sanitizeGnippetsState(remoteState) : remoteState;
+      await writeJson(path.join(scenarioDir, 'gnippets-state.json'), storedState);
       artifacts.gnippets_state = 'gnippets-state.json';
+      if (sensitive) remoteState = storedState;
     }
-    if (video) {
+    if (captureRequested) {
       try {
         const capture = await cloud.downloadCapture(
           browser.id,
@@ -165,27 +206,32 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
     run ||= error.latest || null;
     await writeJson(path.join(scenarioDir, 'error.json'), {
       name: error.name,
-      message: error.message,
+      message: sensitive ? 'Sensitive scenario failed; raw diagnostics were omitted.' : error.message,
       status: error.status || null,
-      body: error.body || null,
+      body: sensitive ? null : (error.body || null),
     });
   } finally {
     if (gnippetsRun) {
-      await gnippets.deleteRun(gnippetsRun.run_id).catch(() => {});
+      await gnippets.deleteRun(gnippetsRun.run_id).catch((error) => cleanupErrors.push(error));
     }
     if (browser?.id) {
-      await cloud.destroyBrowser(browser.id).catch(() => {});
+      await cloud.destroyBrowser(browser.id).catch((error) => cleanupErrors.push(error));
     }
   }
 
   const grade = gradeScenario({
     scenario,
-    run,
+    run: sensitive ? sanitizeRun(run) : run,
     trace,
     remoteState,
-    setupError,
+    setupError: sensitive && setupError
+      ? new Error('Sensitive scenario failed; raw diagnostics were omitted.')
+      : setupError,
     artifactError,
-    captureRequired: video,
+    cleanupErrors: sensitive
+      ? cleanupErrors.map(() => new Error('Sensitive scenario cleanup failed; raw diagnostics were omitted.'))
+      : cleanupErrors,
+    captureRequired: captureRequested,
   });
   const manifest = {
     format: 'webbrain.ci-scenario',

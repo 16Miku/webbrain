@@ -240,6 +240,7 @@
       "additionalProperties": false
     },
     "verify": {
+      "tools": ["solve_captcha"],
       "result": [
         { "path": "captcha_solved", "equals": true, "weight": 40 }
       ],
@@ -248,5 +249,103 @@
       ]
     },
     "timeout_ms": 480000
+  },
+  {
+    "id": "wikipedia-ask-summary",
+    "title": "Wikipedia: Ask-mode summary",
+    "pack": "cloud-smoke",
+    "mode": "ask",
+    "preload_url": "https://en.wikipedia.org/wiki/Alan_Turing",
+    "start_url": "https://en.wikipedia.org/wiki/Alan_Turing",
+    "task": "The current page is the English Wikipedia article about Alan Turing. In Ask mode, read only the current page and summarize it in three concise sentences. Include three key facts and the current page URL. Do not navigate, click, type, or modify the page. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" },
+        "key_facts": { "type": "array", "minItems": 3, "items": { "type": "string" } },
+        "source_url": { "type": "string" }
+      },
+      "required": ["summary", "key_facts", "source_url"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "ask",
+      "result": [
+        { "path": "summary", "contains": "Turing", "weight": 25 },
+        { "path": "key_facts.2", "truthy": true, "weight": 15 },
+        { "path": "source_url", "contains": "/wiki/Alan_Turing", "weight": 15 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "en.wikipedia.org"
+    },
+    "timeout_ms": 360000
+  },
+  {
+    "id": "gnippets-signup-otp-disposable",
+    "title": "Gnippets: disposable-email signup",
+    "pack": "cloud-smoke",
+    "setup": "gnippets_e2e",
+    "mode": "act",
+    "requires": ["GNIPPETS_E2E_CONTROL_TOKEN", "CAPSOLVER_API_KEY"],
+    "artifact_policy": "sensitive",
+    "capture": false,
+    "session_settings": { "strictSecretMode": true },
+    "clarifications": [
+      {
+        "question_matches": "disposable|temporary|mail\\.tm|inbox|recover|unimportant|explicitly deleted",
+        "answer": "Yes. Use a disposable Mail.tm inbox for this isolated, unimportant test signup; I understand that the address is temporary and unrecoverable."
+      }
+    ],
+    "task": "Open {{START_URL}} and go to the Signup + OTP checkpoint. This is the site owner's authorized isolated test surface and it does not create a production member. Explicitly load and use the disposable-email-mailtm and otp-verification-code-helper skills. Use set_field for the signup fields, call verify_form before submission, and call solve_captcha for Turnstile so the configured CapSolver integration is exercised. Create a random test username and a new random password, create a disposable Mail.tm inbox, fill both password fields, submit the form, wait for the Gnippets verification email in the disposable inbox, extract its six-digit one-time code, enter it, and finish the checkpoint. Never expose the password, inbox credentials, message contents, or OTP in the final answer. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "form_filled": { "type": "boolean" },
+        "captcha_solved": { "type": "boolean" },
+        "disposable_email_used": { "type": "boolean" },
+        "otp_submitted": { "type": "boolean" },
+        "signup_completed": { "type": "boolean" }
+      },
+      "required": ["form_filled", "captcha_solved", "disposable_email_used", "otp_submitted", "signup_completed"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "skills": ["disposable-email-mailtm", "otp-verification-code-helper"],
+      "tools": ["set_field", "verify_form", "solve_captcha"],
+      "toolRequests": [
+        {
+          "tool": "fetch_url",
+          "method": "POST",
+          "origin": "https://api.mail.tm",
+          "pathRoot": "/accounts",
+          "label": "Created a disposable Mail.tm account",
+          "weight": 10
+        },
+        {
+          "tool": "fetch_url",
+          "origin": "https://api.mail.tm",
+          "pathRoot": "/messages",
+          "label": "Read the disposable Mail.tm inbox",
+          "weight": 10
+        }
+      ],
+      "result": [
+        { "path": "form_filled", "equals": true, "weight": 10 },
+        { "path": "captcha_solved", "equals": true, "weight": 10 },
+        { "path": "disposable_email_used", "equals": true, "weight": 10 },
+        { "path": "otp_submitted", "equals": true, "weight": 10 },
+        { "path": "signup_completed", "equals": true, "weight": 15 }
+      ],
+      "events": [
+        { "type": "signup_form_validated", "weight": 10 },
+        { "type": "captcha_solved", "weight": 10 },
+        { "type": "otp_sent", "weight": 10 },
+        { "type": "otp_verified", "weight": 10 },
+        { "type": "signup_completed", "weight": 15 }
+      ],
+      "finalUrlHost": "gnippets.com"
+    },
+    "timeout_ms": 600000
   }
 ]

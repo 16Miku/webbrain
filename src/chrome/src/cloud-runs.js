@@ -16,10 +16,20 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
 const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
 const SENSITIVE_CLOUD_KEY_EXACT = new Set(['pin', 'otp', 'cvv', 'cvc', 'ssn']);
 const LARGE_IMAGE_KEY = /(?:attachimage|screenshot|image|imagedata|dataurl)$/i;
+const CLOUD_TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
 
 function cloudRunError(message, status) {
   return Object.assign(new Error(message), { status });
+}
+
+export function normalizeCloudRunMode(value, fallback = 'act') {
+  const mode = String(value ?? '').trim().toLowerCase();
+  if (!mode) return fallback;
+  if (!['ask', 'act'].includes(mode)) {
+    throw cloudRunError('Cloud run `mode` must be `ask` or `act`.', 400);
+  }
+  return mode;
 }
 
 function normalizedCloudKey(key) {
@@ -65,6 +75,60 @@ function scrubCloudValue(value) {
   } catch {
     return { unserializable: true };
   }
+}
+
+function cloudUrlEvidence(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (!['http:', 'https:'].includes(url.protocol)) return {};
+    const firstSegment = url.pathname.split('/').filter(Boolean)[0] || '';
+    return {
+      url_origin: url.origin,
+      url_path_root: firstSegment ? `/${firstSegment}` : '/',
+    };
+  } catch {
+    return {};
+  }
+}
+
+function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
+  if (!data || typeof data !== 'object') return data;
+  const name = String(data.name || data.tool || '');
+  if (type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    return {
+      ...data,
+      args: {
+        ...args,
+        ...(Object.hasOwn(args, 'text') ? { text: '[redacted typed text]' } : {}),
+        ...(Object.hasOwn(args, 'value') ? { value: '[redacted typed text]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_call' && name === 'fetch_url') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    const method = String(args.method || '').toUpperCase();
+    return {
+      ...data,
+      args: {
+        ...(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method) ? { method } : {}),
+        ...cloudUrlEvidence(args.url),
+        ...(Object.hasOwn(args, 'body') ? { body: '[redacted request body]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'fetch_url') {
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        success: result.success === true,
+        ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
+        sensitivePayloadRedacted: true,
+      },
+    };
+  }
+  return data;
 }
 
 function redactWorkflowRuntimeValues(value, runtimeValues = []) {
@@ -147,6 +211,7 @@ function compactCloudRunForPersistence(run) {
     workflowId: run?.workflowId || null,
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
+    mode: run?.mode || 'act',
     captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
     task: run?.task,
@@ -188,6 +253,7 @@ function cloudSnapshot(run, { includeUpdates = true } = {}) {
     status: run.status,
     workflowId: run.workflowId || null,
     parentRunId: run.parentRunId || null,
+    mode: run.mode || 'act',
     tabId: run.tabId,
     task: run.task,
     structured: run.structured ?? !!run.outputSchema,
@@ -351,7 +417,10 @@ export function createCloudRunController({
       return;
     }
     run.nextUpdateSeq = (Number(run.nextUpdateSeq) || 0) + 1;
-    const scrubbedData = scrubCloudValue(redactWorkflowRuntimeValues(data, runtimeValues));
+    const safeData = cloudSafeUpdateData(type, data, {
+      strictSecretMode: agent.strictSecretMode === true,
+    });
+    const scrubbedData = scrubCloudValue(redactWorkflowRuntimeValues(safeData, runtimeValues));
     run.updates.push({ seq: run.nextUpdateSeq, type, data: scrubbedData, ts: run.updatedAt });
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
       run.updates.splice(0, run.updates.length - CLOUD_UPDATE_LIMIT);
@@ -420,24 +489,26 @@ export function createCloudRunController({
   async function startRun(msg = {}) {
     await hydrate();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
+    let parentRun = null;
     let requestedTabId = msg.tabId ?? msg.tab_id;
     if (parentRunId) {
-      const parent = runs.get(parentRunId);
-      if (parent) {
-        if (!TERMINAL_STATUSES.has(parent.status)) {
+      parentRun = runs.get(parentRunId) || null;
+      if (parentRun) {
+        if (!TERMINAL_STATUSES.has(parentRun.status)) {
           throw cloudRunError('Parent cloud run must be finished before it can be continued.', 409);
         }
         const existingChild = [...runs.values()].find(candidate => candidate.parentRunId === parentRunId);
         if (existingChild) {
           throw cloudRunError(`Cloud run has already been continued as ${existingChild.runId}.`, 409);
         }
-        requestedTabId = parent.tabId;
+        requestedTabId = parentRun.tabId;
       } else if (requestedTabId == null || requestedTabId === '') {
         throw cloudRunError('Parent cloud run is no longer available and has no saved tab.', 409);
       }
     }
     const tabId = await resolveTabId(requestedTabId);
     const workflow = msg._workflow || null;
+    const mode = workflow ? 'act' : normalizeCloudRunMode(msg.mode, parentRun?.mode || 'act');
     const workflowParameters = msg._workflowParameters || {};
     const workflowParameterValues = workflow ? Object.values(workflowParameters) : [];
     const redactWorkflowValue = value => redactWorkflowRuntimeValues(value, workflowParameterValues);
@@ -458,6 +529,7 @@ export function createCloudRunController({
       workflowId: workflow?.id || null,
       traceRunId: null,
       parentRunId,
+      mode,
       tabId,
       task,
       outputSchema,
@@ -544,7 +616,7 @@ export function createCloudRunController({
             );
           }
         } else {
-          content = await agent.processMessage(tabId, task, publishUpdate, 'act', [], {
+          content = await agent.processMessage(tabId, task, publishUpdate, mode, [], {
             cloudRun: true,
             independentRun: true,
             outputSchema,

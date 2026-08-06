@@ -43,7 +43,10 @@ export class WebBrainCloudClient {
         settings,
       },
     });
-    return response.browser_session;
+    return {
+      ...response.browser_session,
+      webbrain_config_result: response.webbrain_config_result || null,
+    };
   }
 
   async waitForBrowser(sessionId, { timeoutMs = 600_000, intervalMs = 4_000 } = {}) {
@@ -61,14 +64,26 @@ export class WebBrainCloudClient {
     throw new Error(`Browser did not become ready within ${timeoutMs}ms (last status: ${latest?.status || 'unknown'}).`);
   }
 
-  async startRun(sessionId, { task, outputSchema, timeoutMs, capture = 'video' }) {
+  async startRun(sessionId, {
+    task, mode = 'act', tabId, outputSchema, timeoutMs, capture = 'video',
+  }) {
     return await this.request('POST', `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs`, {
       task,
-      output_schema: outputSchema,
+      mode,
+      ...(tabId === undefined || tabId === null ? {} : { tab_id: tabId }),
+      ...(outputSchema === undefined || outputSchema === null ? {} : { output_schema: outputSchema }),
       timeout_ms: timeoutMs,
       capture,
       wait: false,
     });
+  }
+
+  async respondToRun(sessionId, runId, clarifyId, answer) {
+    return await this.request(
+      'POST',
+      `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/responses`,
+      { clarify_id: clarifyId, answer },
+    );
   }
 
   async waitForRun(sessionId, runId, { timeoutMs = 900_000, intervalMs = 3_000 } = {}) {
