@@ -24,6 +24,7 @@ const DIRECT_ACTION_TOOLS = new Set([
 
 const NAVIGATION_ACTION_TOOLS = new Set([
   'navigate',
+  'promote_iframe',
   'new_tab',
   'go_back',
   'go_forward',
@@ -313,6 +314,8 @@ export function createCompletionInvariantState(runToken = '') {
     lastObservation: null,
     consumedActionSequence: 0,
     consumedObservationSequence: 0,
+    iframeFormVerificationDebt: false,
+    iframeFormScope: '',
   };
 }
 
@@ -344,12 +347,28 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
         || result?.error
       ),
     };
+    if (name === 'iframe_type') {
+      next.iframeFormVerificationDebt = true;
+      next.iframeFormScope = String(args?.urlFilter || '').trim().toLowerCase();
+    }
     return next;
   }
 
   if (isCompletionObservationTool(name, args, result)) {
     next.lastObservation = { name, sequence };
     if (current.verificationDebt) next.verificationDebt = false;
+    if (
+      name === 'verify_form'
+      && result?.success === true
+      && result?.scope === 'iframe'
+      && Number(result?.fieldCount || 0) > 0
+    ) {
+      const verifiedScope = String(result?.urlFilter || args?.urlFilter || '').trim().toLowerCase();
+      if (!current.iframeFormScope || verifiedScope === current.iframeFormScope) {
+        next.iframeFormVerificationDebt = false;
+        next.iframeFormScope = verifiedScope;
+      }
+    }
   }
   return next;
 }
@@ -404,6 +423,13 @@ export function completionDoneBlock(state, toolName, args = {}) {
     };
   }
   if (outcome === 'partial' || outcome === 'failed') return null;
+  if (state?.iframeFormVerificationDebt) {
+    return {
+      reason: 'iframe_form_verification_required',
+      error: `Iframe form edits have not been semantically verified. Call verify_form({urlFilter:${JSON.stringify(state.iframeFormScope || 'the iframe host')}}), compare the returned labels and values with the intended answers, correct any mismatch, then call done again.`,
+      urlFilter: state.iframeFormScope || null,
+    };
+  }
   if (state?.verificationDebt) {
     return {
       reason: 'verification_required',

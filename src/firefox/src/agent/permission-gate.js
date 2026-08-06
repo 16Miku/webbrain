@@ -22,7 +22,7 @@
  */
 
 export const Capability = {
-  NAVIGATE: 'navigate',          // navigate / new_tab / go_back / go_forward to a host
+  NAVIGATE: 'navigate',          // navigate / new_tab / promote_iframe / go_back / go_forward to a host
   CLICK: 'click',                // click / click_ax / iframe_click / drag_drop / Enter / submit
   TYPE: 'type',                  // type_text / type_ax / iframe_type / set_field (no submit)
   EXECUTE_JS: 'execute_js',      // execute_js
@@ -66,6 +66,7 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'get_selection',
   'find_text',
   'iframe_read',
+  'promote_iframe',
   // Chrome transports these through CDP, but their catalogs, schemas, frame
   // URLs, outputs, and errors still originate from the inspected page.
   'list_webmcp_tools',
@@ -135,6 +136,7 @@ export function isNetworkMutation(name, args) {
 // bypass the gate, so keep this exhaustive.
 const TOOL_CAPABILITY = {
   navigate: Capability.NAVIGATE,
+  promote_iframe: Capability.NAVIGATE,
   new_tab: Capability.NAVIGATE,
   go_back: Capability.NAVIGATE,
   go_forward: Capability.NAVIGATE,
@@ -296,7 +298,7 @@ export function hostForCapability(capability, args, currentUrlOrHost, toolName) 
   // iframe_click / iframe_type act in a (possibly cross-origin) frame named by
   // `urlFilter`. Charge the FRAME host; if urlFilter is missing we can't
   // identify the frame → '' so the caller fails closed.
-  if (toolName === 'iframe_click' || toolName === 'iframe_type') {
+  if (toolName === 'iframe_click' || toolName === 'iframe_type' || toolName === 'promote_iframe') {
     return normalizeHost(args.urlFilter);
   }
   if (capability === Capability.NAVIGATE || capability === Capability.NETWORK || capability === Capability.DOWNLOAD) {
