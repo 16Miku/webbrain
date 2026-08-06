@@ -17,6 +17,7 @@ const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|
 const SENSITIVE_CLOUD_KEY_EXACT = new Set(['pin', 'otp', 'cvv', 'cvc', 'ssn']);
 const LARGE_IMAGE_KEY = /(?:attachimage|screenshot|image|imagedata|dataurl)$/i;
 const CLOUD_TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
+const VERIFY_FORM_VALUE_KEYS = new Set(['value', 'controlvalue', 'valueprefix', 'valuesuffix']);
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
 
 function cloudRunError(message, status) {
@@ -91,6 +92,18 @@ function cloudUrlEvidence(value) {
   }
 }
 
+function redactVerifyFormValues(value) {
+  try {
+    return JSON.parse(JSON.stringify(value, (key, item) => (
+      VERIFY_FORM_VALUE_KEYS.has(normalizedCloudKey(key).toLowerCase())
+        ? '[redacted form value]'
+        : item
+    )));
+  } catch {
+    return { success: false, sensitivePayloadRedacted: true };
+  }
+}
+
 function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
   if (!data || typeof data !== 'object') return data;
   const name = String(data.name || data.tool || '');
@@ -126,6 +139,12 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
         ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
         sensitivePayloadRedacted: true,
       },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'verify_form') {
+    return {
+      ...data,
+      result: redactVerifyFormValues(data.result),
     };
   }
   return data;
