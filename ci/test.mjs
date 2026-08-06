@@ -38,6 +38,9 @@ assert.deepEqual(
 );
 const googleFormsScenario = scenarios.find((scenario) => scenario.id === 'google-forms-scheduled-double-submit');
 assert.equal(googleFormsScenario.verify.scheduledJobs.count, 2);
+assert.equal(googleFormsScenario.verify.scheduledJobs.definitions.length, 2);
+assert.equal(googleFormsScenario.verify.scheduledJobs.definitions[0].afterSeconds, 0);
+assert.equal(googleFormsScenario.verify.scheduledJobs.definitions[1].afterSeconds, 60);
 assert.equal(googleFormsScenario.session_settings.scheduledRequireConsequentialConfirmation, false);
 assert.match(googleFormsScenario.task, /after_seconds=0/);
 assert.match(googleFormsScenario.task, /after_seconds=60/);
@@ -109,9 +112,33 @@ assert.equal(completedScheduledJobs.jobs[0].lastOutcome, 'success');
 const scheduleTraceFixture = {
   run: {
     updates: [
-      { type: 'tool_call', data: { name: 'schedule_task', args: { title: 'A' } } },
+      {
+        type: 'tool_call',
+        data: {
+          name: 'schedule_task',
+          args: {
+            title: 'Google Form submission A',
+            mode: 'act',
+            schedule: { type: 'once', after_seconds: 0 },
+            target: { type: 'url', url: 'https://forms.gle/nDSbn2B6Cym4x9Bi8' },
+            prompt: 'Use WebBrain CI A with a random shirt size and random harmless comment. Use set_field and verify_form, submit exactly once, and finish only after the response was recorded.',
+          },
+        },
+      },
       { type: 'tool_result', data: { name: 'schedule_task', result: { success: true, jobId: 'task_1' } } },
-      { type: 'tool_call', data: { name: 'schedule_task', args: { title: 'B' } } },
+      {
+        type: 'tool_call',
+        data: {
+          name: 'schedule_task',
+          args: {
+            title: 'Google Form submission B',
+            mode: 'act',
+            schedule: { type: 'once', after_seconds: 60 },
+            target: { type: 'url', url: 'https://forms.gle/nDSbn2B6Cym4x9Bi8' },
+            prompt: 'Use WebBrain CI B with a random shirt size and random harmless comment. Use set_field and verify_form, submit exactly once, and finish only after the response was recorded.',
+          },
+        },
+      },
       { type: 'tool_result', data: { name: 'schedule_task', result: { success: true, jobId: 'task_2' } } },
     ],
   },
@@ -372,25 +399,67 @@ const successfulToolsGrade = gradeScenario({
   },
 });
 assert.equal(successfulToolsGrade.passed, true);
-const scheduledJobsGrade = gradeScenario({
-  scenario: {
-    id: 'scheduled-jobs-fixture',
-    verify: {
-      successfulTools: ['schedule_task'],
-      toolCounts: [{ tool: 'schedule_task', successful: true, equals: 2 }],
-      scheduledJobs: { count: 2, status: 'completed', lastOutcome: 'success' },
+const completedGoogleFormsRun = {
+  status: 'completed',
+  mode: 'act',
+  final_url: 'https://docs.google.com/forms/d/e/example/formResponse',
+  result: {
+    scheduled_count: 2,
+    first_job_id: 'task_1',
+    second_job_id: 'task_2',
+  },
+};
+const completedScheduledState = {
+  jobs: [
+    { id: 'task_1', status: 'completed', lastOutcome: 'success' },
+    { id: 'task_2', status: 'completed', lastOutcome: 'success' },
+  ],
+};
+const gradeGoogleForms = (trace = scheduleTraceFixture, run = completedGoogleFormsRun) => gradeScenario({
+  scenario: googleFormsScenario,
+  run,
+  trace,
+  scheduledState: completedScheduledState,
+});
+const scheduledJobsGrade = gradeGoogleForms();
+assert.equal(scheduledJobsGrade.passed, true);
+const invalidScheduledDefinitions = [
+  {
+    checkId: 'scheduled_jobs:definition:0',
+    mutate(trace) { trace.run.updates[0].data.args.target.url = 'https://example.com/unrelated'; },
+  },
+  {
+    checkId: 'scheduled_jobs:definition:1',
+    mutate(trace) { trace.run.updates[2].data.args.schedule.after_seconds = 30; },
+  },
+  {
+    checkId: 'scheduled_jobs:definition:1',
+    mutate(trace) {
+      trace.run.updates[2].data.args.prompt = trace.run.updates[2].data.args.prompt
+        .replace('random harmless comment', 'a comment');
     },
   },
-  run: { status: 'completed' },
-  trace: scheduleTraceFixture,
-  scheduledState: {
-    jobs: [
-      { id: 'task_1', status: 'completed', lastOutcome: 'success' },
-      { id: 'task_2', status: 'completed', lastOutcome: 'success' },
-    ],
+  {
+    checkId: 'scheduled_jobs:distinct_prompts',
+    mutate(trace) { trace.run.updates[2].data.args.prompt = trace.run.updates[0].data.args.prompt; },
   },
+];
+for (const { checkId, mutate } of invalidScheduledDefinitions) {
+  const trace = structuredClone(scheduleTraceFixture);
+  mutate(trace);
+  const grade = gradeGoogleForms(trace);
+  assert.equal(grade.passed, false);
+  assert.equal(grade.checks.find((check) => check.id === checkId).passed, false);
+}
+const mismatchedScheduledIdGrade = gradeGoogleForms(scheduleTraceFixture, {
+  ...completedGoogleFormsRun,
+  result: { ...completedGoogleFormsRun.result, first_job_id: 'wrong_task' },
 });
-assert.equal(scheduledJobsGrade.passed, true);
+assert.equal(mismatchedScheduledIdGrade.passed, false);
+assert.equal(
+  mismatchedScheduledIdGrade.checks.find((check) => check.id === 'scheduled_jobs:id:first_job_id').passed,
+  false,
+);
 const failedScheduledJobsGrade = gradeScenario({
   scenario: {
     id: 'failed-scheduled-jobs-fixture',
@@ -405,6 +474,20 @@ const failedScheduledJobsGrade = gradeScenario({
   },
 });
 assert.equal(failedScheduledJobsGrade.passed, false);
+const scheduledTimeout = new Error('Scheduled jobs did not finish within 420000ms.');
+assert.equal(inferStuckAt({
+  run: { status: 'completed' },
+  scheduledError: scheduledTimeout,
+  checks: [],
+}), 'scheduled_execution');
+const scheduledTimeoutGrade = gradeScenario({
+  scenario: { id: 'scheduled-timeout-fixture', verify: {} },
+  run: { status: 'completed' },
+  scheduledError: scheduledTimeout,
+});
+assert.equal(scheduledTimeoutGrade.passed, false);
+assert.equal(scheduledTimeoutGrade.stuck_at, 'scheduled_execution');
+assert.match(scheduledTimeoutGrade.error, /did not finish/);
 const invalidToolResultGrade = gradeScenario({
   scenario: {
     id: 'invalid-tool-result-fixture',

@@ -48,8 +48,17 @@ function successfulToolRequest(call) {
   return Number.isInteger(status) && status >= 200 && status < 300;
 }
 
-export function inferStuckAt({ run, trace, setupError, artifactError, cleanupErrors = [], checks }) {
+export function inferStuckAt({
+  run,
+  trace,
+  setupError,
+  scheduledError,
+  artifactError,
+  cleanupErrors = [],
+  checks,
+}) {
   if (setupError) return 'setup';
+  if (scheduledError) return 'scheduled_execution';
   if (!run) return 'run_start';
   if (run.status === 'needs_user_input') return 'user_handoff';
   const updates = trace?.run?.updates || run.updates || [];
@@ -74,6 +83,7 @@ export function gradeScenario({
   remoteState,
   scheduledState,
   setupError,
+  scheduledError,
   artifactError,
   cleanupErrors = [],
   captureRequired = false,
@@ -88,7 +98,7 @@ export function gradeScenario({
     'Cloud run completed',
     20,
     run?.status === 'completed',
-    run?.status || setupError?.message || 'run unavailable',
+    run?.status || scheduledError?.message || setupError?.message || 'run unavailable',
   );
 
   if (scenario.verify?.mode) {
@@ -215,6 +225,9 @@ export function gradeScenario({
   const scheduledExpectation = scenario.verify?.scheduledJobs;
   if (scheduledExpectation) {
     const jobs = scheduledState?.jobs || [];
+    const scheduledCalls = calls.filter((call) => (
+      call.name === 'schedule_task' && call.result?.success === true
+    ));
     const expectedCount = scheduledExpectation.count || 1;
     add(
       'scheduled_jobs:count',
@@ -241,6 +254,56 @@ export function gradeScenario({
         scheduledExpectation.outcomeWeight || 25,
         jobs.length === expectedCount && matching === expectedCount,
         `${matching}/${expectedCount}`,
+      );
+    }
+    const definitions = scheduledExpectation.definitions || [];
+    for (const [index, expected] of definitions.entries()) {
+      const call = scheduledCalls[index];
+      const args = call?.args || {};
+      const jobId = call?.result?.jobId || call?.result?.existingJobId || '';
+      const prompt = String(args.prompt || '');
+      const definitionPassed = Boolean(call)
+        && (!expected.title || args.title === expected.title)
+        && (!expected.mode || args.mode === expected.mode)
+        && (!expected.scheduleType || args.schedule?.type === expected.scheduleType)
+        && (!Object.hasOwn(expected, 'afterSeconds')
+          || Number(args.schedule?.after_seconds) === expected.afterSeconds)
+        && (!expected.targetType || args.target?.type === expected.targetType)
+        && (!expected.targetUrl || args.target?.url === expected.targetUrl)
+        && (expected.promptContains || []).every((value) => prompt.includes(value))
+        && (expected.promptExcludes || []).every((value) => !prompt.includes(value));
+      add(
+        `scheduled_jobs:definition:${index}`,
+        expected.label || `Scheduled job ${index + 1} matched its requested definition`,
+        expected.weight || 15,
+        definitionPassed,
+        definitionPassed ? `${args.title} -> ${args.target?.url}` : 'definition mismatch',
+      );
+      if (expected.resultPath) {
+        const resultJobId = getPath(run?.result, expected.resultPath);
+        const stateJobId = jobs[index]?.id;
+        const idsMatch = Boolean(jobId)
+          && resultJobId === jobId
+          && stateJobId === jobId;
+        add(
+          `scheduled_jobs:id:${expected.resultPath}`,
+          `Scheduled job ID matches result field ${expected.resultPath}`,
+          expected.idWeight || 10,
+          idsMatch,
+          idsMatch ? jobId : 'ID mismatch',
+        );
+      }
+    }
+    if (scheduledExpectation.distinctPrompts) {
+      const prompts = scheduledCalls.map((call) => String(call.args?.prompt || ''));
+      add(
+        'scheduled_jobs:distinct_prompts',
+        'Scheduled jobs use distinct non-empty prompts',
+        scheduledExpectation.distinctPromptsWeight || 10,
+        prompts.length === expectedCount
+          && prompts.every(Boolean)
+          && new Set(prompts).size === expectedCount,
+        `${new Set(prompts.filter(Boolean)).size}/${expectedCount} distinct`,
       );
     }
   }
@@ -275,13 +338,21 @@ export function gradeScenario({
   const requiredPassed = checks.every((check) => check.passed);
   return {
     scenario_id: scenario.id,
-    passed: requiredPassed && !setupError,
+    passed: requiredPassed && !setupError && !scheduledError,
     score,
     earned,
     available,
-    stuck_at: inferStuckAt({ run, trace, setupError, artifactError, cleanupErrors, checks }),
+    stuck_at: inferStuckAt({
+      run,
+      trace,
+      setupError,
+      scheduledError,
+      artifactError,
+      cleanupErrors,
+      checks,
+    }),
     checks,
-    error: setupError?.message || run?.error || '',
+    error: scheduledError?.message || setupError?.message || run?.error || '',
     artifact_warning: artifactError?.message || '',
   };
 }

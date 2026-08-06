@@ -144,6 +144,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   let trace = null;
   let remoteState = null;
   let scheduledState = null;
+  let scheduledError = null;
   let setupError = null;
   let artifactError = null;
   const cleanupErrors = [];
@@ -202,19 +203,20 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       if (sensitive) trace = storedTrace;
     }
     if (trace && scenario.verify?.scheduledJobs) {
-      const jobIds = successfulToolResults(trace, 'schedule_task')
-        .map(result => result.jobId || result.existingJobId)
-        .filter(Boolean);
-      const expectedCount = scenario.verify.scheduledJobs.count || 1;
-      if (jobIds.length !== expectedCount) {
-        throw new Error(`Expected ${expectedCount} successful schedule_task job ids; observed ${jobIds.length}.`);
-      }
       try {
+        const jobIds = successfulToolResults(trace, 'schedule_task')
+          .map(result => result.jobId || result.existingJobId)
+          .filter(Boolean);
+        const expectedCount = scenario.verify.scheduledJobs.count || 1;
+        if (jobIds.length !== expectedCount) {
+          throw new Error(`Expected ${expectedCount} successful schedule_task job ids; observed ${jobIds.length}.`);
+        }
         scheduledState = scheduledJobEvidence(await cloud.waitForScheduledJobs(browser.id, jobIds, {
           timeoutMs: scenario.scheduled_timeout_ms || scenario.timeout_ms,
         }));
       } catch (error) {
-        scheduledState = scheduledJobEvidence(error.latest);
+        scheduledState ||= scheduledJobEvidence(error.latest);
+        scheduledError = error;
         throw error;
       } finally {
         if (scheduledState) {
@@ -243,7 +245,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       }
     }
   } catch (error) {
-    setupError = error;
+    if (!scheduledError) setupError = error;
     run ||= error.latest || null;
     await writeJson(path.join(scenarioDir, 'error.json'), {
       name: error.name,
@@ -266,6 +268,9 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
     trace,
     remoteState,
     scheduledState,
+    scheduledError: sensitive && scheduledError
+      ? new Error('Sensitive scenario scheduled execution failed; raw diagnostics were omitted.')
+      : scheduledError,
     setupError: sensitive && setupError
       ? new Error('Sensitive scenario failed; raw diagnostics were omitted.')
       : setupError,

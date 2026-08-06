@@ -76,5 +76,6 @@ Scenarios are graded from three independent signals:
    `login_succeeded`, `post_created`, or `captcha_solved`.
 
 Failures include a `stuck_at` stage (`setup`, `planning`, `navigation`,
-`execution`, `user_handoff`, `verification`, `artifact_capture`, or `cleanup`) so the
-summary answers both “what passed?” and “where did it stop?”.
+`execution`, `scheduled_execution`, `user_handoff`, `verification`,
+`artifact_capture`, or `cleanup`) so the summary answers both “what passed?”
+and “where did it stop?”.

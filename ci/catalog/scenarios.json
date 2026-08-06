@@ -368,7 +368,7 @@
     "session_settings": {
       "scheduledRequireConsequentialConfirmation": false
     },
-    "task": "The current page is the public T-Shirt Sign Up Google Form. Do not fill or submit it during this run. Create exactly two independent one-shot schedule_task jobs in Act mode, both targeting URL https://forms.gle/nDSbn2B6Cym4x9Bi8. Schedule the first with after_seconds=0 and title 'Google Form submission A'. Schedule the second with after_seconds=60 and title 'Google Form submission B'. Give each job a distinct prompt that tells the scheduled run to generate a fresh random test name prefixed 'WebBrain CI A' or 'WebBrain CI B' respectively, choose a random shirt size, enter a fresh random harmless comment, use set_field for text fields, call verify_form before submitting, submit exactly once, and call done with outcome=success only after the visible Google Forms confirmation says the response was recorded. The prompts must forbid editing the form, switching accounts, signing in, reusing values from the other job, or submitting again. After both schedule_task calls succeed, return scheduled_count=2 and both returned job IDs. Finish with done_json.",
+    "task": "The current page is the public T-Shirt Sign Up Google Form. Do not fill or submit it during this run. Create exactly two independent one-shot schedule_task jobs in Act mode, both targeting URL https://forms.gle/nDSbn2B6Cym4x9Bi8. Schedule the first with after_seconds=0 and title 'Google Form submission A'. Schedule the second with after_seconds=60 and title 'Google Form submission B'. Give each job a distinct prompt that tells the scheduled run to generate a fresh random test name prefixed 'WebBrain CI A' or 'WebBrain CI B' respectively, choose a random shirt size, enter a fresh random harmless comment, use set_field for text fields, call verify_form before submitting, submit exactly once, and call done with outcome=success only after the visible Google Forms confirmation says the response was recorded. Each scheduled prompt must literally include its matching 'WebBrain CI A' or 'WebBrain CI B' prefix plus the exact phrases 'random shirt size', 'random harmless comment', 'set_field', 'verify_form', 'submit exactly once', and 'response was recorded'; it must not include the other job's prefix. The prompts must forbid editing the form, switching accounts, signing in, reusing values from the other job, or submitting again. After both schedule_task calls succeed, return scheduled_count=2 and both returned job IDs. Finish with done_json.",
     "output_schema": {
       "type": "object",
       "properties": {
@@ -389,6 +389,33 @@
         "count": 2,
         "status": "completed",
         "lastOutcome": "success",
+        "distinctPrompts": true,
+        "definitions": [
+          {
+            "label": "Scheduled submission A targets the form with the requested timing and prompt",
+            "title": "Google Form submission A",
+            "mode": "act",
+            "scheduleType": "once",
+            "afterSeconds": 0,
+            "targetType": "url",
+            "targetUrl": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+            "promptContains": ["WebBrain CI A", "random shirt size", "random harmless comment", "set_field", "verify_form", "submit exactly once", "response was recorded"],
+            "promptExcludes": ["WebBrain CI B"],
+            "resultPath": "first_job_id"
+          },
+          {
+            "label": "Scheduled submission B targets the form with the requested timing and prompt",
+            "title": "Google Form submission B",
+            "mode": "act",
+            "scheduleType": "once",
+            "afterSeconds": 60,
+            "targetType": "url",
+            "targetUrl": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+            "promptContains": ["WebBrain CI B", "random shirt size", "random harmless comment", "set_field", "verify_form", "submit exactly once", "response was recorded"],
+            "promptExcludes": ["WebBrain CI A"],
+            "resultPath": "second_job_id"
+          }
+        ],
         "countWeight": 15,
         "statusWeight": 20,
         "outcomeWeight": 25
