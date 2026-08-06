@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Copiar',
   'sp.copied': '¡Copiado!',
   'sp.copy.code.title': 'Copiar código',
+  'sp.copy.message.title': 'Copiar mensaje',
+  'sp.persistence.unavailable': 'No se pueden guardar los datos de recuperación. La tarea activa puede continuar, pero las acciones no se repetirán tras una desconexión. Vuelve a intentarlo manualmente.',
 
   'sp.error_prefix': 'Error: {msg}',
   'sp.subscribe.allowance_used': 'Se agotó la asignación diaria gratuita de WebBrain Cloud.',

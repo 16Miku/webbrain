@@ -127,7 +127,17 @@ export class BaseLLMProvider {
   }
 
   _mapMessages(messages) {
-    return mapProviderMessages(messages, this.config);
+    const sanitized = (Array.isArray(messages) ? messages : []).map((message) => {
+      if (!message || typeof message !== 'object' || !Object.hasOwn(message, 'webbrainPlannerClarification')) {
+        return message;
+      }
+      const {
+        webbrainPlannerClarification: _plannerClarification,
+        ...providerMessage
+      } = message;
+      return providerMessage;
+    });
+    return mapProviderMessages(sanitized, this.config);
   }
 
   _supportsReasoningContentReplay(_options = {}) {

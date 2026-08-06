@@ -247,6 +247,8 @@ export default {
   'sp.copy': 'Kopiëren',
   'sp.copied': 'Gekopieerd!',
   'sp.copy.code.title': 'Code kopiëren',
+  'sp.copy.message.title': 'Bericht kopiëren',
+  'sp.persistence.unavailable': 'Herstelgegevens kunnen niet worden opgeslagen. De actieve taak kan doorgaan, maar acties worden na een verbroken verbinding niet opnieuw uitgevoerd. Probeer het dan handmatig opnieuw.',
   'sp.retry': 'Opnieuw proberen',
   'sp.retry.busy': 'Wacht tot de huidige uitvoering is voltooid voordat u het opnieuw probeert.',
   'sp.retry.attachments_unavailable': 'Bijlagen van de mislukte poging zijn niet meer beschikbaar; alleen de tekst wordt opnieuw geprobeerd.',

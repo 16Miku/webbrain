@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Salin',
   'sp.copied': 'Tersalin!',
   'sp.copy.code.title': 'Salin kode',
+  'sp.copy.message.title': 'Salin pesan',
+  'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas aktif dapat berlanjut, tetapi tindakan tidak akan diputar ulang setelah koneksi terputus. Coba lagi secara manual.',
 
   'sp.error_prefix': 'Galat: {msg}',
   'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Cloud telah habis.',

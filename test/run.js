@@ -7995,7 +7995,7 @@ test('mutation batch invokes CAPTCHA preflight before dispatch when no gate exis
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const [toolName, toolArguments, allowedTools] of [
       ['click_ax', '{"ref_id":"ref_9"}', new Set(['click_ax', 'solve_captcha'])],
-      ['done', '{"success":true}', new Set(['done', 'solve_captcha'])],
+      ['done', '{"summary":"Done.","outcome":"success"}', new Set(['done', 'solve_captcha'])],
       ['fetch_url', '{"url":"https://example.test/signup","method":"POST"}', new Set(['fetch_url', 'solve_captcha'])],
     ]) {
       const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -8059,9 +8059,12 @@ test('loop detection classifies mutating tools from each build tool list, not a 
     for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
       assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
     }
-    // The frame/upload tools act on the page but are not auto-screenshot
-    // state changes, so the two sets must not be collapsed into one.
-    for (const name of ['iframe_click', 'iframe_type', 'upload_file', 'solve_captcha']) {
+    // iframe_type now needs state-change screenshots for its toolbar safety
+    // preflight as well as its ordinary post-action evidence.
+    assert.equal(stateChangeTools.has('iframe_type'), true, `${label}: iframe_type must trigger state-change screenshots`);
+    // The remaining frame/upload tools act on the page but are not
+    // auto-screenshot state changes, so the two sets must not be collapsed.
+    for (const name of ['iframe_click', 'upload_file', 'solve_captcha']) {
       assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
       assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
     }
@@ -10410,6 +10413,7 @@ test('public media recommendations carry immediate download_public_media fast pa
     { url: 'https://www.facebook.com/example/videos/123', title: 'Facebook video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://www.reddit.com/r/pics/comments/abc/photo/', title: 'A photo post', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
     { url: 'https://www.linkedin.com/posts/example_123', title: 'LinkedIn public post video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://www.linkedin.com/feed/update/urn:li:activity:123', title: 'LinkedIn public feed update', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://threads.net/@user/post/abc', title: 'Threads photo', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
   ];
 
@@ -10454,6 +10458,16 @@ test('public media recommendations carry immediate download_public_media fast pa
     assert.equal(feedAction?.runOptions?.firstTool, 'screenshot', 'feed download should take a screenshot before the first model call');
     assert.deepEqual(feedAction?.runOptions?.args, { save: false }, 'feed screenshot should not save an extra file');
     assert.ok(feedAction?.runOptions?.steps?.some((step) => /explicit permalink/.test(step)), 'feed plan should pin explicit permalink resolution');
+
+    for (const url of ['https://www.linkedin.com/posts/', 'https://www.linkedin.com/feed/update/']) {
+      const linkedinFeedAction = buildRecommendedActions({
+        url,
+        title: 'LinkedIn',
+        media: { videoCount: 1, imageCount: 0 },
+      }).find((a) => a.id === 'download-media');
+      assert.equal(linkedinFeedAction?.runOptions?.firstTool, 'screenshot', `empty LinkedIn permalink should resolve a visible target first for ${url}`);
+      assert.match(linkedinFeedAction?.prompt || '', /exact public post\/reel URL/i, `empty LinkedIn permalink should require an explicit target for ${url}`);
+    }
 
     const mobileFeedAction = buildRecommendedActions({
       url: 'https://m.twitter.com/home',
@@ -12415,12 +12429,30 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
   };
 
   try {
+    let chromeIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'not found',
+    };
     globalThis.chrome = {
+      webNavigation: {
+        getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
+      },
       scripting: {
         executeScript: async () => [{ result: { ok: false, reason: 'not-found', url: 'https://example.test/frame' } }],
       },
       tabs: {
         get: async () => ({ url: 'chrome://settings' }),
+        sendMessage: async (_tabId, message) => message.action === 'type'
+          ? chromeIframeTypeResponse
+          : ({
+              resolved: true,
+              dispatchBinding: { token: 'chrome-iframe-target' },
+              rect: { x: 10, y: 10, w: 120, h: 24 },
+              fieldMeta: { tag: 'input', type: 'text' },
+              toolbarContext: false,
+            }),
       },
     };
     const chromeAgent = new AgentCh({});
@@ -12447,9 +12479,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       assertNoDebt('chrome', CompletionInvariantCh, name, {}, await chromeAgent.executeTool(6401, name, {}));
     }
 
-    globalThis.chrome.scripting.executeScript = async () => [{
-      result: { ok: false, dispatched: false, error: 'invalid selector', url: 'https://example.test/frame' },
-    }];
+    chromeIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'invalid selector',
+    };
     assertNoDebt(
       'chrome',
       CompletionInvariantCh,
@@ -12458,9 +12493,11 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       await chromeAgent.executeTool(6401, 'iframe_type', { selector: '::invalid', text: 'x' }),
     );
 
-    globalThis.chrome.scripting.executeScript = async () => [{
-      result: { ok: false, dispatched: true, error: 'event handler threw after target resolution', url: 'https://example.test/frame' },
-    }];
+    chromeIframeTypeResponse = {
+      success: false,
+      dispatched: true,
+      error: 'event handler threw after target resolution',
+    };
     const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
     assert.equal(ambiguousChromeIframe.dispatched, true, 'chrome: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
@@ -12474,10 +12511,28 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'chrome: ambiguous iframe failure did not fail closed',
     );
 
+    let firefoxIframeTypeResponse = {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      error: 'not found',
+    };
     globalThis.browser = {
+      webNavigation: {
+        getAllFrames: async () => [{ frameId: 7, parentFrameId: 0, url: 'https://example.test/frame' }],
+      },
       tabs: {
         executeScript: async () => [{ ok: false, reason: 'not-found', url: 'https://example.test/frame' }],
         get: async () => ({ url: 'about:config' }),
+        sendMessage: async (_tabId, message) => message.action === 'type'
+          ? firefoxIframeTypeResponse
+          : ({
+              resolved: true,
+              dispatchBinding: { token: 'firefox-iframe-target' },
+              rect: { x: 10, y: 10, w: 120, h: 24 },
+              fieldMeta: { tag: 'input', type: 'text' },
+              toolbarContext: false,
+            }),
       },
     };
     const firefoxAgent = new AgentFx({});
@@ -12503,12 +12558,12 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       assertNoDebt('firefox', CompletionInvariantFx, name, {}, await firefoxAgent.executeTool(6402, name, {}));
     }
 
-    globalThis.browser.tabs.executeScript = async () => [{
-      ok: false,
+    firefoxIframeTypeResponse = {
+      success: false,
       dispatched: false,
+      noDispatch: true,
       error: 'invalid selector',
-      url: 'https://example.test/frame',
-    }];
+    };
     assertNoDebt(
       'firefox',
       CompletionInvariantFx,
@@ -12517,12 +12572,11 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '::invalid', text: 'x' }),
     );
 
-    globalThis.browser.tabs.executeScript = async () => [{
-      ok: false,
+    firefoxIframeTypeResponse = {
+      success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
-      url: 'https://example.test/frame',
-    }];
+    };
     const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
     assert.equal(ambiguousFirefoxIframe.dispatched, true, 'firefox: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
@@ -20294,7 +20348,7 @@ test('tab-chat persistence recovers when several sub-threshold chats exceed the 
   }
 });
 
-test('tab-chat persistence evicts an existing chat when older keys saturate the shared quota', async () => {
+test('tab-chat persistence never evicts other chats when shared quota remains exhausted', async () => {
   for (const [label, persistence] of [
     ['chrome', TabChatPersistenceCh],
     ['firefox', TabChatPersistenceFx],
@@ -20332,14 +20386,11 @@ test('tab-chat persistence evicts an existing chat when older keys saturate the 
       (...args) => warnings.push(args),
     );
 
-    assert.equal(result.ok, true, `${label}: saturated shared quota should recover`);
-    assert.equal(result.recoveredFromQuota, true, `${label}: recovery marker missing`);
-    assert.deepEqual(result.evictedKeys, [oldKey], `${label}: recovery should report the evicted chat`);
-    assert.equal(values[oldKey], undefined, `${label}: older chat should be evicted to free quota`);
-    assert.equal(typeof values[newKey], 'string', `${label}: current compacted chat should persist`);
-    assert.ok(values[newKey].length <= 256 * 1024, `${label}: recovered chat should remain tightly bounded`);
+    assert.equal(result.ok, false, `${label}: saturated shared quota should report non-durable persistence`);
+    assert.equal(values[oldKey]?.length > 0, true, `${label}: another tab's chat must not be evicted`);
+    assert.equal(values[newKey], undefined, `${label}: failed current snapshot should not be advertised as stored`);
     assert.equal(values.unrelatedSessionState, 'keep', `${label}: non-chat session state must not be evicted`);
-    assert.equal(warnings.length, 0, `${label}: successful recovery should not warn`);
+    assert.equal(warnings.length, 1, `${label}: failed bounded persistence should warn once`);
   }
 });
 
@@ -24630,6 +24681,75 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       3,
       `${label}: submit, permission, and clarify prompts should override reading-first scroll suppression`,
     );
+    assert.match(
+      panel,
+      /function placeAnsweredClarifyCardInTimeline\(card\) \{[\s\S]*?card\.parentElement !== content[\s\S]*?content\.insertBefore\(card, textEl\);/,
+      `${label}: answered clarifications should move before the final-text cursor`,
+    );
+    const submitClarifySource = panel.slice(
+      panel.indexOf('function submitClarify('),
+      panel.indexOf('// ==========================================================================\n// COMPACT MODE', panel.indexOf('function submitClarify(')),
+    );
+    assert.match(
+      submitClarifySource,
+      /card\.appendChild\(answered\);\s*placeAnsweredClarifyCardInTimeline\(card\);/,
+      `${label}: direct clarification answers should establish a timeline boundary`,
+    );
+    const autoClarifySource = panel.slice(
+      panel.indexOf('function lockClarifyCardFromAuto('),
+      panel.indexOf('function renderPlanReviewCard(', panel.indexOf('function lockClarifyCardFromAuto(')),
+    );
+    assert.match(
+      autoClarifySource,
+      /card\.appendChild\(answered\);\s*placeAnsweredClarifyCardInTimeline\(card\);/,
+      `${label}: auto-selected clarification answers should establish a timeline boundary`,
+    );
+    const compactStepsSource = panel.slice(
+      panel.indexOf('function getOrCreateStepsContainer()'),
+      panel.indexOf('function appendCompactStep(', panel.indexOf('function getOrCreateStepsContainer()')),
+    );
+    assert.match(
+      compactStepsSource,
+      /latestAnsweredCard[\s\S]*?latestAnsweredCard\.nextElementSibling[\s\S]*?candidate !== textEl[\s\S]*?classList\.contains\('steps-container'\)[\s\S]*?content\.insertBefore\(container, textEl\);/,
+      `${label}: compact resumed events should use a steps segment after the latest answered clarification`,
+    );
+    const compactLifecycleSource = panel.slice(
+      panel.indexOf('function findLastActiveCompactStep('),
+      panel.indexOf('function finalizeSteps(', panel.indexOf('function findLastActiveCompactStep(')),
+    );
+    assert.match(
+      compactLifecycleSource,
+      /querySelectorAll\('\.steps-container \.step-item\.active'\)[\s\S]*?step\.dataset\.tool === toolName/,
+      `${label}: compact results should find their pending step across timeline segments`,
+    );
+    assert.match(
+      compactLifecycleSource,
+      /function appendCompactStep[\s\S]*?const prev = findLastActiveCompactStep\(\);/,
+      `${label}: a later compact call should settle an active step from an earlier segment`,
+    );
+    const compactResultSource = compactLifecycleSource.slice(
+      compactLifecycleSource.indexOf('function markLastStepDone('),
+      compactLifecycleSource.indexOf('function markLastStepFailed('),
+    );
+    assert.match(
+      compactResultSource,
+      /const active = findLastActiveCompactStep\(toolName\);/,
+      `${label}: compact tool results should settle the matching pre-clarification step`,
+    );
+    assert.doesNotMatch(
+      compactResultSource,
+      /getOrCreateStepsContainer\(\)/,
+      `${label}: compact tool results should not create an empty post-clarification segment`,
+    );
+    const verboseToolSource = panel.slice(
+      panel.indexOf('function appendVerboseToolCall('),
+      panel.indexOf('function appendVerboseToolResult(', panel.indexOf('function appendVerboseToolCall(')),
+    );
+    assert.match(
+      verboseToolSource,
+      /content\.insertBefore\(el, textEl\);/,
+      `${label}: verbose resumed events should render after the repositioned clarification and before final text`,
+    );
     const planReviewSource = panel.slice(
       panel.indexOf('function renderPlanReviewCard('),
       panel.indexOf('function submitPlanReview('),
@@ -24669,6 +24789,72 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       /command\.value === '\/schedule'[\s\S]*?action === 'create'[\s\S]*?await renderScheduleComposer\(payload, tabId\);/,
       `${label}: schedule forms should finish rendering before slash-command reveal`,
     );
+  }
+});
+
+test('compact clarification results settle the pending pre-card tool step', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const helperStart = panel.indexOf('function findLastActiveCompactStep(');
+    const helperEnd = panel.indexOf('function appendCompactStep(', helperStart);
+    const resultStart = panel.indexOf('function markLastStepDone(', helperEnd);
+    const resultEnd = panel.indexOf('function markLastStepFailed(', resultStart);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: compact active-step helper missing`);
+    assert.ok(resultStart >= 0 && resultEnd > resultStart, `${label}: compact result settlement missing`);
+
+    const makeStep = (toolName) => {
+      const classes = new Set(['step-item', 'active']);
+      const icon = { className: 'step-icon spinning', textContent: '' };
+      const appendedResults = [];
+      const details = {
+        classList: { contains: (name) => name === 'step-details' },
+        appendChild: (child) => appendedResults.push(child),
+      };
+      const step = {
+        dataset: { tool: toolName },
+        classList: {
+          add: (name) => classes.add(name),
+          remove: (name) => classes.delete(name),
+          contains: (name) => classes.has(name),
+        },
+        querySelector: (selector) => selector === '.step-icon' ? icon : null,
+        nextElementSibling: details,
+      };
+      return { step, classes, icon, appendedResults };
+    };
+
+    const pendingClarify = makeStep('clarify');
+    const laterUnrelated = makeStep('auto_screenshot');
+    const currentAssistantEl = {
+      querySelectorAll: (selector) => {
+        assert.equal(selector, '.steps-container .step-item.active');
+        return [pendingClarify.step, laterUnrelated.step];
+      },
+    };
+    const runtime = vm.runInNewContext(
+      `(() => {
+        ${panel.slice(helperStart, helperEnd)}
+        ${panel.slice(resultStart, resultEnd)}
+        return { markLastStepDone };
+      })()`,
+      {
+        currentAssistantEl,
+        document: { createElement: () => ({}) },
+        escapeHtml: (value) => String(value),
+        truncate: (value) => String(value),
+        t: (key) => key,
+      },
+    );
+
+    runtime.markLastStepDone('clarify', { error: 'denied' });
+    assert.equal(pendingClarify.classes.has('active'), false, `${label}: pre-card clarify step should stop spinning`);
+    assert.equal(pendingClarify.classes.has('done'), true, `${label}: pre-card clarify step should be terminal`);
+    assert.equal(pendingClarify.icon.className, 'step-icon fail', `${label}: failed clarify result should retain failure status`);
+    assert.equal(pendingClarify.appendedResults.length, 1, `${label}: clarify result details should stay attached to the original step`);
+    assert.equal(laterUnrelated.classes.has('active'), true, `${label}: matching should not settle an unrelated later step`);
   }
 });
 
@@ -27566,6 +27752,1323 @@ test('CDP querySelectorPierce keeps open-shadow Runtime object handles alive unt
   assert.deepEqual(commands.at(-1).params, { objectGroup: query.objectGroup });
 });
 
+test('Chrome toolbar preflight probes closed-shadow type_text selectors through the dispatch resolver', async () => {
+  const client = new CDPClient();
+  const commands = [];
+  // The scoring is no longer inlined here: cdp-client injects the shared
+  // heuristic module's own source so the main-world probe and the content
+  // script cannot disagree. Serve the real file so the assertions below still
+  // check the scoring that actually ships.
+  const heuristicPath = path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js');
+  const heuristicSource = fs.readFileSync(heuristicPath, 'utf8');
+  const previousChromeForHeuristic = globalThis.chrome;
+  const previousFetch = globalThis.fetch;
+  globalThis.chrome = {
+    ...(previousChromeForHeuristic || {}),
+    runtime: {
+      ...(previousChromeForHeuristic?.runtime || {}),
+      getURL: relative => 'file://' + path.join(ROOT, 'src/chrome', relative),
+    },
+  };
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => heuristicSource });
+  CDPClient._heuristicSourcePromise = null;
+  assert.doesNotMatch(
+    heuristicSource,
+    /if \(globalThis\.__wbRichTextToolbarHeuristic\) return/,
+    'the packaged heuristic must not trust a page-owned global as an installation guard',
+  );
+  client.resolveSelector = async () => ({
+    found: true,
+    nodeId: 77,
+    x: 50,
+    y: 20,
+    width: 80,
+    height: 24,
+    inViewport: true,
+    hitOk: true,
+  });
+  client.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'closed-shadow-font-size' } };
+    if (method === 'DOM.describeNode') return { node: { backendNodeId: 177 } };
+    if (method === 'Runtime.callFunctionOn') {
+      assert.equal(params.objectId, 'closed-shadow-font-size');
+      assert.match(params.functionDeclaration, /semantic_toolbar/);
+      assert.match(params.functionDeclaration, /availablePresetValues/);
+      assert.match(params.functionDeclaration, /associatedEditorIdentity/);
+      assert.match(params.functionDeclaration, /title: el\.getAttribute/);
+      assert.match(params.functionDeclaration, /if \(searchLike\) return null/);
+      assert.match(
+        params.functionDeclaration,
+        /const __wbTrustedRichTextToolbarHeuristic = __wbRichTextToolbarHeuristic/,
+        'the main-world probe must capture the packaged heuristic in a local binding',
+      );
+      assert.doesNotMatch(
+        params.functionDeclaration,
+        /globalThis\.__wbRichTextToolbarHeuristic\.candidate/,
+        'the main-world probe must never dispatch through a page-owned global',
+      );
+      assert.match(
+        params.functionDeclaration,
+        /if \(!formattingEvidence && !editorBackedToolbar\)/,
+        'CDP toolbar probes must exempt ordinary compact fields without formatting evidence even near an editor',
+      );
+      assert.match(
+        params.functionDeclaration,
+        /const editorBackedToolbar = !!semanticToolbar && !!associatedEditor/,
+        'toolbar ancestry alone must not qualify a control through the CDP probe either',
+      );
+      assert.doesNotThrow(() => new Function(`return (${params.functionDeclaration})`));
+      return {
+        result: {
+          value: {
+            pageUrl: 'https://example.test/editor',
+            rect: { x: 10, y: 8, w: 80, h: 24 },
+            fieldMeta: {
+              tag: 'input',
+              type: 'text',
+              toolbarCandidate: {
+                score: 8,
+                reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+                availablePresetValues: ['11', '14'],
+                regionKey: 'rtb:div:10:8:320:44',
+                associatedEditorRef: '',
+                associatedEditorIdentity: {
+                  tag: 'div',
+                  id: 'editor-body',
+                  role: 'textbox',
+                  pageX: 20,
+                  pageY: 160,
+                  w: 400,
+                  h: 180,
+                },
+              },
+            },
+            toolbarContext: true,
+            toolbarRegionKey: 'rtb:div:10:8:320:44',
+          },
+        },
+      };
+    }
+    return {};
+  };
+
+  const probe = await client.probeRichTextToolbarSelector(42, '#shadow-font-size');
+  assert.equal(probe.resolved, true);
+  assert.equal(probe.selectorBackendNodeId, 177);
+  assert.equal(probe.shadowPierced, true);
+  assert.equal(probe.toolbarRegionKey, 'rtb:div:10:8:320:44');
+  assert.equal(probe.fieldMeta.toolbarCandidate.score, 8);
+  assert.equal(probe.fieldMeta.toolbarCandidate.associatedEditorIdentity.id, 'editor-body');
+  assert.deepEqual(probe.rect, { x: 10, y: 8, w: 80, h: 24 });
+  assert.equal(commands.some(command => command.method.startsWith('Input.')), false, 'preflight must not dispatch input');
+  assert.equal(commands.at(-1).method, 'Runtime.releaseObject');
+
+  CDPClient._heuristicSourcePromise = null;
+  if (previousChromeForHeuristic === undefined) delete globalThis.chrome;
+  else globalThis.chrome = previousChromeForHeuristic;
+  if (previousFetch === undefined) delete globalThis.fetch;
+  else globalThis.fetch = previousFetch;
+});
+
+test('Chrome toolbar selector preflight fails closed when its packaged classifier is unavailable', async () => {
+  const client = new CDPClient();
+  const commands = [];
+  const previousOverride = CDPClient._heuristicSourceOverride;
+  CDPClient._heuristicSourceOverride = '';
+  client.resolveSelector = async () => ({ found: true, nodeId: 77, inViewport: true });
+  client.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'toolbar-target' } };
+    if (method === 'DOM.describeNode') return { node: { backendNodeId: 177 } };
+    return {};
+  };
+  try {
+    const probe = await client.probeRichTextToolbarSelector(42, '#font-size');
+    assert.equal(probe.resolved, false);
+    assert.match(probe.error, /classifier could not be loaded/);
+    assert.equal(
+      commands.some(command => command.method === 'Runtime.callFunctionOn'),
+      false,
+      'missing trusted source must stop before main-world inspection or text dispatch',
+    );
+    assert.equal(commands.at(-1).method, 'Runtime.releaseObject');
+  } finally {
+    if (previousOverride === undefined) delete CDPClient._heuristicSourceOverride;
+    else CDPClient._heuristicSourceOverride = previousOverride;
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Rich-text toolbar heuristic — false positives
+//
+// The guard's downside risk is blocking legitimate typing: a false positive
+// costs the user a wedged edit and a run that cannot report success until it
+// proves a correction. That coverage used to live only in the Playwright
+// fixtures, which neither `npm test` nor any workflow runs. The heuristic is a
+// standalone module now, so the rules can be pinned here against a DOM stub.
+// ────────────────────────────────────────────────────────────────────────
+
+function richTextToolbarHeuristicSandbox() {
+  const source = fs.readFileSync(
+    path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js'),
+    'utf8',
+  );
+  const context = {
+    globalThis: null,
+    window: { scrollX: 0, scrollY: 0, innerWidth: 1280, innerHeight: 800 },
+    document: { querySelectorAll: () => [], getElementById: () => null },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    ShadowRoot: class ShadowRoot {},
+    CSS: { escape: value => value },
+  };
+  context.globalThis = context;
+  vm.runInNewContext(source, context);
+  // Core-script recovery may reinject this module into an existing isolated
+  // world after an extension/service-worker reload. It must be idempotent.
+  vm.runInNewContext(source, context);
+  return context.__wbRichTextToolbarHeuristic;
+}
+
+function richTextToolbarElement({
+  tag = 'input',
+  type = 'text',
+  attrs = {},
+  rect = { x: 10, y: 10, width: 90, height: 22 },
+  value = '',
+  contentEditable = false,
+  parent = null,
+  children = [],
+} = {}) {
+  const element = {
+    tagName: tag.toUpperCase(),
+    type,
+    value,
+    textContent: value,
+    isContentEditable: contentEditable,
+    isConnected: true,
+    // _composedClosestElement checks nodeType before calling matches, so
+    // without this the ancestor walk silently never matched and no case in
+    // this suite could express [role="toolbar"] ancestry.
+    nodeType: 1,
+    id: attrs.id || '',
+    children,
+    parentNode: parent,
+    assignedSlot: null,
+    shadowRoot: null,
+    list: null,
+    options: null,
+    getAttribute: name => (name in attrs ? attrs[name] : null),
+    getBoundingClientRect: () => ({
+      ...rect,
+      left: rect.x,
+      top: rect.y,
+      right: rect.x + rect.width,
+      bottom: rect.y + rect.height,
+    }),
+    matches: selector => (attrs.role ? selector.includes(`[role="${attrs.role}"]`) : false),
+    querySelectorAll: () => [],
+    getRootNode: () => ({ getElementById: () => null, querySelector: () => null }),
+    closest: () => null,
+  };
+  for (const child of children) child.parentNode = element;
+  return element;
+}
+
+function richTextToolbarBaseMeta(element, overrides = {}) {
+  return {
+    tag: element.tagName.toLowerCase(),
+    type: element.type,
+    contentEditable: element.isContentEditable,
+    name: element.getAttribute('name'),
+    id: element.id || null,
+    role: element.getAttribute('role'),
+    ariaLabel: element.getAttribute('aria-label'),
+    ariaLabelledByText: null,
+    placeholder: element.getAttribute('placeholder'),
+    title: element.getAttribute('title'),
+    labelText: null,
+    ...overrides,
+  };
+}
+
+test('rich-text toolbar heuristic leaves ordinary fields alone', () => {
+  const heuristic = richTextToolbarHeuristicSandbox();
+  const score = (element, metaOverrides) => heuristic.candidate(
+    element,
+    richTextToolbarBaseMeta(element, metaOverrides),
+  );
+
+  const cases = [
+    {
+      label: 'a search box',
+      element: richTextToolbarElement({ type: 'search', attrs: { 'aria-label': 'Search' } }),
+    },
+    {
+      label: 'a labelled filter field',
+      element: richTextToolbarElement({ attrs: { 'aria-label': 'Filter results' } }),
+    },
+    {
+      label: 'a labelled ordinary form field',
+      element: richTextToolbarElement({ attrs: { 'aria-label': 'Email address' } }),
+    },
+    {
+      label: 'a labelled login field',
+      element: richTextToolbarElement({ attrs: { placeholder: 'Username' } }),
+    },
+    {
+      label: 'a compact native composer',
+      element: richTextToolbarElement({ tag: 'textarea', type: 'textarea', rect: { x: 0, y: 0, width: 420, height: 90 } }),
+    },
+    {
+      label: 'a plain contenteditable body without formatting affordances',
+      element: richTextToolbarElement({ tag: 'div', type: 'div', contentEditable: true, rect: { x: 0, y: 0, width: 600, height: 300 } }),
+    },
+    {
+      label: 'a zero-size control',
+      element: richTextToolbarElement({ rect: { x: 0, y: 0, width: 0, height: 0 } }),
+    },
+    {
+      // [role=toolbar] scores +4 by itself, which clears the escalation
+      // threshold, and it used to satisfy the final guard too. Plenty of
+      // ordinary app toolbars hold a labelled rename or filter field with no
+      // editor anywhere near them, and blocking prose in one costs the run.
+      label: 'a labelled ordinary field inside an app toolbar with no editor',
+      element: richTextToolbarElement({
+        attrs: { 'aria-label': 'Rename document' },
+        parent: richTextToolbarElement({
+          tag: 'div',
+          type: 'div',
+          attrs: { role: 'toolbar' },
+          rect: { x: 0, y: 0, width: 900, height: 40 },
+        }),
+      }),
+    },
+    {
+      label: 'a labelled ordinary select inside an app toolbar with no editor',
+      element: richTextToolbarElement({
+        tag: 'select',
+        type: 'select',
+        attrs: { 'aria-label': 'Sort order' },
+        parent: richTextToolbarElement({
+          tag: 'div',
+          type: 'div',
+          attrs: { role: 'toolbar' },
+          rect: { x: 0, y: 0, width: 900, height: 40 },
+        }),
+      }),
+    },
+  ];
+
+  for (const { label, element } of cases) {
+    assert.equal(score(element), null, `${label} must not be treated as a toolbar control`);
+  }
+});
+
+test('rich-text toolbar heuristic still catches a labelled formatting control in a toolbar', () => {
+  // The counterweight to the two toolbar cases above: dropping toolbar
+  // ancestry as standalone evidence must not stop the heuristic from catching
+  // a control that says what it is, even when no editor body resolves.
+  const heuristic = richTextToolbarHeuristicSandbox();
+  const fontSize = richTextToolbarElement({
+    attrs: { 'aria-label': 'Font size' },
+    rect: { x: 12, y: 8, width: 64, height: 22 },
+    parent: richTextToolbarElement({
+      tag: 'div',
+      type: 'div',
+      attrs: { role: 'toolbar' },
+      rect: { x: 0, y: 0, width: 900, height: 40 },
+    }),
+  });
+  const candidate = heuristic.candidate(fontSize, richTextToolbarBaseMeta(fontSize));
+  assert.ok(candidate, 'a labelled formatting control must still score');
+  assert.ok(candidate.score >= 4, `expected an escalating score, got ${candidate?.score}`);
+  assert.ok(
+    candidate.reasons.includes('formatting_control_label'),
+    `expected the formatting label reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
+});
+
+test('rich-text toolbar heuristic still catches an unlabelled preset control', () => {
+  const heuristic = richTextToolbarHeuristicSandbox();
+  // Unlabelled, compact, holding a numeric preset: the shape a font-size box
+  // takes when it exposes nothing an ordinary field would. This is the
+  // positive control for the suite above — without it, a heuristic that
+  // returned null for everything would pass every false-positive case.
+  const fontSize = richTextToolbarElement({
+    value: '14',
+    rect: { x: 12, y: 8, width: 64, height: 22 },
+  });
+  const candidate = heuristic.candidate(fontSize, richTextToolbarBaseMeta(fontSize));
+  assert.ok(candidate, 'an unlabelled compact numeric preset control must still score');
+  assert.ok(candidate.score >= 4, `expected an escalating score, got ${candidate?.score}`);
+  assert.ok(
+    candidate.reasons.includes('numeric_preset_value'),
+    `expected the numeric preset reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
+  assert.ok(
+    candidate.reasons.includes('unlabelled_text_control'),
+    `expected the unlabelled reason, got ${JSON.stringify(candidate?.reasons)}`,
+  );
+});
+
+
+test('the rich-text toolbar heuristic has exactly one implementation', () => {
+  // It used to exist three times — chrome content.js, firefox content.js, and
+  // an inlined Runtime.callFunctionOn string in cdp-client.js — with nothing
+  // catching divergence, so the same element could score differently depending
+  // on which dispatch route reached it.
+  const chromeModule = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/rich-text-toolbar-heuristic.js'), 'utf8');
+  const firefoxModule = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/rich-text-toolbar-heuristic.js'), 'utf8');
+  assert.equal(chromeModule, firefoxModule, 'chrome and firefox heuristic copies must remain byte-identical');
+
+  // The scoring weights and the rejection ladder live in the module and
+  // nowhere else.
+  const scoringMarkers = [
+    "reasons.push('semantic_toolbar'); score += 4",
+    "reasons.push('dense_control_cluster'); score += 2",
+    "reasons.push('numeric_preset_value'); score += 2",
+    'if (score < 4) return null',
+  ];
+  for (const marker of scoringMarkers) {
+    assert.ok(chromeModule.includes(marker), `the shared module must own the scoring rule: ${marker}`);
+  }
+
+  for (const [label, rel] of [
+    ['chrome content.js', 'src/chrome/src/content/content.js'],
+    ['firefox content.js', 'src/firefox/src/content/content.js'],
+    ['cdp-client.js', 'src/chrome/src/cdp/cdp-client.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    for (const marker of scoringMarkers) {
+      assert.ok(
+        !source.includes(marker),
+        `${label} must delegate to the shared heuristic instead of carrying its own copy of: ${marker}`,
+      );
+    }
+    assert.ok(
+      source.includes('__wbRichTextToolbarHeuristic'),
+      `${label} must reach the heuristic through the shared global`,
+    );
+  }
+
+  // Both builds must actually load the module, ahead of content.js.
+  for (const rel of ['src/chrome/manifest.json', 'src/firefox/manifest.json']) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    const entry = manifest.content_scripts.find(script => script.js?.some(file => file.endsWith('/content.js')));
+    assert.ok(entry, `${rel} must register content.js`);
+    const heuristicIndex = entry.js.indexOf('src/content/rich-text-toolbar-heuristic.js');
+    const contentIndex = entry.js.findIndex(file => file.endsWith('/content.js'));
+    assert.ok(heuristicIndex >= 0, `${rel} must load the shared heuristic`);
+    assert.ok(heuristicIndex < contentIndex, `${rel} must load the heuristic before content.js`);
+  }
+
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  const chromeContentInjections = [...chromeAgent.matchAll(/files:\s*\[([\s\S]*?)\]/g)]
+    .map(match => match[1])
+    .filter(files => files.includes("'src/content/content.js'"));
+  assert.ok(chromeContentInjections.length > 0, 'Chrome must have content-script recovery paths');
+  for (const files of chromeContentInjections) {
+    const heuristicIndex = files.indexOf("'src/content/rich-text-toolbar-heuristic.js'");
+    const contentIndex = files.indexOf("'src/content/content.js'");
+    assert.ok(
+      heuristicIndex >= 0 && heuristicIndex < contentIndex,
+      'every Chrome content-script recovery path must inject the heuristic before content.js',
+    );
+  }
+
+  const firefoxContentInjections = [...firefoxAgent.matchAll(/file: 'src\/content\/content\.js'/g)];
+  assert.ok(firefoxContentInjections.length > 0, 'Firefox must have content-script recovery paths');
+  let previousContentIndex = 0;
+  for (const match of firefoxContentInjections) {
+    const injectionSequence = firefoxAgent.slice(previousContentIndex, match.index);
+    const heuristicIndex = injectionSequence.lastIndexOf("file: 'src/content/rich-text-toolbar-heuristic.js'");
+    const accessibilityIndex = injectionSequence.lastIndexOf("file: 'src/content/accessibility-tree.js'");
+    assert.ok(
+      heuristicIndex >= 0 && accessibilityIndex > heuristicIndex,
+      'every Firefox content-script recovery path must inject the heuristic before accessibility-tree.js and content.js',
+    );
+    previousContentIndex = match.index + match[0].length;
+  }
+});
+
+test('Chrome Agent routes selector type_text toolbar preflight through CDP before content fallback', async () => {
+  const originals = {
+    attach: cdpClientCh.attach,
+    probe: cdpClientCh.probeRichTextToolbarSelector,
+  };
+  try {
+    let attached = 0;
+    cdpClientCh.attach = async () => { attached++; };
+    cdpClientCh.probeRichTextToolbarSelector = async (_tabId, selector) => ({
+      resolved: true,
+      shadowPierced: true,
+      selectorBackendNodeId: 177,
+      selector,
+      rect: { x: 10, y: 8, w: 80, h: 24 },
+      fieldMeta: { toolbarCandidate: { score: 8 } },
+    });
+    const agent = new AgentCh({});
+    const probe = await agent._probeRichTextToolbarRetryTarget(42, 'type_text', {
+      selector: '#shadow-font-size',
+      text: 'Document prose',
+    });
+    assert.equal(attached, 1);
+    assert.equal(probe.resolved, true);
+    assert.equal(probe.selector, '#shadow-font-size');
+    assert.equal(probe.shadowPierced, true);
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.probeRichTextToolbarSelector = originals.probe;
+  }
+});
+
+test('iframe_type toolbar probes use the matching frame and map its target into the top viewport', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frames = [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+    { frameId: 9, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+  ];
+  const toolbarProbe = {
+    resolved: true,
+    dispatchBinding: { token: 'toolbar-target-token' },
+    refId: 'ref_12',
+    documentToken: 'frame-doc-a',
+    refScopeUrl: 'https://frame.example.test/editor',
+    rect: { x: 10, y: 20, w: 80, h: 24 },
+    fieldMeta: { toolbarCandidate: { score: 8 } },
+    toolbarContext: true,
+    toolbarRegionRef: 'ref_10',
+  };
+  const ordinaryProbe = {
+    resolved: true,
+    dispatchBinding: { token: 'ordinary-target-token' },
+    refId: 'ref_shared',
+    rect: { x: 20, y: 30, w: 180, h: 32 },
+    fieldMeta: { tag: 'input', type: 'text' },
+    toolbarContext: false,
+  };
+  const sharedProbeFrameIds = [];
+  let frameContainerOffscreen = false;
+  let frameContainerScrolled = false;
+  let frameScrollParentId = null;
+  let chromeLegacyIframeTypeCalls = 0;
+  const messageResult = (message, options) => {
+    if (message.target === 'content') {
+      if (message.action === 'type') {
+        return { success: true, verified: true, dispatched: true, method: 'native-setter' };
+      }
+      if (message.params?.args?.selector === '#ambiguous-field') {
+        return ordinaryProbe;
+      }
+      if (message.params?.args?.selector === '#shared-field') {
+        sharedProbeFrameIds.push(options.frameId);
+        return options.frameId === 9 ? { resolved: false } : ordinaryProbe;
+      }
+      return options.frameId === 7 ? toolbarProbe : { resolved: false };
+    }
+    if (message.target === 'redaction-content' && message.action === 'wait_for_exact_child_frame_rect') {
+      frameScrollParentId = options.frameId;
+      const scrolled = frameContainerOffscreen;
+      if (scrolled) frameContainerScrolled = true;
+      return {
+        found: true,
+        scrolled,
+        outerRect: { x: 100, y: 200, w: 500, h: 400 },
+        contentRect: { x: 100, y: 200, w: 500, h: 400 },
+        ownerMeta: { tag: 'iframe', id: 'editor-frame', name: null, role: null },
+      };
+    }
+    if (message.target === 'redaction-content' && message.action === 'announce_exact_child_frame') {
+      return { announced: true };
+    }
+    if (message.target === 'redaction-content' && options.frameId === 0) {
+      return {
+        viewport: { width: 1000, height: 800 },
+        childFrames: [{
+          url: 'https://frame.example.test/editor',
+          rect: { x: 700, y: 200, w: 500, h: 400 },
+        }, {
+          url: 'https://frame.example.test/editor',
+          rect: {
+            x: 100,
+            y: frameContainerOffscreen && !frameContainerScrolled ? 1200 : 200,
+            w: 500,
+            h: 400,
+          },
+        }],
+      };
+    }
+    if (message.target === 'redaction-content' && options.frameId === 7) {
+      return { viewport: { width: 500, height: 400 }, childFrames: [] };
+    }
+    if (message.target === 'redaction-content' && options.frameId === 9) {
+      return { viewport: { width: 500, height: 400 }, childFrames: [] };
+    }
+    throw new Error('unexpected frame message');
+  };
+
+  try {
+    let chromeIframeTypeFrameId = null;
+    globalThis.chrome = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: { sendMessage: async (_tabId, message, options) => {
+        if (message.action === 'type') chromeIframeTypeFrameId = options?.frameId ?? null;
+        return messageResult(message, options);
+      } },
+      scripting: {
+        executeScript: async () => {
+          chromeLegacyIframeTypeCalls += 1;
+          return [];
+        },
+      },
+    };
+    const chromeAgent = new AgentCh({});
+    chromeAgent.autoScreenshot = 'state_change';
+    assert.equal(chromeAgent._shouldAutoScreenshot('iframe_type'), true);
+    const chromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.equal(chromeProbe.frameId, 7);
+    assert.deepEqual(chromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.deepEqual(chromeProbe.frameOwnerRect, {
+      x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
+    });
+    assert.equal(chromeProbe.frameOwnerMeta?.id, 'editor-frame');
+    assert.equal(chromeProbe.frameOwnerScopeUrl, 'https://example.test/');
+    sharedProbeFrameIds.length = 0;
+    frameScrollParentId = null;
+    const unfilteredChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      selector: '#shared-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(unfilteredChromeProbe.frameId, 7);
+    assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Chrome iframe_type probes must exclude the top document');
+    assert.equal(frameScrollParentId, null, 'ordinary Chrome iframe fields should not start the toolbar geometry handshake');
+    const ambiguousChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#ambiguous-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(ambiguousChromeProbe.resolved, false);
+    assert.equal(ambiguousChromeProbe.ambiguous, true);
+    assert.equal(ambiguousChromeProbe.matchCount, 2);
+    assert.deepEqual(ambiguousChromeProbe.matchedFrameIds, [7, 9]);
+    const preflightAmbiguousIframe = () => chromeAgent._preflightRichTextToolbarTarget(
+      42,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
+      null,
+    );
+    // Ambiguity is only unsafe once a recovery is pending. Blocking it
+    // unconditionally would strand every page with repeated same-origin
+    // frames, because the tool loop returns the preflight block instead of
+    // ever reaching the legacy all-frames fallback in executeTool.
+    const ambiguousChromePreflight = await preflightAmbiguousIframe();
+    assert.equal(ambiguousChromePreflight.block, null, 'Chrome: ambiguous frames with no debt must reach the all-frames fallback');
+    assert.equal(
+      ambiguousChromePreflight.iframeTargetUnresolved,
+      true,
+      'Chrome: the preflight must tell executeTool the frame sweep already failed',
+    );
+    chromeAgent._richTextToolbarGuard.restore(42, {
+      recoveryObligations: [{
+        toolName: 'type_ax',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: false,
+      }],
+    });
+    const ambiguousChromePreflightBlocked = await preflightAmbiguousIframe();
+    assert.equal(ambiguousChromePreflightBlocked.block?.noDispatch, true);
+    assert.equal(ambiguousChromePreflightBlocked.block?.retryable, true);
+    chromeAgent._richTextToolbarGuard.reset(42);
+    frameContainerOffscreen = true;
+    frameContainerScrolled = false;
+    frameScrollParentId = null;
+    const offscreenChromeProbe = await chromeAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.deepEqual(offscreenChromeProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.equal(frameContainerScrolled, true, 'Chrome must bring an offscreen iframe into view before visual preflight');
+    assert.equal(frameScrollParentId, 0);
+    frameContainerOffscreen = false;
+    const chromeType = await chromeAgent.executeTool(42, 'iframe_type', {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: '14',
+    });
+    assert.equal(chromeType.success, true);
+    assert.equal(chromeType.verified, true);
+    assert.equal(chromeType.frameId, 7);
+    assert.equal(chromeIframeTypeFrameId, 7, 'Chrome must dispatch through the exact preflight frame');
+    assert.equal(chromeLegacyIframeTypeCalls, 0, 'Chrome must not re-query iframe selectors in a separate execution world');
+
+    let firefoxIframeTypeFrameId = null;
+    let firefoxLegacyIframeTypeCalls = 0;
+    globalThis.browser = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: {
+        sendMessage: async (_tabId, message, options) => {
+          if (message.action === 'type') firefoxIframeTypeFrameId = options?.frameId ?? null;
+          return messageResult(message, options);
+        },
+        executeScript: async () => {
+          firefoxLegacyIframeTypeCalls += 1;
+          return [];
+        },
+      },
+    };
+    const firefoxAgent = new AgentFx({});
+    firefoxAgent.autoScreenshot = 'state_change';
+    assert.equal(firefoxAgent._shouldAutoScreenshot('iframe_type'), true);
+    const firefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.equal(firefoxProbe.frameId, 7);
+    assert.deepEqual(firefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.deepEqual(firefoxProbe.frameOwnerRect, {
+      x: 100, y: 200, w: 500, h: 400, pageX: 100, pageY: 200,
+    });
+    assert.equal(firefoxProbe.frameOwnerMeta?.id, 'editor-frame');
+    assert.equal(firefoxProbe.frameOwnerScopeUrl, 'https://example.test/');
+    sharedProbeFrameIds.length = 0;
+    frameScrollParentId = null;
+    const unfilteredFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      selector: '#shared-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(unfilteredFirefoxProbe.frameId, 7);
+    assert.deepEqual(sharedProbeFrameIds, [7, 9], 'Firefox iframe_type probes must exclude the top document');
+    assert.equal(frameScrollParentId, null, 'ordinary Firefox iframe fields should not start the toolbar geometry handshake');
+    const ambiguousFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#ambiguous-field',
+      text: 'Document prose',
+    }, { mapAnnotation: false });
+    assert.equal(ambiguousFirefoxProbe.resolved, false);
+    assert.equal(ambiguousFirefoxProbe.ambiguous, true);
+    assert.equal(ambiguousFirefoxProbe.matchCount, 2);
+    assert.deepEqual(ambiguousFirefoxProbe.matchedFrameIds, [7, 9]);
+    const preflightAmbiguousFirefoxIframe = () => firefoxAgent._preflightRichTextToolbarTarget(
+      42,
+      'iframe_type',
+      { urlFilter: 'frame.example.test', selector: '#ambiguous-field', text: 'Document prose' },
+      null,
+    );
+    // Ambiguity is only unsafe once a recovery is pending. Blocking it
+    // unconditionally would strand every page with repeated same-origin
+    // frames, because the tool loop returns the preflight block instead of
+    // ever reaching the legacy all-frames fallback in executeTool.
+    const ambiguousFirefoxPreflight = await preflightAmbiguousFirefoxIframe();
+    assert.equal(ambiguousFirefoxPreflight.block, null, 'Firefox: ambiguous frames with no debt must reach the all-frames fallback');
+    assert.equal(
+      ambiguousFirefoxPreflight.iframeTargetUnresolved,
+      true,
+      'Firefox: the preflight must tell executeTool the frame sweep already failed',
+    );
+    firefoxAgent._richTextToolbarGuard.restore(42, {
+      recoveryObligations: [{
+        toolName: 'type_ax',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: false,
+      }],
+    });
+    const ambiguousFirefoxPreflightBlocked = await preflightAmbiguousFirefoxIframe();
+    assert.equal(ambiguousFirefoxPreflightBlocked.block?.noDispatch, true);
+    assert.equal(ambiguousFirefoxPreflightBlocked.block?.retryable, true);
+    firefoxAgent._richTextToolbarGuard.reset(42);
+    frameContainerOffscreen = true;
+    frameContainerScrolled = false;
+    frameScrollParentId = null;
+    const offscreenFirefoxProbe = await firefoxAgent._probeRichTextToolbarIframeTarget(42, {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: 'Document prose',
+    });
+    assert.deepEqual(offscreenFirefoxProbe.annotationRect, { x: 110, y: 220, w: 80, h: 24 });
+    assert.equal(frameContainerScrolled, true, 'Firefox must bring an offscreen iframe into view before visual preflight');
+    assert.equal(frameScrollParentId, 0);
+    frameContainerOffscreen = false;
+    const firefoxType = await firefoxAgent.executeTool(42, 'iframe_type', {
+      urlFilter: 'frame.example.test',
+      selector: '#font-size',
+      text: '14',
+    });
+    assert.equal(firefoxType.success, true);
+    assert.equal(firefoxType.verified, true);
+    assert.equal(firefoxType.frameId, 7);
+    assert.equal(firefoxIframeTypeFrameId, 7, 'Firefox must dispatch through the exact preflight frame');
+    assert.equal(firefoxLegacyIframeTypeCalls, 0, 'Firefox must not re-query iframe selectors in a separate execution world');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('iframe_type falls back to all-frames dispatch until a toolbar recovery is pending', async () => {
+  // Single-frame resolution is stricter than the pre-guard behavior and is
+  // what the target token binds to, but it cannot resolve pages with repeated
+  // same-origin frames or frames content.js cannot enter. Those calls used to
+  // work, so they keep working until a debt makes ambiguity unsafe.
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frames = [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+    { frameId: 9, parentFrameId: 0, url: 'https://frame.example.test/editor' },
+  ];
+  const ambiguousProbe = {
+    resolved: true,
+    dispatchBinding: { token: 'ambiguous-token' },
+    rect: { x: 20, y: 30, w: 180, h: 32 },
+    fieldMeta: { tag: 'input', type: 'text' },
+    toolbarContext: false,
+  };
+
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    let legacyArgs = null;
+    const api = {
+      webNavigation: { getAllFrames: async () => frames },
+      tabs: {
+        sendMessage: async (_tabId, message) => {
+          // Every frame matches, so the probe can never pick just one.
+          if (message.action === 'probe_rich_text_toolbar_retry_target') return ambiguousProbe;
+          if (message.action === 'release_dispatch_binding') return { released: true };
+          return { resolved: false };
+        },
+        executeScript: async (...callArgs) => {
+          legacyArgs = callArgs;
+          return [{ ok: true, url: 'https://frame.example.test/editor', method: 'native-setter', value: 'hello', dispatched: true }];
+        },
+      },
+      scripting: {
+        executeScript: async (params) => {
+          legacyArgs = [params];
+          return [{ result: { ok: true, url: 'https://frame.example.test/editor', method: 'native-setter', value: 'hello', dispatched: true } }];
+        },
+      },
+    };
+    globalThis[globalKey] = api;
+    try {
+      const agent = new AgentClass({});
+
+      const fallback = await agent.executeTool(42, 'iframe_type', {
+        urlFilter: 'frame.example.test',
+        selector: '#shared-field',
+        text: 'hello',
+      });
+      assert.equal(fallback.success, true, `${label}: ambiguous frames with no debt must still type`);
+      assert.equal(fallback.resolution, 'all-frames', `${label}: the fallback path must be identifiable in the result`);
+      assert.ok(legacyArgs, `${label}: the legacy all-frames dispatch must have run`);
+
+      // Once a recovery is pending, ambiguity must fail closed and say which
+      // frames matched so the agent can pick a urlFilter instead of guessing.
+      legacyArgs = null;
+      agent._richTextToolbarGuard.restore(42, {
+        recoveryObligations: [{
+          toolName: 'type_ax',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'hello',
+          blockedClear: false,
+        }],
+      });
+      const blocked = await agent.executeTool(42, 'iframe_type', {
+        urlFilter: 'frame.example.test',
+        selector: '#shared-field',
+        text: 'hello',
+      });
+      assert.equal(blocked.success, false, `${label}: a pending recovery must not type into an unvetted frame`);
+      assert.equal(blocked.noDispatch, true, `${label}: the blocked call must not dispatch`);
+      assert.equal(blocked.ambiguous, true, `${label}: the blocked call must report ambiguity`);
+      assert.deepEqual(
+        blocked.frameUrls,
+        ['https://frame.example.test/editor', 'https://frame.example.test/editor'],
+        `${label}: the blocked call must name the candidate frames`,
+      );
+      assert.match(blocked.error, /urlFilter/, `${label}: the error must tell the agent how to disambiguate`);
+      assert.equal(legacyArgs, null, `${label}: the legacy path must stay unreachable while a debt is open`);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('pending toolbar recovery binds and dispatches screenshot clicks at one canonical CSS target', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const pageUrl = 'https://example.test/editor';
+  const imagePoint = { x: 784, y: 441 };
+  const cssPoint = { x: 1280, y: 720 };
+
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    let activeCase = null;
+    const elementAt = (x, y, dispatch = false) => {
+      if (Number(x) === cssPoint.x && Number(y) === cssPoint.y) {
+        return dispatch && activeCase?.replaceBeforeDispatch ? 'replacement-button' : 'intended-editor';
+      }
+      if (Number(x) === imagePoint.x && Number(y) === imagePoint.y) return 'image-coordinate-neighbor';
+      return 'other-target';
+    };
+    const sendMessage = async (_tabId, message) => {
+      if (message.action === 'probe_rich_text_toolbar_retry_target') {
+        activeCase.probeArgs = { ...message.params.args };
+        activeCase.boundTarget = elementAt(activeCase.probeArgs.x, activeCase.probeArgs.y);
+        return {
+          resolved: true,
+          refId: activeCase.boundTarget === 'intended-editor' ? 'ref_editor' : 'ref_neighbor',
+          documentToken: 'doc-a',
+          refScopeUrl: pageUrl,
+          rect: { x: cssPoint.x - 20, y: cssPoint.y - 10, w: 40, h: 20 },
+          fieldMeta: { tag: 'button', type: 'button' },
+          toolbarContext: false,
+          dispatchBinding: { token: `binding:${activeCase.boundTarget}` },
+        };
+      }
+      if (message.action === 'click') {
+        activeCase.dispatchArgs = { ...message.params };
+        const dispatchTarget = elementAt(message.params.x, message.params.y, true);
+        const boundTarget = String(message.params.dispatchBinding?.token || '').replace(/^binding:/, '');
+        if (dispatchTarget !== boundTarget) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
+          };
+        }
+        return { success: true, dispatched: true, target: dispatchTarget };
+      }
+      throw new Error(`${label}: unexpected content message ${message.action}`);
+    };
+    const tabs = {
+      get: async () => ({ url: pageUrl }),
+      sendMessage,
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 4301 : 4302;
+      agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+      agent._richTextToolbarGuard.restore(tabId, {
+        recoveryObligations: [{
+          toolName: 'set_field',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'Document prose',
+          blockedClear: true,
+          blockedToolbarRef: 'ref_toolbar',
+          associatedEditorRef: 'ref_editor',
+          documentToken: 'doc-a',
+          pageUrl,
+          blockedRefs: ['ref_toolbar'],
+        }],
+      });
+      agent._isPdfTab = async () => false;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      if (label === 'chrome') {
+        agent._currentUrl = async () => pageUrl;
+        agent._clickProgressSnapshot = async () => '';
+        agent._annotateClickProgress = async () => {};
+      }
+      const mapScreenshotCoords = agent._screenshotClickCoords.bind(agent);
+      agent._screenshotClickCoords = (...callArgs) => {
+        activeCase.mappingCalls += 1;
+        return mapScreenshotCoords(...callArgs);
+      };
+
+      const executeCase = async ({ args, replaceBeforeDispatch = false }) => {
+        activeCase = {
+          replaceBeforeDispatch,
+          mappingCalls: 0,
+          probeArgs: null,
+          dispatchArgs: null,
+          boundTarget: null,
+        };
+        const result = await agent.executeTool(tabId, 'click', args);
+        assert.equal(activeCase.mappingCalls, 1, `${label}: click coordinates must be canonicalized exactly once`);
+        assert.deepEqual(
+          [activeCase.probeArgs?.x, activeCase.probeArgs?.y],
+          [activeCase.dispatchArgs?.x, activeCase.dispatchArgs?.y],
+          `${label}: preflight and dispatch must receive the same CSS point`,
+        );
+        return result;
+      };
+
+      const screenshotClick = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+      });
+      assert.equal(screenshotClick.success, true, `${label}: stable canonical target should dispatch`);
+      assert.equal(screenshotClick.target, 'intended-editor');
+      assert.deepEqual(
+        [activeCase.probeArgs.x, activeCase.probeArgs.y],
+        [cssPoint.x, cssPoint.y],
+        `${label}: downscaled image coordinates must map before toolbar preflight`,
+      );
+      assert.equal(activeCase.boundTarget, 'intended-editor');
+
+      const changedTarget = await executeCase({
+        args: { ...imagePoint, from_screenshot: true },
+        replaceBeforeDispatch: true,
+      });
+      assert.equal(changedTarget.success, false, `${label}: a genuinely changed canonical target must fail closed`);
+      assert.equal(changedTarget.dispatched, false);
+      assert.equal(changedTarget.noDispatch, true);
+      assert.match(changedTarget.error, /target changed after the rich-text toolbar safety preflight/);
+
+      const cssClick = await executeCase({ args: { ...cssPoint } });
+      assert.equal(cssClick.success, true, `${label}: ordinary CSS-coordinate clicks must remain unchanged`);
+      assert.deepEqual([activeCase.probeArgs.x, activeCase.probeArgs.y], [cssPoint.x, cssPoint.y]);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('rich-text toolbar obligation survives a paused run and trusted continuation only', async () => {
+  for (const [label, AgentClass] of [
+    ['chrome', AgentCh],
+    ['firefox', AgentFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 4201 : 4202;
+    const persistedAudit = {
+      recoveryObligations: [{
+        toolName: 'set_field',
+        targetKind: 'font_size',
+        blockedAttemptedText: 'Document prose',
+        blockedClear: true,
+        blockedToolbarRef: 'ref_12',
+        associatedEditorRef: 'ref_99',
+        documentToken: 'doc-a',
+        pageUrl: 'https://example.test/editor',
+        blockedRefs: ['ref_12'],
+      }],
+    };
+    if (label === 'chrome') {
+      agent._configureCapturePolicyForRun = () => null;
+      agent._restoreCapturePolicyAfterRun = async () => {};
+    }
+    agent._storeContinuationExecutionEvidence = () => {};
+    agent._processMessageStreamInner = async () => {
+      assert.equal(agent._richTextToolbarGuard.hasPending(tabId), false, `${label}: ordinary run must start clean`);
+      agent._richTextToolbarGuard.restore(tabId, persistedAudit);
+      return 'Paused at max steps.';
+    };
+
+    await agent.processMessageStream(tabId, 'fill the editor', () => {}, 'act');
+    const expectedAudit = agent._richTextToolbarGuard.persist(tabId);
+    assert.equal(expectedAudit?.recoveryObligations?.length, 1, `${label}: paused run lost toolbar obligation`);
+    assert.equal(expectedAudit.recoveryObligations[0].blockedToolbarRef, 'ref_12');
+
+    agent._processMessageInner = async () => {
+      assert.deepEqual(agent._richTextToolbarGuard.persist(tabId), expectedAudit, `${label}: trusted continuation lost toolbar obligation`);
+      return 'Still requires editor recovery.';
+    };
+    await agent.processMessage(
+      tabId,
+      'continue',
+      () => {},
+      'act',
+      [],
+      { trustedContinuation: true },
+    );
+    assert.deepEqual(agent._richTextToolbarGuard.persist(tabId), expectedAudit, `${label}: continuation finally cleared toolbar obligation`);
+
+    agent._processMessageInner = async () => {
+      assert.equal(agent._richTextToolbarGuard.hasPending(tabId), false, `${label}: new user turn retained toolbar obligation`);
+      return 'Fresh turn.';
+    };
+    await agent.processMessage(tabId, 'new task', () => {}, 'act');
+  }
+});
+
+test('Rich-text toolbar vision probe consumes the dedicated preflight trace capture and runtime label fields', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webbrain-toolbar-probe-'));
+  try {
+    const tracePath = path.join(tempDir, 'trace.json');
+    const outputPath = path.join(tempDir, 'result.json');
+    const compactResult = ({
+      ariaLabelledByText = null,
+      name = null,
+      title = null,
+      tag = 'input',
+      type = 'text',
+      contentEditable = false,
+      reasons = ['unlabelled_text_control', 'compact_control', 'semantic_toolbar'],
+    } = {}) => ({
+      rect: { x: 10, y: 12, w: 80, h: 24 },
+      fieldMeta: {
+        tag,
+        type,
+        contentEditable,
+        name,
+        autocomplete: 'off',
+        ariaLabel: null,
+        ariaLabelledByText,
+        placeholder: null,
+        title,
+        labelText: null,
+        toolbarCandidate: {
+          score: 8,
+          reasons,
+          availablePresetValues: ['11', '14'],
+        },
+      },
+    });
+    fs.writeFileSync(tracePath, JSON.stringify({
+      run: {
+        runId: 'toolbar-probe-test',
+        userMessage: 'Fill the editor body',
+        runtimeConfig: { auto_screenshot: 'state_change', screenshot_redaction: true },
+      },
+      events: [
+        {
+          kind: 'tool',
+          ts: 1050,
+          data: {
+            name: 'set_field',
+            args: { ref_id: 'ref_ordinary', text: '12' },
+            result: compactResult({ ariaLabelledByText: 'Quantity' }),
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1100,
+          data: {
+            name: 'set_field',
+            args: { ref_id: 'ref_title', text: '125%' },
+            result: compactResult({ title: 'Zoom level' }),
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1150,
+          data: {
+            name: 'iframe_type',
+            args: { urlFilter: 'frame.example.test', selector: '#font-size', text: 'Document prose' },
+            result: compactResult({
+              name: 'fontSize',
+              reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+            }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1155,
+          data: {
+            caption: 'auto-screenshot after tool batch',
+            screenshot_base64: 'data:image/png;base64,dW5yZWxhdGVk',
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1160,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,ZXhhY3Q=',
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1170,
+          data: {
+            name: 'set_field',
+            args: { ref_id: 'ref_link_url', text: 'https://openai.com' },
+            result: compactResult({ type: 'url' }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1175,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,dXJs',
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1180,
+          data: {
+            name: 'type_ax',
+            args: { ref_id: 'ref_editable_family', text: 'Inter Display' },
+            result: compactResult({ tag: 'div', type: 'div', contentEditable: true }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1185,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,ZWRpdGFibGU=',
+          },
+        },
+        {
+          kind: 'tool',
+          ts: 1190,
+          data: {
+            name: 'type_ax',
+            args: { ref_id: 'ref_native_style', text: 'Heading 1' },
+            result: compactResult({ tag: 'select', type: 'select' }),
+          },
+        },
+        {
+          kind: 'screenshot',
+          ts: 1195,
+          data: {
+            caption: 'rich-text toolbar target preflight',
+            screenshot_base64: 'data:image/png;base64,c2VsZWN0',
+          },
+        },
+      ],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--dry-run',
+      '--output', outputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    assert.equal(output.source.candidateCount, 4, 'trace selection must include runtime text, URL, contenteditable, and native-select candidates while excluding labelled ordinary fields');
+    assert.equal(output.source.toolEventIndex, 2);
+    assert.equal(output.source.screenshotEventIndex, 4, 'the dedicated preflight capture must win over an unrelated screenshot from the same attempt');
+    assert.equal(output.case.attemptedText, 'Document prose');
+    assert.equal(output.case.viewport, null, 'an already annotated trace capture must not require a prior viewport event');
+    assert.deepEqual(output.case.toolbarCandidate, {
+      score: 8,
+      reasons: ['unlabelled_text_control', 'compact_control', 'numeric_preset_value', 'semantic_toolbar'],
+    });
+    assert.equal(output.case.structuralFallbackDecision.decision, 'reject');
+    assert.equal(output.case.structuralFallbackDecision.source, 'structural_fallback');
+    assert.equal(output.image.originalBytes, 5);
+    assert.equal(output.image.pixelRect, null, 'the recorded preflight image is already runtime-annotated');
+
+    const missingCaptureTracePath = path.join(tempDir, 'trace-missing-first-capture.json');
+    const missingCaptureTrace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
+    missingCaptureTrace.events.splice(4, 1);
+    fs.writeFileSync(missingCaptureTracePath, JSON.stringify(missingCaptureTrace));
+    const missingCaptureResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', missingCaptureTracePath,
+      '--event-index', '2',
+      '--dry-run',
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(missingCaptureResult.status, 1, missingCaptureResult.stderr || missingCaptureResult.stdout);
+    assert.match(
+      missingCaptureResult.stderr,
+      /no dedicated rich-text toolbar preflight screenshot was captured/,
+      'a later attempt capture must not be reused for an earlier attempt',
+    );
+
+    for (const [value, expectedDecision] of [
+      ['serif', 'reject'],
+      ['red', 'reject'],
+      ['https://openai.com', 'reject'],
+      ['14', 'uncertain'],
+    ]) {
+      const fallbackOutputPath = path.join(tempDir, `fallback-${expectedDecision}-${value.length}.json`);
+      const fallbackResult = spawnSync(process.execPath, [
+        path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+        '--trace', tracePath,
+        '--value', value,
+        '--dry-run',
+        '--output', fallbackOutputPath,
+      ], { cwd: ROOT, encoding: 'utf8' });
+      assert.equal(fallbackResult.status, 0, fallbackResult.stderr || fallbackResult.stdout);
+      const fallbackOutput = JSON.parse(fs.readFileSync(fallbackOutputPath, 'utf8'));
+      assert.equal(
+        fallbackOutput.case.structuralFallbackDecision.decision,
+        expectedDecision,
+        `numeric toolbar candidate fallback must classify ${JSON.stringify(value)} like production`,
+      );
+    }
+
+    const urlOutputPath = path.join(tempDir, 'url-result.json');
+    const urlResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--attempt', '2',
+      '--dry-run',
+      '--output', urlOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(urlResult.status, 0, urlResult.stderr || urlResult.stdout);
+    const urlOutput = JSON.parse(fs.readFileSync(urlOutputPath, 'utf8'));
+    assert.equal(urlOutput.source.toolEventIndex, 5, 'URL toolbar attempts must be selectable by --attempt');
+    assert.equal(urlOutput.source.screenshotEventIndex, 6, 'URL attempt must use only its own preflight capture');
+
+    const editableOutputPath = path.join(tempDir, 'editable-result.json');
+    const editableResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--attempt', '3',
+      '--dry-run',
+      '--output', editableOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(editableResult.status, 0, editableResult.stderr || editableResult.stdout);
+    const editableOutput = JSON.parse(fs.readFileSync(editableOutputPath, 'utf8'));
+    assert.equal(editableOutput.source.toolEventIndex, 7, 'contenteditable toolbar attempts must be selectable by --attempt');
+    assert.equal(editableOutput.source.screenshotEventIndex, 8, 'contenteditable attempt must use only its own preflight capture');
+
+    const selectOutputPath = path.join(tempDir, 'select-result.json');
+    const selectResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--attempt', '4',
+      '--dry-run',
+      '--output', selectOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(selectResult.status, 0, selectResult.stderr || selectResult.stdout);
+    const selectOutput = JSON.parse(fs.readFileSync(selectOutputPath, 'utf8'));
+    assert.equal(selectOutput.source.toolEventIndex, 9, 'native select toolbar attempts must be selectable by --attempt');
+    assert.equal(selectOutput.source.screenshotEventIndex, 10, 'native select attempt must use only its own preflight capture');
+
+    const exactOutputPath = path.join(tempDir, 'exact-result.json');
+    const exactResult = spawnSync(process.execPath, [
+      path.join(ROOT, 'test/rich-text-toolbar-vision-probe.mjs'),
+      '--trace', tracePath,
+      '--event-index', '2',
+      '--dry-run',
+      '--output', exactOutputPath,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(exactResult.status, 0, exactResult.stderr || exactResult.stdout);
+    const exactOutput = JSON.parse(fs.readFileSync(exactOutputPath, 'utf8'));
+    assert.equal(exactOutput.source.toolEventIndex, 2, 'exact iframe_type trace selection must remain supported');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('Chrome selector click distinguishes pre-dispatch failure from uncertain dispatch', async () => {
   const client = new CDPClient();
   client.resolveSelector = async () => null;
@@ -27674,6 +29177,294 @@ test('Chrome selector type distinguishes pre-dispatch failure from uncertain dis
   assert.equal(uncertain.dispatched, true, 'an Input.insertText attempt must fail closed when fallback also fails');
 });
 
+test('Chrome selector type reports post-edit value verification', async () => {
+  const client = new CDPClient();
+  client.resolveSelector = async () => ({
+    inViewport: false,
+    hitOk: false,
+    nodeId: null,
+    tag: 'INPUT',
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+  });
+  client.sendCommand = async () => ({});
+  client.evaluate = async () => ({ result: { value: null } });
+  // Unproven is reported by omitting `verified`, never by setting it false:
+  // `verified === false` is read as an action failure by the loop detector,
+  // the delivery checkpoint and the observation boundary, and an exact-match
+  // proof legitimately fails on masked, truncated or reformatted fields.
+  client.verifyTextEntry = async () => null;
+  const reverted = await client.typeText(42, '#field', 'hello', true);
+  assert.equal(reverted.success, true);
+  assert.equal(reverted.verified, undefined, 'a reverted selector edit must not claim verification');
+  assert.ok(!('verified' in reverted), 'an unproven selector edit must omit verified entirely');
+
+  client.verifyTextEntry = async () => true;
+  const persisted = await client.typeText(42, '#field', 'hello', true);
+  assert.equal(persisted.success, true);
+  assert.equal(persisted.verified, true, 'a persisted selector edit must be verified');
+});
+
+test('toolbar safety captures use one separate reserved slot under finite caps', async () => {
+  // A finite cap N belongs to the model-facing capture path. The toolbar
+  // classifier gets one separate successful capture so the first guarded edit
+  // is not judged blind, but ordering must never let the turn grow past N+1.
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = 909;
+
+    const resetCounts = () => {
+      agent.autoScreenshotCount.delete(tabId);
+      agent.toolbarAuditScreenshotCount.delete(tabId);
+    };
+    const takeModelFacingCapture = () => {
+      assert.equal(agent._canTakeAutoScreenshot(tabId), true, `${label}: model-facing slot available`);
+      agent._recordAutoScreenshot(tabId);
+    };
+
+    agent.maxScreenshotsPerTurn = 0;
+    agent.autoScreenshotCount.set(tabId, 12);
+    agent.toolbarAuditScreenshotCount.set(tabId, 12);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: an unlimited budget must never gate the safety check`,
+    );
+    assert.equal(agent._canTakeAutoScreenshot(tabId), true, `${label}: zero keeps model captures unlimited`);
+
+    agent.maxScreenshotsPerTurn = 3;
+    resetCounts();
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: the first finite-cap safety capture is reserved`,
+    );
+    assert.equal(agent.toolbarAuditScreenshotCount.has(tabId), false);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      true,
+      `${label}: a failed capture that leaves no counter must not burn the reservation`,
+    );
+
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      false,
+      `${label}: an audit-first turn admits exactly one safety capture`,
+    );
+    for (let index = 0; index < 3; index += 1) takeModelFacingCapture();
+    assert.equal(agent._canTakeAutoScreenshot(tabId), false);
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: audit-first ordering must stay at N+1`,
+    );
+
+    resetCounts();
+    for (let index = 0; index < 3; index += 1) takeModelFacingCapture();
+    assert.equal(agent._canTakeAutoScreenshot(tabId), false);
+    assert.equal(agent._canTakeToolbarAuditScreenshot(tabId), true);
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
+    assert.equal(
+      agent._canTakeToolbarAuditScreenshot(tabId),
+      false,
+      `${label}: model-first ordering still admits only one safety capture`,
+    );
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: model-first ordering must stay at N+1`,
+    );
+
+    resetCounts();
+    takeModelFacingCapture();
+    agent.toolbarAuditScreenshotCount.set(tabId, 1);
+    assert.equal(agent._canTakeToolbarAuditScreenshot(tabId), false);
+    takeModelFacingCapture();
+    takeModelFacingCapture();
+    assert.equal(
+      (agent.autoScreenshotCount.get(tabId) || 0) + (agent.toolbarAuditScreenshotCount.get(tabId) || 0),
+      4,
+      `${label}: interleaved ordering must stay at N+1`,
+    );
+
+    // Both counters, and the once-per-turn skip notice, reset with the turn.
+    agent.toolbarAuditBudgetNotified.add(tabId);
+    agent._cleanupTab(tabId);
+    assert.equal(agent.autoScreenshotCount.has(tabId), false, `${label}: model count must reset`);
+    assert.equal(agent.toolbarAuditScreenshotCount.has(tabId), false, `${label}: audit count must reset`);
+    assert.equal(agent.toolbarAuditBudgetNotified.has(tabId), false, `${label}: skip notice must reset`);
+  }
+});
+
+test('a rejected hydrate releases the run marker instead of wedging the tab', async () => {
+  // Hydration moved ahead of the toolbar-ledger reset so a persisted
+  // obligation cannot outlive the run that cleared it. That put an awaited
+  // storage read between marking the tab busy and the try/finally that
+  // releases it: without a catch there, one rejected read makes every later
+  // run on that tab report "already in progress" until the worker restarts.
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const entry of ['processMessage', 'processMessageStream']) {
+      const agent = new AgentClass({});
+      agent._hydrate = async () => { throw new Error('storage unavailable'); };
+      await assert.rejects(
+        () => agent[entry](4242, 'hello', () => {}, 'ask'),
+        /storage unavailable/,
+        `${label} ${entry}: the hydrate failure must surface`,
+      );
+      assert.equal(
+        agent._runningTabs.has(4242),
+        false,
+        `${label} ${entry}: a failed hydrate must not leave the tab marked as running`,
+      );
+      await assert.rejects(
+        () => agent[entry](4242, 'hello', () => {}, 'ask'),
+        /storage unavailable/,
+        `${label} ${entry}: the tab must stay runnable, not report an in-progress run`,
+      );
+    }
+  }
+});
+
+test('trusted selector resolution counts every closed-shadow match, not one per root', async () => {
+  // requireUnique is what stops a trusted dispatch from landing on a second
+  // element that answers the same selector. DOM.querySelector reports only
+  // the first hit in a root, so counting one per root would let two matches
+  // inside a single closed shadow root pass as a unique identity.
+  const client = new CDPClient();
+  let queriedRoots = 0;
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'Runtime.enable' || command === 'DOM.enable') return {};
+    if (command === 'DOM.getDocument') {
+      return { root: { nodeName: '#document', nodeId: 1, shadowRoots: [{ nodeId: 2, children: [] }], children: [] } };
+    }
+    if (command === 'DOM.querySelectorAll') {
+      queriedRoots += 1;
+      // Both hits live in the same shadow root.
+      return { nodeIds: params.nodeId === 2 ? [40, 41] : [] };
+    }
+    if (command === 'DOM.querySelector') return { nodeId: params.nodeId === 2 ? 40 : 0 };
+    throw new Error(`unexpected command: ${command}`);
+  };
+  // Strategy 1 cannot see closed shadow roots, so it finds nothing.
+  client.evaluate = async () => ({ result: { value: null } });
+
+  const ambiguous = await client.resolveSelector(9, '.target', { requireUnique: true, retries: 0 });
+  assert.equal(ambiguous?.nonUnique, true, 'two matches in one closed root must not resolve');
+  assert.equal(ambiguous?.matchCount, 2);
+  assert.ok(queriedRoots > 0, 'the unique path must query with querySelectorAll');
+
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'Runtime.enable' || command === 'DOM.enable') return {};
+    if (command === 'DOM.getDocument') {
+      return { root: { nodeName: '#document', nodeId: 1, shadowRoots: [{ nodeId: 2, children: [] }], children: [] } };
+    }
+    if (command === 'DOM.querySelectorAll') return { nodeIds: params.nodeId === 2 ? [40] : [] };
+    if (command === 'DOM.scrollIntoViewIfNeeded') return {};
+    if (command === 'DOM.getBoxModel') return null;
+    if (command === 'DOM.querySelector') return { nodeId: params.nodeId === 2 ? 40 : 0 };
+    throw new Error(`unexpected command: ${command}`);
+  };
+  const unique = await client.resolveSelector(9, '.target', { requireUnique: true, retries: 0 });
+  assert.equal(unique?.nodeId, 40, 'a single closed-shadow match must still resolve');
+});
+
+test('Chrome select typing reports verification as a positive proof only', async () => {
+  // The <select> fast-path returns success from the keyboard walk itself, so
+  // its separate value read is the same kind of evidence as verifyTextEntry:
+  // a proof when it lands, and nothing at all when it does not. Emitting
+  // `verified: false` here would mark a select change that actually happened
+  // as an unverified action, because the option read is best-effort and its
+  // evaluate returns null on any CDP hiccup.
+  const client = new CDPClient();
+  client.resolveSelector = async () => ({
+    inViewport: false, hitOk: false, nodeId: null, tag: 'SELECT', x: 1, y: 2, width: 3, height: 4,
+  });
+  client.sendCommand = async () => ({});
+  let verificationValue = null;
+  let evaluateCalls = 0;
+  client.evaluate = async () => {
+    evaluateCalls += 1;
+    // First call resolves the option, the second reads it back.
+    return evaluateCalls === 1
+      ? {
+          result: {
+            value: {
+              success: true, currentIndex: 0, targetIndex: 2, targetText: 'Large', targetValue: 'lg',
+            },
+          },
+        }
+      : { result: { value: verificationValue } };
+  };
+
+  const unproven = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(unproven.success, true);
+  assert.ok(!('verified' in unproven), 'an unproven select change must omit verified entirely');
+
+  evaluateCalls = 0;
+  verificationValue = { verified: false };
+  const refuted = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(refuted.success, true);
+  assert.ok(!('verified' in refuted), 'a failed option read must not refute the select change');
+
+  evaluateCalls = 0;
+  verificationValue = { verified: true };
+  const proven = await client.typeText(42, '#size', 'Large', false);
+  assert.equal(proven.verified, true, 'a proven select change must be verified');
+});
+
+test('Chrome append verification proves the requested insertion delta', async () => {
+  const client = new CDPClient();
+  let afterValue = 'requested content alreadY';
+  client.sendCommand = async (_tabId, command, params = {}) => {
+    if (command === 'DOM.enable' || command === 'Runtime.releaseObject') return {};
+    if (command === 'DOM.resolveNode') return { object: { objectId: 'field-object' } };
+    if (command === 'Runtime.callFunctionOn') {
+      const verify = Function(`return (${params.functionDeclaration})`)();
+      const target = {
+        nodeType: 1,
+        isConnected: true,
+        tagName: 'INPUT',
+        isContentEditable: false,
+        value: afterValue,
+      };
+      return {
+        result: {
+          value: verify.call(target, ...(params.arguments || []).map(argument => argument.value)),
+        },
+      };
+    }
+    throw new Error(`unexpected command: ${command}`);
+  };
+  // 32-bit FNV-1a, matching TEXT_ENTRY_SIGNATURE_SOURCE. The append proof
+  // rehashes once per candidate insertion point, so BigInt made this O(n*m)
+  // on a long contenteditable.
+  const signatureFor = value => {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
+    }
+    return `${value.length}:${hash.toString(16)}`;
+  };
+  const beforeSnapshot = signatureFor('requested content already');
+  assert.equal(await client.verifyTextEntry(42, {
+    nodeId: 7,
+    text: 'requested content',
+    clear: false,
+    beforeSignature: beforeSnapshot,
+  }), null, 'changing unrelated characters must not verify text that was already present');
+
+  afterValue = 'requested content alreadyrequested content';
+  assert.equal(await client.verifyTextEntry(42, {
+    nodeId: 7,
+    text: 'requested content',
+    clear: false,
+    beforeSignature: beforeSnapshot,
+  }), true, 'an exact insertion of the requested text must verify');
+});
+
 test('Chrome focused type_text marks missing focus as a pre-dispatch failure', async () => {
   const originalAttach = cdpClientCh.attach;
   const originalEvaluate = cdpClientCh.evaluate;
@@ -27690,6 +29481,204 @@ test('Chrome focused type_text marks missing focus as a pre-dispatch failure', a
     cdpClientCh.attach = originalAttach;
     cdpClientCh.evaluate = originalEvaluate;
   }
+});
+
+test('Chrome focused type_text binds the frame token while preserving trusted CDP insertion', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const originalChrome = globalThis.chrome;
+  const sent = [];
+  const commands = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (tabId, method, params = {}) => {
+      commands.push({ tabId, method, params });
+      return {};
+    };
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        sendMessage: async (tabId, message, options) => {
+          sent.push({ tabId, message, options });
+          if (message.action === 'prepare_focused_type_dispatch') {
+            if (message.params?.dispatchBinding?.token === 'stale-token') {
+              return {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                retryable: true,
+                error: 'focused target changed',
+              };
+            }
+            return {
+              success: true,
+              tag: 'DIV',
+              type: '',
+              name: 'rich-editor',
+              contentEditable: true,
+              beforeSignature: '0:cbf29ce484222325',
+              rect: { x: 10, y: 20, w: 300, h: 120 },
+            };
+          }
+          if (message.action === 'verify_focused_type_dispatch') {
+            return { success: true, verified: true };
+          }
+          return { success: true };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    const result = await agent.executeTool(42, 'type_text', { text: 'hello' }, null, {
+      dispatchBinding: { token: 'focused-token', frameId: 7 },
+    });
+    const prepared = sent.find(entry => entry.message?.action === 'prepare_focused_type_dispatch');
+    const verified = sent.find(entry => entry.message?.action === 'verify_focused_type_dispatch');
+    assert.equal(result.verified, true);
+    assert.equal(result.method, 'cdp-insert-focused');
+    assert.equal(prepared?.tabId, 42);
+    assert.equal(prepared?.options?.frameId, 7);
+    assert.equal(prepared?.message?.params?.dispatchBinding?.token, 'focused-token');
+    assert.equal(verified?.options?.frameId, 7);
+    assert.equal(verified?.message?.params?.dispatchBinding?.token, 'focused-token');
+    assert.equal(sent.some(entry => entry.message?.action === 'type'), false, 'bound focus must not use synthetic content typing');
+    assert.deepEqual(
+      commands.find(command => command.method === 'Input.insertText'),
+      { tabId: 42, method: 'Input.insertText', params: { text: 'hello' } },
+    );
+    const dispatchedBeforeStaleAttempt = commands.filter(command => command.method.startsWith('Input.')).length;
+    const staleResult = await agent.executeTool(42, 'type_text', { text: 'blocked' }, null, {
+      dispatchBinding: { token: 'stale-token', frameId: 7 },
+    });
+    assert.equal(staleResult.success, false);
+    assert.equal(staleResult.dispatched, false);
+    assert.equal(staleResult.noDispatch, true);
+    assert.equal(
+      commands.filter(command => command.method.startsWith('Input.')).length,
+      dispatchedBeforeStaleAttempt,
+      'a stale focused target must fail before any trusted input dispatch',
+    );
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+    globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome focused type_text propagates post-edit verification', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalEvaluate = cdpClientCh.evaluate;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const originalVerifyTextEntry = cdpClientCh.verifyTextEntry;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.evaluate = async () => ({
+      result: {
+        value: {
+          focused: true,
+          editable: true,
+          contentEditable: false,
+          tag: 'INPUT',
+          type: 'text',
+          name: 'answer',
+          value: '',
+          rect: { x: 10, y: 20, w: 100, h: 24 },
+        },
+      },
+    });
+    cdpClientCh.sendCommand = async () => ({});
+    cdpClientCh.verifyTextEntry = async () => null;
+    const agent = new AgentCh({});
+    const reverted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
+    assert.equal(reverted.success, true);
+    assert.equal(reverted.verified, undefined, 'a reverted focused edit must not claim verification');
+    assert.ok(!('verified' in reverted), 'an unproven focused edit must omit verified entirely');
+
+    cdpClientCh.verifyTextEntry = async () => true;
+    const persisted = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
+    assert.equal(persisted.success, true);
+    assert.equal(persisted.verified, true, 'a persisted focused edit must be verified');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.evaluate = originalEvaluate;
+    cdpClientCh.sendCommand = originalSendCommand;
+    cdpClientCh.verifyTextEntry = originalVerifyTextEntry;
+  }
+});
+
+test('unproven text entry never reaches the gates that read verified === false', () => {
+  // An exact-match proof legitimately fails on fields the page rewrites:
+  // maxlength truncation, input masks, React controlled reformatting, and
+  // whitespace-normalizing contenteditables. Those edits worked. Emitting
+  // verified:false for them would mark a real success as a failed action.
+  const unproven = { success: true, method: 'cdp-insert-focused' };
+  const proven = { success: true, verified: true, method: 'cdp-insert-focused' };
+  const refuted = { success: true, verified: false, method: 'cdp-insert-focused' };
+
+  // loop-detector.js: only `verified === false` blocks a success from clearing
+  // the failed-action scopes, so an unproven edit must clear them like any
+  // other success or a second legitimate attempt draws a FAILED ACTION LOOP.
+  const clearsFailureScopes = result => result?.success === true && result?.verified !== false;
+  assert.equal(clearsFailureScopes(unproven), true, 'unproven text entry must still clear failure scopes');
+  assert.equal(clearsFailureScopes(proven), true);
+  assert.equal(clearsFailureScopes(refuted), false, 'an explicit refutation must still count as failure');
+
+  // agent.js `_deliveryCheckpointMadeMeaningfulProgress`
+  const countsAsProgress = result => result?.verified !== false && result?.inconclusive !== true;
+  assert.equal(countsAsProgress(unproven), true, 'unproven text entry must still count as progress');
+
+  // agent.js observation boundary
+  const isUnverifiedBoundary = result => !!(result?.inconclusive || result?.verified === false);
+  assert.equal(isUnverifiedBoundary(unproven), false, 'unproven text entry must not force an unverified boundary');
+
+  // The toolbar recovery obligation is the one consumer that requires a positive
+  // proof, and it is unchanged by the tri-state: it tests `!== true`.
+  const dischargesToolbarDebt = result => result?.success === true && result?.verified === true;
+  assert.equal(dischargesToolbarDebt(unproven), false, 'unproven text entry must not discharge a toolbar debt');
+  assert.equal(dischargesToolbarDebt(proven), true, 'a proven corrected edit must discharge the toolbar debt');
+});
+
+test('text-entry signature and insertion proof stay linear and bounded', () => {
+  const signatureFor = value => {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = Math.imul(hash ^ value.charCodeAt(i), 16777619) >>> 0;
+    }
+    return `${value.length}:${hash.toString(16)}`;
+  };
+  // The pathological shape: a long value where the inserted text recurs, so
+  // the proof rescans at every occurrence. With BigInt this was O(n*m) inside
+  // the page's content script.
+  const before = 'ab'.repeat(40000);
+  const inserted = 'ab';
+  const after = before + inserted;
+  const started = Date.now();
+  const beforeSignature = signatureFor(before);
+  let proved = false;
+  if (after.length <= 65536) {
+    let index = after.indexOf(inserted);
+    while (index >= 0) {
+      if (signatureFor(after.slice(0, index) + after.slice(index + inserted.length)) === beforeSignature) {
+        proved = true;
+        break;
+      }
+      index = after.indexOf(inserted, index + 1);
+    }
+  }
+  assert.equal(proved, false, 'values past the cap must report unproven rather than rescan');
+  assert.ok(Date.now() - started < 1000, 'the capped proof must not block the content script');
+
+  const shortBefore = 'hello world';
+  assert.equal(
+    signatureFor(shortBefore),
+    signatureFor('hello world'),
+    'the signature must be stable for equal values',
+  );
+  assert.notEqual(
+    signatureFor(shortBefore),
+    signatureFor('hello worlds'),
+    'the signature must separate different values',
+  );
 });
 
 function stubChromeCdpFileInputClickGuard(blocked = null) {
@@ -36053,7 +38042,7 @@ test('Agent tool loops preserve provider reasoning state on both execution paths
     assert.match(source, /_withResponseItems\(message, responseItems, reasoningContent = '', provider = null\)[\s\S]*response_items: responseItems/, `${prefix}: assistant helper should retain Responses output Items`);
     assert.match(source, /_expireCurrentToolReasoning\(messages\)/, `${prefix}: new user turns should expire immediate-only reasoning replay`);
     assert.match(source, /reasoning_content: reasoningContent/, `${prefix}: assistant helper should retain Chat Completions reasoning content`);
-    assert.match(source, /content: result\.content \|\| null,[\s\S]*tool_calls: result\.toolCalls,[\s\S]*}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream tool loop should retain provider reasoning state`);
+    assert.match(source, /content: assistantToolContent,[\s\S]*tool_calls: result\.toolCalls,[\s\S]*}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream tool loop should retain provider reasoning state`);
     assert.match(source, /content: result\.content \}, result\.responseItems, result\.reasoningContent, provider\)[\s\S]*messages\.push\(\{ role: 'user', content: plainFinalBlocks\.join/, `${prefix}: non-stream progress continuations should scope provider reasoning state`);
     assert.match(source, /content: finalResponse \}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream final answers should scope provider reasoning state`);
     assert.match(source, /chunk\.type === 'reasoning'[\s\S]*content: fullText \|\| null,[\s\S]*tool_calls: toolCalls,[\s\S]*}, responseItems, reasoningContent, provider\)/, `${prefix}: stream tool loop should retain provider reasoning state`);
@@ -36145,6 +38134,11 @@ test('WebBrain Cloud groups every generation in a stable conversation session wi
 
     const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     const backgroundSource = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(
+      agentSource,
+      /conversationIds\.set\(tabId, `conv_\$\{tabId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\)/,
+      `${label}: Cloud conversation IDs must use Web Crypto entropy`,
+    );
     for (const generationName of ['main', 'planner', 'compaction', 'intent', 'vision']) {
       assert.match(agentSource, new RegExp(`generationName: '${generationName}'`), `${label}: ${generationName} calls should be labeled`);
     }
@@ -36523,6 +38517,25 @@ test('provider compatibility defaults preserve legacy chat request bodies', () =
       temperature: 0.2,
       max_tokens: 123,
     });
+    const internalMessages = [{
+      role: 'assistant',
+      content: 'What value should I use?',
+      webbrainPlannerClarification: {
+        requiresSubmission: true,
+        pageUrl: 'https://example.test/application',
+      },
+    }];
+    const internalBody = provider._buildChatCompletionsBody(internalMessages, {}, false);
+    assert.deepEqual(
+      internalBody.messages,
+      [{ role: 'assistant', content: 'What value should I use?' }],
+      'app-only planner clarification metadata must not reach Chat Completions providers',
+    );
+    assert.equal(
+      internalMessages[0].webbrainPlannerClarification.requiresSubmission,
+      true,
+      'provider message sanitization must not mutate persisted conversation state',
+    );
   }
   for (const Provider of [LlamaCppProviderCh, LlamaCppProviderFx]) {
     const provider = new Provider({ baseUrl: 'http://localhost:8080' });
@@ -39496,7 +41509,7 @@ test('agent stops prompting current tool after permission gate is disabled mid-p
         id: 'tool_1',
         function: {
           name: 'set_field',
-          arguments: '{"selector":"input[name=email]","value":"a@example.com","submit":true}',
+          arguments: '{"ref_id":"ref_email","text":"a@example.com","submit":true}',
         },
       }],
       messages,
@@ -40563,7 +42576,6 @@ ${JSON.stringify([
           name: 'download_custom_media',
           arguments: JSON.stringify({
             mediaUrl: 'https://media.example/assets/video.mp4',
-            url: 'https://trusted.example/decoy.mp4',
           }),
         },
       }],
@@ -43647,7 +45659,7 @@ test('nullish tool responses classify consequential outcomes and stop unsafe bat
       ['fetch_url', { url: 'https://api.example.com/items', method: 'POST', body: '{}' }, true],
       ['iframe_click', { selector: '#submit', urlFilter: 'payments.example.com' }, true],
       ['download_file', { url: 'https://example.com/report.pdf' }, true],
-      ['schedule_task', { title: 'Check later', prompt: 'Check status later', schedule: { after_seconds: 60 } }, true],
+      ['schedule_task', { title: 'Check later', prompt: 'Check status later', schedule: { type: 'once', after_seconds: 60 }, target: { type: 'current_tab' } }, true],
     ]) {
       const agent = new AgentClass({
         getActive: () => ({ contextWindow: 128000, supportsVision: false }),
@@ -43983,7 +45995,7 @@ test('streaming and non-streaming paths share the hardened batch executor', () =
 
 test('tool-result limiting is nullish-safe and preserves serializable falsy values', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }), getVisionProvider: async () => null });
     for (const value of [undefined, null]) {
       const parsed = JSON.parse(agent._limitToolResult(value));
       assert.equal(parsed.errorCode, 'missing_tool_response', `${AgentClass.name}: nullish result was not normalized`);
@@ -49334,6 +51346,50 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'read_page', args: [] }],
     },
     {
+      label: 'bare JSON with nested arguments and braces in strings',
+      raw: [
+        'I will use the save button now.',
+        JSON.stringify({
+          name: 'click',
+          arguments: { text: 'Save "{draft}"', meta: { source: 'dialog' } },
+        }),
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save "{draft}"', meta: { source: 'dialog' } } }],
+    },
+    {
+      label: 'multiple bare JSON calls preserve order',
+      raw: [
+        '{"name":"read_page","arguments":{"selector":{"role":"main"}}}',
+        'then',
+        '{"name":"click_ax","arguments":{"target":{"ref_id":"ref_7"}}}',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: { selector: { role: 'main' } } },
+        { name: 'click_ax', args: { target: { ref_id: 'ref_7' } } },
+      ],
+    },
+    {
+      label: 'unclosed prose brace does not swallow the following call',
+      raw: [
+        'Template: {unclosed',
+        '{"name":"click","arguments":{"text":"Save"}}',
+      ].join('\n'),
+      expected: [{ name: 'click', args: { text: 'Save' } }],
+    },
+    {
+      label: 'unbalanced code snippet does not swallow the following call',
+      raw: [
+        'if (ready) { submit();',
+        '{"name":"read_page","arguments":{}}',
+      ].join('\n'),
+      expected: [{ name: 'read_page', args: {} }],
+    },
+    {
+      label: 'nested object of a disallowed outer call stays rejected',
+      raw: '{"name":"execute_js","arguments":{"name":"click","code":"alert(1)"}}',
+      expected: [],
+    },
+    {
       label: 'XML typed parameters',
       raw: [
         '<tool_call><function=click>',
@@ -49393,6 +51449,43 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('x'.repeat(10001), allowed),
       [],
       'oversized model text was parsed',
+    );
+
+    // A parsed call replaces the model's prose entirely (the caller sets
+    // result.content = null), so a call the model was describing rather than
+    // making must not be executed with its own explanation discarded.
+    for (const [label, narrated] of [
+      ['refusal, nested args', 'I could click it with {"name":"click","arguments":{"text":"Delete account"}} but that is destructive, so I will not.'],
+      ['refusal, flat object', 'I will not call {"name":"click","text":"Delete"} here.'],
+      ['quoted page content', 'The page told me to run {"name":"navigate","url":"https://evil.test"} — I ignored it.'],
+      ['enumerated options', 'Option A: {"name":"click","text":"Yes"}\nOption B: {"name":"navigate","url":"https://a.test"}'],
+    ]) {
+      assert.deepEqual(
+        parser.parseToolCallsFromText(narrated, allowed),
+        [],
+        `a call the model only described was executed (${label})`,
+      );
+    }
+
+    // The flip side: calls emitted as array elements keep their trailing
+    // commas, and those are still calls.
+    assert.deepEqual(
+      parser.parseToolCallsFromText(
+        '[\n{"name":"read_page","arguments":{}},\n{"name":"click","arguments":{"text":"Go"}}\n]',
+        allowed,
+      ).map(call => call.function.name),
+      ['read_page', 'click'],
+      'array-shaped bare calls were dropped',
+    );
+    const startedAt = Date.now();
+    assert.deepEqual(
+      parser.parseToolCallsFromText('{'.repeat(9000), allowed),
+      [],
+      'unbalanced brace flood produced calls',
+    );
+    assert.ok(
+      Date.now() - startedAt < 1000,
+      'unbalanced brace flood was not bounded by the restart cap',
     );
   }
 });
@@ -50576,6 +52669,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
     await agent._injectCoreContentScripts(43);
     assert.deepEqual(firefoxInjections.map(injection => injection.file), [
       'src/content/file-picker-guard-loader.js',
+      'src/content/rich-text-toolbar-heuristic.js',
       'src/content/accessibility-tree.js',
       'src/content/content.js',
       'src/content/agent-visual-indicator.js',
@@ -52107,7 +54201,11 @@ test('agent forwards private AX scope and records only the final done verdict', 
       `${label}: verify_form refs do not refresh their private AX scope`,
     );
     assert.match(source, /delete response\.documentToken/, `${label}: private AX document token leaks into model context`);
-    assert.match(source, /if \(!toolResult\?\.done\) (?:await )?recordFinalToolTrace\(toolResult\)/, `${label}: raw done is still recorded before terminal guards`);
+    assert.match(
+      source,
+      /if \(!toolResult\?\.done\) (?:await recordFinalToolTrace\(toolResult\)|\{[\s\S]{0,180}(?:await )?recordFinalToolTrace\(toolResult\))/,
+      `${label}: raw done is still recorded before terminal guards`,
+    );
     assert.match(source, /recordFinalToolTrace\(blockedResult\)/, `${label}: blocked done verdict is not recorded`);
     assert.match(source, /recordFinalToolTrace\(failedResult\)/, `${label}: failed done verdict is not recorded`);
   }
@@ -52405,6 +54503,27 @@ test('planner: parse and format structured plan', () => {
   assert.equal(respond?.requires_state_change, false, 'respond must never authorize page mutation');
   assert.equal(respond?.requires_submission, false, 'respond must never require submission');
   assert.equal(respond?.scheduling, null, 'respond must not preserve scheduling metadata');
+
+  for (const parse of [parsePlanFromContent, parsePlanFromContentFx]) {
+    const clarifyBeforeSubmit = parse(JSON.stringify({
+      request_kind: 'clarify',
+      requires_state_change: false,
+      requires_submission: true,
+      summary: 'Ask for the missing answer before submitting the form.',
+      steps: [],
+      memory: {},
+      scheduling: null,
+      risks: [],
+      localized: {
+        locale: 'en',
+        summary: 'What answer should I use before submitting?',
+        steps: [],
+        risks: [],
+      },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(clarifyBeforeSubmit?.requires_state_change, false, 'clarify must never authorize an immediate mutation');
+    assert.equal(clarifyBeforeSubmit?.requires_submission, true, 'clarify must retain the eventual user-authorized submit intent');
+  }
 });
 
 test('planner: parse JSON inside markdown fence', () => {
@@ -52494,6 +54613,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"use_progress_ledger": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"requires_submission": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /explicit do-not-submit tasks and autosave UIs/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /For clarify, preserve true.*already-requested commit/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /answers, drafts, or values already prepared.*classify execute and inspect/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /sequential workflow stages, sites, apps, or destinations are not peer items/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Calendar\/cron recurrence.*unsupported/i);
@@ -52814,6 +54935,138 @@ test('planner consistency repair keeps model-derived plan fields out of trusted 
       `${AgentClass.name}: model-derived plan data crossed the trust boundary`,
     );
   }
+});
+
+test('planner consistency repair preserves submit intent across one direct clarification continuation', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        const responses = [false, true].map(requiresSubmission => plannerFixtureJson({
+          request_kind: 'execute',
+          requires_state_change: true,
+          requires_submission: requiresSubmission,
+          summary: 'Fill the remaining application answers and submit the form.',
+          confidence: 0.99,
+          steps: [
+            { id: '1', action: 'Fill the remaining answers.', tools: ['set_field'] },
+            { id: '2', action: 'Submit and verify the form.', tools: ['click_ax', 'read_page'] },
+          ],
+          localized: {
+            locale: 'en',
+            summary: 'Fill the remaining application answers and submit the form.',
+            steps: [
+              { id: '1', action: 'Fill the remaining answers.' },
+              { id: '2', action: 'Submit and verify the form.' },
+            ],
+            risks: [],
+          },
+        }));
+        const requests = [];
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-submit-continuation-test',
+          name: 'planner-submit-continuation-test',
+          chat: async messages => {
+            requests.push(messages);
+            return { content: responses.shift(), usage: {} };
+          },
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        const followUpContext = {
+          priorUserTask: 'Fill and submit this application.',
+          scratchpadFacts: '',
+          plannerClarification: {
+            requiresSubmission: true,
+            pageUrl: 'https://example.test/application',
+          },
+        };
+        const args = [
+          9340 + (agentIndex * 20) + (routeIndex * 10),
+          { role: 'user', content: 'Use the WebBrain details and answer the remaining questions.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://example.test/application', tabTitle: 'Application' },
+        ];
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' }, followUpContext)
+          : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' }, followUpContext);
+
+        assert.equal(gate.proceed, true, `${AgentClass.name}: ${route} continuation did not execute`);
+        assert.equal(gate.requiresSubmission, true, `${AgentClass.name}: ${route} dropped clarified submit intent`);
+        assert.equal(requests.length, 2, `${AgentClass.name}: ${route} should get one semantic submit-intent recheck`);
+        assert.match(requests[0][1].content, /Unresolved planner clarification/);
+        assert.match(requests[1].at(-1)?.content || '', /clarification_submit_intent_dropped/);
+        assert.equal(responses.length, 0);
+      }
+    }
+  });
+});
+
+test('planner submit clarification does not cross page boundaries', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        const response = plannerFixtureJson({
+          request_kind: 'execute',
+          requires_state_change: true,
+          requires_submission: false,
+          summary: 'Fill the different form without submitting it.',
+          confidence: 0.99,
+          steps: [
+            { id: '1', action: 'Fill the requested fields without submitting.', tools: ['set_field'] },
+          ],
+          localized: {
+            locale: 'en',
+            summary: 'Fill the different form without submitting it.',
+            steps: [
+              { id: '1', action: 'Fill the requested fields without submitting.' },
+            ],
+            risks: [],
+          },
+        });
+        const requests = [];
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-submit-page-scope-test',
+          name: 'planner-submit-page-scope-test',
+          chat: async messages => {
+            requests.push(messages);
+            return { content: response, usage: {} };
+          },
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        const followUpContext = {
+          priorUserTask: 'Fill and submit the first application.',
+          scratchpadFacts: '',
+          plannerClarification: {
+            requiresSubmission: true,
+            pageUrl: 'https://example.test/first-application',
+          },
+        };
+        const args = [
+          9380 + (agentIndex * 20) + (routeIndex * 10),
+          { role: 'user', content: 'Fill this different form without submitting it.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://example.test/second-application', tabTitle: 'Second application' },
+        ];
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' }, followUpContext)
+          : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' }, followUpContext);
+
+        assert.equal(gate.proceed, true, `${AgentClass.name}: ${route} different-page task did not execute`);
+        assert.equal(gate.requiresSubmission, false, `${AgentClass.name}: ${route} carried stale submit intent across pages`);
+        assert.equal(requests.length, 1, `${AgentClass.name}: ${route} should not repair submit intent from another page`);
+        assert.doesNotMatch(requests[0][1].content, /Unresolved planner clarification/);
+      }
+    }
+  });
 });
 
 test('planner falls back safely when repaired respond intent still lists tools', async () => {
@@ -53648,10 +55901,14 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   const chromeAgentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
-  const toolDispatchIndex = chromeAgentSource.indexOf('const rawToolResult = protectedPageFailure || await this.executeTool(', guardIndex);
+  const toolbarPreflightIndex = chromeAgentSource.indexOf('const toolbarPreflight = protectedPageFailure', webMcpPreparationIndex);
+  const toolDispatchIndex = chromeAgentSource.indexOf('|| await this.executeTool(', toolbarPreflightIndex);
   assert.ok(
-    guardIndex >= 0 && webMcpPreparationIndex > guardIndex && toolDispatchIndex > webMcpPreparationIndex,
-    'chrome: protected-page guard must run before WebMCP preparation and tool dispatch',
+    guardIndex >= 0
+      && webMcpPreparationIndex > guardIndex
+      && toolbarPreflightIndex > webMcpPreparationIndex
+      && toolDispatchIndex > toolbarPreflightIndex,
+    'chrome: protected-page guard must run before WebMCP preparation, toolbar preflight, and tool dispatch',
   );
   assert.match(chromeAgentSource, /TRUSTED RUNTIME ROUTING: Chrome blocks extension DOM\/debugger access/, 'chrome: protected-page recovery should remain outside the untrusted page-content wrapper');
   assert.doesNotMatch(chromeAgentSource, /ask the user to enable\/configure that packaged skill/i, 'chrome: protected-page recovery must not route users to a removed packaged skill');
@@ -53936,14 +56193,20 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(disposable, /browser conversation\/session until the user runs `\/reset`/i, `${label}: disposable email skill should disclose session retention`);
     assert.match(disposable, /use `clarify` to confirm the user understands/i, `${label}: disposable email skill should require explicit user confirmation`);
     assert.match(disposable, /Continue only after the user confirms/i, `${label}: disposable email skill should stop without confirmation`);
+    assert.match(disposable, /visible browser UI first/i, `${label}: disposable email skill should prefer the Mail.tm UI`);
+    assert.match(disposable, /`navigate` to `https:\/\/mail\.tm\/en\/`/i, `${label}: disposable email skill should open Mail.tm in the active run tab`);
+    assert.match(disposable, /UI-first route does not require `\/allow-api`/i, `${label}: disposable email skill should not require API approval for the default route`);
+    assert.match(disposable, /Request `\/allow-api` at that point, not preemptively/i, `${label}: disposable email skill should defer API approval until fallback`);
+    assert.doesNotMatch(disposable, /will be deleted automatically/i, `${label}: UI-provided mailbox should not promise automatic deletion`);
     assert.match(disposable, /Never write the password or bearer token to the scratchpad/i, `${label}: disposable email skill should keep secrets out of the scratchpad`);
     assert.doesNotMatch(disposable, /Keep the address, password, token/i, `${label}: disposable email skill should not pin secrets`);
     assert.match(disposable, /confirm its hostname matches the signup site/i, `${label}: disposable email skill should validate verification-link destinations`);
-    assert.match(disposable, /before every normal success or failure exit/i, `${label}: disposable email skill should clean up failed flows too`);
+    assert.match(disposable, /If the API fallback created the mailbox[\s\S]*before every normal success or failure exit/i, `${label}: API fallback should clean up failed flows too`);
+    assert.match(disposable, /UI-provided mailbox was not explicitly deleted and may remain active/i, `${label}: UI-first completion should disclose retained mailbox state`);
     assert.match(disposable, /use `schedule_resume` for a later inbox check/i, `${label}: disposable email skill should schedule external inbox waits`);
     assert.doesNotMatch(disposable, /Poll every 5-10 seconds/i, `${label}: disposable email skill should not recommend tight polling`);
-    assert.match(disposable, /fetch_url/, `${label}: disposable email skill should use fetch_url in normal runs`);
-    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain API mutation approval`);
+    assert.match(disposable, /API fallback `fetch_url` examples \(not the default route\)/i, `${label}: disposable email skill should retain an explicit API fallback`);
+    assert.match(disposable, /\/allow-api/, `${label}: disposable email skill should explain fallback API mutation approval`);
     assert.match(disposable, new RegExp(String.raw`"url": "https:\/\/api\.mail\.tm\/accounts"`), `${label}: disposable email skill should document account creation`);
     assert.match(disposable, /\"Authorization\": \"Bearer REPLACE_TOKEN\"/, `${label}: disposable email skill should document authenticated message reads`);
     assert.match(disposable, /accounts\/REPLACE_ACCOUNT_ID/, `${label}: disposable email skill should document account deletion`);
@@ -58112,6 +60375,35 @@ test('planner input: active prior task and pending draft survive long tool chatt
     assert.match(context.priorUserTask, /Draft and send Gary/, `${label}: original task fell out of planner context`);
     assert.match(context.scratchpadFacts, /\[pending draft\]/, `${label}: pending draft fell out of planner context`);
 
+    const clarificationMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Fill these answers and submit the form.' },
+      agent._plannerTerminalAssistantMessage({
+        requestKind: 'clarify',
+        requiresSubmission: true,
+        message: 'What should I use for the final answer?',
+      }, { tabUrl: 'https://example.test/application' }),
+    ];
+    const clarificationContext = agent._buildPlannerFollowUpContext(clarificationMessages);
+    assert.equal(clarificationContext.plannerClarification?.requiresSubmission, true, `${label}: pending submit clarification was not retained`);
+    const clarificationPlannerMessages = build(
+      { role: 'user', content: 'Use the WebBrain details.' },
+      'https://example.test/application',
+      'Application',
+      agent._buildPlannerHistoryDigest(clarificationMessages),
+      clarificationContext,
+    );
+    assert.match(clarificationPlannerMessages[1].content, /Unresolved planner clarification[\s\S]*eventual explicit submission/);
+    assert.match(clarificationPlannerMessages[1].content, /unless the current User task revokes submission/);
+    const changedPagePlannerMessages = build(
+      { role: 'user', content: 'Fill this different form without submitting it.' },
+      'https://example.test/other-application',
+      'Other application',
+      agent._buildPlannerHistoryDigest(clarificationMessages),
+      clarificationContext,
+    );
+    assert.doesNotMatch(changedPagePlannerMessages[1].content, /Unresolved planner clarification/);
+
     const plannerMessages = build(
       { role: 'user', content: 'Just tell me what you were going to draft.' },
       'https://mail.google.com/mail/u/0/#inbox',
@@ -58900,8 +61192,10 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'import_saved_workflow':/);
     assert.match(source, /agent\.replaySavedWorkflow\(/);
     assert.match(source, /clearUserMemoryTurnContext\(tabId\)/);
-    assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], runOptions\)/);
+    assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }
+  const cloudRunsSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRunsSource, /replay\.prompt, publishUpdate, 'act', \[\], \{\s*cloudRun: true,\s*independentRun: true,\s*preserveRichTextToolbarAudit: true,/);
 });
 
 test('saved workflow compiler skips unsafe coordinates, failed calls, and unsupported tools', () => {
@@ -59419,6 +61713,64 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.match(result.reason, /tool_failed/);
     assert.equal(updates.some((update) => update.type === 'workflow_fallback'), false);
     assert.equal(agent.isRunning(80), false);
+  });
+
+  test(`${browser} saved workflow fallback preserves rich-text toolbar recovery obligations`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_toolbar_fallback',
+      name: 'Fill editor',
+      start: { origin: 'https://example.com', pathFamily: '/editor' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'set_field',
+        args: { text: 'Document prose', clear: true },
+        target: { role: 'textbox', name: 'Font size' },
+        expected: { kind: 'tool_verified' },
+      }],
+    };
+    const tabId = 82;
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/editor';
+    agent.executeTool = async () => ({ pageContent: 'textbox "Font size" [ref_20]' });
+    agent._executeToolBatch = async (_tabId, _calls, _messages, onUpdate) => {
+      agent._richTextToolbarGuard.restore(tabId, {
+        recoveryObligations: [{
+          toolName: 'set_field',
+          targetKind: 'font_size',
+          blockedAttemptedText: 'Document prose',
+          blockedClear: true,
+          blockedToolbarRef: 'ref_20',
+          blockedRefs: ['ref_20'],
+        }],
+      });
+      onUpdate('tool_result', {
+        name: 'set_field',
+        result: {
+          success: false,
+          verified: false,
+          dispatched: false,
+          noDispatch: true,
+          wrongTarget: true,
+          retryable: false,
+          error: 'toolbar target blocked',
+        },
+      });
+      return { action: 'continue' };
+    };
+
+    const result = await agent.replaySavedWorkflow(tabId, workflow, {});
+
+    assert.equal(result.status, 'fallback');
+    assert.match(result.reason, /tool_failed/);
+    assert.equal(agent._richTextToolbarGuard.hasPending(tabId), true);
+    assert.equal(agent._richTextToolbarGuard.obligations(tabId).length, 1);
+    assert.equal(agent.isRunning(tabId), false);
+    agent._resetRichTextToolbarAudit(tabId);
   });
 
   test(`${browser} saved workflow replay delegates before acting on the wrong page family`, async () => {
@@ -62754,6 +65106,293 @@ test('capsolver errors: demo-key refusals and task-config errors get different r
     }
   } finally {
     globalThis.fetch = previousFetch;
+  }
+});
+
+test('built-in tool schemas are closed and invalid arguments never dispatch', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const toolsModule = await import(pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tools.js`)).href);
+    const argumentModule = await import(pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tool-arguments.js`)).href);
+    const advertised = toolsModule.getToolsForMode('act');
+    assert.ok(advertised.length > 0, `${label}: Act tool catalog is empty`);
+    assert.ok(
+      advertised.every(tool => tool.function?.parameters?.additionalProperties === false),
+      `${label}: an advertised object schema remains open`,
+    );
+
+    const setField = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'set_field');
+    const rejectedLang = argumentModule.validateToolArguments(
+      'set_field',
+      { ref_id: 'ref_1', text: 'miras.global', clear: true, submit: false, lang: 'tr-deasciify' },
+      setField.function.parameters,
+    );
+    assert.equal(rejectedLang.ok, false, `${label}: undeclared lang argument was accepted`);
+    assert.equal(rejectedLang.result.noDispatch, true, `${label}: rejected lang argument did not fail closed`);
+    assert.equal(rejectedLang.result.errorCode, 'invalid_tool_arguments', `${label}: unstable invalid-argument code`);
+
+    const fetchUrl = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'fetch_url');
+    const acceptedHeaders = argumentModule.validateToolArguments(
+      'fetch_url',
+      {
+        url: 'https://api.example.com/items',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+          'X-Custom-Header': 'custom-value',
+        },
+        body: '{}',
+      },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(acceptedHeaders.ok, true, `${label}: string-valued fetch_url headers were rejected`);
+
+    for (const invalidValue of [42, true, null, ['application/json'], { value: 'application/json' }]) {
+      const rejectedHeaders = argumentModule.validateToolArguments(
+        'fetch_url',
+        { url: 'https://api.example.com/items', headers: { 'Content-Type': invalidValue } },
+        fetchUrl.function.parameters,
+      );
+      assert.equal(rejectedHeaders.ok, false, `${label}: non-string fetch_url header value was accepted`);
+      assert.ok(rejectedHeaders.result.invalidArgumentNames.includes('$.headers.Content-Type'), `${label}: invalid header path was not reported`);
+    }
+
+    const rejectedFetchTopLevel = argumentModule.validateToolArguments(
+      'fetch_url',
+      { url: 'https://api.example.com/items', timeout: 5000 },
+      fetchUrl.function.parameters,
+    );
+    assert.equal(rejectedFetchTopLevel.ok, false, `${label}: undeclared fetch_url top-level argument was accepted`);
+    assert.ok(rejectedFetchTopLevel.result.invalidArgumentNames.includes('$.timeout'), `${label}: undeclared fetch_url argument path was not reported`);
+
+    const click = toolsModule.AGENT_TOOLS.find(tool => tool.function?.name === 'click');
+    for (const args of [
+      { index: 3, x: 0, y: 0 },
+      { text: 'Save', selector: '#save' },
+      { x: 10 },
+    ]) {
+      const rejectedClick = argumentModule.validateToolArguments('click', args, click.function.parameters);
+      assert.equal(rejectedClick.ok, false, `${label}: mixed/incomplete click target was accepted`);
+      assert.equal(rejectedClick.result.noDispatch, true, `${label}: invalid click target did not fail closed`);
+    }
+    assert.equal(
+      argumentModule.validateToolArguments('click', { index: 3 }, click.function.parameters).ok,
+      true,
+      `${label}: one valid click strategy was rejected`,
+    );
+
+    const agent = new AgentClass({
+      getActive: () => ({ contextWindow: 128000, supportsVision: false }),
+      getVisionProvider: async () => null,
+    });
+    const tabId = label === 'chrome' ? 9901 : 9902;
+    agent.conversationModes.set(tabId, 'act');
+    agent._persist = () => {};
+    let dispatches = 0;
+    agent.executeTool = async () => {
+      dispatches++;
+      return { success: true };
+    };
+    const messages = [];
+    const updates = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'bad_lang', function: { name: 'set_field', arguments: JSON.stringify({ ref_id: 'ref_1', text: 'miras.global', lang: 'tr-deasciify' }) } }],
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { supportsVision: false },
+      null,
+      new Set(['set_field']),
+      1,
+    );
+    assert.equal(dispatches, 0, `${label}: invalid set_field arguments reached executeTool`);
+    const result = JSON.parse(messages.find(message => message.role === 'tool')?.content || '{}');
+    assert.equal(result.invalidArguments, true, `${label}: structured invalidArguments marker missing`);
+    assert.equal(result.noDispatch, true, `${label}: structured noDispatch marker missing`);
+    assert.ok(updates.some(update => update.type === 'tool_result' && update.data?.result?.noDispatch === true), `${label}: UI did not receive the rejected tool result`);
+
+    const headerMessages = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'bad_headers', function: { name: 'fetch_url', arguments: JSON.stringify({ url: 'https://api.example.com/items', headers: { Authorization: 123 } }) } }],
+      headerMessages,
+      () => {},
+      { supportsVision: false },
+      null,
+      new Set(['fetch_url']),
+      2,
+    );
+    assert.equal(dispatches, 0, `${label}: invalid fetch_url headers reached executeTool`);
+    const headerResult = JSON.parse(headerMessages.find(message => message.role === 'tool')?.content || '{}');
+    assert.equal(headerResult.invalidArguments, true, `${label}: invalid header result marker missing`);
+    assert.equal(headerResult.noDispatch, true, `${label}: invalid header noDispatch marker missing`);
+  }
+});
+
+test('execute protocol suppresses planner payloads, rejects false Ask claims, and ends with friendly failure', async () => {
+  const plannerPayload = JSON.stringify({
+    request_kind: 'execute',
+    requires_state_change: true,
+    summary: 'Fill the form.',
+    steps: [{ id: '1', action: 'Type the value.' }],
+    localized: { locale: 'tr', summary: 'Formu doldur.', steps: [] },
+  });
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = AgentClass === AgentCh ? 9911 : 9912;
+    assert.equal(agent._isPlannerShapedJson(plannerPayload), true, `${AgentClass.name}: planner JSON was not detected`);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: false });
+    assert.equal(
+      agent._looksLikePlanOnlyTerminal('You are currently in Ask mode. Switch to Act mode to continue.', agent._planExecutionGuards.get(tabId)),
+      true,
+      `${AgentClass.name}: false runtime-mode claim was accepted`,
+    );
+    const first = agent._planOnlyTerminalDecision(tabId, plannerPayload);
+    assert.equal(first?.retry, true, `${AgentClass.name}: first planner terminal did not receive one recovery`);
+    const second = agent._planOnlyTerminalDecision(tabId, plannerPayload);
+    assert.match(second?.failure || '', /could not verify any requested page action/i, `${AgentClass.name}: terminal failure is not user-facing`);
+    assert.doesNotMatch(second?.failure || '', /execute protocol|recovery nudge|model returned/i, `${AgentClass.name}: raw protocol detail leaked to terminal`);
+  }
+});
+
+test('planner routes Act advice follow-ups to respond and protects unknown required form values', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const planner = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/planner.js`), 'utf8');
+    assert.match(planner, /Runtime mode does not force execute/, `${build}: Act advice routing rule missing`);
+    assert.match(planner, /trusted conversation context already contains everything needed/, `${build}: conversation-only respond rule missing`);
+    assert.match(planner, /required form value is unavailable[\s\S]*?leave the field untouched/, `${build}: missing form-value guard missing`);
+  }
+});
+
+test('error formatting is bounded and never exposes object coercion text', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const { formatErrorMessage } = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/error-format.js`)).href);
+    assert.equal(formatErrorMessage({ error: { detail: { message: 'Provider rejected the request.' } } }), 'Provider rejected the request.', `${build}: nested provider message missing`);
+    assert.equal(formatErrorMessage(new Error('Network unavailable.')), 'Network unavailable.', `${build}: Error instance message missing`);
+    assert.equal(formatErrorMessage({ error: { cause: new Error('Nested provider failure.') } }), 'Nested provider failure.', `${build}: nested Error cause message missing`);
+    const arbitrary = formatErrorMessage({ status: 503, payload: { retry: false } });
+    assert.doesNotMatch(arbitrary, /\[object Object\]/, `${build}: arbitrary object leaked coercion text`);
+    assert.match(arbitrary, /"status":503/, `${build}: arbitrary object did not receive a useful stable representation`);
+    const circular = { code: 'E_LOOP' };
+    circular.self = circular;
+    assert.doesNotMatch(formatErrorMessage(circular), /\[object Object\]/, `${build}: circular error leaked coercion text`);
+    assert.ok(formatErrorMessage({ message: 'x'.repeat(5000) }, { maxLength: 200 }).length <= 200, `${build}: formatter ignored its bound`);
+
+    const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
+    assert.match(panel, /function renderAgentErrorUpdate[\s\S]*?formatErrorMessage\(data\?\.message \?\? data\?\.error \?\? data\)/, `${build}: UI error ingress is not normalized`);
+    assert.match(panel, /const existing = content\.querySelector\('\.msg-copy-btn:not\(\.scratchpad-copy-btn\)'\)/, `${build}: message Copy insertion is not idempotent`);
+    assert.match(panel, /btn\.title = t\('sp\.copy\.message\.title'\)/, `${build}: message Copy still reuses the code tooltip`);
+    assert.match(panel, /data-rejected-completion[\s\S]*?rejectedCompletion = 'pending'/, `${build}: rejected done retries are not collapsed`);
+  }
+});
+
+test('session conversation snapshots strip binary payloads and cap large tool results', async () => {
+  const imagePayload = 'A'.repeat(3 * 1024 * 1024);
+  for (const build of ['chrome', 'firefox']) {
+    const persistence = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/conversation-persistence.js`)).href);
+    const messages = [
+      { role: 'system', content: 'system' },
+      {
+        role: 'user',
+        attachmentHandles: [{ attachmentId: 'attachment_safe_1', kind: 'image', name: 'fixture.png' }],
+        content: [
+          { type: 'text', text: 'Use this attachment.' },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${imagePayload}` } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'shot', content: JSON.stringify({ image: `data:image/png;base64,${imagePayload}`, tree: 'x'.repeat(200_000) }) },
+      { role: 'user', transientCompletionVerification: true, content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${imagePayload}` } }] },
+    ];
+    const serialized = persistence.serializeConversationForSession(messages);
+    const json = JSON.stringify(serialized.messages);
+    assert.equal(serialized.compacted, true, `${build}: binary snapshot was not marked compacted`);
+    assert.ok(serialized.bytes <= persistence.SESSION_CONVERSATION_BUDGET_BYTES, `${build}: serialized conversation exceeded its bound`);
+    assert.doesNotMatch(json, /data:image\//, `${build}: inline image survived session serialization`);
+    assert.doesNotMatch(json, new RegExp(`A{${1024 * 1024}}`), `${build}: multi-megabyte payload survived session serialization`);
+    assert.match(json, /attachment_safe_1/, `${build}: user attachment durable handle was lost`);
+    assert.match(json, /Completion verification screenshot omitted/, `${build}: completion screenshot placeholder missing`);
+  }
+});
+
+test('quota exhaustion degrades recovery once, continues live, and disables automatic replay', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName, tabId] of [
+      ['chrome', AgentCh, 'chrome', 9931],
+      ['firefox', AgentFx, 'browser', 9932],
+    ]) {
+      let writes = 0;
+      globalThis[apiName] = {
+        storage: {
+          session: {
+            get: async () => ({}),
+            set: async () => {
+              writes++;
+              throw new Error('QUOTA_BYTES exceeded');
+            },
+          },
+        },
+      };
+      const agent = new AgentClass({});
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'continue live' }]);
+      agent.submittedRunRequestIds.set(tabId, `${label}-request`);
+      agent.currentRunId.set(tabId, `${label}-run`);
+      const updates = [];
+      agent._runUpdateCallbacks.set(tabId, (type, data) => updates.push({ type, data }));
+
+      const first = await agent._persistNow(tabId);
+      const second = await agent._persistNow(tabId);
+      assert.deepEqual(
+        { ok: first.ok, degraded: first.degraded, reason: first.reason },
+        { ok: false, degraded: true, reason: 'quota' },
+        `${label}: quota failure did not return structured degradation`,
+      );
+      assert.equal(second.ok, false, `${label}: repeated quota write unexpectedly became durable`);
+      assert.equal(writes, 4, `${label}: each write should make one compact retry and stop`);
+      assert.equal(updates.filter(update => update.data?.code === 'persistence_degraded').length, 1, `${label}: degradation warning was not deduped per run`);
+      assert.equal(agent.activeRunState(tabId).persistenceDegraded, true, `${label}: active run state omitted degradation`);
+      assert.equal(await agent.hasDurableSubmittedTurn(tabId, `${label}-request`), false, `${label}: non-durable run remained replayable`);
+      assert.equal(agent.conversations.get(tabId).at(-1).content, 'continue live', `${label}: live conversation was discarded`);
+
+      let retryWrites = 0;
+      let compactStored = null;
+      globalThis[apiName].storage.session.set = async patch => {
+        retryWrites++;
+        if (retryWrites === 1) throw new Error('QUOTA_BYTES exceeded');
+        compactStored = patch;
+      };
+      const recovered = new AgentClass({});
+      recovered.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'tool', content: 'x'.repeat(600_000) }]);
+      const persisted = await recovered._persistNow(tabId);
+      assert.equal(persisted.ok, true, `${label}: compact retry did not recover`);
+      assert.equal(persisted.reason, 'quota_compacted', `${label}: compact retry reason missing`);
+      assert.ok(JSON.stringify(compactStored).length < 500_000, `${label}: retry snapshot was not tightly bounded`);
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('run UI persistence compaction preserves acknowledged versus discarded boundaries', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const journal = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/run-ui-journal.js`)).href);
+    const events = Array.from({ length: 120 }, (_, index) => ({
+      seq: index + 1,
+      type: 'text_delta',
+      data: { content: 'x'.repeat(10_000) },
+      ts: index + 1,
+    }));
+    const snapshot = { requestId: 'bounded-run', seq: 120, ackedSeq: 10, discardedBeforeSeq: 0, events, streamedText: 'x'.repeat(100_000), finalContent: '' };
+    const compact = journal.compactRunUiSnapshotForPersist(snapshot, { tight: true });
+    assert.ok(JSON.stringify(compact).length <= journal.RUN_UI_PERSIST_RETRY_BUDGET, `${build}: run UI retry snapshot exceeded budget`);
+    assert.equal(compact.ackedSeq, 10, `${build}: compaction rewrote acknowledged boundary`);
+    assert.ok(compact.discardedBeforeSeq > compact.ackedSeq, `${build}: genuine persisted eviction did not create a replay-gap boundary`);
+    const acknowledgedOnly = { ackedSeq: 42, discardedBeforeSeq: 0, truncatedBeforeSeq: 42 };
+    assert.equal(journal.runUiDiscardedBeforeSeq(acknowledgedOnly), 0, `${build}: acknowledged events became a false replay gap`);
   }
 });
 

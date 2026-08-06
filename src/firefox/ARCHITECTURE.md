@@ -1,6 +1,6 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 26.0.10 · Manifest V2 · Background Page
+> Version 26.1.2 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
@@ -471,6 +471,14 @@ All job kinds (`resume`, `task`), lifecycle states, retry/deferral logic, schedu
 
 All identical to Chrome:
 
+- **Rich-text toolbar guard** — `content/rich-text-toolbar-heuristic.js` is
+  byte-identical to the Chrome copy and is loaded ahead of `content.js` by the
+  manifest. Detection, the recovery contract, and the positive-proof `verified`
+  semantics for text-entry tools match Chrome exactly; see
+  `src/chrome/ARCHITECTURE.md § Rich-Text Toolbar Guard`. The only difference is
+  adjudication: Chrome can also route a selector probe through CDP, which
+  Firefox has no equivalent for, so Firefox always scores through the content
+  script
 - **Loop detection** — `agent/loop-detector.js` is inherited by `Agent` and
   imported directly by the unit suite; it contains the three detectors
   (general repeat, coordinate click, navigation) with the same thresholds and

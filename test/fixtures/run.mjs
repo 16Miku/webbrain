@@ -19,6 +19,8 @@ import path from 'node:path';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
+import { registerRichTextToolbarFixtures } from './rich-text-toolbar.mjs';
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..', '..');
@@ -26,6 +28,18 @@ const accessibilityTreeJsPath = path.join(root, 'src', 'chrome', 'src', 'content
 const firefoxAccessibilityTreeJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'accessibility-tree.js');
 const contentJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'content.js');
 const firefoxContentJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'content.js');
+// content.js delegates the toolbar heuristic to this module, which the
+// manifests load immediately before it. Fixtures must mirror that order or
+// every candidate scores null.
+const toolbarHeuristicJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'rich-text-toolbar-heuristic.js');
+const firefoxToolbarHeuristicJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'rich-text-toolbar-heuristic.js');
+
+// cdp-client normally reads this file through chrome.runtime.getURL, which
+// does not exist here. Feed it the same source the content scripts get so the
+// main-world probe scores identically under test.
+CDPClient._heuristicSourceOverride = await readFile(toolbarHeuristicJsPath, 'utf-8');
+const redactionRegionsJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'redaction-regions.js');
+const firefoxRedactionRegionsJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'redaction-regions.js');
 const filePickerGuardPageJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'file-picker-guard-page.js');
 const firefoxFilePickerGuardPageJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'file-picker-guard-page.js');
 const selectionShortcutJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
@@ -60,6 +74,7 @@ async function setup(page, fixture) {
   await page.goto(fixtureUrl(fixture));
   const axSrc = await readFile(accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
+  await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   // Ensure handler is registered.
@@ -72,6 +87,7 @@ async function setupContentFixture(page, fixture, browserKind) {
   await page.goto(fixtureUrl(fixture));
   const axSrc = await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
+  await page.addScriptTag({ content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8') });
   const contentSrc = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
   await page.addScriptTag({ content: contentSrc });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -88,6 +104,10 @@ async function setupContentHtml(page, html, browserKind) {
   // Simulate manifest injection followed by extension-reload recovery.
   await page.addScriptTag({ content: pageGuardSrc });
   await page.addScriptTag({ content: firefox ? stubFirefoxBrowser : stubChrome });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8'),
+  });
+  await page.addScriptTag({ content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -114,9 +134,10 @@ async function setupIsolatedContentHtml(page, html, browserKind) {
   });
   const contextId = isolatedWorld.executionContextId;
   const contentSrc = await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8');
+  const heuristicSrc = await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8');
   const injected = await session.send('Runtime.evaluate', {
     contextId,
-    expression: `${firefox ? stubFirefoxBrowser : stubChrome}\n${contentSrc}`,
+    expression: `${firefox ? stubFirefoxBrowser : stubChrome}\n${heuristicSrc}\n${contentSrc}`,
     awaitPromise: true,
   });
   if (injected.exceptionDetails) {
@@ -168,6 +189,7 @@ async function setupIsolatedContentHtml(page, html, browserKind) {
 async function setupFirefoxHtml(page, html) {
   await page.setContent(html, { waitUntil: 'domcontentloaded' });
   await page.addScriptTag({ content: stubFirefoxBrowser });
+  await page.addScriptTag({ content: await readFile(firefoxToolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(firefoxContentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -176,6 +198,7 @@ async function setupFirefoxHtml(page, html) {
 async function setupChromeHtml(page, html) {
   await page.setContent(html, { waitUntil: 'domcontentloaded' });
   await page.addScriptTag({ content: stubChrome });
+  await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
   const src = await readFile(contentJsPath, 'utf-8');
   await page.addScriptTag({ content: src });
   await page.waitForFunction(() => typeof window.__wb_handler === 'function');
@@ -325,6 +348,116 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
+
+test('exact iframe rect handshake distinguishes same-URL sibling frames', async (page) => {
+  for (const [browserKind, sourcePath] of [
+    ['chrome', redactionRegionsJsPath],
+    ['firefox', firefoxRedactionRegionsJsPath],
+  ]) {
+    await page.setContent(`<!doctype html>
+      <style>
+        body { margin: 0; height: 1200px; }
+        #first { position: absolute; top: 180px; left: 100px; width: 300px; height: 180px; border: 0; }
+      </style>
+      <iframe id="first" srcdoc="<input>"></iframe>
+      <div id="shadow-host"></div>
+      <script>
+        (() => {
+          const root = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
+          root.innerHTML = '<iframe id="second" style="position:absolute;top:180px;left:600px;width:300px;height:180px;border:0" srcdoc="<input>"></iframe>';
+        })();
+      </script>`);
+    await page.waitForFunction(() => {
+      const first = document.getElementById('first');
+      const second = document.getElementById('shadow-host')?.shadowRoot?.getElementById('second');
+      return !!first?.contentWindow && !!second?.contentWindow;
+    });
+    await page.waitForTimeout(50);
+    await page.evaluate(() => window.scrollTo(0, 100));
+    const runtimeStub = browserKind === 'firefox' ? `
+      window.browser = window.browser || {};
+      window.browser.runtime = {
+        onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
+      };` : `
+      window.chrome = window.chrome || {};
+      window.chrome.runtime = {
+        onMessage: { addListener: fn => { window.__redaction_handler = fn; } }
+      };`;
+    const source = await readFile(sourcePath, 'utf-8');
+    for (const frame of page.frames()) {
+      await frame.addScriptTag({ content: runtimeStub });
+      await frame.addScriptTag({ content: source });
+    }
+    const childFrames = page.frames().filter(frame => frame !== page.mainFrame());
+    if (childFrames.length !== 2) throw new Error(`${browserKind}: expected two child frames, got ${childFrames.length}`);
+    const shadowChildFrame = (await Promise.all(childFrames.map(async frame => ({
+      frame,
+      id: await frame.evaluate(() => window.frameElement?.id || ''),
+    })))).find(entry => entry.id === 'second')?.frame;
+    if (!shadowChildFrame) throw new Error(`${browserKind}: shadow child frame was not reachable`);
+    const token = `fixture-${browserKind}-${Date.now()}`;
+    const parentWait = page.evaluate(probeToken => new Promise(resolve => {
+      const keepAlive = window.__redaction_handler({
+        target: 'redaction-content',
+        action: 'wait_for_exact_child_frame_rect',
+        params: { token: probeToken },
+      }, {}, resolve);
+      if (keepAlive !== true) resolve({ found: false, keepAlive });
+    }), token);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const announced = await shadowChildFrame.evaluate(probeToken => new Promise(resolve => {
+      window.__redaction_handler({
+        target: 'redaction-content',
+        action: 'announce_exact_child_frame',
+        params: { token: probeToken },
+      }, {}, resolve);
+    }), token);
+    const exact = await parentWait;
+    if (
+      announced?.announced !== true
+      || exact?.found !== true
+      || Math.round(exact.outerRect?.x) !== 600
+      || Math.round(exact.outerRect?.y) !== 80
+      || Math.round(exact.outerRect?.pageY) !== 180
+    ) {
+      throw new Error(`${browserKind}: expected exact shadow-frame geometry, got: ${JSON.stringify({ announced, exact })}`);
+    }
+  }
+});
+
+for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
+  test(`${label}: type_text verifies after controlled field reconciliation`, async (page) => {
+    await setupContentHtml(page, `<!doctype html>
+      <input id="controlled" value="requested content already">
+      <textarea id="accepted"></textarea>
+      <script>
+        const controlled = document.getElementById('controlled');
+        controlled.addEventListener('input', () => {
+          setTimeout(() => { controlled.value = 'requested content alreadY'; }, 0);
+        });
+      </script>`, browserKind);
+    const rejected = await call(page, 'type', {
+      selector: '#controlled',
+      text: 'requested content',
+      clear: false,
+    });
+    // Controlled reformatting is exactly the case that must not be reported as
+    // a failed action: the edit dispatched, the page rewrote the value, so the
+    // exact-match proof cannot pass. Unproven is signalled by omitting
+    // `verified`, never by setting it false.
+    if (rejected?.success !== true || 'verified' in (rejected || {})) {
+      throw new Error(`controlled normalization without the requested insertion must be unproven, not refuted: ${JSON.stringify(rejected)}`);
+    }
+    const accepted = await call(page, 'type', {
+      selector: '#accepted',
+      text: 'requested content',
+      clear: true,
+    });
+    if (accepted?.success !== true || accepted?.verified !== true) {
+      throw new Error(`persisted text must be verified: ${JSON.stringify(accepted)}`);
+    }
+  });
+}
 
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
@@ -1048,6 +1181,269 @@ test('CDP upload selector bridge resolves hidden and open-shadow file inputs', a
   }));
   if (attached.hidden !== 'package.json' || attached.shadow !== 'package.json') {
     throw new Error(`DOM.setFileInputFiles did not attach through resolved nodes: ${JSON.stringify(attached)}`);
+  }
+});
+
+test('CDP toolbar selector probe traverses shadow hosts for dense clusters', async (page) => {
+  await page.setContent(`<!doctype html>
+    <style>
+      #formatting-row { display:flex; align-items:center; gap:6px; width:420px; height:44px; }
+      #editor-body { width:420px; height:160px; }
+    </style>
+    <div id="formatting-row">
+      <button type="button">Bold</button>
+      <span id="family-host"></span>
+    </div>
+    <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>
+    <script>
+      document.querySelector('#family-host').attachShadow({ mode: 'open' }).innerHTML =
+        '<input id="shadow-family" aria-label="Font family" value="Default" style="width:118px;height:22px">';
+    </script>`);
+
+  // The selector probe runs in the page's main world. A hostile page must not
+  // be able to replace the packaged classifier with a permissive global.
+  await page.evaluate(() => {
+    Object.defineProperty(window, '__wbRichTextToolbarHeuristic', {
+      configurable: false,
+      writable: false,
+      value: Object.freeze({ candidate: () => null }),
+    });
+  });
+
+  const session = await page.context().newCDPSession(page);
+  const client = new CDPClient();
+  client.sendCommand = async (_tabId, method, params = {}) => session.send(method, params);
+  client.resolveSelector = async () => ({ found: true, nodeId: null, inViewport: true });
+
+  const probe = await client.probeRichTextToolbarSelector(42, '#shadow-family');
+  const candidate = probe?.fieldMeta?.toolbarCandidate;
+  if (
+    !probe?.resolved
+    || Number(candidate?.score) < 4
+    || !candidate?.reasons?.includes('dense_control_cluster')
+    || candidate?.associatedEditorIdentity?.id !== 'editor-body'
+  ) {
+    throw new Error(`shadow-host dense toolbar cluster was not audited by the CDP selector probe: ${JSON.stringify(probe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <style>
+      #color-row { display:flex; align-items:center; gap:6px; width:420px; height:44px; }
+      #editor-body { width:420px; height:160px; }
+    </style>
+    <div id="color-row">
+      <button type="button">Bold</button>
+      <input id="text-color" aria-label="Text color" value="#111111" style="width:118px;height:22px">
+    </div>
+    <div id="editor-body" role="textbox" contenteditable="true">Enter text</div>`);
+  const colorProbe = await client.probeRichTextToolbarSelector(42, '#text-color');
+  if (
+    !colorProbe?.resolved
+    || !colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+    || !colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('dense_control_cluster')
+    || colorProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || colorProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'editor-body'
+    || !colorProbe.toolbarContext
+    || colorProbe.toolbarRegionKey !== colorProbe.fieldMeta.toolbarCandidate.regionKey
+  ) {
+    throw new Error(`conventional text-color control was not audited by the CDP selector probe: ${JSON.stringify(colorProbe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <style>
+      #slotted-toolbar-editor { width:420px; margin-top:1400px; }
+      #slot-editor-component { display:block; width:420px; height:160px; }
+    </style>
+    <div id="slotted-toolbar-editor">
+      <span id="slot-toolbar-host">
+        <input id="slotted-family" type="text" aria-label="Font family" value="Default" style="width:118px;height:22px">
+        <input id="slotted-search" type="search" aria-label="Search links" value="" style="width:118px;height:22px">
+        <input id="slotted-unlabelled-search" type="search" value="" style="width:118px;height:22px">
+        <input id="slotted-filter" type="text" aria-label="Filter" value="" style="width:118px;height:22px">
+        <input id="slotted-link" type="url" aria-label="Link URL" value="https://example.test" style="width:118px;height:22px">
+        <select id="slotted-style" aria-label="Paragraph style" style="width:118px;height:24px">
+          <option>Body</option><option>Heading 1</option><option>Heading 2</option>
+        </select>
+        <div id="slotted-editable-family" contenteditable="true" role="combobox" aria-label="Font family"
+          style="width:118px;height:22px">Default</div>
+      </span>
+      <div id="slot-editor-component"></div>
+    </div>
+    <script>
+      document.querySelector('#slot-toolbar-host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div role="toolbar" style="height:44px;display:flex;align-items:center"><slot></slot></div>';
+      document.querySelector('#slot-editor-component').attachShadow({ mode: 'open' }).innerHTML =
+        '<div id="slot-editor-body" role="textbox" contenteditable="true" style="width:420px;height:160px">Enter text</div>';
+    </script>`);
+  await page.evaluate(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.documentElement.style.scrollBehavior = 'smooth';
+  });
+  const slottedProbe = await client.probeRichTextToolbarSelector(42, '#slotted-family');
+  const settledSlottedRect = await page.evaluate(() => {
+    const rect = document.querySelector('#slotted-family').getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    document.documentElement.style.scrollBehavior = 'auto';
+    return { y: rect.y, h: rect.height, viewportHeight };
+  });
+  if (
+    !slottedProbe?.resolved
+    || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || !slottedProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('labelled_toolbar_control')
+    || slottedProbe.fieldMeta.toolbarCandidate.associatedEditorIdentity?.id !== 'slot-editor-body'
+    || !slottedProbe.toolbarRegionKey
+    || slottedProbe.toolbarRegionKey !== slottedProbe.fieldMeta.toolbarCandidate.regionKey
+    || Math.abs(slottedProbe.rect.y - settledSlottedRect.y) > 2
+    || slottedProbe.rect.y < 0
+    || slottedProbe.rect.y + slottedProbe.rect.h > settledSlottedRect.viewportHeight
+  ) {
+    throw new Error(`labelled assigned-slot toolbar must settle before CDP audit: ${JSON.stringify({ slottedProbe, settledSlottedRect })}`);
+  }
+  const ordinarySearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-search');
+  if (!ordinarySearchProbe?.resolved || ordinarySearchProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary labelled toolbar search was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySearchProbe)}`);
+  }
+  const unlabelledSearchProbe = await client.probeRichTextToolbarSelector(42, '#slotted-unlabelled-search');
+  if (
+    !unlabelledSearchProbe?.resolved
+    || unlabelledSearchProbe.fieldMeta?.type !== 'search'
+    || unlabelledSearchProbe.fieldMeta?.toolbarCandidate
+    || unlabelledSearchProbe.toolbarRegionKey !== slottedProbe.toolbarRegionKey
+  ) {
+    throw new Error(`unlabelled native search must remain ordinary while preserving its toolbar region: ${JSON.stringify(unlabelledSearchProbe)}`);
+  }
+  const ordinaryFilterProbe = await client.probeRichTextToolbarSelector(42, '#slotted-filter');
+  if (!ordinaryFilterProbe?.resolved || ordinaryFilterProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary labelled toolbar text filter was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinaryFilterProbe)}`);
+  }
+  const linkProbe = await client.probeRichTextToolbarSelector(42, '#slotted-link');
+  if (
+    !linkProbe?.resolved
+    || linkProbe.fieldMeta?.type !== 'url'
+    || !linkProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+  ) {
+    throw new Error(`URL-typed rich-text link control was not audited by the CDP selector probe: ${JSON.stringify(linkProbe)}`);
+  }
+  const editableProbe = await client.probeRichTextToolbarSelector(42, '#slotted-editable-family');
+  if (
+    !editableProbe?.resolved
+    || editableProbe.fieldMeta?.contentEditable !== true
+    || !editableProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('formatting_control_label')
+  ) {
+    throw new Error(`contenteditable rich-text formatting control was not audited by the CDP selector probe: ${JSON.stringify(editableProbe)}`);
+  }
+  const nativeStyleProbe = await client.probeRichTextToolbarSelector(42, '#slotted-style');
+  if (
+    !nativeStyleProbe?.resolved
+    || nativeStyleProbe.fieldMeta?.type !== 'select'
+    || !nativeStyleProbe.fieldMeta?.toolbarCandidate?.reasons?.includes('semantic_toolbar')
+    || !nativeStyleProbe.fieldMeta.toolbarCandidate.availablePresetValues?.includes('Heading 1')
+  ) {
+    throw new Error(`native rich-text style select was not audited by the CDP selector probe: ${JSON.stringify(nativeStyleProbe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <label for="ordinary-status">Status</label>
+    <select id="ordinary-status"><option>Draft</option><option>Published</option></select>`);
+  const ordinarySelectProbe = await client.probeRichTextToolbarSelector(42, '#ordinary-status');
+  if (!ordinarySelectProbe?.resolved || ordinarySelectProbe.fieldMeta?.type !== 'select' || ordinarySelectProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`labelled ordinary select was audited as formatting by the CDP selector probe: ${JSON.stringify(ordinarySelectProbe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <div style="display:flex;align-items:center;gap:6px;width:320px;height:44px">
+      <div id="compact-composer" role="textbox" contenteditable="true"
+        style="width:190px;height:28px">Draft reply</div>
+      <button type="button">Emoji</button>
+      <button type="button">Send</button>
+    </div>`);
+  const compactComposerProbe = await client.probeRichTextToolbarSelector(42, '#compact-composer');
+  if (!compactComposerProbe?.resolved || compactComposerProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`compact contenteditable composer was audited as formatting by the CDP selector probe: ${JSON.stringify(compactComposerProbe)}`);
+  }
+
+  await page.setContent(`<!doctype html>
+    <div style="width:420px">
+      <div style="height:42px;display:flex;align-items:center;gap:6px">
+        <input id="ordinary-document-title" type="text" style="width:180px;height:28px">
+        <button type="button">Save</button>
+      </div>
+      <textarea style="width:400px;height:180px"></textarea>
+    </div>`);
+  const ordinaryTitleProbe = await client.probeRichTextToolbarSelector(42, '#ordinary-document-title');
+  if (!ordinaryTitleProbe?.resolved || ordinaryTitleProbe.fieldMeta?.toolbarCandidate) {
+    throw new Error(`ordinary compact title near an editor was audited by the CDP selector probe: ${JSON.stringify(ordinaryTitleProbe)}`);
+  }
+});
+
+test('CDP type_text binds dispatch to the selector node approved by toolbar preflight', async (page) => {
+  await page.setContent(`<!doctype html>
+    <input class="shared-target" value="ordinary" style="width:180px;height:32px">`);
+  const session = await page.context().newCDPSession(page);
+  const client = new CDPClient();
+  client.sendCommand = async (_tabId, method, params = {}) => session.send(method, params);
+
+  const staleProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  if (!staleProbe?.resolved || !staleProbe.selectorBackendNodeId) {
+    throw new Error(`CDP selector preflight did not expose an exact node identity: ${JSON.stringify(staleProbe)}`);
+  }
+  await page.evaluate(() => {
+    const previous = document.querySelector('.shared-target');
+    const replacement = previous.cloneNode();
+    replacement.value = '11';
+    previous.replaceWith(replacement);
+  });
+  const rejected = await client.typeText(
+    42,
+    '.shared-target',
+    'Document prose',
+    true,
+    staleProbe.selectorBackendNodeId,
+  );
+  const rejectedValue = await page.locator('.shared-target').inputValue();
+  if (rejected?.success !== false || rejected?.dispatched !== false || !rejected?.retryable || rejectedValue !== '11') {
+    throw new Error(`rerendered CDP selector target did not fail closed: ${JSON.stringify({ rejected, rejectedValue })}`);
+  }
+
+  const cloneProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  await page.evaluate(() => {
+    const observer = new MutationObserver(records => {
+      if (!records.some(record => record.attributeName === 'data-webbrain-dispatch-binding')) return;
+      observer.disconnect();
+      const previous = document.querySelector('.shared-target');
+      const replacement = previous.cloneNode();
+      replacement.value = '12';
+      previous.replaceWith(replacement);
+    });
+    observer.observe(document.querySelector('.shared-target'), {
+      attributes: true,
+      attributeFilter: ['data-webbrain-dispatch-binding'],
+    });
+  });
+  const cloneRejected = await client.typeText(
+    42,
+    '.shared-target',
+    'Document prose',
+    true,
+    cloneProbe.selectorBackendNodeId,
+  );
+  const cloneRejectedValue = await page.locator('.shared-target').inputValue();
+  if (cloneRejected?.success !== false || cloneRejected?.dispatched !== false || !cloneRejected?.retryable || cloneRejectedValue !== '12') {
+    throw new Error(`a replacement that copied the preflight attribute bypassed node identity: ${JSON.stringify({ cloneRejected, cloneRejectedValue })}`);
+  }
+
+  const stableProbe = await client.probeRichTextToolbarSelector(42, '.shared-target');
+  const accepted = await client.typeText(
+    42,
+    '.shared-target',
+    '14',
+    false,
+    stableProbe.selectorBackendNodeId,
+  );
+  const acceptedValue = await page.locator('.shared-target').inputValue();
+  const leakedMarkers = await page.locator('[data-webbrain-dispatch-binding]').count();
+  if (!accepted?.success || accepted?.verified !== true || acceptedValue !== '1214' || leakedMarkers !== 0) {
+    throw new Error(`stable CDP selector target did not type and clean up exactly: ${JSON.stringify({ accepted, acceptedValue, leakedMarkers })}`);
   }
 });
 
@@ -2942,8 +3338,18 @@ test('Firefox: type_text rejects disabled indexed text input fallback', async (p
   if (value !== 'Locked') throw new Error(`expected disabled value to remain unchanged, got: ${value}`);
 });
 
-// ─── main ─────────────────────────────────────────────────────────────────
-// Social media downloader focus safety
+
+registerRichTextToolbarFixtures({
+  test,
+  setupContentHtml,
+  setupContentFixture,
+  call,
+  Agent,
+  FirefoxAgent,
+  cdpClient,
+  root,
+});
+
 test('SMD: Instagram auto mode downloads the open dialog image, not the feed', async (page) => {
   await setupSmd(page, 'https://www.instagram.com/natgeo/', `<!doctype html>
     <style>

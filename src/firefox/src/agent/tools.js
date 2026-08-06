@@ -1,3 +1,5 @@
+import { closeToolDefinitions } from './tool-arguments.js';
+
 /**
  * Tool definitions for the WebBrain agent.
  * These are sent to the LLM in OpenAI function-calling format.
@@ -659,11 +661,11 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_type',
-      description: 'Type text into an input/textarea inside an iframe — INCLUDING cross-origin iframes.',
+      description: 'Type text into an input/textarea inside an iframe — INCLUDING cross-origin iframes. If a rich-text editor recovery is pending and several frames match the selector, this fails and names the candidate frames; pass a urlFilter selecting exactly one of them.',
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on.' },
+          urlFilter: { type: 'string', description: 'Optional substring to filter which iframe to act on. Required to disambiguate when several frames match and a rich-text editor recovery is pending.' },
           selector: { type: 'string', description: 'CSS selector for the input element inside the iframe.' },
           text: { type: 'string', description: 'Text to type into the field.' },
           clear: { type: 'boolean', description: 'Whether to clear the field before typing.' },
@@ -682,7 +684,7 @@ export const AGENT_TOOLS = [
         properties: {
           url: { type: 'string', description: 'URL to fetch' },
           method: { type: 'string', description: 'HTTP method (default GET)' },
-          headers: { type: 'object', description: 'Optional request headers' },
+          headers: { type: 'object', description: 'Optional request headers as a string-valued map.', additionalProperties: { type: 'string' } },
           body: { type: 'string', description: 'Optional request body' },
           replayRequestId: { type: 'string', description: 'Optional opaque id from a bulk API mutation hint. Reuses captured same-origin XHR/fetch body and safe headers without exposing hidden form tokens.' },
           offset: { type: 'number', description: 'Character offset for text/JSON pagination. Default 0; continue with the returned nextOffset.' },
@@ -1163,15 +1165,15 @@ export function getToolsForMode(mode, opts = {}) {
     base = [...base, ...extras];
   }
   const useDoneJson = normalizedMode === 'act' && tier === 'full' && opts.cloudRun === true && !!opts.outputSchema;
-  if (useDoneJson) return base.map(tool => (tool.function.name === 'done' ? DONE_JSON_TOOL : tool));
+  if (useDoneJson) return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? DONE_JSON_TOOL : tool)));
   const useOutcomeDone = normalizedMode !== 'ask';
-  if (!opts.strictSecretMode && !useOutcomeDone) return base;
+  if (!opts.strictSecretMode && !useOutcomeDone) return closeToolDefinitions(base);
   const replacement = opts.strictSecretMode
     ? (useOutcomeDone
       ? (tier === 'compact' ? DONE_TOOL_COMPACT_STRICT_WITH_OUTCOME : DONE_TOOL_STRICT_WITH_OUTCOME)
       : DONE_TOOL_STRICT)
     : (tier === 'compact' ? DONE_TOOL_COMPACT_WITH_OUTCOME : DONE_TOOL_WITH_OUTCOME);
-  return base.map(t => (t.function.name === 'done' ? replacement : t));
+  return closeToolDefinitions(base.map(t => (t.function.name === 'done' ? replacement : t)));
 }
 
 const SENSITIVE_PAGE_DATA_GUIDANCE = `SENSITIVE PAGE DATA:
@@ -1180,7 +1182,9 @@ const SENSITIVE_PAGE_DATA_GUIDANCE = `SENSITIVE PAGE DATA:
 
 const PLAN_TO_EXECUTION_GUIDANCE = `PLAN TO EXECUTION:
 - In Act/Dev, an approved or pinned plan is context for doing the task, not a completed user outcome. When the user authorized action, do not end by returning the plan, planner JSON, action-policy metadata, or a promise to act; call the first permitted tool and continue until done, an explicit blocker, cancellation, or required user input.
+- The trusted runtime mode is authoritative. Never claim that the run is in Ask mode or tell the user to switch to Act when the runtime prompt says Act/Dev.
 - Do not call done with the plan, planner JSON, action-policy metadata, or a promise to act as its summary. Call a permitted non-done tool first; use clarify or stop only for a real blocker or required user input.
+- If a required form value is unavailable, leave that field untouched and call clarify. Never focus, clear, or write an empty value merely because the value is unknown.
 - Respect user boundaries: if the user asked only for a plan, or said to wait for approval or confirmation, return the plan or wait and do not execute.
 - Structured output can be legitimate user-requested data. Honor requested JSON or markdown formats; never treat an answer as leaked planner metadata merely because it looks like a plan or policy.`;
 

@@ -1,4 +1,5 @@
 import { normalizeRuntimeTraceConfig } from './runtime-config.js';
+import { formatErrorMessage } from '../error-format.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -248,7 +249,7 @@ export async function recordScreenshot(runId, step, dataUrl, caption = '') {
 }
 
 export function recordError(runId, step, phase, message) {
-  return _appendEvent(runId, 'error', { step, phase, message });
+  return _appendEvent(runId, 'error', { step, phase, message: formatErrorMessage(message) });
 }
 
 /**

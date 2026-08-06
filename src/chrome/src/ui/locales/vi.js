@@ -255,6 +255,8 @@ export default {
   'sp.copy': "Sao chép",
   'sp.copied': "Đã sao chép!",
   'sp.copy.code.title': "Sao chép mã",
+  'sp.copy.message.title': "Sao chép tin nhắn",
+  'sp.persistence.unavailable': "Không thể lưu dữ liệu khôi phục. Tác vụ đang chạy có thể tiếp tục, nhưng các hành động sẽ không được phát lại sau khi mất kết nối. Hãy thử lại theo cách thủ công.",
   'sp.retry': "Thử lại",
   'sp.retry.busy': "Đợi quá trình chạy hiện tại kết thúc trước khi thử lại.",
   'sp.retry.attachments_unavailable': "Tệp đính kèm từ lần thử không thành công không còn tồn tại nữa; chỉ thử lại văn bản.",

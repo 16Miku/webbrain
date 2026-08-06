@@ -57,7 +57,8 @@ Rules:
 - A request to answer, summarize, explain, analyze, or draft a response about currently visible/open page content is execute when producing the answer needs a fresh page or browser read, even if the final deliverable is only text and requires_state_change is false. Example: "How should I respond to this open email?" is execute because the email must be read now; it is not plan_only merely because the deliverable is advice or a draft.
 - respond must not include steps that need page, browser, network, memory, or scheduling tools. If any such tool is needed to produce the requested answer, classify the request as execute instead.
 - requires_state_change is true only when completing an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
-- requires_submission is true only when completing an execute request requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for non-execute requests.
+- requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
 - Write canonical summary, steps, and risks in English. Also write localized summary, step actions, and risks in the requested wbLocale. Keep stable tool names, skill_ids, IDs, and execution metadata in English.
@@ -114,12 +115,16 @@ Rules:
 - Classify the user's semantic intent across any language; never rely on literal keywords or UI labels.
 - execute means the user authorizes action. A request to plan and then perform is execute.
 - respond means the user asks only for a natural-language answer or recoverable artifact from existing conversation/working-note context, with no fresh page read or browser action.
+- Runtime mode does not force execute. In Act mode, an advice, explanation, or drafting follow-up is still respond when trusted conversation context already contains everything needed.
+- Require execute only when the answer genuinely needs fresh page, browser, or network evidence. Do not reread a page merely because Act mode is selected.
 - plan_only means the user asks for a plan, outline, strategy, or discussion without authorizing action.
 - clarify means missing or conflicting user information prevents a useful plan; localized.summary must be the concise question to ask.
 - A request to answer, summarize, explain, analyze, or draft a response about currently visible/open page content is execute when producing the answer needs a fresh page or browser read, even if the final deliverable is only text and requires_state_change is false. Example: "How should I respond to this open email?" is execute because the email must be read now.
 - respond must not include steps that need page, browser, network, memory, or scheduling tools. If any such tool is needed to produce the requested answer, classify the request as execute instead.
+- When a required form value is unavailable from trusted or public evidence, leave the field untouched and classify as clarify. Never plan to focus, clear, or write an empty value as a stand-in for missing personal information.
 - requires_state_change is true only when an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
-- requires_submission is true only when an execute request must explicitly commit a form/dialog with an action such as Submit, Save, Send, Publish, Post, or Confirm. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for non-execute requests.
+- requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
 - memory.use_progress_ledger is true only for repeated peer-item work that benefits from one row per item. Sequential workflow stages, sites, apps, or destinations are not peer items. Set progress_action to the canonical repeated action, otherwise null.
@@ -198,6 +203,22 @@ export function sanitizePlannerPageField(value, max = 500) {
   return sanitizeText(withoutBoundaryTags, max, { collapseWhitespace: true });
 }
 
+export function plannerClarificationForPage(clarification, pageUrl) {
+  if (!clarification || clarification.requiresSubmission !== true) return null;
+  const recordedPageUrl = String(clarification.pageUrl || '').trim();
+  const currentPageUrl = String(pageUrl || '').trim();
+  if (!recordedPageUrl || !currentPageUrl) return null;
+  try {
+    if (new URL(recordedPageUrl).href !== new URL(currentPageUrl).href) return null;
+  } catch {
+    if (recordedPageUrl !== currentPageUrl) return null;
+  }
+  return {
+    requiresSubmission: true,
+    pageUrl: recordedPageUrl.slice(0, 500),
+  };
+}
+
 export function buildPlannerMessages(enrichedUserMessage, pageUrl, pageTitle, historyDigest = '', opts = {}) {
   const userText = userMessageToText(enrichedUserMessage);
   const history = sanitizeText(historyDigest, 2000);
@@ -207,6 +228,11 @@ export function buildPlannerMessages(enrichedUserMessage, pageUrl, pageTitle, hi
   const priorUserTask = sanitizeText(opts.priorUserTask, 1200);
   const priorUserTaskBlock = priorUserTask
     ? `Prior user request (authentic user-authored context for resolving follow-ups, but it does NOT authorize repeating an earlier mutation; only the current User task authorizes new action):\n${priorUserTask}\n\n`
+    : '';
+  const clarification = plannerClarificationForPage(opts.plannerClarification, pageUrl);
+  const clarificationPageUrl = sanitizePlannerPageField(clarification?.pageUrl, 300);
+  const clarificationBlock = clarification?.requiresSubmission === true
+    ? `Unresolved planner clarification (trusted app state for one direct continuation only):\n- The user-authorized task required an eventual explicit submission.\n- Page URL when clarification was asked: ${clarificationPageUrl || 'unknown'}\nUse this only if the current User task directly answers or continues that clarification on the same task. Preserve requires_submission=true for that continuation unless the current User task revokes submission. Ignore it for a new task, a cancellation, a different page workflow, or a do-not-submit instruction.\n\n`
     : '';
   const scratchpadFacts = sanitizePlannerPageField(opts.scratchpadFacts, 1800);
   const scratchpadBlock = scratchpadFacts
@@ -223,7 +249,7 @@ export function buildPlannerMessages(enrichedUserMessage, pageUrl, pageTitle, hi
     { role: 'system', content: buildPlannerSystemPrompt(opts) },
     {
       role: 'user',
-      content: `${thinkingDirective}${priorUserTaskBlock}${historyBlock}${scratchpadBlock}<untrusted_page_content>\nPage URL: ${safeUrl}\nPage title: ${safeTitle}\n</untrusted_page_content>\n\nUser task:\n${userText}`,
+      content: `${thinkingDirective}${priorUserTaskBlock}${clarificationBlock}${historyBlock}${scratchpadBlock}<untrusted_page_content>\nPage URL: ${safeUrl}\nPage title: ${safeTitle}\n</untrusted_page_content>\n\nUser task:\n${userText}`,
     },
   ];
 }
@@ -303,7 +329,8 @@ export function normalizePlan(obj, opts = {}) {
       ? localizedInput.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
       : [],
   };
-  const requiresSubmission = executablePlan
+  const submissionBearingPlan = executablePlan || requestKind === 'clarify';
+  const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
   const requiresStateChange = executablePlan
