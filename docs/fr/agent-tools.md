@@ -57,6 +57,7 @@ uniquement · **Dev** = module Dev (fournisseurs Mid/Full ; pas Compact).
 | `navigate` | Non | Oui | Oui | Oui | - |
 | `wait_for_element` | Non | Oui | Oui | Oui | - |
 | `new_tab` | Non | Oui | Oui | Oui | - |
+| `promote_iframe` | Non | Non | Oui | Oui | - |
 | `scratchpad_write` | Non | Oui | Oui | Oui | - |
 | `progress_update` | Non | Oui | Oui | Oui | - |
 | `progress_read` | Non | Oui | Oui | Oui | - |
@@ -88,6 +89,12 @@ uniquement · **Dev** = module Dev (fournisseurs Mid/Full ; pas Compact).
 | `inspect_network_requests` | Non | Non | Non | Non | C |
 | `inspect_event_listeners` | Non | Non | Non | Non | C |
 | `highlight_element` | Non | Non | Non | Non | C |
+
+`promote_iframe` est un outil Act normal des niveaux Mid/Full, et non un
+module réservé au mode Dev. Les sessions Dev avec un fournisseur Mid ou Full
+l'héritent du niveau Act sélectionné. Voir le
+[ciblage des iframes](accessibility-tree-and-refs.md#ciblage-des-iframes) pour le
+flux de travail en page autonome et les contrôles de sécurité.
 
 > **Note Shadow DOM :** L'arbre d'accessibilité ne traverse que le light DOM.
 > Sur les pages riches en Web Components (Stripe, Salesforce, Shopify), utilisez

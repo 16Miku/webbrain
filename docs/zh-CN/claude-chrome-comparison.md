@@ -48,8 +48,8 @@ Claude 代码树部分经过打包/压缩。以下工具名称是根据 `toAnthr
 
 当前本地源代码中的静态核心工具：
 
-- Chrome：57 个核心工具。
-- Firefox：48 个核心工具。
+- Chrome：62 个核心工具。
+- Firefox：53 个核心工具。
 - Chrome 独有核心工具：`shadow_dom_query`，以及可逆/诊断 Dev 工具 `inject_css`、`remove_injected_css`、`patch_element`、`revert_patch`、`read_console`、`inspect_network_requests`、`inspect_event_listeners` 和 `highlight_element`。
 - `execute_js` 为两者共有：Chrome Dev 使用 CDP 求值，Firefox Dev 使用 MV2 内容脚本求值器。
 - 动态技能工具可以在运行时添加更多模式，不计入上述数量。
@@ -59,22 +59,24 @@ Claude 代码树部分经过打包/压缩。以下工具名称是根据 `toAnthr
 ```text
 get_accessibility_tree, read_page, read_pdf,
 get_window_info, get_interactive_elements, scroll, extract_data,
-get_selection, done, wait_for_stable,
+get_selection, find_text, done, wait_for_stable,
 fetch_url, research_url, list_downloads
 ```
 
 Chrome 静态核心工具列表（所有模式与层级的并集）：
 
 ```text
-get_accessibility_tree, click_ax, type_ax, set_field, hover, drag_drop,
+get_accessibility_tree, click_ax, type_ax, set_field, set_checked, hover, drag_drop,
 read_page, read_pdf, read_page_source, get_window_info, resize_window,
 get_interactive_elements, click, type_text, press_keys, scroll, navigate,
 go_back, go_forward, extract_data, inspect_element_styles, wait_for_element,
 inject_css, remove_injected_css, patch_element, revert_patch, execute_js,
 read_console, inspect_network_requests, inspect_event_listeners,
-highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, new_tab,
+highlight_element, wait_for_stable, schedule_resume, schedule_task, get_selection, find_text, new_tab,
+promote_iframe,
 done, clarify, get_shadow_dom, shadow_dom_query, get_frames, iframe_read,
 iframe_click, iframe_type, fetch_url, research_url, list_downloads,
+list_webmcp_tools, execute_webmcp_tool,
 read_downloaded_file, download_resource_from_page, download_files,
 upload_file, scratchpad_write, progress_update, progress_read,
 verify_form, download_social_media, solve_captcha
@@ -86,12 +88,13 @@ Firefox 不包含 Chrome 独有的 Dev 工具和 `shadow_dom_query`；其余核�
 
 | 族 | 工具 |
 |---|---|
-| AX 优先的 DOM 控制 | `get_accessibility_tree`、`click_ax`、`type_ax`、`set_field`、`hover`、`drag_drop` |
+| AX 优先的 DOM 控制 | `get_accessibility_tree`、`click_ax`、`type_ax`、`set_field`、`set_checked`、`hover`、`drag_drop` |
 | 传统的 DOM 回退 | `get_interactive_elements`、`click`、`type_text`、`press_keys`、`scroll`、`wait_for_element`、`wait_for_stable` |
-| 导航和标签页 | `navigate`、`go_back`、`go_forward`、`new_tab` |
-| 读取/提取 | `read_page`、`read_pdf`、`read_page_source`、`extract_data`、`inspect_element_styles`、`get_selection` |
+| 导航和标签页 | `navigate`、`go_back`、`go_forward`、`new_tab`、`promote_iframe` |
+| 读取/提取 | `read_page`、`read_pdf`、`read_page_source`、`extract_data`、`inspect_element_styles`、`get_selection`、`find_text` |
 | Dev 编辑与诊断 | `inject_css`、`remove_injected_css`、`patch_element`、`revert_patch`、`execute_js`、`read_console`、`inspect_network_requests`、`inspect_event_listeners`、`highlight_element` |
-| Shadow DOM 和框架 | `get_shadow_dom`、`shadow_dom_query`（Chrome）、`get_frames`、`iframe_read`、`iframe_click`、`iframe_type` |
+| Shadow DOM 和框架 | `get_shadow_dom`、`shadow_dom_query`（Chrome）、`get_frames`、`iframe_read`、`iframe_click`、`iframe_type`、`promote_iframe` |
+| WebMCP（实验性） | 在兼容的 Chrome 构建中启用后提供 `list_webmcp_tools`、`execute_webmcp_tool` |
 | 网络和文件 | `fetch_url`、`research_url`、`list_downloads`、`read_downloaded_file`、`download_resource_from_page`、`download_files`、`upload_file` |
 | 长时间运行的工作 | `schedule_resume`、`schedule_task`、`scratchpad_write`、`progress_update`、`progress_read` |
 | 安全/工作流 | `verify_form`、`clarify`、`done`、`solve_captcha` |
@@ -179,7 +182,7 @@ W               等待页面稳定
 | PDF 阅读 | `read_pdf` 直接提取 PDF 文本。 | 未找到等效功能。 |
 | 原始源代码读取 | `read_page_source` 公开服务器返回的 HTML 和资源 URL。 | 未找到等效功能。 |
 | 网络请求 | `fetch_url` / `research_url`，带有 WebBrain 特定的 API 变更规则和用于可变方法的 `/allow-api`。 | 未恢复通用请求工具。通过 `read_network_requests` 存在调试网络日志。 |
-| 控制台/网络检查 | WebBrain 核心工具列表中没有专用的控制台日志读取器。存在用于 API 观察的网络快捷方式，但没有面向模型的请求日志读取器。 | 专用的 `read_console_messages` 和 `read_network_requests`。 |
+| 控制台/网络检查 | Chrome Dev 提供 `read_console`、`inspect_network_requests` 和 `inspect_event_listeners`；Firefox 不提供这些 Chrome 独有诊断工具。 | 专用的 `read_console_messages` 和 `read_network_requests`。 |
 | 下载 | 多个浏览器下载/文件工具加上动态下载作业技能工具。 | `downloads` 权限存在，`gif_creator` 可以下载导出内容，但未找到通用的下载管理器等效功能。 |
 | 媒体下载 | 首选 `download_public_media` 技能；浏览器回退 `download_social_media`。 | 未找到公共媒体下载等效功能。 |
 | 文件上传 | 两个浏览器都有 `upload_file`。Chrome 支持 `downloadId` 与绝对 `filePath`；Firefox 支持 `downloadId` 重新拉取以及侧栏用户文件选择器（无 CDP，因此不能设置任意本地路径）。 | `file_upload` 直接在文件输入上设置本地绝对路径；`upload_image` 通过引用或坐标上传捕获/用户图像。 |
@@ -187,7 +190,7 @@ W               等待页面稳定
 | 验证码 | 配置 CapSolver 后的 `solve_captcha`。 | 明确的安全提示要求尊重验证码，绝不绕过；未恢复求解工具。 |
 | 持久代理记忆 | `scratchpad_write`、`progress_update`、`progress_read`。 | 存在对话压缩；未恢复等效的草稿板/进度工具。 |
 | 表单安全 | 重要表单使用 `verify_form`。 | `form_input` 可以设置值；未恢复专用的表单验证工具。 |
-| Iframe | 专用的 `get_frames`、`iframe_read`、`iframe_click`、`iframe_type`。 | 未恢复专用的 iframe 工具；操作可能通过坐标/JS 在允许的地方进行。 |
+| Iframe | 专用的 `get_frames`、`iframe_read`、`iframe_click`、`iframe_type`，以及 `promote_iframe`；后者可把已发现的子框架在当前标签页中作为独立页面打开，并执行歧义与未保存草稿检查。 | 未恢复专用的 iframe 工具；操作可能通过坐标/JS 在允许的地方进行。 |
 | 快捷方式/工作流 | 自定义技能是 Markdown 加可选的工具清单。 | `shortcuts_list` / `shortcuts_execute` 公开保存的快捷方式/工作流。 |
 | GIF/视频工作流 | WebBrain Chrome 中存在斜杠驱动的录制，但不是以模型可调用的工具形式。 | `gif_creator` 是模型可调用的，可以录制/导出浏览器自动化会话为 GIF。 |
 

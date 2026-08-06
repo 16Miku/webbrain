@@ -39563,6 +39563,62 @@ test('provider docs describe cache-aware cost semantics and configuration', () =
   assert.match(docs[0], /final cumulative usage snapshot/);
 });
 
+test('promote_iframe documentation is mirrored across public languages', () => {
+  const mirrors = [
+    {
+      label: 'English',
+      root: 'docs',
+      availabilityRow: '| `promote_iframe` | No | No | Yes | Yes | - |',
+      historyPattern: /Back history[\s\S]*go_back/,
+      counts: [/Chrome: 62 core tools\./, /Firefox: 53 core tools\./],
+    },
+    {
+      label: 'French',
+      root: 'docs/fr',
+      availabilityRow: '| `promote_iframe` | Non | Non | Oui | Oui | - |',
+      historyPattern: /historique Retour[\s\S]*go_back/,
+      counts: [/Chrome : 62 outils de base\./, /Firefox : 53 outils de base\./],
+    },
+    {
+      label: 'Chinese',
+      root: 'docs/zh-CN',
+      availabilityRow: '| `promote_iframe` | 否 | 否 | 是 | 是 | - |',
+      historyPattern: /后退历史[\s\S]*go_back/,
+      counts: [/Chrome：62 个核心工具。/, /Firefox：53 个核心工具。/],
+    },
+  ];
+
+  for (const mirror of mirrors) {
+    const tools = fs.readFileSync(path.join(ROOT, mirror.root, 'agent-tools.md'), 'utf8');
+    const accessibility = fs.readFileSync(path.join(ROOT, mirror.root, 'accessibility-tree-and-refs.md'), 'utf8');
+    const comparison = fs.readFileSync(path.join(ROOT, mirror.root, 'claude-chrome-comparison.md'), 'utf8');
+
+    assert.ok(tools.includes(mirror.availabilityRow), `${mirror.label}: availability row is missing or incorrect`);
+    assert.match(tools, /promote_iframe[\s\S]*(?:Mid\/Full|Mid or Full|Mid 或 Full)[\s\S]*Dev/, `${mirror.label}: Act-to-Dev inheritance guidance is missing`);
+
+    const promoteSectionStart = accessibility.indexOf('promote_iframe');
+    const workflowStart = accessibility.indexOf('1.', promoteSectionStart);
+    const workflowEnd = accessibility.indexOf('\n---', workflowStart);
+    assert.ok(promoteSectionStart >= 0 && workflowStart > promoteSectionStart && workflowEnd > workflowStart, `${mirror.label}: iframe workflow section is missing`);
+    const workflow = accessibility.slice(workflowStart, workflowEnd);
+    assert.match(
+      workflow,
+      /1\.[\s\S]*iframe_read[\s\S]*get_frames[\s\S]*2\.[\s\S]*promote_iframe[\s\S]*urlFilter[\s\S]*3\.[\s\S]*matchIndex[\s\S]*4\./,
+      `${mirror.label}: discover, promote, disambiguate, and re-read workflow is incomplete`,
+    );
+    assert.match(accessibility, mirror.historyPattern, `${mirror.label}: same-tab Back-history behavior is missing`);
+    assert.match(accessibility, /force: true/, `${mirror.label}: explicit draft-discard override is missing`);
+    assert.match(accessibility, /promote_iframe[\s\S]*navigate/, `${mirror.label}: navigate distinction is missing`);
+
+    for (const countPattern of mirror.counts) assert.match(comparison, countPattern);
+    for (const omittedTool of ['set_checked', 'find_text', 'list_webmcp_tools', 'execute_webmcp_tool']) {
+      assert.match(comparison, new RegExp(`\\b${omittedTool}\\b`), `${mirror.label}: ${omittedTool} is missing from the reconciled inventory`);
+    }
+    const promoteMentions = comparison.match(/promote_iframe/g) || [];
+    assert.ok(promoteMentions.length >= 4, `${mirror.label}: promote_iframe must appear in inventory, navigation/frame families, and iframe comparison`);
+  }
+});
+
 console.log('\nsheets-tools: A1 parsing');
 
 test('parseA1: single cell A1', () => {

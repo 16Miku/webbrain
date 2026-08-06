@@ -56,6 +56,7 @@ WebBrain 将**模型层级**与**对话模式**分开。
 | `navigate` | 否 | 是 | 是 | 是 | - |
 | `wait_for_element` | 否 | 是 | 是 | 是 | - |
 | `new_tab` | 否 | 是 | 是 | 是 | - |
+| `promote_iframe` | 否 | 否 | 是 | 是 | - |
 | `scratchpad_write` | 否 | 是 | 是 | 是 | - |
 | `progress_update` | 否 | 是 | 是 | 是 | - |
 | `progress_read` | 否 | 是 | 是 | 是 | - |
@@ -87,6 +88,10 @@ WebBrain 将**模型层级**与**对话模式**分开。
 | `inspect_network_requests` | 否 | 否 | 否 | 否 | C |
 | `inspect_event_listeners` | 否 | 否 | 否 | 否 | C |
 | `highlight_element` | 否 | 否 | 否 | 否 | C |
+
+`promote_iframe` 是 Mid/Full 层级的常规 Act 工具，不是 Dev 专属附加工具。
+使用 Mid 或 Full 提供商的 Dev 会话会从所选 Act 层级继承它。独立页面工作流和
+安全检查请参阅 [iframe 定位](accessibility-tree-and-refs.md#iframe-定位)。
 
 > **Shadow DOM 注意：** 可访问性树仅遍历 light DOM。在大量使用 Web 组件的页面
 > （Stripe、Salesforce、Shopify）上，请先使用 `get_interactive_elements`；在
