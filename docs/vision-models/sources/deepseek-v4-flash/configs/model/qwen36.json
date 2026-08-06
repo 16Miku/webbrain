@@ -1,0 +1,30 @@
+{
+  "name": "deepseek-v4-flash-qwen36-pilot",
+  "seed": 20260802,
+  "tower": {
+    "kind": "qwen36",
+    "model_id": "Qwen/Qwen3.6-27B",
+    "revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9",
+    "weight_prefix": "model.visual.",
+    "hidden_size": 1152,
+    "merge_size": 2,
+    "component_path": "artifacts/towers/qwen3.6-27b-vision.safetensors"
+  },
+  "projector": {
+    "vision_hidden_size": 1152,
+    "text_hidden_size": 4096,
+    "merge_size": 2,
+    "layer_norm_eps": 0.00001
+  },
+  "text": {
+    "model_id": "artifacts/models/deepseek-v4-flash-bf16",
+    "revision": "dequantized-from-ae01d80c06cdfe30581edfd0e1c5449dc7ed7f17",
+    "hidden_size": 4096,
+    "vocab_size": 129280
+  },
+  "routing": {
+    "policy": "palette_cycle",
+    "palette_path": "configs/routing/deepseek-v4-flash-60d8d707-palette64.json",
+    "palette_size": 64
+  }
+}

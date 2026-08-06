@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Copier',
   'sp.copied': 'Copié !',
   'sp.copy.code.title': 'Copier le code',
+  'sp.copy.message.title': 'Copier le message',
+  'sp.persistence.unavailable': 'Les données de récupération ne peuvent pas être enregistrées. La tâche en cours peut continuer, mais aucune action ne sera rejouée après une déconnexion. Réessayez manuellement.',
 
   'sp.error_prefix': 'Erreur : {msg}',
   'sp.subscribe.allowance_used': 'Quota quotidien gratuit de WebBrain Cloud épuisé.',

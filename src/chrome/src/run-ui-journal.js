@@ -1,6 +1,8 @@
 export const RUN_UI_EVENT_LIMIT = 256;
 export const RUN_UI_TEXT_DELTA_PERSIST_DELAY_MS = 200;
 export const RUN_UI_STREAM_TEXT_LIMIT = 100000;
+export const RUN_UI_PERSIST_BUDGET = 512 * 1024;
+export const RUN_UI_PERSIST_RETRY_BUDGET = 128 * 1024;
 
 /**
  * Highest sequence number that was genuinely evicted from the bounded replay
@@ -60,6 +62,35 @@ export function compactRunUiData(type, data) {
     return { ...data, content: String(data.content || '').slice(0, 30000) };
   }
   return data;
+}
+
+export function compactRunUiSnapshotForPersist(snapshot, options = {}) {
+  const tight = options.tight === true;
+  const budget = tight ? RUN_UI_PERSIST_RETRY_BUDGET : RUN_UI_PERSIST_BUDGET;
+  const clone = typeof structuredClone === 'function'
+    ? structuredClone(snapshot || {})
+    : JSON.parse(JSON.stringify(snapshot || {}));
+  clone.finalContent = String(clone.finalContent || '').slice(0, tight ? 8000 : 30000);
+  clone.streamedText = String(clone.streamedText || '').slice(0, tight ? 30000 : RUN_UI_STREAM_TEXT_LIMIT);
+  const eventCap = tight ? 64 : RUN_UI_EVENT_LIMIT;
+  clone.events = (Array.isArray(clone.events) ? clone.events : []).slice(-eventCap).map(event => {
+    const data = compactRunUiData(event?.type, event?.data);
+    if (tight && data && typeof data === 'object' && typeof data.content === 'string') {
+      data.content = data.content.slice(0, 4000);
+    }
+    return { ...event, data };
+  });
+  const removedBoundary = Number((Array.isArray(snapshot?.events) ? snapshot.events : []).at(-(clone.events.length + 1))?.seq || 0);
+  if (removedBoundary > 0) {
+    clone.discardedBeforeSeq = Math.max(runUiDiscardedBeforeSeq(clone), removedBoundary);
+    clone.truncatedBeforeSeq = clone.discardedBeforeSeq;
+  }
+  while (clone.events.length && JSON.stringify(clone).length > budget) {
+    const removed = clone.events.shift();
+    clone.discardedBeforeSeq = Math.max(runUiDiscardedBeforeSeq(clone), Number(removed?.seq || 0));
+    clone.truncatedBeforeSeq = clone.discardedBeforeSeq;
+  }
+  return clone;
 }
 
 export class RunUiPersistenceScheduler {

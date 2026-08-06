@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Rich text toolbar target fixture</title>
+<style>
+  body { margin: 24px; font: 16px sans-serif; }
+  .editor { width: 620px; border: 1px solid #aaa; }
+  .toolbar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #ccc; }
+  .family { width: 132px; height: 24px; display: flex; align-items: center; padding: 0 6px; border: 1px solid #bbb; }
+  .family-input { width: 118px; height: 22px; padding: 0 6px; }
+  .size { width: 34px; height: 22px; padding: 0 3px; }
+  .style-select { width: 112px; height: 24px; }
+  .body { min-height: 130px; padding: 12px; outline: none; }
+  .ordinary { display: block; width: 180px; height: 32px; margin-top: 24px; }
+</style>
+
+<div class="editor">
+  <div class="toolbar" role="toolbar">
+    <div id="font-family" class="family" tabindex="0"><span>Inter Display</span></div>
+    <input id="font-family-input" class="family-input" type="text" value="Default" list="font-family-presets">
+    <div id="editable-font-family" class="family-input" contenteditable="true" role="combobox"
+      aria-label="Font family" aria-controls="font-family-presets">Default</div>
+    <datalist id="font-family-presets">
+      <option value="Inter Display"></option>
+      <option value="Arial"></option>
+      <option value="Times New Roman"></option>
+    </datalist>
+    <div><input id="font-size" class="size" type="text" name="fontSize" value="11"></div>
+    <span id="toolbar-quantity-label">Quantity</span>
+    <input id="labelled-by-size" class="size" type="text" value="11" aria-labelledby="toolbar-quantity-label">
+    <input id="title-size" class="size" type="text" value="11" title="Zoom level">
+    <input id="link-url" class="family-input" type="url" value="https://example.test" aria-label="Link URL">
+    <select id="paragraph-style" class="style-select" aria-label="Paragraph style">
+      <option>Body</option>
+      <option>Heading 1</option>
+      <option>Heading 2</option>
+    </select>
+    <button id="bold" type="button">B</button>
+    <button id="link" type="button">Link</button>
+  </div>
+  <div id="editor-body" class="body" contenteditable="true">Enter text</div>
+</div>
+
+<label for="ordinary-size">Quantity</label>
+<input id="ordinary-size" class="ordinary" type="text" value="11">
+<label for="ordinary-status">Status</label>
+<select id="ordinary-status" class="ordinary">
+  <option>Draft</option>
+  <option>Published</option>
+</select>
+<textarea id="secondary-notes" class="ordinary">Unrelated notes</textarea>

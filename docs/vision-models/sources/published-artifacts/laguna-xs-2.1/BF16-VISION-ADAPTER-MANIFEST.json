@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "package_kind": "vision_language_checkpoint_assets",
+  "text_backbone": {
+    "model_id": "poolside/Laguna-XS-2.1",
+    "revision": "e9df9a59996d790b94b70f3fef343fe1d9e34bdf",
+    "variant": "BF16",
+    "packaged_in_repo": true
+  },
+  "vision_tower": {
+    "filename": "vision_tower.safetensors",
+    "source_model": "moonshotai/Kimi-K2.6",
+    "source_revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb",
+    "source_prefix": "vision_tower.",
+    "tensor_count": 329,
+    "dtypes": ["BF16"],
+    "parameter_count": 416866032,
+    "size_bytes": 833765768,
+    "sha256": "befe801bd7dfe8bf5630fef56a7f53c2235065599ca9eea4d995040e2e6fd183"
+  },
+  "projector": {
+    "filename": "mm_projector.safetensors",
+    "training_step": 782,
+    "training_examples": 100000,
+    "training_epochs": 1,
+    "training_world_size": 4,
+    "tensor_count": 6,
+    "dtypes": ["BF16"],
+    "parameter_count": 30679808,
+    "size_bytes": 61360104,
+    "sha256": "7837384f18be69a4f875ca44a8ed69ec186501d70896daf4b305fa77547974de"
+  },
+  "serving": {
+    "multimodal_integration_packaged": false,
+    "end_to_end_validated": false
+  }
+}

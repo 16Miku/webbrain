@@ -1,0 +1,12 @@
+{
+  "seed": 20260802,
+  "target_examples": 100000,
+  "sources": [
+    {"name": "general_vqa", "path": "../../data/normalized/general_vqa.jsonl", "quota": 25000},
+    {"name": "caption_grounding", "path": "../../data/normalized/caption_grounding.jsonl", "quota": 20000},
+    {"name": "ocr_docs", "path": "../../data/normalized/ocr_docs.jsonl", "quota": 20000},
+    {"name": "charts_diagrams", "path": "../../data/normalized/charts_diagrams.jsonl", "quota": 15000},
+    {"name": "science_spatial", "path": "../../data/normalized/science_spatial.jsonl", "quota": 10000},
+    {"name": "ui_screenshots", "path": "../../data/normalized/ui_screenshots.jsonl", "quota": 10000}
+  ]
+}

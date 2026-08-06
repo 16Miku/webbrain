@@ -35,6 +35,8 @@ This doc covers the shared architecture and calls out where the builds diverge.
 │         ├─ adapters.js— per-site guidance            │
 │         ├─ permission-gate.js — capability grants     │
 │         ├─ credential-fields.js — secret detection   │
+│         ├─ rich-text-toolbar-guard.js — obligations  │
+│         ├─ rich-text-toolbar-probe.js — page probes  │
 │         ├─ captcha-solver.js — CapSolver integration │
 │         ├─ user-memory.js — local preference memory  │
 │         ├─ loop-bucket.js — URL-family loop bucketing│
@@ -121,6 +123,14 @@ Injected into every page (`<all_urls>`). Two files loaded sequentially:
 
 1. **`accessibility-tree.js`** — exposes `window.__generateAccessibilityTree()` (DOM walker that produces the flat indented text tree), `window.__wb_ax_lookup()` (ref_id → Element resolver), and `window.__wbElementMap` (WeakRef-backed registry). Ships before `content.js` so the AX handlers are ready.
 2. **`content.js`** — DOM reader, interactive-element discovery, click/type/press_keys/scroll implementations, and iframe/frame support. Handlers for all content-script-dispatched tools.
+
+### Rich-text toolbar safety boundary
+
+Text-entry attempts that resolve to formatting controls are blocked before dispatch. `rich-text-toolbar-guard.js` owns the single per-tab obligation ledger, including normalization, deduplication, navigation demotion, `recoveryObligations[]` persistence, completion blocking, and pure recovery matching. The Chrome and Firefox guard modules are byte-identical.
+
+`rich-text-toolbar-probe.js` is the browser adapter: it gathers DOM/CDP evidence, resolves frames, and maps iframe geometry without owning recovery state. A successful probe returns a neutral `dispatchBinding`; click, keyboard, focused/selector typing, and iframe dispatch consume that binding so execution cannot silently retarget after preflight. If recovery is pending, a required binding failure is closed before dispatch. With no pending obligation, the legacy all-frame `iframe_type` fallback remains available.
+
+Recovery requires a positively verified edit with the original text and clear/append semantics in the associated editor scope. Failed or merely unverified edits leave the obligation in the ledger and continue to block a successful completion.
 
 ---
 

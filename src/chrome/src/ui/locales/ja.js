@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'コピー',
   'sp.copied': 'コピーしました！',
   'sp.copy.code.title': 'コードをコピー',
+  'sp.copy.message.title': 'メッセージをコピー',
+  'sp.persistence.unavailable': '復旧データを保存できません。実行中のタスクは続行できますが、接続が切れた後に操作を再実行することはありません。手動で再試行してください。',
 
   'sp.error_prefix': 'エラー: {msg}',
   'sp.subscribe.allowance_used': 'WebBrain Cloud の無料の1日あたりの利用枠を使い切りました。',

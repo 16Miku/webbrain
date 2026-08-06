@@ -1,0 +1,19 @@
+{
+  "elapsed_seconds": 44432.623383931816,
+  "epochs": 1,
+  "examples": 100000,
+  "examples_per_hour": 4161.266788196531,
+  "final_step_loss": 0.7318046561413212,
+  "first_step_loss": 0.8451752126360361,
+  "load_seconds": 8.480479083955288,
+  "minimum_step_loss": 0.6835096142294574,
+  "model_id": "poolside/Laguna-XS-2.1",
+  "model_revision": "e9df9a59996d790b94b70f3fef343fe1d9e34bdf",
+  "optimizer_steps": 782,
+  "peak_allocated_gib": 65.62627792358398,
+  "peak_reserved_gib": 67.5078125,
+  "projected_100k_hours": 24.031143661264608,
+  "projector_parameters": 30679808,
+  "unique_examples": 100000,
+  "world_size": 4
+}

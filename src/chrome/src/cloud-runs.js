@@ -534,6 +534,7 @@ export function createCloudRunController({
               tabId, replay.prompt, publishUpdate, 'act', [], {
                 cloudRun: true,
                 independentRun: true,
+                preserveRichTextToolbarAudit: true,
               },
             ));
           } else if (replay.status === 'stopped') {

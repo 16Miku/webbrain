@@ -1,0 +1,10 @@
+model-path: webbrain-one/DeepSeek-V4-Flash-Vision-NVFP4
+host: 127.0.0.1
+port: 30000
+tensor-parallel-size: 5
+trust-remote-code: true
+enable-multimodal: true
+limit-mm-data-per-request:
+  image: 1
+disable-cuda-graph: true
+skip-server-warmup: true

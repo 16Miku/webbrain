@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Salin',
   'sp.copied': 'Disalin!',
   'sp.copy.code.title': 'Salin kod',
+  'sp.copy.message.title': 'Salin mesej',
+  'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas langsung boleh diteruskan, tetapi tindakan tidak akan dimainkan semula selepas sambungan terputus. Cuba lagi secara manual.',
 
   'sp.error_prefix': 'Ralat: {msg}',
   'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Cloud telah digunakan.',

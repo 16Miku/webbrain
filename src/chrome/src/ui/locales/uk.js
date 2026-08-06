@@ -153,6 +153,8 @@ export default {
   'sp.copy': 'Копіювати',
   'sp.copied': 'Скопійовано!',
   'sp.copy.code.title': 'Копіювати код',
+  'sp.copy.message.title': 'Копіювати повідомлення',
+  'sp.persistence.unavailable': 'Не вдалося зберегти дані відновлення. Поточне завдання може продовжитися, але після розриву з’єднання дії не повторюватимуться. Спробуйте знову вручну.',
 
   'sp.error_prefix': 'Помилка: {msg}',
   'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Cloud вичерпано.',

@@ -23,6 +23,7 @@ import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
+import { formatErrorMessage } from '../error-format.js';
 import { escapeHtml } from './utils.js';
 import {
   isBackgroundConnectionError,
@@ -5485,7 +5486,7 @@ function scheduleActiveChatPayloadCleanup(tabId, state) {
 }
 
 function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', options = {}) {
-  const message = data?.message || data?.error || 'unknown error';
+  const message = formatErrorMessage(data?.message ?? data?.error ?? data);
   // Allowance routing depends on terminal durable-turn proof. Live error
   // updates arrive before that proof, so the run_complete/direct response
   // path owns the single actionable card.
@@ -7687,6 +7688,8 @@ function handleAgentUpdateMessage(msg) {
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
+      } else if (data?.code === 'persistence_degraded') {
+        showComposerToast(t('sp.persistence.unavailable'), { duration: 10000 });
       }
       break;
 
@@ -8080,6 +8083,7 @@ function lockClarifyCardFromAuto(data) {
       : (typeof t === 'function' ? t('sp.clarify.auto_selected') : 'Auto-selected (timed out):');
     answered.textContent = `${prefix} ${answer}`;
     card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();
     return;
   }
@@ -8433,6 +8437,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     }
     answered.textContent = `${prefix} ${answer}`;
     card.appendChild(answered);
+    placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();
   }
 
@@ -8487,26 +8492,75 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
 // COMPACT MODE (default) — shows tool steps as a tidy activity log
 // ==========================================================================
 
+function placeAnsweredClarifyCardInTimeline(card) {
+  const content = card?.closest('.message-content');
+  if (!content || card.parentElement !== content) return;
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return;
+
+  // Clarify prompts are appended after the text element so the blocking card
+  // is always the live edge while it awaits input. Once answered, move the
+  // card immediately before that text cursor. Verbose tool calls already
+  // insert at the cursor; compact mode creates a fresh steps segment there,
+  // keeping resumed activity and the final answer after the Q&A in time order.
+  content.insertBefore(card, textEl);
+}
+
 function getOrCreateStepsContainer() {
   if (!currentAssistantEl) return null;
   const content = currentAssistantEl.querySelector('.message-content');
-  let container = content.querySelector('.steps-container');
+  const textEl = [...content.children]
+    .find(child => child.classList.contains('message-text')) || null;
+  if (!textEl) return null;
+
+  // Each answered clarification is a timeline boundary. Reusing a compact
+  // steps container from before that boundary would place resumed events above
+  // the Q&A, so only reuse a segment between the latest answered card and the
+  // final-text cursor.
+  const latestAnsweredCard = [...content.children]
+    .reverse()
+    .find(child => child.matches('.clarify-card.clarify-answered')) || null;
+  let candidate = latestAnsweredCard
+    ? latestAnsweredCard.nextElementSibling
+    : content.firstElementChild;
+  let container = null;
+  while (candidate && candidate !== textEl) {
+    if (candidate.classList.contains('steps-container')) {
+      container = candidate;
+      break;
+    }
+    candidate = candidate.nextElementSibling;
+  }
   if (!container) {
     container = document.createElement('div');
     container.className = 'steps-container';
-    // Insert before the text element
-    const textEl = content.querySelector('.message-text');
     content.insertBefore(container, textEl);
   }
   return container;
+}
+
+function findLastActiveCompactStep(toolName = '') {
+  if (!currentAssistantEl) return null;
+  const activeSteps = [...currentAssistantEl.querySelectorAll('.steps-container .step-item.active')];
+  if (toolName) {
+    const matchingStep = activeSteps
+      .slice()
+      .reverse()
+      .find(step => step.dataset.tool === toolName);
+    return matchingStep || null;
+  }
+  return activeSteps.at(-1) || null;
 }
 
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
 
-  // Mark previous active step as done if still spinning
-  const prev = container.querySelector('.step-item.active');
+  // A previous call may live before an answered clarification boundary while
+  // this call belongs to the new segment after it. Never leave the old spinner
+  // active merely because the timeline now has more than one steps container.
+  const prev = findLastActiveCompactStep();
   if (prev) {
     prev.classList.remove('active');
     prev.classList.add('done');
@@ -8551,10 +8605,10 @@ function appendCompactStep(toolName, args) {
 }
 
 function markLastStepDone(toolName, result) {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-
-  const active = container.querySelector('.step-item.active');
+  // A blocking clarify/confirmation tool emits its result only after its card
+  // is answered. Settle that original pre-card step; do not create or search a
+  // post-card container until a later tool_call actually starts there.
+  const active = findLastActiveCompactStep(toolName);
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
@@ -8577,9 +8631,7 @@ function markLastStepDone(toolName, result) {
 }
 
 function markLastStepFailed() {
-  const container = getOrCreateStepsContainer();
-  if (!container) return;
-  const active = container.querySelector('.step-item.active');
+  const active = findLastActiveCompactStep();
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
@@ -8761,9 +8813,25 @@ function clearTransientAssistantTextForToolCall() {
 function appendVerboseToolCall(name, args) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
+  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
+    tool.dataset.awaitingResult = 'false';
+  });
+
+  if (name === 'done') {
+    const priorRejected = content.querySelector('.tool-call[data-tool-name="done"][data-rejected-completion="true"]');
+    if (priorRejected) {
+      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
+      priorRejected.querySelector('.tool-result')?.remove();
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      priorRejected.dataset.awaitingResult = 'true';
+      return;
+    }
+  }
 
   const el = document.createElement('div');
   el.className = 'tool-call';
+  el.dataset.toolName = name || '';
+  el.dataset.awaitingResult = 'true';
 
   const header = document.createElement('div');
   header.className = 'tool-call-header';
@@ -8786,12 +8854,16 @@ function appendVerboseToolCall(name, args) {
 function appendVerboseToolResult(name, result) {
   if (!currentAssistantEl) return;
   const content = currentAssistantEl.querySelector('.message-content');
-  const lastTool = content.querySelector('.tool-call:last-of-type');
+  const lastTool = content.querySelector('.tool-call[data-awaiting-result="true"]');
   if (lastTool) {
     const resultEl = document.createElement('div');
     resultEl.className = 'tool-result';
     resultEl.textContent = truncate(JSON.stringify(result), 200);
     lastTool.appendChild(resultEl);
+    if (name === 'done') {
+      lastTool.dataset.rejectedCompletion = result?.blockedDone === true ? 'true' : 'false';
+    }
+    lastTool.dataset.awaitingResult = 'false';
   }
 }
 
@@ -9767,12 +9839,18 @@ function addMessageCopyButton(msgEl) {
   if (!msgEl) return;
   const content = msgEl.querySelector('.message-content');
   if (!content) return;
+  const existing = content.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
   const btn = document.createElement('button');
   btn.className = 'msg-copy-btn';
   btn.textContent = t('sp.copy');
-  btn.title = t('sp.copy.code.title');
+  btn.title = t('sp.copy.message.title');
   bindMessageCopyButton(btn);
   content.appendChild(btn);
+  return btn;
 }
 
 function addScratchpadCopyButton(msgEl) {
@@ -9780,12 +9858,18 @@ function addScratchpadCopyButton(msgEl) {
   const content = msgEl.querySelector('.message-content');
   const pre = content?.querySelector('pre.scratchpad-dump');
   if (!content || !pre) return;
+  const existing = content.querySelector('.scratchpad-copy-btn');
+  if (existing) {
+    bindMessageCopyButton(existing);
+    return existing;
+  }
   const btn = document.createElement('button');
   btn.className = 'msg-copy-btn scratchpad-copy-btn';
   btn.textContent = t('sp.copy');
   btn.title = t('sp.copy.code.title');
   bindMessageCopyButton(btn);
   content.appendChild(btn);
+  return btn;
 }
 
 function getMessageCopyText(btn) {
