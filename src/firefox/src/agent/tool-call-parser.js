@@ -88,11 +88,59 @@ function standsAloneOnLine(text, start, end) {
 }
 
 /**
+ * Parse a batch only when the entire trimmed response is a JSON array. Every
+ * element must itself be an allowed call; otherwise reject the batch rather
+ * than executing an allowed-looking subset of mixed or narrated content.
+ *
+ * `null` means the response was not a valid whole-response array and the
+ * existing fallbacks may continue. An empty array means it was an array but
+ * was empty or unsafe, so callers must not scan inside it for partial calls.
+ */
+function parseWholeResponseJsonArray(text, allowedNames) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  if (!parsed.every(obj => (
+    obj
+    && typeof obj === 'object'
+    && !Array.isArray(obj)
+    && typeof obj.name === 'string'
+    && allowedNames.has(obj.name)
+  ))) return [];
+  return parsed;
+}
+
+function toFallbackToolCalls(objects) {
+  return objects.map((obj, index) => ({
+    id: `fallback_call_${Date.now()}_${index}`,
+    type: 'function',
+    function: {
+      name: obj.name,
+      arguments: typeof obj.arguments === 'string'
+        ? obj.arguments
+        : JSON.stringify(obj.arguments || obj.parameters || {}),
+    },
+  }));
+}
+
+/**
  * Parse common text tool-call formats into OpenAI-style tool call objects.
  * Only names in allowedNames are accepted.
  */
 export function parseToolCallsFromText(text, allowedNames) {
   if (!text || text.length > 10000) return [];
+
+  const wholeResponseArray = parseWholeResponseJsonArray(text, allowedNames);
+  if (wholeResponseArray !== null) {
+    return toFallbackToolCalls(wholeResponseArray);
+  }
 
   const results = [];
   const parseXmlParamValue = (value) => {
@@ -193,14 +241,5 @@ export function parseToolCallsFromText(text, allowedNames) {
     }
   }
 
-  return results.map((obj, index) => ({
-    id: `fallback_call_${Date.now()}_${index}`,
-    type: 'function',
-    function: {
-      name: obj.name,
-      arguments: typeof obj.arguments === 'string'
-        ? obj.arguments
-        : JSON.stringify(obj.arguments || obj.parameters || {}),
-    },
-  }));
+  return toFallbackToolCalls(results);
 }
