@@ -111,10 +111,13 @@ export class WebBrainCloudClient {
     );
   }
 
-  async listScheduledJobs(sessionId) {
+  async listScheduledJobs(sessionId, jobIds) {
+    const ids = [...new Set((jobIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('At least one scheduled job id is required.');
+    const query = ids.map(id => `job_id=${encodeURIComponent(id)}`).join('&');
     return await this.request(
       'GET',
-      `/api/browser-sessions/${encodeURIComponent(sessionId)}/scheduled-jobs`,
+      `/api/browser-sessions/${encodeURIComponent(sessionId)}/scheduled-jobs?${query}`,
     );
   }
 
@@ -124,7 +127,7 @@ export class WebBrainCloudClient {
     const deadline = Date.now() + timeoutMs;
     let latest = { jobs: [] };
     while (Date.now() < deadline) {
-      const response = await this.listScheduledJobs(sessionId);
+      const response = await this.listScheduledJobs(sessionId, ids);
       const byId = new Map((response.jobs || []).map(job => [String(job.id), job]));
       latest = { jobs: ids.map(id => byId.get(id)).filter(Boolean) };
       if (
