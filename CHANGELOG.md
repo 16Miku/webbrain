@@ -4,6 +4,18 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [26.2.0] - 2026-08-06
+
+### Changed
+- Repaired minor release workflow ordering to ensure consistent build/publish sequencing.
+- Rebuilt distribution zips for Chrome/Edge/Firefox to match the corrected release workflow.
+
+### Fixed
+- Fixed minor release workflow ordering issues that could lead to out-of-order release artifacts.
+
+### Tests
+- Updated `test/run.js` to align with the corrected minor release workflow behavior.
+
 ## [26.1.0] - 2026-08-05
 
 ### Added
