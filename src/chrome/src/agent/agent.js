@@ -21691,7 +21691,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
       return await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
@@ -22006,7 +22006,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
       cloudRun: !!cloudRunContext,
-      outputSchema: cloudRunContext?.outputSchema || null,
+      outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     // The selected text is already present in the trusted run envelope.
@@ -22177,7 +22177,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
         cloudRun: !!cloudRunContext,
-        outputSchema: cloudRunContext?.outputSchema || null,
+        outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       if (selectionOnly) tools = [];
@@ -22459,7 +22459,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
-      if (mode === 'ask' && runOptions?.cloudRun === true && cloudRunContext?.outputSchema) {
+      if (mode === 'ask' && runOptions?.cloudRun === true && cloudRunContext?.outputSchema != null) {
         if (!structuredOutputRecoveryAttempted) {
           structuredOutputRecoveryAttempted = true;
           messages.push(this._withResponseItems(
@@ -22617,7 +22617,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
       return await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
@@ -22794,7 +22794,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
       cloudRun: !!cloudRunContext,
-      outputSchema: cloudRunContext?.outputSchema || null,
+      outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
@@ -22839,7 +22839,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
         cloudRun: !!cloudRunContext,
-        outputSchema: cloudRunContext?.outputSchema || null,
+        outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       if (selectionOnly) tools = [];

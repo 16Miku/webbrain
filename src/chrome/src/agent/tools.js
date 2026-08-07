@@ -1495,7 +1495,7 @@ export function getToolsForMode(mode, opts = {}) {
   const useDoneJson = ['ask', 'act'].includes(normalizedMode)
     && tier === 'full'
     && opts.cloudRun === true
-    && !!opts.outputSchema;
+    && opts.outputSchema != null;
   if (useDoneJson) {
     const structuredDone = doneJsonTool(opts.outputSchema, {
       strictSecretMode: opts.strictSecretMode === true,

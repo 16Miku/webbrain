@@ -335,7 +335,7 @@ export function validateCloudOutput(value, schema) {
   return { ok: errors.length === 0, errors };
 }
 export function handleDoneJson(context, args = {}) {
-  if (!context?.outputSchema) {
+  if (!context || context.outputSchema == null) {
     return {
       success: false,
       error: 'done_json is only available during a cloud run with an output schema.',

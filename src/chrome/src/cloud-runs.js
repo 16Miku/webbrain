@@ -45,6 +45,12 @@ const CLOUD_STRICT_SECRET_VALUE_LIMIT = 256;
 // with boundary-aware replacement below.
 const CLOUD_STRICT_SECRET_MIN_LENGTH = 4;
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
+const SENSITIVE_URL_COMPONENT_KEY = /(?:^|[-_.\s])(?:auth(?:orization)?|api[-_.\s]?key|key|token|secret|signature|sig|code|credential|password|passcode|otp)(?:$|[-_.\s])/i;
+const SENSITIVE_URL_PATH_LABELS = new Set([
+  'auth', 'authorization', 'apikey', 'key', 'token', 'accesstoken', 'refreshtoken',
+  'secret', 'signature', 'sig', 'code', 'authcode', 'verificationcode',
+  'credential', 'password', 'passcode', 'otp', 'downloadkey', 'sharetoken',
+]);
 
 function cloudRunError(message, status) {
   return Object.assign(new Error(message), { status });
@@ -79,6 +85,10 @@ function isSensitiveCloudKey(key) {
   const normalizedKey = normalizedCloudKey(key);
   if (!normalizedKey) return false;
   return SENSITIVE_CLOUD_KEY.test(normalizedKey) || SENSITIVE_CLOUD_KEY_EXACT.has(normalizedKey);
+}
+
+function hasCloudOutputSchema(value) {
+  return value !== null && value !== undefined;
 }
 
 function scrubCloudValue(value) {
@@ -283,10 +293,22 @@ function collectSensitiveStrings(value, into, depth = 0, sensitiveParent = false
   }
 }
 
-// A capability credential may be carried by any non-origin URL component,
-// including an otherwise unremarkable first path segment. Strict traces never
-// publish those components, and remembering their literal forms also prevents
-// the model from repeating them later in clarification or terminal prose.
+function isSensitiveUrlComponentKey(value) {
+  const text = String(value || '');
+  return isSensitiveCloudKey(text)
+    || SENSITIVE_URL_COMPONENT_KEY.test(text)
+    || /(?:Key|Code|Signature|Token|Secret|Password)$/.test(text);
+}
+
+function isSensitiveUrlPathLabel(value) {
+  return SENSITIVE_URL_PATH_LABELS.has(normalizedCloudKey(value).toLowerCase());
+}
+
+// URL paths and queries are withheld wholesale from strict trace evidence, but
+// the value registry must be narrower: registering `/profile` or `?tab=activity`
+// as a secret corrupts legitimate caller-visible results. Remember userinfo,
+// values under credential-like query keys, and path/hash components that either
+// carry credential vocabulary themselves or follow an explicit credential label.
 function collectUrlSecretStrings(value, into) {
   let url;
   try {
@@ -305,24 +327,47 @@ function collectUrlSecretStrings(value, into) {
       add(decodeURIComponent(String(candidate || '')));
     } catch {}
   };
-  add(url.href);
   addEncoded(url.username);
   addEncoded(url.password);
-  addEncoded(url.pathname);
-  for (const segment of url.pathname.split('/').filter(Boolean)) addEncoded(segment);
-  add(url.search);
-  for (const [key, item] of url.searchParams) {
-    add(key);
-    add(item);
+  let followsSensitivePathLabel = false;
+  for (const segment of url.pathname.split('/').filter(Boolean)) {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch {}
+    const isLabel = isSensitiveUrlPathLabel(decoded);
+    if (followsSensitivePathLabel || (!isLabel && isSensitiveUrlComponentKey(decoded))) {
+      addEncoded(segment);
+    }
+    followsSensitivePathLabel = isLabel;
   }
-  addEncoded(url.hash.replace(/^#/, ''));
+  for (const [key, item] of url.searchParams) {
+    if (isSensitiveUrlComponentKey(key)) addEncoded(item);
+  }
+  const hash = url.hash.replace(/^#/, '');
+  if (hash) {
+    let decodedHash = hash;
+    try { decodedHash = decodeURIComponent(hash); } catch {}
+    let foundSensitiveHashParam = false;
+    if (decodedHash.includes('=')) {
+      const hashParams = new URLSearchParams(decodedHash.replace(/^\?/, ''));
+      for (const [key, item] of hashParams) {
+        if (!isSensitiveUrlComponentKey(key)) continue;
+        foundSensitiveHashParam = true;
+        addEncoded(item);
+      }
+    }
+    if (!foundSensitiveHashParam
+        && !isSensitiveUrlPathLabel(decodedHash)
+        && isSensitiveUrlComponentKey(decodedHash)) {
+      addEncoded(hash);
+    }
+  }
 }
 
 // URL credentials are not unique to fetch_url: navigate, new_tab, read tools,
 // downloads, custom skills, and tool results can all carry URL-shaped fields.
 // Walk only fields whose normalized name ends in url/urls, but follow arrays
-// and nested containers below such a field so every concrete http(s) value is
-// registered before later clarification or terminal prose is published.
+// and nested containers below such a field so credential-like components in
+// every concrete http(s) value are registered before later prose is published.
 function collectUrlSecretsFromNamedFields(value, into, depth = 0, urlBearing = false) {
   if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
   if (typeof value === 'string') {
@@ -337,6 +382,39 @@ function collectUrlSecretsFromNamedFields(value, into, depth = 0, urlBearing = f
   for (const [key, item] of Object.entries(value)) {
     const normalizedKey = normalizedCloudKey(key).toLowerCase();
     collectUrlSecretsFromNamedFields(
+      item,
+      into,
+      depth + 1,
+      urlBearing || /urls?$/.test(normalizedKey),
+    );
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
+// Full URLs are trace-only sensitive in strict mode even when their individual
+// path/query components are ordinary public data. Keep this registry separate
+// from credential values so a repeated URL is removed from prose updates while
+// a schema-valid result such as `{ section: 'profile' }` stays intact.
+function collectUrlTraceStringsFromNamedFields(value, into, depth = 0, urlBearing = false) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (!urlBearing) return;
+    try {
+      const url = new URL(value);
+      if (!['http:', 'https:'].includes(url.protocol)) return;
+      into.push(value);
+      if (url.href !== value) into.push(url.href);
+    } catch {}
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrlTraceStringsFromNamedFields(item, into, depth + 1, urlBearing);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = normalizedCloudKey(key).toLowerCase();
+    collectUrlTraceStringsFromNamedFields(
       item,
       into,
       depth + 1,
@@ -480,7 +558,7 @@ function serializedBytes(value) {
 
 function compactCloudRunForPersistence(run) {
   const row = scrubCloudValue(run);
-  row.structured = row.structured ?? !!run?.outputSchema;
+  row.structured = row.structured ?? hasCloudOutputSchema(run?.outputSchema);
   if (serializedBytes(row) <= CLOUD_RUN_PERSIST_BYTES_LIMIT) return row;
 
   const omittedUpdates = Array.isArray(row.updates) ? row.updates.length : 0;
@@ -508,7 +586,7 @@ function compactCloudRunForPersistence(run) {
     captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
     task: run?.task,
-    structured: !!run?.outputSchema || run?.structured === true,
+    structured: hasCloudOutputSchema(run?.outputSchema) || run?.structured === true,
     pendingInput: run?.pendingInput || null,
     summary: run?.summary,
     content: '',
@@ -576,7 +654,7 @@ function cloudSnapshot(run, { includeUpdates = true } = {}) {
     mode: run.mode || 'act',
     tabId: run.tabId,
     task: run.task,
-    structured: run.structured ?? !!run.outputSchema,
+    structured: run.structured ?? hasCloudOutputSchema(run.outputSchema),
     pendingInput: run.pendingInput || null,
     ...(run.captchaDiagnostics ? { captchaDiagnostics: run.captchaDiagnostics } : {}),
     result: run.result,
@@ -723,7 +801,29 @@ export function createCloudRunController({
   // Kept out of the run object so a literal secret can never reach session
   // storage or a persistence row. Dropped when the run leaves the map.
   const strictSecretValues = new Map();
+  const strictTraceValues = new Map();
   const strictSecretOverflowRuns = new Set();
+  const strictTraceOverflowRuns = new Set();
+
+  function rememberStrictCandidates(run, candidates, registry, overflowRuns) {
+    if (!candidates.length) return;
+    const known = registry.get(run.runId) || [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const shortNumericSecret = /^\d{1,3}$/.test(candidate);
+      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH && !shortNumericSecret) continue;
+      if (candidate.length > WORKFLOW_PARAMETER_VALUE_LIMIT) continue;
+      if (known.includes(candidate)) continue;
+      if (known.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) {
+        // Never evict an earlier credential or trace-only URL and silently
+        // expose it later. Losing free-text utility is preferable to leakage.
+        overflowRuns.add(run.runId);
+        break;
+      }
+      known.push(candidate);
+    }
+    if (known.length) registry.set(run.runId, known);
+  }
 
   // Whatever a strict run types into a page is a value the caller must never
   // read back, wherever it later resurfaces — a clarification question, a
@@ -732,10 +832,12 @@ export function createCloudRunController({
   function rememberStrictSecrets(run, type, data) {
     const name = String(data?.name || data?.tool || '');
     const candidates = [];
+    const traceCandidates = [];
     if (type === 'tool_call') {
       const args = data?.args && typeof data.args === 'object' ? data.args : {};
       if (CLOUD_TEXT_ENTRY_TOOLS.has(name)) candidates.push(args.text, args.value);
       collectUrlSecretsFromNamedFields(args, candidates);
+      collectUrlTraceStringsFromNamedFields(args, traceCandidates);
       // A credential does not have to be typed into a page to exist. The
       // disposable-signup scenario mints its account password inside the JSON
       // body of `POST /accounts` and never types it, so registering only
@@ -757,28 +859,11 @@ export function createCloudRunController({
       // unanswerable, or entropy guessing at prose.
       collectSensitiveStrings(data?.result, candidates);
       collectUrlSecretsFromNamedFields(data?.result, candidates);
+      collectUrlTraceStringsFromNamedFields(data?.result, traceCandidates);
       if (name === 'verify_form') collectCredentialFieldValues(data?.result, candidates);
     }
-    if (!candidates.length) return;
-    const known = strictSecretValues.get(run.runId) || [];
-    for (const candidate of candidates) {
-      if (typeof candidate !== 'string') continue;
-      const shortNumericSecret = /^\d{1,3}$/.test(candidate);
-      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH && !shortNumericSecret) continue;
-      if (candidate.length > WORKFLOW_PARAMETER_VALUE_LIMIT) continue;
-      if (known.includes(candidate)) continue;
-      if (known.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) {
-        // Never evict an earlier credential and silently expose it later. This
-        // is extremely rare, so losing free-text utility is preferable to
-        // publishing an unknown secret after the bounded registry fills.
-        strictSecretOverflowRuns.add(run.runId);
-        break;
-      }
-      known.push(candidate);
-    }
-    if (known.length) {
-      strictSecretValues.set(run.runId, known);
-    }
+    rememberStrictCandidates(run, candidates, strictSecretValues, strictSecretOverflowRuns);
+    rememberStrictCandidates(run, traceCandidates, strictTraceValues, strictTraceOverflowRuns);
   }
 
   function redactStrictSecretValues(run, value, strictSecretMode) {
@@ -789,11 +874,21 @@ export function createCloudRunController({
     return redactWorkflowRuntimeValues(value, known, '[redacted strict value]');
   }
 
-  // run.content / run.result / run.finalUrl / run.error reach the caller by the
-  // same two routes as an update row, so they cannot rely on the update-path
-  // redaction having run.
+  function redactStrictTraceValues(run, value, strictSecretMode) {
+    const withoutSecrets = redactStrictSecretValues(run, value, strictSecretMode);
+    if (!strictSecretMode || strictSecretOverflowRuns.has(run.runId)) return withoutSecrets;
+    if (strictTraceOverflowRuns.has(run.runId)) return redactStrictStructuredValues(withoutSecrets);
+    const known = strictTraceValues.get(run.runId);
+    if (!known?.length) return withoutSecrets;
+    return redactWorkflowRuntimeValues(withoutSecrets, known, '[redacted strict URL]');
+  }
+
+  // Terminal prose reaches the caller by the same two routes as an update row,
+  // so it takes both secret and trace-only URL redaction. A structured
+  // `run.result` is handled separately below and takes only credential-value
+  // redaction so ordinary schema-valid URL components remain usable.
   function redactStrictTerminal(run, value, strictSecretMode) {
-    return redactStrictSecretValues(run, value, strictSecretMode);
+    return redactStrictTraceValues(run, value, strictSecretMode);
   }
 
   function pushUpdate(run, type, data, runtimeValues = []) {
@@ -809,7 +904,7 @@ export function createCloudRunController({
       // Deltas must pass through the same redaction as any other update: this
       // branch used to append raw model output straight onto the stored row.
       const safeDelta = cloudSafeUpdateData(type, data, { strictSecretMode });
-      previous.data = scrubCloudValue(redactStrictSecretValues(run, redactWorkflowRuntimeValues({
+      previous.data = scrubCloudValue(redactStrictTraceValues(run, redactWorkflowRuntimeValues({
         ...previous.data,
         content: strictSecretMode
           ? (safeDelta?.content || '')
@@ -822,7 +917,7 @@ export function createCloudRunController({
     run.nextUpdateSeq = (Number(run.nextUpdateSeq) || 0) + 1;
     const safeData = cloudSafeUpdateData(type, data, { strictSecretMode });
     const scrubbedData = scrubCloudValue(
-      redactStrictSecretValues(run, redactWorkflowRuntimeValues(safeData, runtimeValues), strictSecretMode),
+      redactStrictTraceValues(run, redactWorkflowRuntimeValues(safeData, runtimeValues), strictSecretMode),
     );
     run.updates.push({ seq: run.nextUpdateSeq, type, data: scrubbedData, ts: run.updatedAt });
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
@@ -840,7 +935,7 @@ export function createCloudRunController({
       // with every string and number replaced by a placeholder, which satisfies
       // strict mode by making the run useless.
       const publicSummary = strictSecretMode
-        ? redactStrictSecretValues(run, result.summary, true)
+        ? redactStrictTraceValues(run, result.summary, true)
         : safeResult.summary;
       if (result.cloudFailed) {
         run.status = 'failed';
@@ -938,7 +1033,8 @@ export function createCloudRunController({
     const apiMutationsAllowed = msg.apiMutationsAllowed === true || msg.api_mutations_allowed === true;
     const outputSchema = workflow
       ? null
-      : msg.outputSchema || msg.output_schema || msg.responseFormat?.schema || msg.response_format?.schema || null;
+      : msg.outputSchema ?? msg.output_schema ?? msg.responseFormat?.schema ?? msg.response_format?.schema ?? null;
+    const structured = hasCloudOutputSchema(outputSchema);
     const createdAt = isoNow();
     const run = {
       runId: msg.runId || msg.run_id || makeRunId(),
@@ -949,6 +1045,7 @@ export function createCloudRunController({
       mode,
       tabId,
       task,
+      structured,
       outputSchema,
       capture: msg.capture === 'video' ? 'video' : 'none',
       result: undefined,
@@ -1052,7 +1149,7 @@ export function createCloudRunController({
         // told not to. Value redaction rather than blanking, because for an
         // unstructured run this text *is* the result: the answer survives with
         // the literal struck.
-        run.content = strictSecretMode && outputSchema
+        run.content = strictSecretMode && structured
           ? (run.summary || '[redacted strict structured completion]')
           : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
@@ -1060,12 +1157,12 @@ export function createCloudRunController({
           run.status = 'aborted';
           run.error = run.error || 'Aborted by cloud_abort.';
         } else if (run.status !== 'failed') {
-          if (outputSchema && run.result === undefined) {
+          if (structured && run.result === undefined) {
             run.status = 'failed';
             run.error = 'Structured cloud run finished without a valid done_json result.';
           } else {
             run.status = 'completed';
-            if (!outputSchema) {
+            if (!structured) {
               run.result = redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
             }
           }
@@ -1106,7 +1203,9 @@ export function createCloudRunController({
         // The run is over, so nothing more can quote these; do not hold the
         // literals in memory any longer than the run that typed them.
         strictSecretValues.delete(run.runId);
+        strictTraceValues.delete(run.runId);
         strictSecretOverflowRuns.delete(run.runId);
+        strictTraceOverflowRuns.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         await persist().catch(() => {});
       }

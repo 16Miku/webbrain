@@ -10890,6 +10890,17 @@ test('getToolsForMode: done_json is available for structured full-tier Ask and A
     assert.equal(askCloud.includes('done_json'), true, `[${label}] structured Ask cloud run should expose done_json`);
     assert.equal(askCloud.includes('done'), false, `[${label}] structured Ask cloud run should replace done`);
     assert.equal(askCloud.includes('navigate'), false, `[${label}] structured Ask cloud run exposed Act tools`);
+    for (const mode of ['ask', 'act']) {
+      const falseRoot = getTools(mode, {
+        tier: 'full',
+        cloudRun: true,
+        outputSchema: false,
+      }).map(tool => tool.function.name);
+      assert.equal(falseRoot.includes('done_json'), true,
+        `[${label}] boolean false root schema lost done_json in ${mode}`);
+      assert.equal(falseRoot.includes('done'), false,
+        `[${label}] boolean false root schema exposed ordinary done in ${mode}`);
+    }
     for (const tools of [
       getTools('act', { tier: 'full', cloudRun: true }),
       getTools('act', { tier: 'mid', cloudRun: true, outputSchema: schema }),
@@ -10915,6 +10926,18 @@ test('done_json validates Chrome and Firefox cloud results with one repair attem
     const failed = handle(exhausted, { result: { title: 42 }, summary: 'Bad' });
     assert.equal(failed.done, true, `[${label}] second invalid result should terminate`);
     assert.equal(failed.cloudFailed, true, `[${label}] second invalid result should fail the cloud run`);
+
+    const impossible = { outputSchema: false, schemaRepairUsed: false };
+    const falseFirst = handle(impossible, { result: 'anything', summary: 'First try' });
+    assert.equal(falseFirst.schemaValidationError, true,
+      `[${label}] false root schema was treated as a missing structured context`);
+    assert.equal(falseFirst.done, undefined,
+      `[${label}] false root schema skipped its one repair attempt`);
+    const falseTerminal = handle(impossible, { result: null, summary: 'Second try' });
+    assert.equal(falseTerminal.done, true,
+      `[${label}] impossible false root schema did not terminate after repair`);
+    assert.equal(falseTerminal.cloudFailed, true,
+      `[${label}] false root schema produced a successful completion`);
   }
 });
 
@@ -11391,6 +11414,52 @@ test('structured Ask cloud runs recover prose finals through done_json', async (
   }
 });
 
+test('boolean false root schemas remain structured through Chrome and Firefox agent runs', async () => {
+  for (const [index, [label, AgentClass]] of [
+    ['chrome', AgentCh],
+    ['firefox', AgentFx],
+  ].entries()) {
+    const advertisedToolNames = [];
+    let calls = 0;
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (_messages, options) => {
+        calls += 1;
+        advertisedToolNames.push((options.tools || []).map(tool => tool.function.name));
+        return { content: 'Prose cannot satisfy a false schema.', toolCalls: [] };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 10830 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(
+      tabId,
+      'Return impossible structured output.',
+      () => {},
+      'ask',
+      [],
+      { cloudRun: true, independentRun: true, outputSchema: false },
+    );
+
+    assert.equal(calls, 2, `${label}: false root schema allowed the first prose final`);
+    assert.equal(advertisedToolNames.every(names => names.includes('done_json')), true,
+      `${label}: agent dropped done_json after preserving a false root schema`);
+    assert.equal(advertisedToolNames.every(names => !names.includes('done')), true,
+      `${label}: agent exposed ordinary done for a false root schema`);
+    assert.match(final, /requires structured output|structured cloud run stopped/i,
+      `${label}: false root schema ended as ordinary prose`);
+  }
+});
+
 test('cloud run controller uses the visible tab and persists terminal status', async () => {
   const session = {};
   const tab = { id: 17, url: '', pendingUrl: 'https://webbrain.one/', active: true, windowId: 3 };
@@ -11521,8 +11590,56 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
 });
 
+test('cloud run controller preserves a boolean false root output schema', async () => {
+  const session = {};
+  const tab = { id: 19, url: 'https://example.test/', active: true, windowId: 4 };
+  let receivedRunOptions;
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [tab],
+        get: async () => tab,
+        update: async () => tab,
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      setApiMutationsAllowed: () => {},
+      processMessage: async (_tabId, _task, _onUpdate, _mode, _attachments, runOptions) => {
+        receivedRunOptions = runOptions;
+        return 'ordinary prose';
+      },
+    },
+    ensureOffscreen: async () => {},
+    makeRunId: () => 'run_false_root_schema',
+  });
+
+  const started = await controller.startRun({ task: 'Impossible schema.', output_schema: false });
+  assert.equal(started.structured, true, 'false root schema was reported as an unstructured run');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const completed = await controller.status({ runId: started.runId });
+  assert.equal(receivedRunOptions.outputSchema, false, 'controller replaced false root schema before agent dispatch');
+  assert.equal(completed.structured, true, 'completed false-schema run lost its structured marker');
+  assert.equal(completed.status, 'failed', 'ordinary prose completed an impossible false root schema');
+  assert.equal(completed.result, undefined, 'false root schema published an ordinary prose result');
+  assert.equal(completed.error, 'Structured cloud run finished without a valid done_json result.');
+  assert.equal(session.webbrainCloudRunSnapshots[0].outputSchema, false,
+    'persistence replaced the false root schema');
+  assert.equal(session.webbrainCloudRunSnapshots[0].structured, true,
+    'persistence marked the false root schema as unstructured');
+});
+
 test('strict cloud runs register credential-labeled form values and fail closed on oversized request bodies', async () => {
-  async function runStrictCase(runId, emitUpdates, terminalContent) {
+  async function runStrictCase(runId, emitUpdates, terminalContent, { outputSchema } = {}) {
     const session = {};
     const tab = { id: runId === 'run_strict_form' ? 71 : 72, url: 'https://example.test/', active: true, windowId: 7 };
     let publishUpdate;
@@ -11557,7 +11674,10 @@ test('strict cloud runs register credential-labeled form values and fail closed 
       ensureOffscreen: async () => {},
       makeRunId: () => runId,
     });
-    await controller.startRun({ task: 'Exercise strict redaction.' });
+    await controller.startRun({
+      task: 'Exercise strict redaction.',
+      ...(outputSchema === undefined ? {} : { outputSchema }),
+    });
     emitUpdates(publishUpdate, tab);
     finishRun(terminalContent);
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -11698,6 +11818,40 @@ test('strict cloud runs register credential-labeled form values and fail closed 
     'navigation URL credentials repeated in clarification prose were not redacted',
   );
   assert.equal(navigationRun.finalUrl, 'https://files.example');
+
+  const ordinaryUrl = 'https://files.example/profile/tokenization?section=profile&monkey=activity#overview';
+  const publicUrlResult = {
+    section: 'profile', category: 'tokenization', tab: 'activity', anchor: 'overview',
+  };
+  const ordinaryUrlRun = await runStrictCase('run_strict_public_url', (publishUpdate, tab) => {
+    publishUpdate('tool_call', { name: 'navigate', args: { url: ordinaryUrl } });
+    tab.url = ordinaryUrl;
+    publishUpdate('warning', { message: `Visited ${ordinaryUrl}` });
+    publishUpdate('tool_result', {
+      name: 'done_json',
+      result: {
+        success: true,
+        cloudResult: publicUrlResult,
+        summary: 'Profile activity overview.',
+      },
+    });
+  }, 'done', { outputSchema: { type: 'object' } });
+  assert.deepEqual(ordinaryUrlRun.result, publicUrlResult,
+    'ordinary URL components corrupted a schema-valid strict structured result');
+  assert.equal(ordinaryUrlRun.summary, 'Profile activity overview.');
+  assert.equal(JSON.stringify(ordinaryUrlRun).includes(ordinaryUrl), false,
+    'strict trace or terminal data published an ordinary URL beyond its origin');
+  assert.match(
+    ordinaryUrlRun.updates.find(update => update.type === 'warning')?.data?.message || '',
+    /Visited \[redacted strict URL\]/,
+    'a complete ordinary URL repeated in trace prose was not suppressed',
+  );
+  assert.deepEqual(
+    ordinaryUrlRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { sensitiveArgsRedacted: true },
+    'strict ordinary navigation published path or query evidence',
+  );
+  assert.equal(ordinaryUrlRun.finalUrl, 'https://files.example');
 });
 
 test('cloud run controller forwards Ask mode and inherits it for continuations', async () => {
