@@ -11638,6 +11638,45 @@ test('cloud run controller preserves a boolean false root output schema', async 
     'persistence marked the false root schema as unstructured');
 });
 
+test('cloud run controller rejects duplicate caller-supplied run IDs', async () => {
+  const session = {};
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [{ id: 81, url: 'https://example.test/', active: true, windowId: 8 }],
+        get: async tabId => ({ id: tabId, url: 'https://example.test/', active: true, windowId: 8 }),
+        update: async tabId => ({ id: tabId, url: 'https://example.test/', active: true, windowId: 8 }),
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        local: { get: async () => ({}) },
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      setApiMutationsAllowed: () => {},
+      processMessage: () => new Promise(() => {}),
+    },
+    ensureOffscreen: async () => {},
+  });
+
+  const started = await controller.startRun({ runId: 42, tabId: 81, task: 'First run.' });
+  assert.equal(started.runId, '42', 'caller run IDs were not normalized to stable string keys');
+  await assert.rejects(
+    controller.startRun({ run_id: '42', tabId: 82, task: 'Conflicting run.' }),
+    error => error?.status === 409 && /already exists/.test(error.message),
+    'a duplicate run ID replaced the existing run',
+  );
+  assert.equal(controller.runs.size, 1, 'duplicate rejection changed the run registry');
+  assert.equal((await controller.status({ runId: '42' })).task, 'First run.');
+});
+
 test('strict cloud runs register credential-labeled form values and fail closed on oversized request bodies', async () => {
   async function runStrictCase(runId, emitUpdates, terminalContent, { outputSchema } = {}) {
     const session = {};

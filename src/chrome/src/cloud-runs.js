@@ -1000,6 +1000,8 @@ export function createCloudRunController({
 
   async function startRun(msg = {}) {
     await hydrate();
+    const suppliedRunId = msg.runId ?? msg.run_id;
+    const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
     let parentRun = null;
     let requestedTabId = msg.tabId ?? msg.tab_id;
@@ -1035,9 +1037,17 @@ export function createCloudRunController({
       ? null
       : msg.outputSchema ?? msg.output_schema ?? msg.responseFormat?.schema ?? msg.response_format?.schema ?? null;
     const structured = hasCloudOutputSchema(outputSchema);
+    const runId = requestedRunId || String(makeRunId());
+    // Cloud-assigned IDs are valid correlation keys, but they must not replace
+    // an active or persisted run. Besides losing the older run from status
+    // queries, replacement aliases both runs' strict-secret registries; the
+    // first run to finish would then clear the second run's redaction state.
+    if (runs.has(runId)) {
+      throw cloudRunError(`Cloud run ${runId} already exists.`, 409);
+    }
     const createdAt = isoNow();
     const run = {
-      runId: msg.runId || msg.run_id || makeRunId(),
+      runId,
       status: 'running',
       workflowId: workflow?.id || null,
       traceRunId: null,
