@@ -1033,6 +1033,8 @@ export function createCloudRunController({
     if (agent.isRunning(tabId)) throw new Error(`Tab ${tabId} already has an active WebBrain run.`);
 
     const apiMutationsAllowed = msg.apiMutationsAllowed === true || msg.api_mutations_allowed === true;
+    const grantApiMutationsForRun = apiMutationsAllowed
+      && agent.isApiMutationsAllowed?.(tabId) !== true;
     const outputSchema = workflow
       ? null
       : msg.outputSchema ?? msg.output_schema ?? msg.responseFormat?.schema ?? msg.response_format?.schema ?? null;
@@ -1100,7 +1102,7 @@ export function createCloudRunController({
             filename: `webbrain-ci-${run.runId}.webm`,
           });
         }
-        if (apiMutationsAllowed) agent.setApiMutationsAllowed(tabId, true);
+        if (grantApiMutationsForRun) agent.setApiMutationsAllowed(tabId, true);
         sendIndicator(tabId, 'WB_SHOW_AGENT_INDICATORS');
         const publishUpdate = (type, data) => pushUpdate(
           run,
@@ -1185,6 +1187,11 @@ export function createCloudRunController({
         );
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
+        // The bridge flag is a run-scoped grant, not the sidebar's persistent
+        // /allow-api setting. Revoke only permission this run added; preserve a
+        // pre-existing per-conversation or global user grant.
+        if (grantApiMutationsForRun) agent.setApiMutationsAllowed(tabId, false);
+
         // Do not expose a terminal status until the requested recording has
         // finished flushing to Downloads; pollers use terminality as the cue
         // that traces and artifacts are complete.

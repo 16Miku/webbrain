@@ -8,6 +8,7 @@
  */
 
 import {
+  BridgeError,
   TERMINAL_STATUSES,
   sharedBridge,
   type CloudSnapshot,
@@ -138,7 +139,12 @@ async function waitForRun(
         remainingMs,
       );
     } catch (error) {
-      if (Date.now() >= deadline) return { snapshot, timedOut: true };
+      if (
+        Date.now() >= deadline ||
+        (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT")
+      ) {
+        return { snapshot, timedOut: true };
+      }
       throw error;
     }
     if ((polled as { runs?: CloudSnapshot[] }).runs) continue;

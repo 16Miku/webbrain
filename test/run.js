@@ -11469,6 +11469,7 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   const apiMutationsAllowedCalls = [];
   const agent = {
     isRunning: () => false,
+    isApiMutationsAllowed: () => false,
     abort: () => {},
     setApiMutationsAllowed: (...args) => apiMutationsAllowedCalls.push(args),
     processMessage: (...args) => {
@@ -11588,6 +11589,8 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(completed.status, 'completed');
   assert.equal(completed.result, 'Google');
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
+  assert.deepEqual(apiMutationsAllowedCalls, [[17, true], [17, false]],
+    'run-scoped API mutation permission was not revoked');
 });
 
 test('cloud run controller preserves a boolean false root output schema', async () => {

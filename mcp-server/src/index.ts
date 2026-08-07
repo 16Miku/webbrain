@@ -267,13 +267,23 @@ async function main(): Promise<void> {
   console.error("[webbrain-mcp] ready on stdio");
 }
 
+let shuttingDown = false;
 async function shutdown(): Promise<void> {
-  await bridge.stop();
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await bridge.stop().catch((error) => {
+    console.error("[webbrain-mcp] shutdown error:", error);
+  });
   process.exit(0);
 }
 
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+// MCP hosts commonly stop stdio servers by closing the child's stdin rather
+// than sending a signal. Without these handlers the WebSocket listener keeps
+// the event loop alive and leaves port 17374 occupied by an orphan process.
+process.stdin.once("end", () => void shutdown());
+process.stdin.once("close", () => void shutdown());
 
 main().catch((error) => {
   console.error("[webbrain-mcp] fatal:", error);

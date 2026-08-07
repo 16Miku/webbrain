@@ -34,6 +34,7 @@ function reply(message, result) {
 
 before(async () => {
   process.env.WEBBRAIN_BRIDGE_PORT = String(await freePort());
+  process.env.WEBBRAIN_COMMAND_TIMEOUT_MS = "50";
   const context = {
     withToolsProvider(provider) {
       toolsProvider = provider;
@@ -146,7 +147,7 @@ test("browser_task bounds a stalled status request by its run timeout", async ()
 
   assert.equal(result.stillRunning, true);
   assert.equal(result.runId, "stalled-run");
-  assert.ok(elapsedMs < 6_000, `5000ms timeout took ${elapsedMs}ms`);
+  assert.ok(elapsedMs < 1_500, `command timeout lost the run for ${elapsedMs}ms`);
 });
 
 test("browser_abort forwards the continuing run ID", async () => {

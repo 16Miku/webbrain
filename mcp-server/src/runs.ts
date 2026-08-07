@@ -14,7 +14,7 @@
  * calling it directly would move the trust boundary out of the browser.
  */
 
-import { TERMINAL_STATUSES, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
+import { BridgeError, TERMINAL_STATUSES, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
 import { config } from "./config.js";
 
 export interface StartRunOptions {
@@ -97,7 +97,12 @@ export async function awaitSettled(
     try {
       result = await getStatus(bridge, runId, remainingMs);
     } catch (error) {
-      if (Date.now() >= deadline) return { snapshot: last, timedOut: true };
+      if (
+        Date.now() >= deadline ||
+        (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT")
+      ) {
+        return { snapshot: last, timedOut: true };
+      }
       throw error;
     }
     const snapshot = (result as { runs?: CloudSnapshot[] }).runs

@@ -62,10 +62,12 @@ interface Pending {
 
 export class BridgeError extends Error {
   readonly status?: number;
-  constructor(message: string, status?: number) {
+  readonly code?: "COMMAND_TIMEOUT";
+  constructor(message: string, status?: number, code?: "COMMAND_TIMEOUT") {
     super(message);
     this.name = "BridgeError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -260,6 +262,8 @@ export class WebBrainBridge {
         reject(
           new BridgeError(
             `WebBrain did not answer '${action}' within ${responseTimeoutMs}ms.`,
+            undefined,
+            "COMMAND_TIMEOUT",
           ),
         );
       }, responseTimeoutMs);
