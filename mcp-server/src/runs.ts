@@ -49,9 +49,14 @@ export async function startRun(
 export async function getStatus(
   bridge: WebBrainBridge,
   runId?: string,
+  timeoutMs?: number,
 ): Promise<CloudSnapshot | { runs: CloudSnapshot[] }> {
   const payload = runId ? { runId } : {};
-  return await bridge.request<CloudSnapshot | { runs: CloudSnapshot[] }>("cloud_status", payload);
+  return await bridge.request<CloudSnapshot | { runs: CloudSnapshot[] }>(
+    "cloud_status",
+    payload,
+    timeoutMs,
+  );
 }
 
 export async function respond(
@@ -81,12 +86,20 @@ export async function awaitSettled(
   { timeoutMs }: AwaitOptions,
 ): Promise<{ snapshot: CloudSnapshot; timedOut: boolean }> {
   const deadline = Date.now() + timeoutMs;
-  let last: CloudSnapshot | null = null;
+  let last: CloudSnapshot = { runId, status: "running" };
 
   while (Date.now() < deadline) {
     await sleep(Math.min(config.pollIntervalMs, Math.max(0, deadline - Date.now())));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
 
-    const result = await getStatus(bridge, runId);
+    let result: CloudSnapshot | { runs: CloudSnapshot[] };
+    try {
+      result = await getStatus(bridge, runId, remainingMs);
+    } catch (error) {
+      if (Date.now() >= deadline) return { snapshot: last, timedOut: true };
+      throw error;
+    }
     const snapshot = (result as { runs?: CloudSnapshot[] }).runs
       ? null
       : (result as CloudSnapshot);
@@ -99,9 +112,6 @@ export async function awaitSettled(
     }
   }
 
-  if (!last) {
-    last = (await getStatus(bridge, runId)) as CloudSnapshot;
-  }
   return { snapshot: last, timedOut: true };
 }
 

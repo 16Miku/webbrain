@@ -5,6 +5,7 @@ import { after, before, test } from "node:test";
 import WebSocket from "ws";
 
 import {
+  browserAbort,
   browserRespond,
   browserStatus,
   browserTask,
@@ -49,6 +50,10 @@ before(async () => {
     received.push(message);
 
     if (message.action === "cloud_run") {
+      if (message.payload.task === "stall status response") {
+        reply(message, { runId: "stalled-run", status: "running" });
+        return;
+      }
       reply(message, {
         runId: "clarify-run",
         status: "needs_user_input",
@@ -60,7 +65,16 @@ before(async () => {
       reply(message, { runId: message.payload.runId, status: "running" });
       return;
     }
+    if (message.action === "cloud_abort") {
+      reply(message, {
+        runId: message.payload.runId,
+        status: "aborted",
+        error: "Abort requested.",
+      });
+      return;
+    }
     if (message.action === "cloud_status") {
+      if (message.payload.runId === "stalled-run") return;
       reply(message, {
         runId: message.payload.runId,
         status: "completed",
@@ -87,6 +101,7 @@ test("plugin initialization starts the bridge and registers browser recovery too
   const names = tools.map((registeredTool) => registeredTool.name);
   assert.ok(names.includes("browser_status"));
   assert.ok(names.includes("browser_respond"));
+  assert.ok(names.includes("browser_abort"));
   assert.equal(sharedBridge().isConnected(), true);
 });
 
@@ -122,6 +137,25 @@ test("browser_respond forwards IDs and the user's answer, then returns completio
     clarifyId: "clarify-1",
     answer: "The work account",
   });
+});
+
+test("browser_task bounds a stalled status request by its run timeout", async () => {
+  const startedAt = Date.now();
+  const result = await browserTask({ task: "stall status response", timeout: 5_000 });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.stillRunning, true);
+  assert.equal(result.runId, "stalled-run");
+  assert.ok(elapsedMs < 6_000, `5000ms timeout took ${elapsedMs}ms`);
+});
+
+test("browser_abort forwards the continuing run ID", async () => {
+  const result = await browserAbort("stalled-run");
+  assert.equal(result.runId, "stalled-run");
+  assert.equal(result.status, "aborted");
+
+  const abort = received.find((message) => message.action === "cloud_abort");
+  assert.deepEqual(abort.payload, { runId: "stalled-run" });
 });
 
 test("a replacement socket receives nothing until it sends a valid hello", async () => {

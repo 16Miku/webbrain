@@ -89,7 +89,8 @@ function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult 
       hint:
         "The task is still running in the browser and was NOT cancelled. Call " +
         "browser_status with this runId to retrieve its progress or eventual result; " +
-        "do not start a duplicate browser_task.",
+        "do not start a duplicate browser_task. Call browser_abort with this runId if " +
+        "the user wants it stopped.",
     };
   }
 
@@ -126,10 +127,20 @@ async function waitForRun(
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
-    const polled = await bridge.request<CloudSnapshot | { runs: CloudSnapshot[] }>(
-      "cloud_status",
-      { runId },
-    );
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+
+    let polled: CloudSnapshot | { runs: CloudSnapshot[] };
+    try {
+      polled = await bridge.request<CloudSnapshot | { runs: CloudSnapshot[] }>(
+        "cloud_status",
+        { runId },
+        remainingMs,
+      );
+    } catch (error) {
+      if (Date.now() >= deadline) return { snapshot, timedOut: true };
+      throw error;
+    }
     if ((polled as { runs?: CloudSnapshot[] }).runs) continue;
     snapshot = polled as CloudSnapshot;
     if (TERMINAL_STATUSES.has(snapshot.status) || snapshot.status === "needs_user_input") {
@@ -230,6 +241,24 @@ export async function browserRespond(args: BrowserRespondArgs): Promise<BrowserT
     return {
       ok: false,
       runId: args.runId,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** Stop a continuing run. Actions it already completed are not rolled back. */
+export async function browserAbort(runId: string): Promise<BrowserTaskResult> {
+  const bridge = sharedBridge();
+  try {
+    const connectionError = await ensureConnected(2_000);
+    if (connectionError) return { ...connectionError, runId };
+
+    const snapshot = await bridge.request<CloudSnapshot>("cloud_abort", { runId });
+    return resultOf(snapshot);
+  } catch (error) {
+    return {
+      ok: false,
+      runId,
       error: error instanceof Error ? error.message : String(error),
     };
   }

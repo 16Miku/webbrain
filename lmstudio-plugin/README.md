@@ -29,6 +29,8 @@ is installed on a Chromium browser** (Chrome, Edge, Brave, Opera, Vivaldi —
 - **`browser_respond`** — forward the user's answer when a task pauses with
   `needs_user_input`. Use the `runId` and `clarifyId` returned by the task;
   never guess the answer on the user's behalf.
+- **`browser_abort`** — stop a continuing run by `runId`. Browser actions that
+  already completed are not rolled back.
 
 The browser tools are always offered. Without an extension they return an
 actionable message instead of failing opaquely, so the model can tell you
@@ -139,7 +141,7 @@ Node project.
     ├── tools/
     │   ├── fetchUrl.ts     ← fetch_url implementation
     │   ├── researchUrl.ts  ← research_url implementation
-    │   └── browserTask.ts  ← browser task + status/respond recovery tools
+    │   └── browserTask.ts  ← browser task + status/respond/abort recovery tools
     └── util/
         ├── htmlToText.ts   ← regex HTML stripper
         ├── safeFetch.ts    ← redirect-revalidating wrapper + streaming cap

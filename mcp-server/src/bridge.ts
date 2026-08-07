@@ -239,6 +239,7 @@ export class WebBrainBridge {
   async request<T = unknown>(
     action: BridgeAction,
     payload: Record<string, unknown> = {},
+    timeoutMs = config.commandTimeoutMs,
   ): Promise<T> {
     const socket = this.socket;
     if (!socket || !this.isConnected()) {
@@ -251,16 +252,17 @@ export class WebBrainBridge {
 
     const id = this.nextId++;
     const frame = JSON.stringify({ id, action, payload });
+    const responseTimeoutMs = Math.max(1, Math.min(config.commandTimeoutMs, timeoutMs));
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(
           new BridgeError(
-            `WebBrain did not answer '${action}' within ${config.commandTimeoutMs}ms.`,
+            `WebBrain did not answer '${action}' within ${responseTimeoutMs}ms.`,
           ),
         );
-      }, config.commandTimeoutMs);
+      }, responseTimeoutMs);
 
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
 

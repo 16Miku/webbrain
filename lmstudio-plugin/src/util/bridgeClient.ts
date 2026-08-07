@@ -228,6 +228,7 @@ export class BridgeClient {
   async request<T = unknown>(
     action: BridgeAction,
     payload: Record<string, unknown> = {},
+    timeoutMs = this.commandTimeoutMs,
   ): Promise<T> {
     await this.ensureStarted();
     const socket = this.socket;
@@ -237,14 +238,15 @@ export class BridgeClient {
 
     const id = this.nextId++;
     const frame = JSON.stringify({ id, action, payload });
+    const responseTimeoutMs = Math.max(1, Math.min(this.commandTimeoutMs, timeoutMs));
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(
-          new BridgeError(`WebBrain did not answer '${action}' within ${this.commandTimeoutMs}ms.`),
+          new BridgeError(`WebBrain did not answer '${action}' within ${responseTimeoutMs}ms.`),
         );
-      }, this.commandTimeoutMs);
+      }, responseTimeoutMs);
 
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
 

@@ -30,7 +30,12 @@ import type { PluginContext } from "@lmstudio/sdk";
 import { z } from "zod";
 import { fetchUrl } from "./tools/fetchUrl.js";
 import { researchUrl } from "./tools/researchUrl.js";
-import { browserRespond, browserStatus, browserTask } from "./tools/browserTask.js";
+import {
+  browserAbort,
+  browserRespond,
+  browserStatus,
+  browserTask,
+} from "./tools/browserTask.js";
 import { sharedBridge } from "./util/bridgeClient.js";
 
 const fetchUrlTool = tool({
@@ -162,7 +167,8 @@ const browserTaskTool = tool({
     "prefer it whenever you only need to read. mode='act' allows interaction, " +
     "and the user approves consequential actions in the browser.\n\n" +
     "If a task keeps running, poll browser_status with its runId. If it needs user " +
-    "input, ask the user and forward their answer with browser_respond.\n\n" +
+    "input, ask the user and forward their answer with browser_respond. If the user " +
+    "wants a continuing run stopped, call browser_abort.\n\n" +
     "Requires the WebBrain extension (https://webbrain.one) on a Chromium browser " +
     "(Chrome, Edge, Brave), pointed at this plugin's bridge. Firefox cannot host the " +
     "bridge. If it is not connected the tool returns a hint explaining exactly what to " +
@@ -242,6 +248,19 @@ const browserRespondTool = tool({
     JSON.stringify(await browserRespond({ runId, clarifyId, answer, timeout }), null, 2),
 });
 
+const browserAbortTool = tool({
+  name: "browser_abort",
+  description:
+    "Stop a browser run that is still running, waiting for input, or no longer needed. " +
+    "Use the runId returned by browser_task, browser_status, or browser_respond. Actions " +
+    "already completed in the browser are not undone.",
+  parameters: {
+    runId: z.string().min(1).describe("The continuing browser run to stop."),
+  },
+  implementation: async ({ runId }) =>
+    JSON.stringify(await browserAbort(runId), null, 2),
+});
+
 /**
  * Plugin entry point. LM Studio's plugin runner calls this once at
  * load time with a `PluginContext` builder. We register the tools
@@ -274,6 +293,7 @@ export async function main(ctx: PluginContext): Promise<void> {
     browserTaskTool,
     browserStatusTool,
     browserRespondTool,
+    browserAbortTool,
   ]);
 }
 
