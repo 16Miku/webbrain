@@ -8,8 +8,10 @@ process.env.WEBBRAIN_POLL_INTERVAL_MS = "500";
 const { awaitSettled } = await import("../dist/runs.js");
 
 test("awaitSettled never sleeps past the requested deadline", async () => {
+  let requestCount = 0;
   const bridge = {
     async request() {
+      requestCount += 1;
       return { runId: "deadline-run", status: "running" };
     },
   };
@@ -20,5 +22,22 @@ test("awaitSettled never sleeps past the requested deadline", async () => {
 
   assert.equal(result.timedOut, true);
   assert.equal(result.snapshot.status, "running");
+  assert.ok(requestCount >= 1, "the run must be polled before the first sleep");
   assert.ok(elapsedMs < 250, `20ms timeout took ${elapsedMs}ms`);
+});
+
+test("awaitSettled polls immediately when the timeout is shorter than the interval", async () => {
+  let requestCount = 0;
+  const bridge = {
+    async request() {
+      requestCount += 1;
+      return { runId: "fast-run", status: "completed", result: "done" };
+    },
+  };
+
+  const result = await awaitSettled(bridge, "fast-run", { timeoutMs: 20 });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.snapshot.status, "completed");
+  assert.equal(requestCount, 1);
 });

@@ -67,7 +67,7 @@ test("awaitSettled bounds each status request by the remaining run budget", asyn
 
   assert.equal(result.timedOut, true);
   assert.equal(result.snapshot.status, "running");
-  assert.ok(observedRequestTimeout > 0 && observedRequestTimeout < 40);
+  assert.ok(observedRequestTimeout > 0 && observedRequestTimeout <= 40);
   assert.ok(elapsedMs < 250, `40ms timeout took ${elapsedMs}ms`);
 });
 

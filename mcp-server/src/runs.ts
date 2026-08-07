@@ -101,7 +101,6 @@ export async function awaitSettled(
   let last: CloudSnapshot = { runId, status: "running" };
 
   while (Date.now() < deadline) {
-    await sleep(Math.min(config.pollIntervalMs, Math.max(0, deadline - Date.now())));
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
 
@@ -128,6 +127,8 @@ export async function awaitSettled(
     if (TERMINAL_STATUSES.has(snapshot.status) || snapshot.status === "needs_user_input") {
       return { snapshot, timedOut: false };
     }
+
+    await sleep(Math.min(config.pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
 
   return { snapshot: last, timedOut: true };

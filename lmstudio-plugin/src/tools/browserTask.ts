@@ -128,7 +128,6 @@ async function waitForRun(
   const bridge = sharedBridge();
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
 
@@ -154,6 +153,8 @@ async function waitForRun(
     if (TERMINAL_STATUSES.has(snapshot.status) || snapshot.status === "needs_user_input") {
       return { snapshot, timedOut: false };
     }
+
+    await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
   }
   return { snapshot, timedOut: true };
 }

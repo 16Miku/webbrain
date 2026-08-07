@@ -170,12 +170,19 @@ test("browser_task bounds a stalled status request by its run timeout", async ()
 });
 
 test("browser_task honors a timeout below five seconds", async () => {
+  const statusRequestsBefore = received.filter(
+    (message) => message.action === "cloud_status" && message.payload.runId === "stalled-run",
+  ).length;
   const startedAt = Date.now();
   const result = await browserTask({ task: "stall status response", timeout: 100 });
   const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.stillRunning, true);
   assert.equal(result.runId, "stalled-run");
+  const statusRequestsAfter = received.filter(
+    (message) => message.action === "cloud_status" && message.payload.runId === "stalled-run",
+  ).length;
+  assert.equal(statusRequestsAfter, statusRequestsBefore + 1);
   assert.ok(elapsedMs < 500, `100ms timeout was stretched to ${elapsedMs}ms`);
 });
 
