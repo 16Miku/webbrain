@@ -13,6 +13,7 @@ import {
   sharedBridge,
   type CloudSnapshot,
 } from "../util/bridgeClient.js";
+import { randomUUID } from "node:crypto";
 
 export interface BrowserTaskArgs {
   task: string;
@@ -171,16 +172,35 @@ async function ensureConnected(waitMs: number): Promise<BrowserTaskResult | null
 export async function browserTask(args: BrowserTaskArgs): Promise<BrowserTaskResult> {
   const bridge = sharedBridge();
   const mode = args.mode === "act" ? "act" : "ask";
+  const waitMs = timeoutMs(args.timeout);
+  const deadline = Date.now() + waitMs;
+  const runId = `lm_${randomUUID()}`;
 
   try {
     const connectionError = await ensureConnected(2_000);
     if (connectionError) return connectionError;
 
-    const payload: Record<string, unknown> = { task: args.task, mode };
+    const payload: Record<string, unknown> = { runId, task: args.task, mode };
     if (args.allowApiMutations) payload.apiMutationsAllowed = true;
 
-    const started = await bridge.request<CloudSnapshot>("cloud_run", payload);
-    const settled = await waitForRun(started.runId, started, timeoutMs(args.timeout));
+    let started: CloudSnapshot;
+    try {
+      started = await bridge.request<CloudSnapshot>(
+        "cloud_run",
+        payload,
+        Math.max(1, deadline - Date.now()),
+      );
+    } catch (error) {
+      if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+        return resultOf({ runId, status: "running" }, true);
+      }
+      throw error;
+    }
+    const settled = await waitForRun(
+      started.runId,
+      started,
+      Math.max(0, deadline - Date.now()),
+    );
     return resultOf(settled.snapshot, settled.timedOut);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -232,16 +252,34 @@ export async function browserStatus(
 /** Forward a user's answer to a paused run, then wait for its next settled state. */
 export async function browserRespond(args: BrowserRespondArgs): Promise<BrowserTaskResult> {
   const bridge = sharedBridge();
+  const waitMs = timeoutMs(args.timeout);
+  const deadline = Date.now() + waitMs;
   try {
     const connectionError = await ensureConnected(2_000);
     if (connectionError) return { ...connectionError, runId: args.runId };
 
-    const resumed = await bridge.request<CloudSnapshot>("cloud_respond", {
-      runId: args.runId,
-      clarifyId: args.clarifyId,
-      answer: args.answer,
-    });
-    const settled = await waitForRun(args.runId, resumed, timeoutMs(args.timeout));
+    let resumed: CloudSnapshot;
+    try {
+      resumed = await bridge.request<CloudSnapshot>(
+        "cloud_respond",
+        {
+          runId: args.runId,
+          clarifyId: args.clarifyId,
+          answer: args.answer,
+        },
+        Math.max(1, deadline - Date.now()),
+      );
+    } catch (error) {
+      if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+        return resultOf({ runId: args.runId, status: "running" }, true);
+      }
+      throw error;
+    }
+    const settled = await waitForRun(
+      args.runId,
+      resumed,
+      Math.max(0, deadline - Date.now()),
+    );
     return resultOf(settled.snapshot, settled.timedOut);
   } catch (error) {
     return {

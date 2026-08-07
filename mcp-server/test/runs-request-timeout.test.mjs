@@ -3,8 +3,31 @@ import test from "node:test";
 
 process.env.WEBBRAIN_POLL_INTERVAL_MS = "5";
 
-const { awaitSettled } = await import("../dist/runs.js");
+const { awaitSettled, startRun } = await import("../dist/runs.js");
 const { BridgeError } = await import("../dist/bridge.js");
+
+test("startRun forwards its caller-supplied run ID and command budget", async () => {
+  let observed;
+  const bridge = {
+    async request(action, payload, requestTimeoutMs) {
+      observed = { action, payload, requestTimeoutMs };
+      return { runId: payload.runId, status: "running" };
+    },
+  };
+
+  const result = await startRun(
+    bridge,
+    { runId: "recoverable-start", task: "do work", mode: "ask" },
+    25,
+  );
+
+  assert.equal(result.runId, "recoverable-start");
+  assert.deepEqual(observed, {
+    action: "cloud_run",
+    payload: { runId: "recoverable-start", task: "do work", mode: "ask" },
+    requestTimeoutMs: 25,
+  });
+});
 
 test("awaitSettled bounds each status request by the remaining run budget", async () => {
   let observedRequestTimeout;

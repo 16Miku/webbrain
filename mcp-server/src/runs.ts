@@ -18,6 +18,7 @@ import { BridgeError, TERMINAL_STATUSES, WebBrainBridge, type CloudSnapshot } fr
 import { config } from "./config.js";
 
 export interface StartRunOptions {
+  runId?: string;
   task: string;
   mode: "ask" | "act";
   tabId?: number;
@@ -34,16 +35,18 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function startRun(
   bridge: WebBrainBridge,
   options: StartRunOptions,
+  timeoutMs?: number,
 ): Promise<CloudSnapshot> {
   const payload: Record<string, unknown> = {
     task: options.task,
     mode: options.mode,
   };
+  if (options.runId) payload.runId = options.runId;
   if (options.tabId != null) payload.tabId = options.tabId;
   if (options.apiMutationsAllowed) payload.apiMutationsAllowed = true;
   if (options.outputSchema != null) payload.outputSchema = options.outputSchema;
 
-  return await bridge.request<CloudSnapshot>("cloud_run", payload);
+  return await bridge.request<CloudSnapshot>("cloud_run", payload, timeoutMs);
 }
 
 export async function getStatus(
@@ -64,8 +67,13 @@ export async function respond(
   runId: string,
   clarifyId: string,
   answer: string,
+  timeoutMs?: number,
 ): Promise<CloudSnapshot> {
-  return await bridge.request<CloudSnapshot>("cloud_respond", { runId, clarifyId, answer });
+  return await bridge.request<CloudSnapshot>(
+    "cloud_respond",
+    { runId, clarifyId, answer },
+    timeoutMs,
+  );
 }
 
 export async function abort(bridge: WebBrainBridge, runId: string): Promise<CloudSnapshot> {

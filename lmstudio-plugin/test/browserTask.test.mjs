@@ -51,6 +51,7 @@ before(async () => {
     received.push(message);
 
     if (message.action === "cloud_run") {
+      if (message.payload.task === "stall initial response") return;
       if (message.payload.task === "stall status response") {
         reply(message, { runId: "stalled-run", status: "running" });
         return;
@@ -148,6 +149,21 @@ test("browser_task bounds a stalled status request by its run timeout", async ()
   assert.equal(result.stillRunning, true);
   assert.equal(result.runId, "stalled-run");
   assert.ok(elapsedMs < 1_500, `command timeout lost the run for ${elapsedMs}ms`);
+});
+
+test("browser_task preserves its generated run ID when the initial response stalls", async () => {
+  const startedAt = Date.now();
+  const result = await browserTask({ task: "stall initial response", timeout: 5_000 });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.stillRunning, true);
+  assert.match(result.runId, /^lm_/);
+  const request = received.find(
+    (message) =>
+      message.action === "cloud_run" && message.payload.task === "stall initial response",
+  );
+  assert.equal(request.payload.runId, result.runId);
+  assert.ok(elapsedMs < 500, `initial command timeout took ${elapsedMs}ms`);
 });
 
 test("browser_abort forwards the continuing run ID", async () => {

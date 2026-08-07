@@ -21,6 +21,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { BridgeError, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
@@ -113,13 +114,29 @@ server.registerTool(
     },
   },
   async ({ task, mode, tab_id, allow_api_mutations, timeout_seconds, wait }): Promise<TextResult> => {
+    const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
+    const runId = `mcp_${randomUUID()}`;
     try {
-      const started = await startRun(bridge, {
-        task,
-        mode,
-        tabId: tab_id,
-        apiMutationsAllowed: allow_api_mutations,
-      });
+      let started: CloudSnapshot;
+      try {
+        started = await startRun(
+          bridge,
+          {
+            runId,
+            task,
+            mode,
+            tabId: tab_id,
+            apiMutationsAllowed: allow_api_mutations,
+          },
+          Math.max(1, deadline - Date.now()),
+        );
+      } catch (error) {
+        if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+          return ok(describeSnapshot({ runId, status: "running" }, true));
+        }
+        throw error;
+      }
 
       if (!wait) {
         return ok(
@@ -128,8 +145,9 @@ server.registerTool(
         );
       }
 
-      const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
-      const { snapshot, timedOut } = await awaitSettled(bridge, started.runId, { timeoutMs });
+      const { snapshot, timedOut } = await awaitSettled(bridge, started.runId, {
+        timeoutMs: Math.max(0, deadline - Date.now()),
+      });
       return ok(describeSnapshot(snapshot, timedOut));
     } catch (error) {
       return toolError(error);
@@ -192,10 +210,26 @@ server.registerTool(
     },
   },
   async ({ run_id, clarify_id, answer, timeout_seconds }): Promise<TextResult> => {
+    const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
     try {
-      await respond(bridge, run_id, clarify_id, answer);
-      const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
-      const { snapshot, timedOut } = await awaitSettled(bridge, run_id, { timeoutMs });
+      try {
+        await respond(
+          bridge,
+          run_id,
+          clarify_id,
+          answer,
+          Math.max(1, deadline - Date.now()),
+        );
+      } catch (error) {
+        if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+          return ok(describeSnapshot({ runId: run_id, status: "running" }, true));
+        }
+        throw error;
+      }
+      const { snapshot, timedOut } = await awaitSettled(bridge, run_id, {
+        timeoutMs: Math.max(0, deadline - Date.now()),
+      });
       return ok(describeSnapshot(snapshot, timedOut));
     } catch (error) {
       return toolError(error);
