@@ -1289,13 +1289,44 @@ function nullableSchema(schema) {
   return schema;
 }
 
+// Generic tool definitions are closed recursively before they reach a model.
+// Caller-provided JSON Schema has the opposite default: an object that declares
+// `properties` still permits other keys unless `additionalProperties: false`
+// is explicit. Materialize that default throughout the dynamic result schema
+// so the generic closer cannot silently narrow the caller's contract. The
+// shorthand converter below remains closed by construction.
+function preserveJsonSchemaObjectDefaults(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const preserved = { ...schema };
+  if (schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
+    preserved.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [
+      key,
+      preserveJsonSchemaObjectDefaults(child),
+    ]));
+    if (!Object.hasOwn(schema, 'additionalProperties')) preserved.additionalProperties = true;
+  }
+  if (schema.items && typeof schema.items === 'object' && !Array.isArray(schema.items)) {
+    preserved.items = preserveJsonSchemaObjectDefaults(schema.items);
+  }
+  if (schema.additionalProperties && typeof schema.additionalProperties === 'object'
+      && !Array.isArray(schema.additionalProperties)) {
+    preserved.additionalProperties = preserveJsonSchemaObjectDefaults(schema.additionalProperties);
+  }
+  for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(schema[keyword])) {
+      preserved[keyword] = schema[keyword].map(preserveJsonSchemaObjectDefaults);
+    }
+  }
+  return preserved;
+}
+
 function doneJsonResultSchema(spec) {
-  // An explicit `$schema` says the caller wrote real JSON Schema, so advertise
-  // it verbatim rather than guessing node by node. The marker itself is dropped
-  // — it describes the document, not the argument being validated.
+  // An explicit `$schema` says the caller wrote real JSON Schema, so preserve
+  // its semantics rather than guessing node by node. The marker itself is
+  // dropped — it describes the document, not the argument being validated.
   if (hasJsonSchemaMarker(spec)) {
     const { $schema: _marker, ...jsonSchema } = spec;
-    return jsonSchema;
+    return preserveJsonSchemaObjectDefaults(jsonSchema);
   }
   const convert = (value) => {
     if (typeof value === 'string') {
@@ -1316,7 +1347,9 @@ function doneJsonResultSchema(spec) {
       return { schema: { type: 'array', items: convert(value[0] ?? 'any').schema }, optional: false };
     }
     if (!value || typeof value !== 'object') return { schema: {}, optional: false };
-    if (isJsonSchemaSpec(value)) return { schema: value, optional: false };
+    if (isJsonSchemaSpec(value)) {
+      return { schema: preserveJsonSchemaObjectDefaults(value), optional: false };
+    }
     const converted = Object.entries(value).map(([key, child]) => [key, convert(child)]);
     return {
       schema: {

@@ -62,8 +62,9 @@ function validateValue(value, schema, path, failures) {
     return;
   }
   if (typeof value === 'string') {
-    if (Number.isFinite(schema.minLength) && value.length < schema.minLength) failures.push(path);
-    if (Number.isFinite(schema.maxLength) && value.length > schema.maxLength) failures.push(path);
+    const length = [...value].length;
+    if (Number.isFinite(schema.minLength) && length < schema.minLength) failures.push(path);
+    if (Number.isFinite(schema.maxLength) && length > schema.maxLength) failures.push(path);
   }
   if (Array.isArray(value) && schema.items) {
     value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, failures));

@@ -10963,6 +10963,52 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       `${label}: shorthand validation disagreed with the advertised schema`,
     );
 
+    const openObjectSchema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        nested: { type: 'object', properties: { count: { type: 'number' } } },
+      },
+      required: ['name', 'nested'],
+    };
+    const openObjectResult = { name: 'x', extra: 1, nested: { count: 2, extra: true } };
+    const advertisedOpenObject = advertised(openObjectSchema).function.parameters.properties.result;
+    assert.equal(advertisedOpenObject.additionalProperties, true,
+      `${label}: caller's root additionalProperties default was closed`);
+    assert.equal(advertisedOpenObject.properties.nested.additionalProperties, true,
+      `${label}: caller's nested additionalProperties default was closed`);
+    assert.equal(
+      validate(openObjectSchema, { result: openObjectResult, summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate rejected properties allowed by the caller's JSON Schema default`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(openObjectResult, openObjectSchema).ok,
+      true,
+      `${label}: runtime validator disagreed with the caller's open object schema`,
+    );
+    assert.equal(
+      advertised({ name: 'string' }).function.parameters.properties.result.additionalProperties,
+      false,
+      `${label}: preserving JSON Schema defaults opened the shorthand object contract`,
+    );
+
+    const unicodeSchema = { type: 'string', minLength: 1, maxLength: 1 };
+    assert.equal(
+      validate(unicodeSchema, { result: '😀', summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate counted an astral Unicode character as two characters`,
+    );
+    assert.equal(
+      validate(unicodeSchema, { result: '😀x', summary: 'ok' }).ok,
+      false,
+      `${label}: argument gate failed to enforce maxLength by Unicode code point`,
+    );
+    assert.equal(cloudModule.validateCloudOutput('😀', unicodeSchema).ok, true,
+      `${label}: runtime validator rejected a one-code-point result`);
+    assert.equal(cloudModule.validateCloudOutput('😀x', unicodeSchema).ok, false,
+      `${label}: runtime validator accepted a two-code-point result`);
+
     // The argument gate and the cloud validator both see the caller's schema,
     // so any keyword they both enforce has to agree. Sweep the shapes where
     // they could drift rather than spot-checking one at a time.
@@ -10996,7 +11042,12 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
     }
 
     // Declared constraints are still enforced in both directions.
-    const declared = { type: 'object', properties: { n: { type: 'number' } }, required: ['n'] };
+    const declared = {
+      type: 'object',
+      properties: { n: { type: 'number' } },
+      required: ['n'],
+      additionalProperties: false,
+    };
     assert.equal(
       validate(declared, { result: { n: 1, extra: 2 }, summary: 'ok' }).ok,
       false,
