@@ -8091,6 +8091,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return messages.filter(message => !this._isLocalConversationStatusMessage(message));
   }
 
+  _plannerCompletedDoneSummary(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return '';
+    let scanStart = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message?.role === 'user' && !this._isAgentInjectedUserContent(message.content)) {
+        scanStart = i + 1;
+        break;
+      }
+    }
+    const doneCallById = new Map();
+    let summary = '';
+    for (const message of messages.slice(scanStart)) {
+      if (message?.role === 'assistant' && Array.isArray(message.tool_calls)) {
+        for (const toolCall of message.tool_calls) {
+          const name = toolCall?.function?.name || toolCall?.name || '';
+          if (!toolCall?.id || name !== 'done') continue;
+          let args = null;
+          try { args = JSON.parse(toolCall.function?.arguments || toolCall.arguments || '{}'); } catch {}
+          doneCallById.set(toolCall.id, args);
+        }
+        continue;
+      }
+      if (message?.role !== 'tool' || !doneCallById.has(message.tool_call_id)) continue;
+      let result = null;
+      const rawResult = this._unwrapUntrusted(message.content);
+      try { result = JSON.parse(rawResult); } catch {}
+      const completed = result?.done === true
+        || /^\s*\{\s*"done"\s*:\s*true(?:\s*[,}])/.test(String(rawResult || ''));
+      if (!completed) continue;
+      // Only the model-authored done summary is trusted assistant context.
+      // Verification/page fields remain excluded even though the result is
+      // paired with a real done call rather than an arbitrary page tool.
+      const args = doneCallById.get(message.tool_call_id);
+      const resultSummary = typeof result?.summary === 'string' ? result.summary : '';
+      const argumentSummary = typeof args?.summary === 'string' ? args.summary : '';
+      summary = sanitizePlannerText(resultSummary || argumentSummary, 300, { collapseWhitespace: true });
+      if (!summary) summary = '[Task completed via done]';
+    }
+    return summary;
+  }
+
   _buildPlannerHistoryDigest(messages, maxChars = 1500) {
     if (!Array.isArray(messages) || messages.length === 0) return '';
     const lines = [];
@@ -8103,6 +8145,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
       if (!text) continue;
       lines.push(`${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`);
+    }
+    const doneSummary = this._plannerCompletedDoneSummary(messages);
+    if (doneSummary) {
+      const completionLine = `Assistant: ${doneSummary}`;
+      if (!lines.includes(completionLine)) lines.push(completionLine);
     }
     if (lines.length === 0) return '';
     const digest = lines.join('\n');
