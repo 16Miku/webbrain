@@ -8091,6 +8091,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return messages.filter(message => !this._isLocalConversationStatusMessage(message));
   }
 
+  _plannerCompletedDoneSummary(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return '';
+    let scanStart = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message?.role === 'user' && !this._isAgentInjectedUserContent(message.content)) {
+        scanStart = i + 1;
+        break;
+      }
+    }
+    const doneCallById = new Map();
+    let summary = '';
+    for (const message of messages.slice(scanStart)) {
+      if (message?.role === 'assistant' && Array.isArray(message.tool_calls)) {
+        for (const toolCall of message.tool_calls) {
+          const name = toolCall?.function?.name || toolCall?.name || '';
+          if (!toolCall?.id || name !== 'done') continue;
+          let args = null;
+          try { args = JSON.parse(toolCall.function?.arguments || toolCall.arguments || '{}'); } catch {}
+          doneCallById.set(toolCall.id, args);
+        }
+        continue;
+      }
+      if (message?.role !== 'tool' || !doneCallById.has(message.tool_call_id)) continue;
+      let result = null;
+      const rawResult = this._unwrapUntrusted(message.content);
+      try { result = JSON.parse(rawResult); } catch {}
+      const completed = result?.done === true
+        || /^\s*\{\s*"done"\s*:\s*true(?:\s*[,}])/.test(String(rawResult || ''));
+      if (!completed) continue;
+      // Only the model-authored done summary is trusted assistant context.
+      // Verification/page fields remain excluded even though the result is
+      // paired with a real done call rather than an arbitrary page tool.
+      const args = doneCallById.get(message.tool_call_id);
+      const resultSummary = typeof result?.summary === 'string' ? result.summary : '';
+      const argumentSummary = typeof args?.summary === 'string' ? args.summary : '';
+      summary = sanitizePlannerText(resultSummary || argumentSummary, 300, { collapseWhitespace: true });
+      if (!summary) summary = '[Task completed via done]';
+    }
+    return summary;
+  }
+
   _buildPlannerHistoryDigest(messages, maxChars = 1500) {
     if (!Array.isArray(messages) || messages.length === 0) return '';
     const lines = [];
@@ -8103,6 +8145,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
       if (!text) continue;
       lines.push(`${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`);
+    }
+    const doneSummary = this._plannerCompletedDoneSummary(messages);
+    if (doneSummary) {
+      const completionLine = `Assistant: ${doneSummary}`;
+      if (!lines.includes(completionLine)) lines.push(completionLine);
     }
     if (lines.length === 0) return '';
     const digest = lines.join('\n');
@@ -8587,6 +8634,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
+  _shouldRecheckReadOnlyFollowUpIntent(plan, historyDigest = '', followUpContext = {}) {
+    if (plan?.request_kind !== 'execute'
+        || plan.requires_state_change === true
+        || plan.requires_submission === true
+        || plan.scheduling) return false;
+    if (!String(followUpContext?.priorUserTask || '').trim()) return false;
+    if (!/(?:^|\n)Assistant:\s*\S/.test(String(historyDigest || ''))) return false;
+    const recheckableTools = new Set([
+      'done',
+      'extract_data',
+      'fetch_url',
+      'find_text',
+      'get_accessibility_tree',
+      'hover',
+      'read_page',
+      'research_url',
+      'screenshot',
+      'scroll',
+      'wait_for_element',
+      'wait_for_stable',
+    ]);
+    const plannedTools = plan.steps.flatMap(step => Array.isArray(step?.tools) ? step.tools : [])
+      .map(tool => String(tool || '').trim())
+      .filter(Boolean);
+    return plannedTools.every(tool => recheckableTools.has(tool));
+  }
+
   _plannerIntentConsistencyRepairMessages(plannerMessages, issue) {
     const issueKind = issue?.kind === 'respond_with_tools'
       || issue?.kind === 'plan_only_with_execution_tools'
@@ -8652,6 +8726,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requiresSubmission: false,
       progressLedgerPolicy: 'disabled',
       progressAction: null,
+    };
+  }
+
+  _plannerIntentRecheckFallback() {
+    return {
+      proceed: true,
+      requestKind: 'execute',
+      responseOnly: false,
+      requiresStateChange: false,
+      intentRecheckInconclusive: true,
     };
   }
 
@@ -8795,6 +8879,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
+    const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
     const provider = this.providerManager.getActive();
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
@@ -8873,10 +8958,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       if (!plan) {
-        return this._plannerReadOnlyFallback(runOptions, onUpdate);
+        return recheckOnly
+          ? this._plannerIntentRecheckFallback()
+          : this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
-        return this._plannerReadOnlyFallback(runOptions, onUpdate);
+        return recheckOnly
+          ? this._plannerIntentRecheckFallback()
+          : this._plannerReadOnlyFallback(runOptions, onUpdate);
       }
       if (plan.request_kind === 'respond') {
         return {
@@ -8913,6 +9002,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
+      if (recheckOnly) return this._plannerIntentRecheckFallback();
       return this._plannerRequestFailure(e, onUpdate, provider);
     }
   }
@@ -9033,6 +9123,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
           ? this._strictPlannerFailure(onUpdate)
           : this._plannerReadOnlyFallback(runOptions, onUpdate);
+      }
+      if (this._shouldRecheckReadOnlyFollowUpIntent(plan, historyDigest, followUpContext)) {
+        const intentGate = await this._runPlannerIntentGate(
+          tabId,
+          enriched,
+          onUpdate,
+          costState,
+          runId,
+          historyDigest,
+          { tabUrl, tabTitle },
+          conversationMode,
+          { ...runOptions, plannerIntentRecheckOnly: true },
+          followUpContext,
+        );
+        if (this._checkAbort(tabId)) {
+          return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+        }
+        if (intentGate?.proceed === false) return intentGate;
+        if (intentGate?.proceed && intentGate.responseOnly === true) return intentGate;
       }
       if (plan.request_kind === 'respond') {
         return {
