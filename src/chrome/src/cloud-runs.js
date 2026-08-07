@@ -114,6 +114,11 @@ function cloudUrlEvidence(value) {
   }
 }
 
+function cloudTerminalUrl(value, { strictSecretMode = false } = {}) {
+  if (!strictSecretMode) return value;
+  return cloudUrlEvidence(value).url_origin || '';
+}
+
 function redactVerifyFormValues(value) {
   try {
     return JSON.parse(JSON.stringify(value, (key, item) => (
@@ -311,6 +316,34 @@ function collectUrlSecretStrings(value, into) {
     add(item);
   }
   addEncoded(url.hash.replace(/^#/, ''));
+}
+
+// URL credentials are not unique to fetch_url: navigate, new_tab, read tools,
+// downloads, custom skills, and tool results can all carry URL-shaped fields.
+// Walk only fields whose normalized name ends in url/urls, but follow arrays
+// and nested containers below such a field so every concrete http(s) value is
+// registered before later clarification or terminal prose is published.
+function collectUrlSecretsFromNamedFields(value, into, depth = 0, urlBearing = false) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (urlBearing) collectUrlSecretStrings(value, into);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrlSecretsFromNamedFields(item, into, depth + 1, urlBearing);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = normalizedCloudKey(key).toLowerCase();
+    collectUrlSecretsFromNamedFields(
+      item,
+      into,
+      depth + 1,
+      urlBearing || /urls?$/.test(normalizedKey),
+    );
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
 }
 
 // verify_form represents an input's identity and value as siblings, for
@@ -702,7 +735,7 @@ export function createCloudRunController({
     if (type === 'tool_call') {
       const args = data?.args && typeof data.args === 'object' ? data.args : {};
       if (CLOUD_TEXT_ENTRY_TOOLS.has(name)) candidates.push(args.text, args.value);
-      if (name === 'fetch_url') collectUrlSecretStrings(args.url, candidates);
+      collectUrlSecretsFromNamedFields(args, candidates);
       // A credential does not have to be typed into a page to exist. The
       // disposable-signup scenario mints its account password inside the JSON
       // body of `POST /accounts` and never types it, so registering only
@@ -723,6 +756,7 @@ export function createCloudRunController({
       // would mean either blanking clarification text, which makes a strict run
       // unanswerable, or entropy guessing at prose.
       collectSensitiveStrings(data?.result, candidates);
+      collectUrlSecretsFromNamedFields(data?.result, candidates);
       if (name === 'verify_form') collectCredentialFieldValues(data?.result, candidates);
     }
     if (!candidates.length) return;
@@ -1021,9 +1055,7 @@ export function createCloudRunController({
         run.content = strictSecretMode && outputSchema
           ? (run.summary || '[redacted strict structured completion]')
           : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
-        run.finalUrl = redactStrictTerminal(
-          run, redactWorkflowValue(await getTabUrl(tabId)), strictSecretMode,
-        );
+        run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
         if (run.status === 'aborting') {
           run.status = 'aborted';
           run.error = run.error || 'Aborted by cloud_abort.';
@@ -1044,9 +1076,7 @@ export function createCloudRunController({
         run.error = redactStrictTerminal(
           run, redactWorkflowValue(error?.message || String(error)), strictSecretMode,
         );
-        run.finalUrl = redactStrictTerminal(
-          run, redactWorkflowValue(await getTabUrl(tabId)), strictSecretMode,
-        );
+        run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
         // Do not expose a terminal status until the requested recording has
         // finished flushing to Downloads; pollers use terminality as the cue

@@ -279,11 +279,7 @@ export function validateCloudOutput(value, schema) {
       if (Number.isInteger(spec.minProperties) && size < spec.minProperties) push(path, `expected at least ${spec.minProperties} properties`);
       if (Number.isInteger(spec.maxProperties) && size > spec.maxProperties) push(path, `expected at most ${spec.maxProperties} properties`);
     }
-    if (spec.properties || spec.required || Object.hasOwn(spec, 'additionalProperties')) {
-      if (!isObject(item)) {
-        push(path, 'expected object with properties');
-        return;
-      }
+    if (isObject(item) && (spec.properties || spec.required || Object.hasOwn(spec, 'additionalProperties'))) {
       for (const key of Array.isArray(spec.required) ? spec.required : []) {
         if (!(key in item)) push(`${path}.${key}`, 'missing required property');
       }

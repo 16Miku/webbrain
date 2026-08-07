@@ -11129,6 +11129,32 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       false,
       `${label}: the $schema marker leaked into the advertised tool schema`,
     );
+    const typeAgnosticObjectKeywords = {
+      $schema: DRAFT,
+      properties: { a: { type: 'string' } },
+      required: ['a'],
+      additionalProperties: false,
+    };
+    assert.equal(
+      cloudModule.validateCloudOutput('scalar', typeAgnosticObjectKeywords).ok,
+      true,
+      `${label}: object-only keywords rejected a non-object JSON Schema instance`,
+    );
+    assert.equal(
+      validate(typeAgnosticObjectKeywords, { result: 'scalar', summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate disagreed on type-agnostic object keywords`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput({ a: 42 }, typeAgnosticObjectKeywords).ok,
+      false,
+      `${label}: properties stopped validating object instances`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('scalar', { ...typeAgnosticObjectKeywords, type: 'object' }).ok,
+      false,
+      `${label}: explicit object type stopped enforcing object instances`,
+    );
     // Unmarked stays shorthand, so the earlier disambiguation fix still holds.
     assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
       `${label}: an unmarked shorthand const field changed meaning`);
@@ -11503,7 +11529,7 @@ test('strict cloud runs register credential-labeled form values and fail closed 
       makeRunId: () => runId,
     });
     await controller.startRun({ task: 'Exercise strict redaction.' });
-    emitUpdates(publishUpdate);
+    emitUpdates(publishUpdate, tab);
     finishRun(terminalContent);
     await new Promise(resolve => setTimeout(resolve, 0));
     return await controller.status({ runId });
@@ -11583,6 +11609,31 @@ test('strict cloud runs register credential-labeled form values and fail closed 
     /\[redacted strict value\]/,
     'URL credentials repeated in clarification prose were not redacted',
   );
+
+  const navigationPathToken = 'navigation-path-secret';
+  const navigationQueryToken = 'navigation-query-secret';
+  const navigationUrl = `https://files.example/${navigationPathToken}?key=${navigationQueryToken}`;
+  const navigationRun = await runStrictCase('run_strict_navigation_url', (publishUpdate, tab) => {
+    publishUpdate('tool_call', { name: 'navigate', args: { url: navigationUrl } });
+    tab.url = navigationUrl;
+    publishUpdate('clarify', {
+      clarifyId: 'strict_navigation_question',
+      question: `Confirm ${navigationPathToken} and ${navigationQueryToken}?`,
+    });
+  }, `Finished with ${navigationPathToken} and ${navigationQueryToken}.`);
+  const navigationJson = JSON.stringify(navigationRun);
+  assert.doesNotMatch(navigationJson, new RegExp(`${navigationPathToken}|${navigationQueryToken}`));
+  assert.deepEqual(
+    navigationRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { sensitiveArgsRedacted: true },
+    'strict navigate arguments were not reduced to the generic redacted envelope',
+  );
+  assert.match(
+    navigationRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'navigation URL credentials repeated in clarification prose were not redacted',
+  );
+  assert.equal(navigationRun.finalUrl, 'https://files.example');
 });
 
 test('cloud run controller forwards Ask mode and inherits it for continuations', async () => {
