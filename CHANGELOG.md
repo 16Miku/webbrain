@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [27.0.0] - 2026-08-07
+
+### Added
+- Added the WebBrain MCP server so Claude Code, Codex, Cursor, OpenClaw, and other MCP clients can delegate Ask or Act tasks to an already-authenticated Chromium session through the local browser bridge, with tools for connection checks, status polling, clarification responses, and aborting runs.
+- Updated the LM Studio plugin with the same authenticated-browser delegation through `browser_task`, `browser_status`, `browser_respond`, and `browser_abort`, while retaining its standalone `fetch_url` and `research_url` tools.
+- Added a default-off persistent setting for API mutations and strict JSON Schema output support for WebBrain Cloud runs.
+
+### Changed
+- Hardened local bridge task handling across MCP and LM Studio with bounded command and run deadlines, resumable status polling, disconnect recovery, explicit run aborts, and actionable connection diagnostics.
+- Improved Act follow-up routing and planner continuity so completed-step summaries remain available to later turns, and localized tool-completion status labels across Chrome and Firefox.
+
+### Fixed
+- Kept Ask-mode bridge runs read-only, rejected web-page WebSocket origins, preserved active runs across bridge disconnects, and prevented temporary API authorization or timeout state from leaking into later requests.
+- Tightened WebBrain Cloud structured-output validation, secret redaction, public-URL handling, scheduled-job scoping, and run-ID generation without discarding valid schema-shaped results.
+- Made iframe form automation fail closed on ambiguous targets and improved promoted-frame navigation, submission, and persisted-value verification in Chrome and Firefox.
+
+### Tests
+- Added MCP and LM Studio bridge suites covering connection handshakes, concurrent commands, polling, timeouts, clarification, aborts, disconnect recovery, and clean shutdown.
+- Expanded WebBrain Cloud smoke scenarios and mirrored Chrome/Firefox regressions for structured output, privacy boundaries, iframe recovery, Act follow-ups, and localized completion states.
+
 ## [26.2.0] - 2026-08-06
 
 ### Changed
