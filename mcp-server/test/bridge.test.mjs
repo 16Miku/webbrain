@@ -196,7 +196,14 @@ test("disconnect mid-command rejects rather than hanging", async () => {
   const pending = bridge.request("cloud_run", { task: "x", mode: "ask" });
   setTimeout(() => ext.terminate(), 60);
 
-  await assert.rejects(pending, /disconnected mid-command/);
+  await assert.rejects(
+    pending,
+    (error) => {
+      assert.match(error.message, /disconnected mid-command/);
+      assert.equal(error.code, "COMMAND_INTERRUPTED");
+      return true;
+    },
+  );
   await bridge.stop();
 });
 

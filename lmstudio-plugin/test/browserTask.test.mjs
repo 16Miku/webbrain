@@ -51,6 +51,10 @@ before(async () => {
     received.push(message);
 
     if (message.action === "cloud_run") {
+      if (message.payload.task === "disconnect initial response") {
+        socket.terminate();
+        return;
+      }
       if (message.payload.task === "stall initial response") return;
       if (message.payload.task === "stall status response") {
         reply(message, { runId: "stalled-run", status: "running" });
@@ -173,6 +177,18 @@ test("browser_abort forwards the continuing run ID", async () => {
 
   const abort = received.find((message) => message.action === "cloud_abort");
   assert.deepEqual(abort.payload, { runId: "stalled-run" });
+});
+
+test("browser_task preserves its generated run ID when the start socket disconnects", async () => {
+  const result = await browserTask({ task: "disconnect initial response", timeout: 5_000 });
+
+  assert.equal(result.stillRunning, true);
+  assert.match(result.runId, /^lm_/);
+  const request = received.find(
+    (message) =>
+      message.action === "cloud_run" && message.payload.task === "disconnect initial response",
+  );
+  assert.equal(request.payload.runId, result.runId);
 });
 
 test("a replacement socket receives nothing until it sends a valid hello", async () => {

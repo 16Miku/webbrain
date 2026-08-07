@@ -63,3 +63,20 @@ test("a command timeout returns the run ID instead of losing recovery access", a
   assert.equal(result.snapshot.runId, "recoverable-run");
   assert.equal(result.snapshot.status, "running");
 });
+
+test("a disconnected status request preserves recovery access to the run", async () => {
+  const bridge = {
+    async request() {
+      throw new BridgeError(
+        "extension disconnected mid-command",
+        undefined,
+        "COMMAND_INTERRUPTED",
+      );
+    },
+  };
+
+  const result = await awaitSettled(bridge, "interrupted-run", { timeoutMs: 5_000 });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.snapshot.runId, "interrupted-run");
+  assert.equal(result.snapshot.status, "running");
+});

@@ -142,7 +142,8 @@ async function waitForRun(
     } catch (error) {
       if (
         Date.now() >= deadline ||
-        (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT")
+        (error instanceof BridgeError &&
+          (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED"))
       ) {
         return { snapshot, timedOut: true };
       }
@@ -191,7 +192,10 @@ export async function browserTask(args: BrowserTaskArgs): Promise<BrowserTaskRes
         Math.max(1, deadline - Date.now()),
       );
     } catch (error) {
-      if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+      if (
+        error instanceof BridgeError &&
+        (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED")
+      ) {
         return resultOf({ runId, status: "running" }, true);
       }
       throw error;
@@ -270,7 +274,10 @@ export async function browserRespond(args: BrowserRespondArgs): Promise<BrowserT
         Math.max(1, deadline - Date.now()),
       );
     } catch (error) {
-      if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+      if (
+        error instanceof BridgeError &&
+        (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED")
+      ) {
         return resultOf({ runId: args.runId, status: "running" }, true);
       }
       throw error;

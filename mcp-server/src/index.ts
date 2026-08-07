@@ -132,7 +132,10 @@ server.registerTool(
           Math.max(1, deadline - Date.now()),
         );
       } catch (error) {
-        if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+        if (
+          error instanceof BridgeError &&
+          (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED")
+        ) {
           return ok(describeSnapshot({ runId, status: "running" }, true));
         }
         throw error;
@@ -222,7 +225,10 @@ server.registerTool(
           Math.max(1, deadline - Date.now()),
         );
       } catch (error) {
-        if (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT") {
+        if (
+          error instanceof BridgeError &&
+          (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED")
+        ) {
           return ok(describeSnapshot({ runId: run_id, status: "running" }, true));
         }
         throw error;

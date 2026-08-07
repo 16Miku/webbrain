@@ -62,8 +62,12 @@ interface Pending {
 
 export class BridgeError extends Error {
   readonly status?: number;
-  readonly code?: "COMMAND_TIMEOUT";
-  constructor(message: string, status?: number, code?: "COMMAND_TIMEOUT") {
+  readonly code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
+  constructor(
+    message: string,
+    status?: number,
+    code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED",
+  ) {
     super(message);
     this.name = "BridgeError";
     this.status = status;
@@ -113,7 +117,11 @@ export class WebBrainBridge {
       // is never reused.
       if (this.socket) {
         this.failAllPending(
-          new BridgeError("WebBrain extension connection was superseded mid-command."),
+          new BridgeError(
+            "WebBrain extension connection was superseded mid-command.",
+            undefined,
+            "COMMAND_INTERRUPTED",
+          ),
         );
         try {
           this.socket.close(1000, "Superseded by a newer extension connection");
@@ -137,7 +145,13 @@ export class WebBrainBridge {
         this.extensionCapabilities = [];
         this.extensionProtocol = null;
         log("extension disconnected");
-        this.failAllPending(new BridgeError("WebBrain extension disconnected mid-command."));
+        this.failAllPending(
+          new BridgeError(
+            "WebBrain extension disconnected mid-command.",
+            undefined,
+            "COMMAND_INTERRUPTED",
+          ),
+        );
       });
 
       socket.on("error", (error) => {

@@ -107,7 +107,8 @@ export async function awaitSettled(
     } catch (error) {
       if (
         Date.now() >= deadline ||
-        (error instanceof BridgeError && error.code === "COMMAND_TIMEOUT")
+        (error instanceof BridgeError &&
+          (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED"))
       ) {
         return { snapshot: last, timedOut: true };
       }

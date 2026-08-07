@@ -50,8 +50,12 @@ export const TERMINAL_STATUSES = new Set(["completed", "failed", "aborted"]);
 
 export class BridgeError extends Error {
   readonly status?: number;
-  readonly code?: "COMMAND_TIMEOUT";
-  constructor(message: string, status?: number, code?: "COMMAND_TIMEOUT") {
+  readonly code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
+  constructor(
+    message: string,
+    status?: number,
+    code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED",
+  ) {
     super(message);
     this.name = "BridgeError";
     this.status = status;
@@ -115,7 +119,13 @@ export class BridgeClient {
         return;
       }
       if (this.socket) {
-        this.failAllPending(new BridgeError("WebBrain extension connection was superseded."));
+        this.failAllPending(
+          new BridgeError(
+            "WebBrain extension connection was superseded.",
+            undefined,
+            "COMMAND_INTERRUPTED",
+          ),
+        );
         try {
           this.socket.close(1000, "Superseded");
         } catch {
@@ -130,7 +140,13 @@ export class BridgeClient {
         if (this.socket !== socket) return;
         this.socket = null;
         this.handshakenSocket = null;
-        this.failAllPending(new BridgeError("WebBrain extension disconnected mid-command."));
+        this.failAllPending(
+          new BridgeError(
+            "WebBrain extension disconnected mid-command.",
+            undefined,
+            "COMMAND_INTERRUPTED",
+          ),
+        );
       });
       socket.on("error", () => {
         /* close handler does the cleanup */
