@@ -465,6 +465,9 @@ export class Agent extends LoopDetector {
     // clearConversation. Persisted with the conversation so a service
     // worker restart preserves it.
     this.apiAllowedTabs = new Set();
+    // Cloud callers can grant API mutations for one managed run without
+    // mutating the conversation's persistent /allow-api choice.
+    this.temporaryApiAllowedTabs = new Set();
     // Global Advanced-setting opt-in. This is deliberately separate from
     // apiAllowedTabs so resetting a conversation clears only its slash-command
     // override, while disabling the stored setting revokes global permission
@@ -1668,6 +1671,30 @@ export class Agent extends LoopDetector {
       this.apiAllowedTabs.add(tabId);
     } else {
       this.apiAllowedTabs.delete(tabId);
+      if (!this.isApiMutationsAllowed(tabId)) this.apiAllowedInjected.delete(tabId);
+    }
+  }
+
+  setTemporaryApiMutationsAllowed(tabId, allowed) {
+    if (allowed) {
+      this.temporaryApiAllowedTabs.add(tabId);
+      return;
+    }
+
+    this.temporaryApiAllowedTabs.delete(tabId);
+    // A user may have enabled /allow-api or the global setting while the run
+    // was active. In that case the injected authorization is still current.
+    if (this.isApiMutationsAllowed(tabId)) return;
+
+    if (this.apiAllowedInjected.has(tabId)) {
+      const messages = this.conversations.get(tabId);
+      if (Array.isArray(messages)) {
+        messages.push({
+          role: 'user',
+          content: '[CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED: The temporary API mutation authorization for the completed browser run has ended. This current state supersedes any earlier [USER OVERRIDE — API MUTATIONS ALLOWED] note. Do not plan or call POST/PUT/PATCH/DELETE requests through fetch_url or research_url unless the user explicitly enables /allow-api for this conversation. Continue through the visible UI or ask for /allow-api.]',
+        });
+        this._persist(tabId);
+      }
       this.apiAllowedInjected.delete(tabId);
     }
   }
@@ -1682,7 +1709,7 @@ export class Agent extends LoopDetector {
     // system prompt cannot retract it. Append the live state only for chats
     // that actually saw that note and lost their effective authorization.
     for (const tabId of [...this.apiAllowedInjected]) {
-      if (this.apiAllowedTabs.has(tabId)) continue;
+      if (this.isApiMutationsAllowed(tabId)) continue;
       const messages = this.conversations.get(tabId);
       if (Array.isArray(messages)) {
         messages.push({
@@ -1696,7 +1723,9 @@ export class Agent extends LoopDetector {
   }
 
   isApiMutationsAllowed(tabId) {
-    return this.alwaysAllowApiMutations || this.apiAllowedTabs.has(tabId);
+    return this.alwaysAllowApiMutations
+      || this.apiAllowedTabs.has(tabId)
+      || this.temporaryApiAllowedTabs.has(tabId);
   }
 
   // Browser-free loop detection is inherited from LoopDetector. These
@@ -11337,6 +11366,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._compactCooldown.delete(tabId);
     this.hydratedTabs.delete(tabId);
     this.apiAllowedTabs.delete(tabId);
+    this.temporaryApiAllowedTabs.delete(tabId);
     this.apiAllowedInjected.delete(tabId);
     this._cleanupTab(tabId, { preserveRunGuard: true });
     const t = this.persistTimers.get(tabId);

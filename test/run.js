@@ -11466,12 +11466,12 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   let createdTabs = 0;
   let finishRun;
   let processArgs = null;
-  const apiMutationsAllowedCalls = [];
+  const temporaryApiMutationsAllowedCalls = [];
   const agent = {
     isRunning: () => false,
     isApiMutationsAllowed: () => false,
     abort: () => {},
-    setApiMutationsAllowed: (...args) => apiMutationsAllowedCalls.push(args),
+    setTemporaryApiMutationsAllowed: (...args) => temporaryApiMutationsAllowedCalls.push(args),
     processMessage: (...args) => {
       processArgs = args;
       return new Promise(resolve => { finishRun = resolve; });
@@ -11508,7 +11508,7 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(started.status, 'running');
   assert.equal(started.tabId, 17);
   assert.equal(createdTabs, 0, 'a loaded pendingUrl tab should be reused instead of opening about:blank');
-  assert.deepEqual(apiMutationsAllowedCalls, [[17, true]]);
+  assert.deepEqual(temporaryApiMutationsAllowedCalls, [[17, true]]);
   assert.equal(processArgs[1], 'Open Google', 'hidden API allowance must not modify the task text');
   assert.equal(processArgs[3], 'act');
   assert.equal(started.mode, 'act');
@@ -11589,7 +11589,7 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(completed.status, 'completed');
   assert.equal(completed.result, 'Google');
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
-  assert.deepEqual(apiMutationsAllowedCalls, [[17, true], [17, false]],
+  assert.deepEqual(temporaryApiMutationsAllowedCalls, [[17, true], [17, false]],
     'run-scoped API mutation permission was not revoked');
 });
 
@@ -40971,6 +40971,38 @@ test('persistent API mutation permission is global and independent of /allow-api
     agent.clearConversation(tabId);
     assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: reset cleared the persistent permission`);
   }
+});
+
+test('temporary API mutation permission retracts its prompt without overriding user grants', () => {
+  const agent = new AgentCh({});
+  const revokedTabId = 4894;
+  const stillAllowedTabId = 4895;
+  const revokedMessages = [{ role: 'system', content: 'sys' }];
+  const stillAllowedMessages = [{ role: 'system', content: 'sys' }];
+  const persisted = [];
+  agent._persist = tabId => persisted.push(tabId);
+  agent.conversations.set(revokedTabId, revokedMessages);
+  agent.conversations.set(stillAllowedTabId, stillAllowedMessages);
+
+  agent.setTemporaryApiMutationsAllowed(revokedTabId, true);
+  agent.apiAllowedInjected.add(revokedTabId);
+  agent.setTemporaryApiMutationsAllowed(revokedTabId, false);
+
+  assert.equal(agent.isApiMutationsAllowed(revokedTabId), false);
+  assert.equal(revokedMessages.at(-1)?.role, 'user');
+  assert.match(revokedMessages.at(-1)?.content || '', /CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED/);
+  assert.match(revokedMessages.at(-1)?.content || '', /temporary API mutation authorization/);
+  assert.equal(agent.apiAllowedInjected.has(revokedTabId), false);
+  assert.deepEqual(persisted, [revokedTabId]);
+
+  agent.setTemporaryApiMutationsAllowed(stillAllowedTabId, true);
+  agent.apiAllowedInjected.add(stillAllowedTabId);
+  agent.setApiMutationsAllowed(stillAllowedTabId, true);
+  agent.setTemporaryApiMutationsAllowed(stillAllowedTabId, false);
+
+  assert.equal(agent.isApiMutationsAllowed(stillAllowedTabId), true);
+  assert.equal(stillAllowedMessages.length, 1);
+  assert.equal(agent.apiAllowedInjected.has(stillAllowedTabId), true);
 });
 
 test('disabling persistent API permission retracts stale prompt authorization in both builds', () => {

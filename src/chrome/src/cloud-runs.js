@@ -1102,7 +1102,7 @@ export function createCloudRunController({
             filename: `webbrain-ci-${run.runId}.webm`,
           });
         }
-        if (grantApiMutationsForRun) agent.setApiMutationsAllowed(tabId, true);
+        if (grantApiMutationsForRun) agent.setTemporaryApiMutationsAllowed(tabId, true);
         sendIndicator(tabId, 'WB_SHOW_AGENT_INDICATORS');
         const publishUpdate = (type, data) => pushUpdate(
           run,
@@ -1190,7 +1190,7 @@ export function createCloudRunController({
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
         // /allow-api setting. Revoke only permission this run added; preserve a
         // pre-existing per-conversation or global user grant.
-        if (grantApiMutationsForRun) agent.setApiMutationsAllowed(tabId, false);
+        if (grantApiMutationsForRun) agent.setTemporaryApiMutationsAllowed(tabId, false);
 
         // Do not expose a terminal status until the requested recording has
         // finished flushing to Downloads; pollers use terminality as the cue
