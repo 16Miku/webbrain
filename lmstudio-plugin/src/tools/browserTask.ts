@@ -158,10 +158,18 @@ async function waitForRun(
   return { snapshot, timedOut: true };
 }
 
-async function ensureConnected(waitMs: number): Promise<BrowserTaskResult | null> {
+async function ensureConnected(
+  waitMs: number,
+  deadline?: number,
+): Promise<BrowserTaskResult | null> {
   const bridge = sharedBridge();
   await bridge.ensureStarted();
-  if (!bridge.isConnected()) await bridge.waitForExtension(waitMs);
+  const boundedWaitMs = deadline == null
+    ? waitMs
+    : Math.min(waitMs, Math.max(0, deadline - Date.now()));
+  if (!bridge.isConnected() && boundedWaitMs > 0) {
+    await bridge.waitForExtension(boundedWaitMs);
+  }
   if (bridge.isConnected()) return null;
   return {
     ok: false,
@@ -185,8 +193,15 @@ export async function browserTask(args: BrowserTaskArgs): Promise<BrowserTaskRes
   const runId = `lm_${randomUUID()}`;
 
   try {
-    const connectionError = await ensureConnected(2_000);
+    const connectionError = await ensureConnected(2_000, deadline);
     if (connectionError) return connectionError;
+    if (Date.now() >= deadline) {
+      return {
+        ok: false,
+        error: "Browser task timeout expired before cloud_run could be dispatched.",
+        hint: "No browser run was started. Retry with a longer timeout after the extension connects.",
+      };
+    }
 
     const payload: Record<string, unknown> = { runId, task: args.task, mode };
     if (args.allowApiMutations) payload.apiMutationsAllowed = true;
@@ -266,8 +281,16 @@ export async function browserRespond(args: BrowserRespondArgs): Promise<BrowserT
   const waitMs = timeoutMs(args.timeout);
   const deadline = Date.now() + waitMs;
   try {
-    const connectionError = await ensureConnected(2_000);
+    const connectionError = await ensureConnected(2_000, deadline);
     if (connectionError) return { ...connectionError, runId: args.runId };
+    if (Date.now() >= deadline) {
+      return {
+        ok: false,
+        runId: args.runId,
+        error: "Browser response timeout expired before cloud_respond could be dispatched.",
+        hint: "No answer was sent. Retry after the extension reconnects.",
+      };
+    }
 
     let resumed: CloudSnapshot;
     try {

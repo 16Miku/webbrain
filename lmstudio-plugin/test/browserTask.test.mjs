@@ -242,6 +242,26 @@ test("a replacement socket receives nothing until it sends a valid hello", async
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.equal(sharedBridge().isConnected(), false);
+  const taskStartedAt = Date.now();
+  const task = await browserTask({ task: "wait for extension", timeout: 100 });
+  const taskElapsedMs = Date.now() - taskStartedAt;
+  assert.equal(task.ok, false);
+  assert.match(task.error, /not connected/i);
+  assert.ok(taskElapsedMs < 500, `100ms task connection wait took ${taskElapsedMs}ms`);
+
+  const respondStartedAt = Date.now();
+  const response = await browserRespond({
+    runId: "paused-run",
+    clarifyId: "clarify-1",
+    answer: "yes",
+    timeout: 100,
+  });
+  const respondElapsedMs = Date.now() - respondStartedAt;
+  assert.equal(response.ok, false);
+  assert.equal(response.runId, "paused-run");
+  assert.match(response.error, /not connected/i);
+  assert.ok(respondElapsedMs < 500, `100ms response connection wait took ${respondElapsedMs}ms`);
+
   await assert.rejects(
     () => sharedBridge().request("cloud_run", { task: "private task", mode: "ask" }),
     /No WebBrain browser extension is connected/,
