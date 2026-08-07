@@ -127,6 +127,20 @@ test("browser_task tells the model how to answer a paused run", async () => {
   assert.match(result.hint, /browser_respond/);
 });
 
+test("browser_task rejects API mutation permission in ask mode before dispatch", async () => {
+  const before = received.filter((message) => message.action === "cloud_run").length;
+  const result = await browserTask({
+    task: "read the page",
+    mode: "ask",
+    allowApiMutations: true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /requires mode 'act'/);
+  const after = received.filter((message) => message.action === "cloud_run").length;
+  assert.equal(after, before);
+});
+
 test("browser_respond forwards IDs and the user's answer, then returns completion", async () => {
   const result = await browserRespond({
     runId: "clarify-run",

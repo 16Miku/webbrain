@@ -29,6 +29,26 @@ test("startRun forwards its caller-supplied run ID and command budget", async ()
   });
 });
 
+test("startRun rejects API mutation permission in ask mode before dispatch", async () => {
+  let dispatched = false;
+  const bridge = {
+    async request() {
+      dispatched = true;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      startRun(bridge, {
+        task: "read the page",
+        mode: "ask",
+        apiMutationsAllowed: true,
+      }),
+    /requires mode 'act'/,
+  );
+  assert.equal(dispatched, false);
+});
+
 test("awaitSettled bounds each status request by the remaining run budget", async () => {
   let observedRequestTimeout;
   const bridge = {

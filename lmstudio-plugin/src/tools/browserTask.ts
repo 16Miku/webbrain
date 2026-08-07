@@ -173,6 +173,13 @@ async function ensureConnected(waitMs: number): Promise<BrowserTaskResult | null
 export async function browserTask(args: BrowserTaskArgs): Promise<BrowserTaskResult> {
   const bridge = sharedBridge();
   const mode = args.mode === "act" ? "act" : "ask";
+  if (args.allowApiMutations && mode !== "act") {
+    return {
+      ok: false,
+      error: "API mutation permission requires mode 'act'.",
+      hint: "Use mode 'ask' without allowApiMutations for read-only work, or explicitly choose mode 'act'.",
+    };
+  }
   const waitMs = timeoutMs(args.timeout);
   const deadline = Date.now() + waitMs;
   const runId = `lm_${randomUUID()}`;

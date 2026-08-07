@@ -11504,6 +11504,13 @@ test('cloud run controller uses the visible tab and persists terminal status', a
     makeRunId: () => 'run_test',
     now: (() => { let tick = 0; return () => new Date(1700000000000 + tick++ * 1000); })(),
   });
+  await assert.rejects(
+    () => controller.startRun({ task: 'Read Google', mode: 'ask', apiMutationsAllowed: true }),
+    /requires cloud_run mode `act`/,
+  );
+  assert.deepEqual(temporaryApiMutationsAllowedCalls, [],
+    'Ask mode dispatched an API mutation permission grant');
+  assert.equal(processArgs, null, 'Ask mode started an agent run with API mutation permission');
   const started = await controller.startRun({ task: 'Open Google', apiMutationsAllowed: true });
   assert.equal(started.status, 'running');
   assert.equal(started.tabId, 17);

@@ -1033,6 +1033,9 @@ export function createCloudRunController({
     if (agent.isRunning(tabId)) throw new Error(`Tab ${tabId} already has an active WebBrain run.`);
 
     const apiMutationsAllowed = msg.apiMutationsAllowed === true || msg.api_mutations_allowed === true;
+    if (apiMutationsAllowed && mode !== 'act') {
+      throw cloudRunError('API mutation permission requires cloud_run mode `act`.', 400);
+    }
     const grantApiMutationsForRun = apiMutationsAllowed
       && agent.isApiMutationsAllowed?.(tabId) !== true;
     const outputSchema = workflow

@@ -37,6 +37,10 @@ export async function startRun(
   options: StartRunOptions,
   timeoutMs?: number,
 ): Promise<CloudSnapshot> {
+  if (options.apiMutationsAllowed && options.mode !== "act") {
+    throw new BridgeError("API mutation permission requires mode 'act'.", 400);
+  }
+
   const payload: Record<string, unknown> = {
     task: options.task,
     mode: options.mode,

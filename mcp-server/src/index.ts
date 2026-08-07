@@ -92,7 +92,7 @@ server.registerTool(
         .describe(
           "Lift WebBrain's UI-first rule so the agent may issue mutating HTTP requests " +
             "directly instead of clicking through the interface. Off by default and rarely " +
-            "correct — the UI path is visible and stoppable.",
+            "correct — the UI path is visible and stoppable. Only valid when mode is 'act'.",
         ),
       timeout_seconds: z
         .number()

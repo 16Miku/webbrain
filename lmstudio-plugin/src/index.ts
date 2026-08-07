@@ -200,7 +200,7 @@ const browserTaskTool = tool({
       .describe(
         "Lift WebBrain's UI-first rule so it may issue mutating HTTP requests " +
           "directly instead of clicking through the visible interface. Off by " +
-          "default and rarely correct.",
+          "default and rarely correct. Only valid when mode is 'act'.",
       ),
   },
   implementation: async ({ task, mode, timeout, allowApiMutations }) => {
