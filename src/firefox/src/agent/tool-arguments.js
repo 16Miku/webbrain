@@ -2,6 +2,27 @@ function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * JSON Schema equality for `enum` and `const`: structural, key-order
+ * independent. A tool argument arrives as separately parsed JSON, so reference
+ * identity can never match an object- or array-valued member even when it is
+ * exactly the value the schema asked for. Exported so the cloud output
+ * validator compares the same way — the two must agree on every schema they
+ * both see, or a result one accepts gets rejected by the other.
+ */
+export function jsonDeepEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length
+      && a.every((item, index) => jsonDeepEqual(item, b[index]));
+  }
+  if (!isPlainObject(a) || !isPlainObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.hasOwn(b, key) && jsonDeepEqual(a[key], b[key]));
+}
+
 function valueMatchesType(value, type) {
   if (type === 'object') return isPlainObject(value);
   if (type === 'array') return Array.isArray(value);
@@ -36,13 +57,14 @@ function validateValue(value, schema, path, failures) {
     failures.push(path);
     return;
   }
-  if (Array.isArray(schema.enum) && !schema.enum.some(candidate => Object.is(candidate, value))) {
+  if (Array.isArray(schema.enum) && !schema.enum.some(candidate => jsonDeepEqual(candidate, value))) {
     failures.push(path);
     return;
   }
   if (typeof value === 'string') {
-    if (Number.isFinite(schema.minLength) && value.length < schema.minLength) failures.push(path);
-    if (Number.isFinite(schema.maxLength) && value.length > schema.maxLength) failures.push(path);
+    const length = [...value].length;
+    if (Number.isFinite(schema.minLength) && length < schema.minLength) failures.push(path);
+    if (Number.isFinite(schema.maxLength) && length > schema.maxLength) failures.push(path);
   }
   if (Array.isArray(value) && schema.items) {
     value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, failures));
@@ -52,7 +74,14 @@ function validateValue(value, schema, path, failures) {
   for (const required of Array.isArray(schema.required) ? schema.required : []) {
     if (!Object.prototype.hasOwnProperty.call(value, required)) failures.push(`${path}.${required}`);
   }
-  if (schema.additionalProperties !== true && typeof schema.additionalProperties !== 'object') {
+  // A schema that declares no properties places no constraints on the object's
+  // keys: `{}` and `{ type: 'object' }` mean "any object", not "empty object".
+  // Only an explicit `additionalProperties: false` closes such a schema. Without
+  // this, a caller-supplied free-form object (a cloud run's output_schema, say)
+  // would reject every key it carries.
+  const closed = schema.additionalProperties === false
+    || (schema.additionalProperties === undefined && isPlainObject(schema.properties));
+  if (closed) {
     for (const key of Object.keys(value)) {
       if (!Object.prototype.hasOwnProperty.call(properties, key)) failures.push(`${path}.${key}`);
     }
@@ -95,7 +124,14 @@ export function closeToolDefinition(tool) {
       closed.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [key, closeSchema(child)]));
     }
     if (schema.items) closed.items = closeSchema(schema.items);
-    if (schema.type === 'object' && schema.additionalProperties === undefined) closed.additionalProperties = false;
+    // Only close an object that declares what it accepts. Stamping
+    // `additionalProperties: false` onto a free-form `{ type: 'object' }` would
+    // advertise "empty object only" and make every value invalid.
+    if (schema.type === 'object'
+        && schema.additionalProperties === undefined
+        && isPlainObject(schema.properties)) {
+      closed.additionalProperties = false;
+    }
     return closed;
   };
   return {

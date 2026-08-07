@@ -16714,7 +16714,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
       return await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
@@ -17018,7 +17018,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
       cloudRun: !!cloudRunContext,
-      outputSchema: cloudRunContext?.outputSchema || null,
+      outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     // The selected text is already present in the trusted run envelope.
@@ -17034,6 +17034,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // empty→nudge→empty→nudge cycle.
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
+    let structuredOutputRecoveryAttempted = false;
     let askStreamingDisabledForRun = false;
 
     // Keep trace persistence ordered without putting IndexedDB on the token
@@ -17183,7 +17184,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
         cloudRun: !!cloudRunContext,
-        outputSchema: cloudRunContext?.outputSchema || null,
+        outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       if (selectionOnly) tools = [];
@@ -17460,6 +17461,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
+      if (mode === 'ask' && runOptions?.cloudRun === true && cloudRunContext?.outputSchema != null) {
+        if (!structuredOutputRecoveryAttempted) {
+          structuredOutputRecoveryAttempted = true;
+          messages.push(this._withResponseItems(
+            { role: 'assistant', content: result.content },
+            result.responseItems,
+            result.reasoningContent,
+            provider,
+          ));
+          messages.push({
+            role: 'user',
+            content: '[System nudge: this cloud run requires structured output. Do not return a prose final. Call done_json with a result that satisfies the supplied output schema.]',
+          });
+          onUpdate('warning', { message: 'Structured Ask output requires done_json; continuing.' });
+          this._persist(tabId);
+          continue;
+        }
+        finalResponse = '[Structured cloud run stopped because the model returned prose instead of calling done_json after a recovery nudge.]';
+        _traceStatus = 'required_tool_missing';
+        messages.push({ role: 'assistant', content: finalResponse });
+        onUpdate('warning', { message: finalResponse });
+        break;
+      }
       // Repeated-item progress recovery takes priority so an unresolved ledger
       // can still drive the next tool turn.
       const clarificationFinalDecision = this._isActionMode(mode)
@@ -17591,7 +17615,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema || null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
       return await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
@@ -17759,7 +17783,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
       cloudRun: !!cloudRunContext,
-      outputSchema: cloudRunContext?.outputSchema || null,
+      outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
@@ -17803,7 +17827,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
         cloudRun: !!cloudRunContext,
-        outputSchema: cloudRunContext?.outputSchema || null,
+        outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
       if (selectionOnly) tools = [];

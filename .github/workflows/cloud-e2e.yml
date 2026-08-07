@@ -9,6 +9,7 @@ on:
         default: gnippets-spa
         type: choice
         options:
+          - cloud-smoke
           - gnippets-spa
           - gnippets-captcha
           - gnippets-readonly
@@ -29,7 +30,10 @@ permissions:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Dispatch allows `--pack all --concurrency 1`, whose catalog budget is
+    # ~305 min. A job killed mid-scenario leaks the cloud browser session, so
+    # this has to cover the worst pack a caller can choose.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 

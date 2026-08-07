@@ -10880,16 +10880,30 @@ test('getToolsForMode: every `done` variant says its summary is the visible answ
   }
 });
 
-test('getToolsForMode: done_json is available only for structured full-tier cloud runs', () => {
+test('getToolsForMode: done_json is available for structured full-tier Ask and Act cloud runs', () => {
   const schema = { title: 'string' };
   for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
     const cloud = getTools('act', { tier: 'full', cloudRun: true, outputSchema: schema }).map(tool => tool.function.name);
     assert.equal(cloud.includes('done_json'), true, `[${label}] structured cloud run should expose done_json`);
     assert.equal(cloud.includes('done'), false, `[${label}] structured cloud run should replace done`);
+    const askCloud = getTools('ask', { tier: 'full', cloudRun: true, outputSchema: schema }).map(tool => tool.function.name);
+    assert.equal(askCloud.includes('done_json'), true, `[${label}] structured Ask cloud run should expose done_json`);
+    assert.equal(askCloud.includes('done'), false, `[${label}] structured Ask cloud run should replace done`);
+    assert.equal(askCloud.includes('navigate'), false, `[${label}] structured Ask cloud run exposed Act tools`);
+    for (const mode of ['ask', 'act']) {
+      const falseRoot = getTools(mode, {
+        tier: 'full',
+        cloudRun: true,
+        outputSchema: false,
+      }).map(tool => tool.function.name);
+      assert.equal(falseRoot.includes('done_json'), true,
+        `[${label}] boolean false root schema lost done_json in ${mode}`);
+      assert.equal(falseRoot.includes('done'), false,
+        `[${label}] boolean false root schema exposed ordinary done in ${mode}`);
+    }
     for (const tools of [
       getTools('act', { tier: 'full', cloudRun: true }),
       getTools('act', { tier: 'mid', cloudRun: true, outputSchema: schema }),
-      getTools('ask', { tier: 'full', cloudRun: true, outputSchema: schema }),
     ]) {
       const names = tools.map(tool => tool.function.name);
       assert.equal(names.includes('done_json'), false, `[${label}] done_json leaked outside its cloud scope`);
@@ -10912,6 +10926,537 @@ test('done_json validates Chrome and Firefox cloud results with one repair attem
     const failed = handle(exhausted, { result: { title: 42 }, summary: 'Bad' });
     assert.equal(failed.done, true, `[${label}] second invalid result should terminate`);
     assert.equal(failed.cloudFailed, true, `[${label}] second invalid result should fail the cloud run`);
+
+    const impossible = { outputSchema: false, schemaRepairUsed: false };
+    const falseFirst = handle(impossible, { result: 'anything', summary: 'First try' });
+    assert.equal(falseFirst.schemaValidationError, true,
+      `[${label}] false root schema was treated as a missing structured context`);
+    assert.equal(falseFirst.done, undefined,
+      `[${label}] false root schema skipped its one repair attempt`);
+    const falseTerminal = handle(impossible, { result: null, summary: 'Second try' });
+    assert.equal(falseTerminal.done, true,
+      `[${label}] impossible false root schema did not terminate after repair`);
+    assert.equal(falseTerminal.cloudFailed, true,
+      `[${label}] false root schema produced a successful completion`);
+  }
+});
+
+test('done_json accepts free-form and shorthand output schemas it advertises', async () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    const argumentModule = await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/tool-arguments.js`)).href
+    );
+    const cloudModule = await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/cloud-output.js`)).href
+    );
+    const advertised = (outputSchema) => getTools('act', { tier: 'full', cloudRun: true, outputSchema })
+      .find(tool => tool.function.name === 'done_json');
+    const validate = (outputSchema, args) => argumentModule.validateToolArguments(
+      'done_json',
+      args,
+      advertised(outputSchema).function.parameters,
+    );
+
+    // A declared free-form object accepts arbitrary keys. Closing it would have
+    // meant "empty object only", so done_json could never be called at all.
+    assert.equal(
+      validate(
+        { type: 'object', properties: { data: { type: 'object' } }, required: ['data'] },
+        { result: { data: { a: 1, b: [2] } }, summary: 'ok' },
+      ).ok,
+      true,
+      `${label}: a free-form object field rejected its own values`,
+    );
+    assert.equal(
+      validate({ payload: 'any' }, { result: { payload: { deep: { x: 1 } } }, summary: 'ok' }).ok,
+      true,
+      `${label}: an 'any' field rejected its own values`,
+    );
+
+    // `description` is an ordinary field name, not proof of a JSON Schema node.
+    const shorthand = { title: 'string', description: 'string' };
+    assert.equal(
+      validate(shorthand, { result: { title: 'T', description: 'D' }, summary: 'ok' }).ok,
+      true,
+      `${label}: shorthand schema with a description field was read as JSON Schema`,
+    );
+    assert.deepEqual(
+      cloudModule.validateCloudOutput({ title: 'T', description: 'D' }, shorthand),
+      { ok: true, errors: [] },
+      `${label}: shorthand validation disagreed with the advertised schema`,
+    );
+
+    const openObjectSchema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        nested: { type: 'object', properties: { count: { type: 'number' } } },
+      },
+      required: ['name', 'nested'],
+    };
+    const openObjectResult = { name: 'x', extra: 1, nested: { count: 2, extra: true } };
+    const advertisedOpenObject = advertised(openObjectSchema).function.parameters.properties.result;
+    assert.equal(advertisedOpenObject.additionalProperties, true,
+      `${label}: caller's root additionalProperties default was closed`);
+    assert.equal(advertisedOpenObject.properties.nested.additionalProperties, true,
+      `${label}: caller's nested additionalProperties default was closed`);
+    assert.equal(
+      validate(openObjectSchema, { result: openObjectResult, summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate rejected properties allowed by the caller's JSON Schema default`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(openObjectResult, openObjectSchema).ok,
+      true,
+      `${label}: runtime validator disagreed with the caller's open object schema`,
+    );
+    assert.equal(
+      advertised({ name: 'string' }).function.parameters.properties.result.additionalProperties,
+      false,
+      `${label}: preserving JSON Schema defaults opened the shorthand object contract`,
+    );
+
+    const unicodeSchema = { type: 'string', minLength: 1, maxLength: 1 };
+    assert.equal(
+      validate(unicodeSchema, { result: '😀', summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate counted an astral Unicode character as two characters`,
+    );
+    assert.equal(
+      validate(unicodeSchema, { result: '😀x', summary: 'ok' }).ok,
+      false,
+      `${label}: argument gate failed to enforce maxLength by Unicode code point`,
+    );
+    assert.equal(cloudModule.validateCloudOutput('😀', unicodeSchema).ok, true,
+      `${label}: runtime validator rejected a one-code-point result`);
+    assert.equal(cloudModule.validateCloudOutput('😀x', unicodeSchema).ok, false,
+      `${label}: runtime validator accepted a two-code-point result`);
+
+    // The argument gate and the cloud validator both see the caller's schema,
+    // so any keyword they both enforce has to agree. Sweep the shapes where
+    // they could drift rather than spot-checking one at a time.
+    for (const [outputSchema, result] of [
+      // enum and const, scalar and structural
+      [{ type: 'object', properties: { m: { enum: [{ k: 1 }, { k: 2 }] } }, required: ['m'] }, { m: { k: 1 } }],
+      [{ type: 'object', properties: { m: { enum: [{ k: 1 }] } }, required: ['m'] }, { m: { k: 9 } }],
+      [{ type: 'object', properties: { m: { enum: ['a', 'b'] } }, required: ['m'] }, { m: 'a' }],
+      [{ type: 'object', properties: { m: { enum: ['a'] } }, required: ['m'] }, { m: 'z' }],
+      [{ type: 'object', properties: { m: { enum: [[1, 2]] } }, required: ['m'] }, { m: [1, 2] }],
+      // nullable optionals
+      [{ nickname: 'string?' }, { nickname: null }],
+      [{ nickname: 'string?' }, {}],
+      [{ nickname: 'string?' }, { nickname: 42 }],
+      // free-form and shorthand objects
+      [{ type: 'object', properties: { d: { type: 'object' } }, required: ['d'] }, { d: { any: 'thing' } }],
+      [{ payload: 'any' }, { payload: { deep: 1 } }],
+      [{ title: 'string', description: 'string' }, { title: 'T', description: 'D' }],
+      [{ const: 'string' }, { const: 'hello' }],
+      // declared constraints
+      [{ type: 'object', properties: { n: { type: 'number' } }, required: ['n'] }, { n: 1 }],
+      [{ type: 'object', properties: { n: { type: 'number' } }, required: ['n'], additionalProperties: false }, { n: 1, x: 2 }],
+    ]) {
+      const gateOk = validate(outputSchema, { result, summary: 'ok' }).ok;
+      const cloudOk = cloudModule.validateCloudOutput(result, outputSchema).ok;
+      assert.equal(
+        gateOk,
+        cloudOk,
+        `${label}: argument gate and cloud validator disagree on ${JSON.stringify(outputSchema)} / ${JSON.stringify(result)}`,
+      );
+    }
+
+    // Declared constraints are still enforced in both directions.
+    const declared = {
+      type: 'object',
+      properties: { n: { type: 'number' } },
+      required: ['n'],
+      additionalProperties: false,
+    };
+    assert.equal(
+      validate(declared, { result: { n: 1, extra: 2 }, summary: 'ok' }).ok,
+      false,
+      `${label}: an undeclared property slipped past a closed result schema`,
+    );
+    assert.equal(
+      validate(declared, { result: { n: 1 }, summary: 'ok', bogus: 1 }).ok,
+      false,
+      `${label}: an undeclared top-level done_json argument was accepted`,
+    );
+    assert.equal(
+      cloudModule.isJsonSchemaSpec({ type: 'object', properties: {} }),
+      true,
+      `${label}: a real schema node was misread as shorthand`,
+    );
+    assert.equal(
+      cloudModule.isJsonSchemaSpec({ description: 'string', required: 'string' }),
+      false,
+      `${label}: a shorthand object was misread as a schema node`,
+    );
+    // A keyword name alone proves nothing — every one of these is also a legal
+    // shorthand field name, so the value has to have the schema's shape.
+    for (const shorthandSpec of [
+      { const: 'string' }, { anyOf: 'string' }, { oneOf: 'string[]' }, { allOf: 'number?' },
+      { $ref: 'string' }, { items: 'string' }, { enum: 'string' }, { properties: 'string' },
+    ]) {
+      assert.equal(
+        cloudModule.isJsonSchemaSpec(shorthandSpec),
+        false,
+        `${label}: ${JSON.stringify(shorthandSpec)} was misread as a schema node`,
+      );
+    }
+    for (const schemaSpec of [
+      { const: 'ok' }, { const: { a: 1 } }, { $ref: '#/$defs/x' }, { anyOf: [{ type: 'string' }] },
+      { enum: ['a', 'b'] }, { items: { type: 'string' } }, { properties: { a: { type: 'string' } } },
+      { minLength: 3 }, { maximum: 10 }, { pattern: '^safe$' },
+      { items: false }, { anyOf: [false, { type: 'string' }] }, { additionalProperties: false },
+    ]) {
+      assert.equal(
+        cloudModule.isJsonSchemaSpec(schemaSpec),
+        true,
+        `${label}: ${JSON.stringify(schemaSpec)} was misread as shorthand`,
+      );
+    }
+    // `{ const: 'string' }` is genuinely ambiguous: a shorthand field named
+    // `const`, or the JSON Schema literal "string". The heuristic picks
+    // shorthand, so a caller who means the literal says so with `$schema`,
+    // which disables shorthand for the whole tree.
+    const DRAFT = 'https://json-schema.org/draft/2020-12/schema';
+    assert.equal(
+      cloudModule.validateCloudOutput('string', { $schema: DRAFT, const: 'string' }).ok,
+      true,
+      `${label}: a marked const literal was not honoured`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('other', { $schema: DRAFT, const: 'string' }).ok,
+      false,
+      `${label}: a marked const literal accepted the wrong value`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        { title: 'T' },
+        { $schema: DRAFT, type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
+      ).ok,
+      true,
+      `${label}: a marked document was still read as shorthand`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        'string',
+        { $schema: DRAFT, anyOf: [{ const: 'string' }, { type: 'boolean' }] },
+      ).ok,
+      true,
+      `${label}: a marked document lost JSON Schema mode inside an anyOf branch`,
+    );
+    // The marker describes the document, not the argument, so it is not
+    // advertised on the done_json parameter.
+    const markedDone = advertised({ $schema: DRAFT, const: 'string' });
+    assert.equal(
+      Object.hasOwn(markedDone.function.parameters.properties.result, '$schema'),
+      false,
+      `${label}: the $schema marker leaked into the advertised tool schema`,
+    );
+    const typeAgnosticObjectKeywords = {
+      $schema: DRAFT,
+      properties: { a: { type: 'string' } },
+      required: ['a'],
+      additionalProperties: false,
+    };
+    assert.equal(
+      cloudModule.validateCloudOutput('scalar', typeAgnosticObjectKeywords).ok,
+      true,
+      `${label}: object-only keywords rejected a non-object JSON Schema instance`,
+    );
+    assert.equal(
+      validate(typeAgnosticObjectKeywords, { result: 'scalar', summary: 'ok' }).ok,
+      true,
+      `${label}: argument gate disagreed on type-agnostic object keywords`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput({ a: 42 }, typeAgnosticObjectKeywords).ok,
+      false,
+      `${label}: properties stopped validating object instances`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('scalar', { ...typeAgnosticObjectKeywords, type: 'object' }).ok,
+      false,
+      `${label}: explicit object type stopped enforcing object instances`,
+    );
+    // Unmarked stays shorthand, so the earlier disambiguation fix still holds.
+    assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
+      `${label}: an unmarked shorthand const field changed meaning`);
+
+    // ...and the shorthand reading has to actually be applied end to end.
+    assert.equal(cloudModule.validateCloudOutput({ const: 'hello' }, { const: 'string' }).ok, true,
+      `${label}: a shorthand field named const was not validated as shorthand`);
+    assert.equal(cloudModule.validateCloudOutput({ const: 42 }, { const: 'string' }).ok, false,
+      `${label}: a shorthand field named const skipped its type check`);
+    assert.equal(cloudModule.validateCloudOutput({}, { const: 'string' }).ok, false,
+      `${label}: a shorthand field named const skipped its required check`);
+    assert.equal(
+      validate({ const: 'string' }, { result: { const: 'hello' }, summary: 'ok' }).ok,
+      true,
+      `${label}: done_json advertised the wrong contract for a shorthand const field`,
+    );
+
+    // Every keyword classified as JSON Schema has to be enforced, or done_json
+    // completes a run with a result that violates the caller's contract.
+    const combinators = [
+      [{ anyOf: [{ type: 'string' }, { type: 'boolean' }] }, 7, false],
+      [{ anyOf: [{ type: 'string' }, { type: 'boolean' }] }, true, true],
+      [{ oneOf: [{ type: 'string' }, { type: 'number' }] }, 'x', true],
+      [{ oneOf: [{ type: 'string' }, { type: 'string' }] }, 'x', false],
+      [{ allOf: [{ type: 'number' }, { enum: [1, 2] }] }, 1, true],
+      [{ allOf: [{ type: 'number' }, { enum: [1, 2] }] }, 3, false],
+      [{ const: 'x' }, 'x', true],
+      [{ const: 'x' }, 'y', false],
+      // Unsupported rather than silently permissive.
+      [{ $ref: '#/$defs/thing' }, 'anything', false],
+      // A model's argument is separately parsed, so identity never matches an
+      // object or array const.
+      [{ const: { a: 1, b: [2] } }, { b: [2], a: 1 }, true],
+      [{ const: { a: 1 } }, { a: 2 }, false],
+      [{ enum: [{ k: 1 }, { k: 2 }] }, { k: 1 }, true],
+      [{ enum: [{ k: 1 }] }, { k: 3 }, false],
+    ];
+    for (const [spec, value, expected] of combinators) {
+      assert.equal(
+        cloudModule.validateCloudOutput(value, spec).ok,
+        expected,
+        `${label}: ${JSON.stringify(spec)} mis-validated ${JSON.stringify(value)}`,
+      );
+    }
+
+    // A schema keyword is useful only if local completion validation enforces
+    // it. Provider-side tool-schema enforcement is optional, so supported
+    // bounds must be checked here and every other assertion keyword must fail
+    // closed instead of silently weakening the caller's contract.
+    for (const [spec, value, expected] of [
+      [{ type: 'array', minItems: 3 }, [], false],
+      [{ type: 'array', minItems: 3 }, [1, 2, 3], true],
+      [{ type: 'array', maxItems: 1 }, [1, 2], false],
+      [{ type: 'string', pattern: '^safe$' }, 'unsafe', false],
+      [{ type: 'string', pattern: '^safe$' }, 'safe', true],
+      [{ type: 'string', minLength: 2, maxLength: 3 }, 'x', false],
+      [{ type: 'string', minLength: 2, maxLength: 3 }, 'xy', true],
+      [{ type: 'number', minimum: 5 }, 3, false],
+      [{ type: 'number', minimum: 5, maximum: 10 }, 7, true],
+      [{ type: 'number', maximum: 5 }, 10, false],
+      [{ type: 'object', minProperties: 1, maxProperties: 2 }, {}, false],
+      [{ type: 'object', minProperties: 1, maxProperties: 2 }, { a: 1 }, true],
+      [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 1 }, false],
+      [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 'x' }, true],
+      // Constraint-only schemas are valid JSON Schema even without `type` or a
+      // top-level `$schema` marker. They must not fall into object shorthand.
+      [{ minLength: 3 }, 'ab', false],
+      [{ minLength: 3 }, 'abc', true],
+      [{ pattern: '^safe$' }, 'unsafe', false],
+      [{ minimum: 5 }, 3, false],
+      [{ minItems: 2 }, [1], false],
+      [{ minProperties: 1 }, {}, false],
+      [{ items: false }, [], true],
+      [{ items: false }, [1], false],
+      [{ anyOf: [false, { minLength: 3 }] }, 'abc', true],
+      [{ anyOf: [false, { minLength: 3 }] }, 'a', false],
+    ]) {
+      assert.equal(
+        cloudModule.validateCloudOutput(value, spec).ok,
+        expected,
+        `${label}: supported constraint ${JSON.stringify(spec)} mis-validated ${JSON.stringify(value)}`,
+      );
+    }
+    assert.equal(
+      validate({ minLength: 3 }, { result: 'abc', summary: 'ok' }).ok,
+      true,
+      `${label}: argument schema advertised a constraint-only result as shorthand object`,
+    );
+    assert.equal(
+      validate({ minLength: 3 }, { result: 'ab', summary: 'ok' }).ok,
+      false,
+      `${label}: argument gate lost a type-agnostic minLength constraint`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('anything', { minLength: -1 }).ok,
+      false,
+      `${label}: invalid type-agnostic constraint shape escaped fail-closed support checks`,
+    );
+    for (const [spec, value, keyword] of [
+      [{ type: 'array', uniqueItems: true }, [1], 'uniqueItems'],
+      [{ type: 'array', contains: { type: 'number' } }, [1], 'contains'],
+      [{ type: 'string', format: 'email' }, 'a@example.com', 'format'],
+      [{ type: 'number', multipleOf: 2 }, 4, 'multipleOf'],
+      [{ type: 'number', exclusiveMinimum: 1 }, 2, 'exclusiveMinimum'],
+      [{ type: 'string', not: { const: 'x' } }, 'y', 'not'],
+      [{ type: 'object', properties: { n: { type: 'number', multipleOf: 2 } } }, { n: 4 }, 'multipleOf'],
+    ]) {
+      const validation = cloudModule.validateCloudOutput(value, spec);
+      assert.equal(validation.ok, false, `${label}: unsupported ${keyword} constraint was silently accepted`);
+      assert.match(validation.errors.join('\n'), new RegExp(`unsupported JSON Schema keyword.*${keyword}`));
+      const completion = cloudModule.handleDoneJson(
+        { outputSchema: spec, schemaRepairUsed: false },
+        { result: value, summary: 'done' },
+      );
+      assert.equal(completion.success, false, `${label}: done_json completed through unsupported ${keyword}`);
+      assert.equal(completion.schemaValidationError, true, `${label}: unsupported ${keyword} was not a schema failure`);
+    }
+    assert.equal(
+      cloudModule.validateCloudOutput({ maximum: 5 }, { maximum: 'number' }).ok,
+      true,
+      `${label}: unsupported-keyword checks reinterpreted a shorthand field as JSON Schema`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        { answer: 'string' },
+        { type: 'object', properties: { answer: { const: 'string' } }, required: ['answer'] },
+      ).ok,
+      true,
+      `${label}: a JSON Schema child was reinterpreted as shorthand`,
+    );
+
+    // `field?` means absent or null, so the advertised type must admit null —
+    // otherwise the argument gate rejects a call the schema itself permits.
+    const optionalSchema = { nickname: 'string?', tags: 'string[]?', name: 'string' };
+    for (const result of [
+      { nickname: null, tags: null, name: 'a' },
+      { name: 'a' },
+      { nickname: 'n', tags: ['t'], name: 'a' },
+    ]) {
+      assert.equal(
+        validate(optionalSchema, { result, summary: 'ok' }).ok,
+        cloudModule.validateCloudOutput(result, optionalSchema).ok,
+        `${label}: advertised schema and cloud validation disagree on ${JSON.stringify(result)}`,
+      );
+      assert.equal(
+        validate(optionalSchema, { result, summary: 'ok' }).ok,
+        true,
+        `${label}: a valid optional-field result was rejected`,
+      );
+    }
+    assert.equal(
+      validate(optionalSchema, { result: { nickname: 42, name: 'a' }, summary: 'ok' }).ok,
+      false,
+      `${label}: nullable optional widened past its declared type`,
+    );
+  }
+});
+
+test('structured Ask cloud runs recover prose finals through done_json', async () => {
+  const schema = {
+    type: 'object',
+    properties: { title: { type: 'string' } },
+    required: ['title'],
+    additionalProperties: false,
+  };
+  for (const [index, [label, AgentClass, handleDoneJson]] of [
+    ['chrome', AgentCh, handleDoneJsonCh],
+    ['firefox', AgentFx, handleDoneJsonFx],
+  ].entries()) {
+    const responses = [
+      { content: 'Draft prose that must not terminate the structured run.', toolCalls: [] },
+      {
+        content: null,
+        toolCalls: [{
+          id: `structured_ask_done_${label}`,
+          function: {
+            name: 'done_json',
+            arguments: JSON.stringify({
+              result: { title: 'Alan Turing' },
+              summary: 'Alan Turing was a pioneering mathematician and computer scientist.',
+            }),
+          },
+        }],
+      },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async () => responses.shift(),
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 10820 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    agent.executeTool = async (_tabId, name, args) => {
+      if (name === 'done_json') return handleDoneJson(agent.cloudRunContexts.get(tabId), args);
+      throw new Error(`unexpected tool ${name}`);
+    };
+    const updates = [];
+
+    const final = await agent.processMessage(
+      tabId,
+      'Summarize the current page.',
+      (type, data) => updates.push({ type, data }),
+      'ask',
+      [],
+      { cloudRun: true, independentRun: true, outputSchema: schema },
+    );
+
+    assert.equal(
+      final,
+      'Alan Turing was a pioneering mathematician and computer scientist.',
+      `${label}: done_json summary was not returned`,
+    );
+    assert.equal(responses.length, 0, `${label}: structured recovery did not take the second model turn`);
+    assert.equal(
+      updates.some(update => update.type === 'warning' && /requires done_json/.test(update.data?.message || '')),
+      true,
+      `${label}: structured prose recovery warning was not emitted`,
+    );
+    assert.equal(
+      updates.some(update => update.type === 'text' && /Draft prose/.test(update.data?.content || '')),
+      false,
+      `${label}: rejected prose was emitted as the cloud result`,
+    );
+  }
+});
+
+test('boolean false root schemas remain structured through Chrome and Firefox agent runs', async () => {
+  for (const [index, [label, AgentClass]] of [
+    ['chrome', AgentCh],
+    ['firefox', AgentFx],
+  ].entries()) {
+    const advertisedToolNames = [];
+    let calls = 0;
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (_messages, options) => {
+        calls += 1;
+        advertisedToolNames.push((options.tools || []).map(tool => tool.function.name));
+        return { content: 'Prose cannot satisfy a false schema.', toolCalls: [] };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 10830 + index;
+    configurePlanOnlyGuardAgent(agent, tabId);
+
+    const final = await agent.processMessage(
+      tabId,
+      'Return impossible structured output.',
+      () => {},
+      'ask',
+      [],
+      { cloudRun: true, independentRun: true, outputSchema: false },
+    );
+
+    assert.equal(calls, 2, `${label}: false root schema allowed the first prose final`);
+    assert.equal(advertisedToolNames.every(names => names.includes('done_json')), true,
+      `${label}: agent dropped done_json after preserving a false root schema`);
+    assert.equal(advertisedToolNames.every(names => !names.includes('done')), true,
+      `${label}: agent exposed ordinary done for a false root schema`);
+    assert.match(final, /requires structured output|structured cloud run stopped/i,
+      `${label}: false root schema ended as ordinary prose`);
   }
 });
 
@@ -10965,6 +11510,7 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.deepEqual(apiMutationsAllowedCalls, [[17, true]]);
   assert.equal(processArgs[1], 'Open Google', 'hidden API allowance must not modify the task text');
   assert.equal(processArgs[3], 'act');
+  assert.equal(started.mode, 'act');
   assert.deepEqual(processArgs[4], []);
   assert.equal(processArgs[5].cloudRun, true);
   processArgs[2]('thinking', { step: 1, note: 'Opening the page' });
@@ -10990,8 +11536,25 @@ test('cloud run controller uses the visible tab and persists terminal status', a
     },
   });
   processArgs[2]('tool_result', { name: 'fetch_url', result: { success: true } });
+  processArgs[2]('tool_call', {
+    name: 'set_field',
+    args: { ref_id: 'ref_password', text: 'literal-password-must-not-persist', clear: true },
+  });
+  agent.strictSecretMode = true;
+  processArgs[2]('tool_call', {
+    name: 'fetch_url',
+    args: {
+      url: 'https://api.mail.tm/accounts?address=private%40example.test',
+      method: 'POST',
+      body: JSON.stringify({ address: 'private@example.test', password: 'mailbox-secret' }),
+    },
+  });
+  processArgs[2]('tool_result', {
+    name: 'fetch_url',
+    result: { success: true, status: 201, text: '{"token":"mailbox-token","otp":"654321"}' },
+  });
   const running = await controller.status({ run_id: 'run_test' });
-  assert.deepEqual(running.updates.map(update => update.seq), [1, 2, 3, 4]);
+  assert.deepEqual(running.updates.map(update => update.seq), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(running.updates[1].data.content, 'Opening the page');
   assert.equal(running.updates[2].data.args.authorization, '[redacted]');
   assert.equal(running.updates[2].data.args.nested.apiKey, '[redacted]');
@@ -11004,12 +11567,378 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(running.updates[2].data.args.nested.mapPin, 'also-keep');
   assert.equal(running.updates[2].data.args.nested.headers['x-api-key'], '[redacted]');
   assert.match(running.updates[2].data.args.screenshot, /^\[image omitted:/);
+  assert.equal(running.updates[4].data.args.text, '[redacted typed text]');
+  assert.deepEqual(running.updates[5].data.args, {
+    method: 'POST',
+    url_origin: 'https://api.mail.tm',
+    body: '[redacted request body]',
+  });
+  assert.deepEqual(running.updates[6].data.result, {
+    success: true,
+    status: 201,
+    sensitivePayloadRedacted: true,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(running.updates),
+    /literal-password-must-not-persist|mailbox-secret|mailbox-token|654321/,
+  );
   finishRun('Google');
   await new Promise(resolve => setTimeout(resolve, 0));
   const completed = await controller.status({ run_id: 'run_test' });
   assert.equal(completed.status, 'completed');
   assert.equal(completed.result, 'Google');
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
+});
+
+test('cloud run controller preserves a boolean false root output schema', async () => {
+  const session = {};
+  const tab = { id: 19, url: 'https://example.test/', active: true, windowId: 4 };
+  let receivedRunOptions;
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [tab],
+        get: async () => tab,
+        update: async () => tab,
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      setApiMutationsAllowed: () => {},
+      processMessage: async (_tabId, _task, _onUpdate, _mode, _attachments, runOptions) => {
+        receivedRunOptions = runOptions;
+        return 'ordinary prose';
+      },
+    },
+    ensureOffscreen: async () => {},
+    makeRunId: () => 'run_false_root_schema',
+  });
+
+  const started = await controller.startRun({ task: 'Impossible schema.', output_schema: false });
+  assert.equal(started.structured, true, 'false root schema was reported as an unstructured run');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const completed = await controller.status({ runId: started.runId });
+  assert.equal(receivedRunOptions.outputSchema, false, 'controller replaced false root schema before agent dispatch');
+  assert.equal(completed.structured, true, 'completed false-schema run lost its structured marker');
+  assert.equal(completed.status, 'failed', 'ordinary prose completed an impossible false root schema');
+  assert.equal(completed.result, undefined, 'false root schema published an ordinary prose result');
+  assert.equal(completed.error, 'Structured cloud run finished without a valid done_json result.');
+  assert.equal(session.webbrainCloudRunSnapshots[0].outputSchema, false,
+    'persistence replaced the false root schema');
+  assert.equal(session.webbrainCloudRunSnapshots[0].structured, true,
+    'persistence marked the false root schema as unstructured');
+});
+
+test('cloud run controller rejects duplicate caller-supplied run IDs', async () => {
+  const session = {};
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [{ id: 81, url: 'https://example.test/', active: true, windowId: 8 }],
+        get: async tabId => ({ id: tabId, url: 'https://example.test/', active: true, windowId: 8 }),
+        update: async tabId => ({ id: tabId, url: 'https://example.test/', active: true, windowId: 8 }),
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        local: { get: async () => ({}) },
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      setApiMutationsAllowed: () => {},
+      processMessage: () => new Promise(() => {}),
+    },
+    ensureOffscreen: async () => {},
+  });
+
+  const started = await controller.startRun({ runId: 42, tabId: 81, task: 'First run.' });
+  assert.equal(started.runId, '42', 'caller run IDs were not normalized to stable string keys');
+  await assert.rejects(
+    controller.startRun({ run_id: '42', tabId: 82, task: 'Conflicting run.' }),
+    error => error?.status === 409 && /already exists/.test(error.message),
+    'a duplicate run ID replaced the existing run',
+  );
+  assert.equal(controller.runs.size, 1, 'duplicate rejection changed the run registry');
+  assert.equal((await controller.status({ runId: '42' })).task, 'First run.');
+});
+
+test('strict cloud runs register credential-labeled form values and fail closed on oversized request bodies', async () => {
+  async function runStrictCase(runId, emitUpdates, terminalContent, { outputSchema } = {}) {
+    const session = {};
+    const tab = { id: runId === 'run_strict_form' ? 71 : 72, url: 'https://example.test/', active: true, windowId: 7 };
+    let publishUpdate;
+    let finishRun;
+    const controller = createCloudRunController({
+      chromeApi: {
+        tabs: {
+          query: async () => [tab],
+          get: async () => tab,
+          update: async () => tab,
+        },
+        windows: { update: async () => ({}) },
+        storage: {
+          local: { get: async () => ({}) },
+          session: {
+            get: async key => ({ [key]: session[key] || [] }),
+            set: async value => Object.assign(session, value),
+          },
+        },
+        runtime: { sendMessage: async () => ({}) },
+      },
+      agent: {
+        strictSecretMode: true,
+        isRunning: () => false,
+        abort: () => {},
+        setApiMutationsAllowed: () => {},
+        processMessage: (_tabId, _task, onUpdate) => {
+          publishUpdate = onUpdate;
+          return new Promise(resolve => { finishRun = resolve; });
+        },
+      },
+      ensureOffscreen: async () => {},
+      makeRunId: () => runId,
+    });
+    await controller.startRun({
+      task: 'Exercise strict redaction.',
+      ...(outputSchema === undefined ? {} : { outputSchema }),
+    });
+    emitUpdates(publishUpdate, tab);
+    finishRun(terminalContent);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return await controller.status({ runId });
+  }
+
+  const formRun = await runStrictCase('run_strict_form', (publishUpdate) => {
+    publishUpdate('tool_result', {
+      name: 'verify_form',
+      result: {
+        success: true,
+        fields: [
+          { name: 'api_key', type: 'text', value: 'field-name-secret' },
+          { name: 'account', type: 'password', value: 'field-type-secret' },
+          { name: 'code', type: 'text', label: 'OTP', value: 654321 },
+          { name: 'display_name', type: 'text', value: 'public-value' },
+        ],
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_form_question',
+      question: 'Confirm field-name-secret, field-type-secret, 654321, and public-value?',
+    });
+  }, 'Finished with field-name-secret, field-type-secret, 654321, and public-value.');
+  const formJson = JSON.stringify(formRun);
+  assert.doesNotMatch(formJson, /field-name-secret|field-type-secret|654321/);
+  assert.match(formJson, /public-value/, 'non-credential sibling form values should remain usable');
+  assert.match(formRun.result, /public-value/, 'terminal result lost its non-secret content');
+
+  const oversizedSecret = 'oversized-body-secret';
+  const oversizedRun = await runStrictCase('run_strict_oversized_body', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/accounts',
+        method: 'POST',
+        body: JSON.stringify({ padding: 'x'.repeat(10_050), password: oversizedSecret }),
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_oversized_question',
+      question: `Confirm ${oversizedSecret}?`,
+    });
+  }, `Finished with ${oversizedSecret}.`);
+  const oversizedJson = JSON.stringify(oversizedRun);
+  assert.doesNotMatch(oversizedJson, new RegExp(oversizedSecret));
+  assert.equal(oversizedRun.result, '[redacted strict value]');
+  assert.equal(
+    oversizedRun.updates.find(update => update.type === 'clarify')?.data?.question,
+    '[redacted strict value]',
+    'an uninspectable request body must fail closed before later prose is published',
+  );
+
+  const verificationCode = 481920;
+  const genericCode = '730155';
+  const publicAddress = 'public-address@example.test';
+  const requestBodyRun = await runStrictCase('run_strict_request_body_codes', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/verify',
+        method: 'POST',
+        body: JSON.stringify({ verification_code: verificationCode, address: publicAddress }),
+      },
+    });
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/confirm',
+        method: 'POST',
+        body: new URLSearchParams({ code: genericCode }).toString(),
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_request_body_question',
+      question: `Confirm ${verificationCode}, ${genericCode}, and ${publicAddress}?`,
+    });
+  }, `Finished with ${verificationCode}, ${genericCode}, and ${publicAddress}.`);
+  const requestBodyJson = JSON.stringify(requestBodyRun);
+  assert.doesNotMatch(requestBodyJson, new RegExp(`${verificationCode}|${genericCode}`));
+  assert.equal(requestBodyJson.includes(publicAddress), true,
+    'non-credential request-body siblings should not poison later public prose');
+  assert.match(
+    requestBodyRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'verification-code request-body values repeated in clarification prose were not redacted',
+  );
+
+  const pathToken = 'share-token-should-stay-private';
+  const queryToken = 'download-key-should-stay-private';
+  const capabilityRun = await runStrictCase('run_strict_capability_url', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: `https://files.example/${pathToken}?download_key=${queryToken}`,
+        method: 'GET',
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_capability_question',
+      question: `Confirm ${pathToken} and ${queryToken}?`,
+    });
+  }, `Finished with ${pathToken} and ${queryToken}.`);
+  const capabilityJson = JSON.stringify(capabilityRun);
+  assert.doesNotMatch(capabilityJson, new RegExp(`${pathToken}|${queryToken}`));
+  assert.deepEqual(
+    capabilityRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { method: 'GET', url_origin: 'https://files.example' },
+    'strict fetch evidence must not publish arbitrary URL path or query components',
+  );
+  assert.match(
+    capabilityRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'URL credentials repeated in clarification prose were not redacted',
+  );
+
+  const navigationPathToken = 'navigation-path-secret';
+  const navigationQueryToken = 'navigation-query-secret';
+  const navigationUrl = `https://files.example/${navigationPathToken}?key=${navigationQueryToken}`;
+  const navigationRun = await runStrictCase('run_strict_navigation_url', (publishUpdate, tab) => {
+    publishUpdate('tool_call', { name: 'navigate', args: { url: navigationUrl } });
+    tab.url = navigationUrl;
+    publishUpdate('clarify', {
+      clarifyId: 'strict_navigation_question',
+      question: `Confirm ${navigationPathToken} and ${navigationQueryToken}?`,
+    });
+  }, `Finished with ${navigationPathToken} and ${navigationQueryToken}.`);
+  const navigationJson = JSON.stringify(navigationRun);
+  assert.doesNotMatch(navigationJson, new RegExp(`${navigationPathToken}|${navigationQueryToken}`));
+  assert.deepEqual(
+    navigationRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { sensitiveArgsRedacted: true },
+    'strict navigate arguments were not reduced to the generic redacted envelope',
+  );
+  assert.match(
+    navigationRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'navigation URL credentials repeated in clarification prose were not redacted',
+  );
+  assert.equal(navigationRun.finalUrl, 'https://files.example');
+
+  const ordinaryUrl = 'https://files.example/profile/tokenization?section=profile&monkey=activity#overview';
+  const publicUrlResult = {
+    section: 'profile', category: 'tokenization', tab: 'activity', anchor: 'overview',
+  };
+  const ordinaryUrlRun = await runStrictCase('run_strict_public_url', (publishUpdate, tab) => {
+    publishUpdate('tool_call', { name: 'navigate', args: { url: ordinaryUrl } });
+    tab.url = ordinaryUrl;
+    publishUpdate('warning', { message: `Visited ${ordinaryUrl}` });
+    publishUpdate('tool_result', {
+      name: 'done_json',
+      result: {
+        success: true,
+        cloudResult: publicUrlResult,
+        summary: 'Profile activity overview.',
+      },
+    });
+  }, 'done', { outputSchema: { type: 'object' } });
+  assert.deepEqual(ordinaryUrlRun.result, publicUrlResult,
+    'ordinary URL components corrupted a schema-valid strict structured result');
+  assert.equal(ordinaryUrlRun.summary, 'Profile activity overview.');
+  assert.equal(JSON.stringify(ordinaryUrlRun).includes(ordinaryUrl), false,
+    'strict trace or terminal data published an ordinary URL beyond its origin');
+  assert.match(
+    ordinaryUrlRun.updates.find(update => update.type === 'warning')?.data?.message || '',
+    /Visited \[redacted strict URL\]/,
+    'a complete ordinary URL repeated in trace prose was not suppressed',
+  );
+  assert.deepEqual(
+    ordinaryUrlRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { sensitiveArgsRedacted: true },
+    'strict ordinary navigation published path or query evidence',
+  );
+  assert.equal(ordinaryUrlRun.finalUrl, 'https://files.example');
+});
+
+test('cloud run controller forwards Ask mode and inherits it for continuations', async () => {
+  const session = {};
+  const tab = { id: 81, url: 'https://en.wikipedia.org/wiki/Alan_Turing', active: true, windowId: 8 };
+  const modes = [];
+  let nextRun = 0;
+  const controller = createCloudRunController({
+    chromeApi: {
+      tabs: {
+        query: async () => [tab],
+        get: async () => tab,
+        update: async () => tab,
+      },
+      windows: { update: async () => ({}) },
+      storage: {
+        local: { get: async () => ({}) },
+        session: {
+          get: async key => ({ [key]: session[key] || [] }),
+          set: async value => Object.assign(session, value),
+        },
+      },
+      runtime: { sendMessage: async () => ({}) },
+    },
+    agent: {
+      isRunning: () => false,
+      abort: () => {},
+      processMessage: async (_tabId, task, _onUpdate, mode) => {
+        modes.push(mode);
+        return `Finished: ${task}`;
+      },
+    },
+    ensureOffscreen: async () => {},
+    makeRunId: () => (++nextRun === 1 ? 'run_ask_parent' : 'run_ask_child'),
+  });
+
+  const parent = await controller.startRun({ task: 'Summarize this page', mode: 'ask' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const child = await controller.startRun({ task: 'Make it shorter', parentRunId: parent.runId });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(parent.mode, 'ask');
+  assert.equal(child.mode, 'ask');
+  assert.deepEqual(modes, ['ask', 'ask']);
+  await assert.rejects(
+    () => controller.startRun({ task: 'Invalid mode', mode: 'dev' }),
+    /must be `ask` or `act`/,
+  );
 });
 
 test('cloud run controller fails clarification-required terminals without schema fallback', async () => {
@@ -11679,6 +12608,14 @@ test('cloud run status exposes persistence truncation after service-worker resta
   assert.equal(restored.persistenceTruncated?.omittedResult, true);
 });
 
+test('cloud run default IDs use cryptographically secure randomness', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  const controllerStart = source.indexOf('export function createCloudRunController(');
+  const controllerBody = source.slice(controllerStart, source.indexOf('\n  const api = chromeApi;', controllerStart));
+  assert.match(controllerBody, /makeRunId = \(\) => `run_\$\{globalThis\.crypto\.randomUUID\(\)\}`/);
+  assert.doesNotMatch(controllerBody, /Math\.random\(/);
+});
+
 test('cloud bridge accepts only loopback WebSocket URLs', () => {
   assert.equal(normalizeCloudBridgeUrl('ws://127.0.0.1:17373/extension'), 'ws://127.0.0.1:17373/extension');
   assert.equal(normalizeCloudBridgeUrl('ws://localhost:17373/extension'), 'ws://localhost:17373/extension');
@@ -11745,7 +12682,10 @@ test('offscreen cloud bridge reconnects with backoff and rejects remote control 
   sockets[0].emit('open');
   assert.equal(sockets[0].sent[0].type, 'hello');
   assert.equal(sockets[0].sent[0].protocolVersion, 2);
-  assert.deepEqual(JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)), ['saved_workflows_v1']);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)),
+    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1'],
+  );
   sockets[0].close();
   assert.equal(timers[0].delay, 500);
   timers[0].callback();
@@ -11809,6 +12749,7 @@ test('offscreen cloud bridge preserves failed run envelopes and rejects unauthor
   for (const [id, action] of [
     ['workflow-compile', 'cloud_workflow_compile'],
     ['workflow-run', 'cloud_workflow_run'],
+    ['scheduled-jobs', 'cloud_scheduled_jobs'],
   ]) {
     socket.emit('message', {
       data: JSON.stringify({ id, action, payload: { runId: 'run_source' } }),
@@ -34303,6 +35244,11 @@ test('detects name= matching credential vocab', () => {
   assert.equal(isCredentialField({ type: 'text', name: 'seed-phrase' }).sensitive, true);
   assert.equal(isCredentialField({ type: 'text', name: 'passphrase' }).sensitive, true);
   assert.equal(isCredentialField({ type: 'text', name: 'pin_code' }).sensitive, true);
+  for (const detector of [isCredentialField, isCredentialFieldFx]) {
+    assert.equal(detector({ type: 'text', name: 'verification_code' }).sensitive, true);
+    assert.equal(detector({ type: 'text', name: 'confirmation-code' }).sensitive, true);
+    assert.equal(detector({ type: 'text', name: 'one_time_code' }).sensitive, true);
+  }
 });
 
 test('detects id / aria-label / placeholder / labelText', () => {

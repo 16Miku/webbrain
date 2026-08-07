@@ -28,7 +28,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
-import { createCloudRunController } from './cloud-runs.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import {
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -2014,6 +2014,22 @@ async function handleMessage(msg, sender) {
       return await cloudRunController.startWorkflowRun(msg);
     case 'cloud_status':
       return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs': {
+      const jobIds = [...new Set((msg.jobIds || msg.job_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      if (!jobIds.length) {
+        return { error: 'cloud_scheduled_jobs requires expected job IDs.', status: 400 };
+      }
+      const expected = new Set(jobIds);
+      const jobs = await scheduler.listJobs({ tabId: null });
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
+    }
     case 'cloud_respond':
       return await cloudRunController.respond(msg);
     case 'cloud_abort':
