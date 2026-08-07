@@ -11357,6 +11357,97 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.equal(session.webbrainCloudRunSnapshots[0].status, 'completed');
 });
 
+test('strict cloud runs register credential-labeled form values and fail closed on oversized request bodies', async () => {
+  async function runStrictCase(runId, emitUpdates, terminalContent) {
+    const session = {};
+    const tab = { id: runId === 'run_strict_form' ? 71 : 72, url: 'https://example.test/', active: true, windowId: 7 };
+    let publishUpdate;
+    let finishRun;
+    const controller = createCloudRunController({
+      chromeApi: {
+        tabs: {
+          query: async () => [tab],
+          get: async () => tab,
+          update: async () => tab,
+        },
+        windows: { update: async () => ({}) },
+        storage: {
+          local: { get: async () => ({}) },
+          session: {
+            get: async key => ({ [key]: session[key] || [] }),
+            set: async value => Object.assign(session, value),
+          },
+        },
+        runtime: { sendMessage: async () => ({}) },
+      },
+      agent: {
+        strictSecretMode: true,
+        isRunning: () => false,
+        abort: () => {},
+        setApiMutationsAllowed: () => {},
+        processMessage: (_tabId, _task, onUpdate) => {
+          publishUpdate = onUpdate;
+          return new Promise(resolve => { finishRun = resolve; });
+        },
+      },
+      ensureOffscreen: async () => {},
+      makeRunId: () => runId,
+    });
+    await controller.startRun({ task: 'Exercise strict redaction.' });
+    emitUpdates(publishUpdate);
+    finishRun(terminalContent);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return await controller.status({ runId });
+  }
+
+  const formRun = await runStrictCase('run_strict_form', (publishUpdate) => {
+    publishUpdate('tool_result', {
+      name: 'verify_form',
+      result: {
+        success: true,
+        fields: [
+          { name: 'api_key', type: 'text', value: 'field-name-secret' },
+          { name: 'account', type: 'password', value: 'field-type-secret' },
+          { name: 'code', type: 'text', label: 'OTP', value: 654321 },
+          { name: 'display_name', type: 'text', value: 'public-value' },
+        ],
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_form_question',
+      question: 'Confirm field-name-secret, field-type-secret, 654321, and public-value?',
+    });
+  }, 'Finished with field-name-secret, field-type-secret, 654321, and public-value.');
+  const formJson = JSON.stringify(formRun);
+  assert.doesNotMatch(formJson, /field-name-secret|field-type-secret|654321/);
+  assert.match(formJson, /public-value/, 'non-credential sibling form values should remain usable');
+  assert.match(formRun.result, /public-value/, 'terminal result lost its non-secret content');
+
+  const oversizedSecret = 'oversized-body-secret';
+  const oversizedRun = await runStrictCase('run_strict_oversized_body', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/accounts',
+        method: 'POST',
+        body: JSON.stringify({ padding: 'x'.repeat(10_050), password: oversizedSecret }),
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_oversized_question',
+      question: `Confirm ${oversizedSecret}?`,
+    });
+  }, `Finished with ${oversizedSecret}.`);
+  const oversizedJson = JSON.stringify(oversizedRun);
+  assert.doesNotMatch(oversizedJson, new RegExp(oversizedSecret));
+  assert.equal(oversizedRun.result, '[redacted strict value]');
+  assert.equal(
+    oversizedRun.updates.find(update => update.type === 'clarify')?.data?.question,
+    '[redacted strict value]',
+    'an uninspectable request body must fail closed before later prose is published',
+  );
+});
+
 test('cloud run controller forwards Ask mode and inherits it for continuations', async () => {
   const session = {};
   const tab = { id: 81, url: 'https://en.wikipedia.org/wiki/Alan_Turing', active: true, windowId: 8 };

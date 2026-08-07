@@ -2,6 +2,7 @@ import {
   compileSuccessfulWorkflowByRunId,
   normalizeSavedWorkflow,
 } from './agent/workflows.js';
+import { isCredentialField } from './agent/credential-fields.js';
 
 const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17373/extension';
 const CLOUD_RUN_STORAGE_KEY = 'webbrainCloudRunSnapshots';
@@ -281,13 +282,51 @@ function collectSensitiveStrings(value, into, depth = 0, sensitiveParent = false
   }
 }
 
+// verify_form represents an input's identity and value as siblings, for
+// example `{ name: 'api_key', value: 'secret' }`. The generic key walk above
+// cannot connect those fields, so reuse the same credential detector that
+// classifies fields when they are filled and register only that field record's
+// value-bearing leaves.
+function collectCredentialFieldValues(value, into, depth = 0) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectCredentialFieldValues(item, into, depth + 1);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const credential = isCredentialField({
+    type: value.type,
+    name: value.name,
+    id: value.id,
+    autocomplete: value.autocomplete,
+    ariaLabel: value.ariaLabel ?? value.aria_label,
+    placeholder: value.placeholder,
+    labelText: value.labelText ?? value.label,
+  }).sensitive;
+  if (credential) {
+    for (const [key, item] of Object.entries(value)) {
+      if (!VERIFY_FORM_VALUE_KEYS.has(normalizedCloudKey(key).toLowerCase())) continue;
+      if (typeof item === 'string') into.push(item);
+      else if (typeof item === 'number' && Number.isFinite(item)) into.push(String(item));
+    }
+  }
+  for (const item of Object.values(value)) {
+    if (item && typeof item === 'object') collectCredentialFieldValues(item, into, depth + 1);
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
 // A request body is a string argument, so the key-walk above cannot see into
 // it. Both encodings a mutating call realistically uses are cheap to parse.
 function collectRequestBodySecrets(body, into) {
-  if (typeof body !== 'string' || !body || body.length > WORKFLOW_PARAMETER_VALUE_LIMIT) return;
+  if (typeof body !== 'string' || !body) return false;
+  // Do not silently skip a body that is too large for bounded inspection. The
+  // caller marks the run as overflowed so every later scalar is redacted rather
+  // than relying on the model not to repeat an unknown credential.
+  if (body.length > WORKFLOW_PARAMETER_VALUE_LIMIT) return true;
   try {
     collectSensitiveStrings(JSON.parse(body), into);
-    return;
+    return false;
   } catch {
     // Not JSON — fall through to the form encoding.
   }
@@ -298,6 +337,7 @@ function collectRequestBodySecrets(body, into) {
   } catch {
     // Undecodable body: nothing to register, and the argument is dropped anyway.
   }
+  return false;
 }
 
 function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workflow parameter]') {
@@ -636,7 +676,9 @@ export function createCloudRunController({
       // body of `POST /accounts` and never types it, so registering only
       // text-entry arguments left it unknown to the value redactor.
       collectSensitiveStrings(args, candidates);
-      collectRequestBodySecrets(args.body, candidates);
+      if (collectRequestBodySecrets(args.body, candidates)) {
+        strictSecretOverflowRuns.add(run.runId);
+      }
     } else if (type === 'tool_result') {
       // The value under a sensitive key is already known to be a secret; the
       // key-based scrubber only masks it in place, so register the literal and
@@ -649,6 +691,7 @@ export function createCloudRunController({
       // would mean either blanking clarification text, which makes a strict run
       // unanswerable, or entropy guessing at prose.
       collectSensitiveStrings(data?.result, candidates);
+      if (name === 'verify_form') collectCredentialFieldValues(data?.result, candidates);
     }
     if (!candidates.length) return;
     const known = strictSecretValues.get(run.runId) || [];
