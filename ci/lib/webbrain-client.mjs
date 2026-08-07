@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const TERMINAL = new Set(['completed', 'failed', 'aborted', 'needs_user_input']);
+const TERMINAL_SCHEDULED = new Set(['completed', 'failed', 'cancelled', 'canceled', 'needs_user_input']);
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -43,7 +44,10 @@ export class WebBrainCloudClient {
         settings,
       },
     });
-    return response.browser_session;
+    return {
+      ...response.browser_session,
+      webbrain_config_result: response.webbrain_config_result || null,
+    };
   }
 
   async waitForBrowser(sessionId, { timeoutMs = 600_000, intervalMs = 4_000 } = {}) {
@@ -61,17 +65,37 @@ export class WebBrainCloudClient {
     throw new Error(`Browser did not become ready within ${timeoutMs}ms (last status: ${latest?.status || 'unknown'}).`);
   }
 
-  async startRun(sessionId, { task, outputSchema, timeoutMs, capture = 'video' }) {
+  async startRun(sessionId, {
+    task, mode = 'act', tabId, outputSchema, timeoutMs, capture = 'video', apiMutationsAllowed = false,
+  }) {
     return await this.request('POST', `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs`, {
       task,
-      output_schema: outputSchema,
+      mode,
+      ...(tabId === undefined || tabId === null ? {} : { tab_id: tabId }),
+      ...(outputSchema === undefined || outputSchema === null ? {} : { output_schema: outputSchema }),
+      ...(apiMutationsAllowed ? { api_mutations_allowed: true } : {}),
       timeout_ms: timeoutMs,
       capture,
       wait: false,
     });
   }
 
-  async waitForRun(sessionId, runId, { timeoutMs = 900_000, intervalMs = 3_000 } = {}) {
+  #isAnsweredClarification(run, answeredClarifyIds) {
+    if (!answeredClarifyIds?.size || run.status !== 'needs_user_input') return false;
+    const pending = run.pending_input || run.pendingInput || {};
+    const clarifyId = String(pending.clarify_id || pending.clarifyId || '');
+    return Boolean(clarifyId) && answeredClarifyIds.has(clarifyId);
+  }
+
+  async respondToRun(sessionId, runId, clarifyId, answer) {
+    return await this.request(
+      'POST',
+      `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/responses`,
+      { clarify_id: clarifyId, answer },
+    );
+  }
+
+  async waitForRun(sessionId, runId, { timeoutMs = 900_000, intervalMs = 3_000, answeredClarifyIds = null } = {}) {
     const deadline = Date.now() + timeoutMs;
     let latest = null;
     while (Date.now() < deadline) {
@@ -79,7 +103,12 @@ export class WebBrainCloudClient {
         'GET',
         `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}`,
       );
-      if (TERMINAL.has(latest.status)) return latest;
+      // A run row read right after an answer may not have flipped back to
+      // `running` yet. Re-reporting a clarification we already answered is a
+      // stale read, not a handoff — keep polling instead of grading it stuck.
+      if (TERMINAL.has(latest.status) && !this.#isAnsweredClarification(latest, answeredClarifyIds)) {
+        return latest;
+      }
       await sleep(intervalMs);
     }
     const error = new Error(`Cloud run did not finish within ${timeoutMs}ms.`);
@@ -92,6 +121,36 @@ export class WebBrainCloudClient {
       'GET',
       `/api/browser-sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/export`,
     );
+  }
+
+  async listScheduledJobs(sessionId, jobIds) {
+    const ids = [...new Set((jobIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('At least one scheduled job id is required.');
+    const query = ids.map(id => `job_id=${encodeURIComponent(id)}`).join('&');
+    return await this.request(
+      'GET',
+      `/api/browser-sessions/${encodeURIComponent(sessionId)}/scheduled-jobs?${query}`,
+    );
+  }
+
+  async waitForScheduledJobs(sessionId, jobIds, { timeoutMs = 600_000, intervalMs = 3_000 } = {}) {
+    const ids = [...new Set((jobIds || []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('At least one scheduled job id is required.');
+    const deadline = Date.now() + timeoutMs;
+    let latest = { jobs: [] };
+    while (Date.now() < deadline) {
+      const response = await this.listScheduledJobs(sessionId, ids);
+      const byId = new Map((response.jobs || []).map(job => [String(job.id), job]));
+      latest = { jobs: ids.map(id => byId.get(id)).filter(Boolean) };
+      if (
+        latest.jobs.length === ids.length
+        && latest.jobs.every(job => TERMINAL_SCHEDULED.has(String(job.status || '').toLowerCase()))
+      ) return latest;
+      await sleep(intervalMs);
+    }
+    const error = new Error(`Scheduled jobs did not finish within ${timeoutMs}ms.`);
+    error.latest = latest;
+    throw error;
   }
 
   async destroyBrowser(sessionId) {

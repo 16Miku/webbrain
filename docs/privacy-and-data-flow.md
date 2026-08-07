@@ -417,7 +417,7 @@ CDP capture → JPEG/PNG data URL
 | Tracing toggle | Prevents any trace data from being stored |
 | Screenshot fallback | Controls whether page images are sent to the LLM |
 | Auto-screenshot mode | Controls how frequently viewport captures are sent |
-| Strict secret handling | Prevents credentials discovered in chat or page reads from appearing in assistant text or completion summaries |
+| Strict secret handling | Keeps credentials out of assistant text and completion summaries: an instruction to the model, plus exact-match redaction in cloud runs of anything it typed, sent, or read from a labelled field |
 | Profile auto-fill | Controls whether user profile text is sent to the LLM |
 | User memory | Controls whether saved memory records are sent to the LLM |
 | User memory auto-learn | Controls whether post-turn extractor calls run |

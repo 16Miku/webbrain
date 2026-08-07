@@ -2,6 +2,7 @@ import {
   compileSuccessfulWorkflowByRunId,
   normalizeSavedWorkflow,
 } from './agent/workflows.js';
+import { isCredentialField } from './agent/credential-fields.js';
 
 const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17373/extension';
 const CLOUD_RUN_STORAGE_KEY = 'webbrainCloudRunSnapshots';
@@ -13,13 +14,55 @@ const CLOUD_PERSIST_BYTES_LIMIT = 4 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
 // Suffix match on normalized keys (non-alnum stripped). Avoid bare `pin` as a
 // suffix — it over-matches `spin`, `mapPin`, etc. Short exact keys live in the set.
-const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
-const SENSITIVE_CLOUD_KEY_EXACT = new Set(['pin', 'otp', 'cvv', 'cvc', 'ssn']);
+const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
+const SENSITIVE_CLOUD_KEY_EXACT = new Set(['code', 'pin', 'otp', 'cvv', 'cvc', 'ssn']);
 const LARGE_IMAGE_KEY = /(?:attachimage|screenshot|image|imagedata|dataurl)$/i;
+const CLOUD_TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
+const VERIFY_FORM_VALUE_KEYS = new Set(['value', 'controlvalue', 'valueprefix', 'valuesuffix']);
+// Strict-secret mode is deny-by-default: an update leaves the browser carrying
+// only the evidence a cloud caller needs to score the run. A per-tool allowlist
+// is the wrong shape here — a secret typed into a visible field comes straight
+// back out of the next page read, and model prose repeats it in plain text.
+// These are the narrow carve-outs that survive, keyed by what grading reads.
+const CLOUD_STRICT_MODEL_TEXT_TYPES = new Set(['text', 'text_delta']);
+// `error` and `run_status` carry the model's final response as `message`.
+const CLOUD_STRICT_DROPPED_MESSAGE_TYPES = new Set(['error', 'run_status']);
+// done_json and verify_form keep their shape through dedicated value-level
+// redactors below; every other tool result is reduced to a bare envelope.
+const CLOUD_STRICT_STRUCTURED_RESULT_TOOLS = new Set(['done_json', 'verify_form']);
+// Scalar, non-page-derived argument keys. `fetch_url` is handled separately so
+// its URL is reduced to origin-only evidence rather than dropped.
+const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origin']);
+// A caller has to read a clarification to answer it, so `clarify` cannot be
+// blanked the way model prose is. Prompt instructions are not a redaction
+// boundary either, so strict runs additionally redact by *value*: every secret
+// this run typed into a page is remembered and struck from the text of every
+// later update, clarifications included. That leaves a usable question while
+// removing the literal the key-based scrubber cannot recognize.
+const CLOUD_STRICT_SECRET_VALUE_LIMIT = 256;
+// Short values would mangle ordinary prose on a coincidental substring match.
+// Numeric PIN/CVV fragments are still security-sensitive, so they are tracked
+// with boundary-aware replacement below.
+const CLOUD_STRICT_SECRET_MIN_LENGTH = 4;
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
+const SENSITIVE_URL_COMPONENT_KEY = /(?:^|[-_.\s])(?:auth(?:orization)?|api[-_.\s]?key|key|token|secret|signature|sig|code|credential|password|passcode|otp)(?:$|[-_.\s])/i;
+const SENSITIVE_URL_PATH_LABELS = new Set([
+  'auth', 'authorization', 'apikey', 'key', 'token', 'accesstoken', 'refreshtoken',
+  'secret', 'signature', 'sig', 'code', 'authcode', 'verificationcode',
+  'credential', 'password', 'passcode', 'otp', 'downloadkey', 'sharetoken',
+]);
 
 function cloudRunError(message, status) {
   return Object.assign(new Error(message), { status });
+}
+
+export function normalizeCloudRunMode(value, fallback = 'act') {
+  const mode = String(value ?? '').trim().toLowerCase();
+  if (!mode) return fallback;
+  if (!['ask', 'act'].includes(mode)) {
+    throw cloudRunError('Cloud run `mode` must be `ask` or `act`.', 400);
+  }
+  return mode;
 }
 
 function normalizedCloudKey(key) {
@@ -42,6 +85,10 @@ function isSensitiveCloudKey(key) {
   const normalizedKey = normalizedCloudKey(key);
   if (!normalizedKey) return false;
   return SENSITIVE_CLOUD_KEY.test(normalizedKey) || SENSITIVE_CLOUD_KEY_EXACT.has(normalizedKey);
+}
+
+function hasCloudOutputSchema(value) {
+  return value !== null && value !== undefined;
 }
 
 function scrubCloudValue(value) {
@@ -67,7 +114,375 @@ function scrubCloudValue(value) {
   }
 }
 
-function redactWorkflowRuntimeValues(value, runtimeValues = []) {
+function cloudUrlEvidence(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (!['http:', 'https:'].includes(url.protocol)) return {};
+    return { url_origin: url.origin };
+  } catch {
+    return {};
+  }
+}
+
+function cloudTerminalUrl(value, { strictSecretMode = false } = {}) {
+  if (!strictSecretMode) return value;
+  return cloudUrlEvidence(value).url_origin || '';
+}
+
+function redactVerifyFormValues(value) {
+  try {
+    return JSON.parse(JSON.stringify(value, (key, item) => (
+      VERIFY_FORM_VALUE_KEYS.has(normalizedCloudKey(key).toLowerCase())
+        ? '[redacted form value]'
+        : item
+    )));
+  } catch {
+    return { success: false, sensitivePayloadRedacted: true };
+  }
+}
+
+// Every leaf a secret can be encoded in goes, not just strings: a six-digit OTP
+// serialized as `verification_code: 481920` is a number, and no key pattern
+// recognizes that field name. Booleans and null survive because neither can
+// carry a credential — which is also what makes a strict structured run
+// gradable, since a `true` outcome flag comes through intact. A strict run's
+// structured output is therefore assertable on booleans only.
+function redactStrictStructuredValues(value) {
+  try {
+    return JSON.parse(JSON.stringify(value, (_key, item) => {
+      if (typeof item === 'string') return '[redacted strict value]';
+      if (typeof item === 'number' || typeof item === 'bigint') return '[redacted strict number]';
+      return item;
+    }));
+  } catch {
+    return { sensitivePayloadRedacted: true };
+  }
+}
+
+function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
+  if (!data || typeof data !== 'object') return data;
+  const name = String(data.name || data.tool || '');
+  if (strictSecretMode && CLOUD_STRICT_MODEL_TEXT_TYPES.has(type)) {
+    return {
+      ...data,
+      ...(Object.hasOwn(data, 'content') ? { content: '[redacted strict text]' } : {}),
+    };
+  }
+  if (strictSecretMode && CLOUD_STRICT_DROPPED_MESSAGE_TYPES.has(type)) {
+    // Dropped rather than replaced so the run-level fallbacks below still pick
+    // their own descriptive constant instead of storing a placeholder.
+    const { message: _message, ...rest } = data;
+    return rest;
+  }
+  if (!strictSecretMode && type === 'tool_call' && CLOUD_TEXT_ENTRY_TOOLS.has(name)) {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    return {
+      ...data,
+      args: {
+        ...args,
+        ...(Object.hasOwn(args, 'text') ? { text: '[redacted typed text]' } : {}),
+        ...(Object.hasOwn(args, 'value') ? { value: '[redacted typed text]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_call' && name === 'fetch_url') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    const method = String(args.method || '').toUpperCase();
+    return {
+      ...data,
+      args: {
+        ...(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method) ? { method } : {}),
+        ...cloudUrlEvidence(args.url),
+        ...(Object.hasOwn(args, 'body') ? { body: '[redacted request body]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'fetch_url') {
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        success: result.success === true,
+        ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
+        sensitivePayloadRedacted: true,
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'verify_form') {
+    return {
+      ...data,
+      result: redactVerifyFormValues(data.result),
+    };
+  }
+  if (strictSecretMode && type === 'tool_call' && name === 'done_json') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    return {
+      ...data,
+      args: {
+        ...args,
+        ...(Object.hasOwn(args, 'result') ? { result: redactStrictStructuredValues(args.result) } : {}),
+        ...(Object.hasOwn(args, 'summary') ? { summary: '[redacted strict summary]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && name === 'done_json') {
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        ...result,
+        ...(Object.hasOwn(result, 'result') ? { result: redactStrictStructuredValues(result.result) } : {}),
+        ...(Object.hasOwn(result, 'cloudResult') ? { cloudResult: redactStrictStructuredValues(result.cloudResult) } : {}),
+        ...(Object.hasOwn(result, 'invalidResult') ? { invalidResult: redactStrictStructuredValues(result.invalidResult) } : {}),
+        ...(Object.hasOwn(result, 'summary') ? { summary: '[redacted strict summary]' } : {}),
+      },
+    };
+  }
+  if (strictSecretMode && type === 'tool_call') {
+    const args = data.args && typeof data.args === 'object' ? data.args : {};
+    const evidence = Object.fromEntries(Object.entries(args).filter(([key, value]) => (
+      CLOUD_STRICT_ARG_EVIDENCE_KEYS.has(key) && (typeof value !== 'object' || value === null)
+    )));
+    return {
+      ...data,
+      args: { ...evidence, sensitiveArgsRedacted: true },
+    };
+  }
+  if (strictSecretMode && type === 'tool_result' && !CLOUD_STRICT_STRUCTURED_RESULT_TOOLS.has(name)) {
+    // Any read tool echoes back whatever was typed into the page, so success
+    // and HTTP status are all a result may carry out of a strict run.
+    const result = data.result && typeof data.result === 'object' ? data.result : {};
+    return {
+      ...data,
+      result: {
+        success: result.success === true,
+        ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
+        sensitivePayloadRedacted: true,
+      },
+    };
+  }
+  return data;
+}
+
+// Walks a raw tool result for string or numeric values sitting under a key the
+// scrubber already treats as sensitive. Depth-bounded: a page read can be
+// enormous, and this runs on every update.
+function collectSensitiveStrings(value, into, depth = 0, sensitiveParent = false) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (sensitiveParent) into.push(value);
+    return;
+  }
+  if (typeof value === 'number') {
+    if (sensitiveParent && Number.isFinite(value)) into.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectSensitiveStrings(item, into, depth + 1, sensitiveParent);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    collectSensitiveStrings(
+      item,
+      into,
+      depth + 1,
+      sensitiveParent || isSensitiveCloudKey(key),
+    );
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
+function isSensitiveUrlComponentKey(value) {
+  const text = String(value || '');
+  return isSensitiveCloudKey(text)
+    || SENSITIVE_URL_COMPONENT_KEY.test(text)
+    || /(?:Key|Code|Signature|Token|Secret|Password)$/.test(text);
+}
+
+function isSensitiveUrlPathLabel(value) {
+  return SENSITIVE_URL_PATH_LABELS.has(normalizedCloudKey(value).toLowerCase());
+}
+
+// URL paths and queries are withheld wholesale from strict trace evidence, but
+// the value registry must be narrower: registering `/profile` or `?tab=activity`
+// as a secret corrupts legitimate caller-visible results. Remember userinfo,
+// values under credential-like query keys, and path/hash components that either
+// carry credential vocabulary themselves or follow an explicit credential label.
+function collectUrlSecretStrings(value, into) {
+  let url;
+  try {
+    url = new URL(String(value || ''));
+  } catch {
+    return;
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) return;
+  const add = (candidate) => {
+    const text = String(candidate || '');
+    if (text && into.length <= CLOUD_STRICT_SECRET_VALUE_LIMIT) into.push(text);
+  };
+  const addEncoded = (candidate) => {
+    add(candidate);
+    try {
+      add(decodeURIComponent(String(candidate || '')));
+    } catch {}
+  };
+  addEncoded(url.username);
+  addEncoded(url.password);
+  let followsSensitivePathLabel = false;
+  for (const segment of url.pathname.split('/').filter(Boolean)) {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch {}
+    const isLabel = isSensitiveUrlPathLabel(decoded);
+    if (followsSensitivePathLabel || (!isLabel && isSensitiveUrlComponentKey(decoded))) {
+      addEncoded(segment);
+    }
+    followsSensitivePathLabel = isLabel;
+  }
+  for (const [key, item] of url.searchParams) {
+    if (isSensitiveUrlComponentKey(key)) addEncoded(item);
+  }
+  const hash = url.hash.replace(/^#/, '');
+  if (hash) {
+    let decodedHash = hash;
+    try { decodedHash = decodeURIComponent(hash); } catch {}
+    let foundSensitiveHashParam = false;
+    if (decodedHash.includes('=')) {
+      const hashParams = new URLSearchParams(decodedHash.replace(/^\?/, ''));
+      for (const [key, item] of hashParams) {
+        if (!isSensitiveUrlComponentKey(key)) continue;
+        foundSensitiveHashParam = true;
+        addEncoded(item);
+      }
+    }
+    if (!foundSensitiveHashParam
+        && !isSensitiveUrlPathLabel(decodedHash)
+        && isSensitiveUrlComponentKey(decodedHash)) {
+      addEncoded(hash);
+    }
+  }
+}
+
+// URL credentials are not unique to fetch_url: navigate, new_tab, read tools,
+// downloads, custom skills, and tool results can all carry URL-shaped fields.
+// Walk only fields whose normalized name ends in url/urls, but follow arrays
+// and nested containers below such a field so credential-like components in
+// every concrete http(s) value are registered before later prose is published.
+function collectUrlSecretsFromNamedFields(value, into, depth = 0, urlBearing = false) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (urlBearing) collectUrlSecretStrings(value, into);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrlSecretsFromNamedFields(item, into, depth + 1, urlBearing);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = normalizedCloudKey(key).toLowerCase();
+    collectUrlSecretsFromNamedFields(
+      item,
+      into,
+      depth + 1,
+      urlBearing || /urls?$/.test(normalizedKey),
+    );
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
+// Full URLs are trace-only sensitive in strict mode even when their individual
+// path/query components are ordinary public data. Keep this registry separate
+// from credential values so a repeated URL is removed from prose updates while
+// a schema-valid result such as `{ section: 'profile' }` stays intact.
+function collectUrlTraceStringsFromNamedFields(value, into, depth = 0, urlBearing = false) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (!urlBearing) return;
+    try {
+      const url = new URL(value);
+      if (!['http:', 'https:'].includes(url.protocol)) return;
+      into.push(value);
+      if (url.href !== value) into.push(url.href);
+    } catch {}
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrlTraceStringsFromNamedFields(item, into, depth + 1, urlBearing);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = normalizedCloudKey(key).toLowerCase();
+    collectUrlTraceStringsFromNamedFields(
+      item,
+      into,
+      depth + 1,
+      urlBearing || /urls?$/.test(normalizedKey),
+    );
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
+// verify_form represents an input's identity and value as siblings, for
+// example `{ name: 'api_key', value: 'secret' }`. The generic key walk above
+// cannot connect those fields, so reuse the same credential detector that
+// classifies fields when they are filled and register only that field record's
+// value-bearing leaves.
+function collectCredentialFieldValues(value, into, depth = 0) {
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectCredentialFieldValues(item, into, depth + 1);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const credential = isCredentialField({
+    type: value.type,
+    name: value.name,
+    id: value.id,
+    autocomplete: value.autocomplete,
+    ariaLabel: value.ariaLabel ?? value.aria_label,
+    placeholder: value.placeholder,
+    labelText: value.labelText ?? value.label,
+  }).sensitive;
+  if (credential) {
+    for (const [key, item] of Object.entries(value)) {
+      if (!VERIFY_FORM_VALUE_KEYS.has(normalizedCloudKey(key).toLowerCase())) continue;
+      if (typeof item === 'string') into.push(item);
+      else if (typeof item === 'number' && Number.isFinite(item)) into.push(String(item));
+    }
+  }
+  for (const item of Object.values(value)) {
+    if (item && typeof item === 'object') collectCredentialFieldValues(item, into, depth + 1);
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  }
+}
+
+// A request body is a string argument, so the key-walk above cannot see into
+// it. Both encodings a mutating call realistically uses are cheap to parse.
+function collectRequestBodySecrets(body, into) {
+  if (typeof body !== 'string' || !body) return false;
+  // Do not silently skip a body that is too large for bounded inspection. The
+  // caller marks the run as overflowed so every later scalar is redacted rather
+  // than relying on the model not to repeat an unknown credential.
+  if (body.length > WORKFLOW_PARAMETER_VALUE_LIMIT) return true;
+  try {
+    collectSensitiveStrings(JSON.parse(body), into);
+    return false;
+  } catch {
+    // Not JSON — fall through to the form encoding.
+  }
+  try {
+    for (const [key, value] of new URLSearchParams(body)) {
+      if (isSensitiveCloudKey(key)) into.push(value);
+    }
+  } catch {
+    // Undecodable body: nothing to register, and the argument is dropped anyway.
+  }
+  return false;
+}
+
+function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workflow parameter]') {
   if (value == null) return value;
   const variants = new Set();
   for (const parameterValue of runtimeValues) {
@@ -102,7 +517,22 @@ function redactWorkflowRuntimeValues(value, runtimeValues = []) {
     let offset = 0;
     let index = normalizedText.indexOf(normalizedValue, offset);
     while (index !== -1) {
-      result += `${text.slice(offset, index)}[workflow parameter]`;
+      const boundaryMatch = parameterValue.length >= CLOUD_STRICT_SECRET_MIN_LENGTH
+        || (
+          (index === 0 || !/[A-Za-z0-9]/.test(normalizedText[index - 1]))
+          && (
+            index + normalizedValue.length === normalizedText.length
+            || !/[A-Za-z0-9]/.test(normalizedText[index + normalizedValue.length])
+          )
+        );
+      if (!boundaryMatch) {
+        const nextOffset = index + normalizedValue.length;
+        result += text.slice(offset, nextOffset);
+        offset = nextOffset;
+        index = normalizedText.indexOf(normalizedValue, offset);
+        continue;
+      }
+      result += `${text.slice(offset, index)}${label}`;
       offset = index + parameterValue.length;
       index = normalizedText.indexOf(normalizedValue, offset);
     }
@@ -110,7 +540,12 @@ function redactWorkflowRuntimeValues(value, runtimeValues = []) {
   }, input);
   try {
     return JSON.parse(JSON.stringify(value, (_key, item) => (
-      typeof item === 'string' ? redactString(item) : item
+      // A secret typed as text can come back as a JSON number — a six-digit OTP
+      // is the obvious case. Match on the number's exact string form: a
+      // substring rule would strike an unrelated `3` out of `481920`.
+      typeof item === 'number' && values.includes(String(item))
+        ? label
+        : (typeof item === 'string' ? redactString(item) : item)
     )));
   } catch {
     return { unserializable: true };
@@ -123,7 +558,7 @@ function serializedBytes(value) {
 
 function compactCloudRunForPersistence(run) {
   const row = scrubCloudValue(run);
-  row.structured = row.structured ?? !!run?.outputSchema;
+  row.structured = row.structured ?? hasCloudOutputSchema(run?.outputSchema);
   if (serializedBytes(row) <= CLOUD_RUN_PERSIST_BYTES_LIMIT) return row;
 
   const omittedUpdates = Array.isArray(row.updates) ? row.updates.length : 0;
@@ -147,10 +582,11 @@ function compactCloudRunForPersistence(run) {
     workflowId: run?.workflowId || null,
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
+    mode: run?.mode || 'act',
     captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
     task: run?.task,
-    structured: !!run?.outputSchema || run?.structured === true,
+    structured: hasCloudOutputSchema(run?.outputSchema) || run?.structured === true,
     pendingInput: run?.pendingInput || null,
     summary: run?.summary,
     content: '',
@@ -162,6 +598,33 @@ function compactCloudRunForPersistence(run) {
     updates: [],
     persistenceTruncated: { omittedUpdates, omittedResult: true, omittedSchema: true },
   });
+}
+
+/**
+ * Scheduled jobs answer a cloud query over the same bridge as run updates, so
+ * they need the same strict-secret treatment: a summarized job otherwise ships
+ * `lastResult`, `lastError`, `pendingClarify`, `target.url`, and
+ * `watch.lastObservation` — a child task's raw prompt and output — straight past
+ * every redaction applied to the parent run. Strict mode keeps only structural
+ * and enumerated fields; free text and URLs are dropped.
+ */
+export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
+  if (!job || !strictSecretMode) return job;
+  return {
+    id: job.id,
+    kind: job.kind,
+    source: job.source || null,
+    status: job.status,
+    scheduledAt: job.scheduledAt,
+    nextRunAt: job.nextRunAt || job.scheduledAt,
+    lastOutcome: job.lastOutcome || null,
+    needsUserInput: job.needsUserInput === true,
+    clarificationRequired: job.clarificationRequired === true,
+    completedAt: job.completedAt || null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    sensitiveFieldsRedacted: true,
+  };
 }
 
 export function buildCloudPersistenceRows(runs) {
@@ -188,9 +651,10 @@ function cloudSnapshot(run, { includeUpdates = true } = {}) {
     status: run.status,
     workflowId: run.workflowId || null,
     parentRunId: run.parentRunId || null,
+    mode: run.mode || 'act',
     tabId: run.tabId,
     task: run.task,
-    structured: run.structured ?? !!run.outputSchema,
+    structured: run.structured ?? hasCloudOutputSchema(run.outputSchema),
     pendingInput: run.pendingInput || null,
     ...(run.captchaDiagnostics ? { captchaDiagnostics: run.captchaDiagnostics } : {}),
     result: run.result,
@@ -227,7 +691,7 @@ export function createCloudRunController({
   stopRecording = null,
   workflowTrace = null,
   now = () => new Date(),
-  makeRunId = () => `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+  makeRunId = () => `run_${globalThis.crypto.randomUUID()}`,
 } = {}) {
   const api = chromeApi;
   const runs = new Map();
@@ -334,37 +798,154 @@ export function createCloudRunController({
     }
   }
 
+  // Kept out of the run object so a literal secret can never reach session
+  // storage or a persistence row. Dropped when the run leaves the map.
+  const strictSecretValues = new Map();
+  const strictTraceValues = new Map();
+  const strictSecretOverflowRuns = new Set();
+  const strictTraceOverflowRuns = new Set();
+
+  function rememberStrictCandidates(run, candidates, registry, overflowRuns) {
+    if (!candidates.length) return;
+    const known = registry.get(run.runId) || [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const shortNumericSecret = /^\d{1,3}$/.test(candidate);
+      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH && !shortNumericSecret) continue;
+      if (candidate.length > WORKFLOW_PARAMETER_VALUE_LIMIT) continue;
+      if (known.includes(candidate)) continue;
+      if (known.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) {
+        // Never evict an earlier credential or trace-only URL and silently
+        // expose it later. Losing free-text utility is preferable to leakage.
+        overflowRuns.add(run.runId);
+        break;
+      }
+      known.push(candidate);
+    }
+    if (known.length) registry.set(run.runId, known);
+  }
+
+  // Whatever a strict run types into a page is a value the caller must never
+  // read back, wherever it later resurfaces — a clarification question, a
+  // warning, a captcha diagnostic. Remember it here, before the redactors drop
+  // the argument that carried it.
+  function rememberStrictSecrets(run, type, data) {
+    const name = String(data?.name || data?.tool || '');
+    const candidates = [];
+    const traceCandidates = [];
+    if (type === 'tool_call') {
+      const args = data?.args && typeof data.args === 'object' ? data.args : {};
+      if (CLOUD_TEXT_ENTRY_TOOLS.has(name)) candidates.push(args.text, args.value);
+      collectUrlSecretsFromNamedFields(args, candidates);
+      collectUrlTraceStringsFromNamedFields(args, traceCandidates);
+      // A credential does not have to be typed into a page to exist. The
+      // disposable-signup scenario mints its account password inside the JSON
+      // body of `POST /accounts` and never types it, so registering only
+      // text-entry arguments left it unknown to the value redactor.
+      collectSensitiveStrings(args, candidates);
+      if (collectRequestBodySecrets(args.body, candidates)) {
+        strictSecretOverflowRuns.add(run.runId);
+      }
+    } else if (type === 'tool_result') {
+      // The value under a sensitive key is already known to be a secret; the
+      // key-based scrubber only masks it in place, so register the literal and
+      // strike it from later prose as well.
+      //
+      // Known limit: a secret the model only ever *reads* out of an
+      // unremarkable field — an OTP in the body text of an inbox message — is
+      // never seen here in a form this can recognize, so a clarification that
+      // quotes it is covered by the strict system prompt alone. Closing that
+      // would mean either blanking clarification text, which makes a strict run
+      // unanswerable, or entropy guessing at prose.
+      collectSensitiveStrings(data?.result, candidates);
+      collectUrlSecretsFromNamedFields(data?.result, candidates);
+      collectUrlTraceStringsFromNamedFields(data?.result, traceCandidates);
+      if (name === 'verify_form') collectCredentialFieldValues(data?.result, candidates);
+    }
+    rememberStrictCandidates(run, candidates, strictSecretValues, strictSecretOverflowRuns);
+    rememberStrictCandidates(run, traceCandidates, strictTraceValues, strictTraceOverflowRuns);
+  }
+
+  function redactStrictSecretValues(run, value, strictSecretMode) {
+    if (!strictSecretMode) return value;
+    if (strictSecretOverflowRuns.has(run.runId)) return redactStrictStructuredValues(value);
+    const known = strictSecretValues.get(run.runId);
+    if (!known?.length) return value;
+    return redactWorkflowRuntimeValues(value, known, '[redacted strict value]');
+  }
+
+  function redactStrictTraceValues(run, value, strictSecretMode) {
+    const withoutSecrets = redactStrictSecretValues(run, value, strictSecretMode);
+    if (!strictSecretMode || strictSecretOverflowRuns.has(run.runId)) return withoutSecrets;
+    if (strictTraceOverflowRuns.has(run.runId)) return redactStrictStructuredValues(withoutSecrets);
+    const known = strictTraceValues.get(run.runId);
+    if (!known?.length) return withoutSecrets;
+    return redactWorkflowRuntimeValues(withoutSecrets, known, '[redacted strict URL]');
+  }
+
+  // Terminal prose reaches the caller by the same two routes as an update row,
+  // so it takes both secret and trace-only URL redaction. A structured
+  // `run.result` is handled separately below and takes only credential-value
+  // redaction so ordinary schema-valid URL components remain usable.
+  function redactStrictTerminal(run, value, strictSecretMode) {
+    return redactStrictTraceValues(run, value, strictSecretMode);
+  }
+
   function pushUpdate(run, type, data, runtimeValues = []) {
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
+    const strictSecretMode = agent.strictSecretMode === true;
+    if (strictSecretMode) rememberStrictSecrets(run, type, data);
     // Consecutive text_delta events upsert the same seq: content grows in place
     // and ts advances. Full-array pollers are fine; append-only / seq-cursor
     // clients must re-read that row (or take a full snapshot) rather than
     // assuming each seq is immutable.
     if (type === 'text_delta' && previous?.type === 'text_delta') {
-      previous.data = scrubCloudValue(redactWorkflowRuntimeValues({
+      // Deltas must pass through the same redaction as any other update: this
+      // branch used to append raw model output straight onto the stored row.
+      const safeDelta = cloudSafeUpdateData(type, data, { strictSecretMode });
+      previous.data = scrubCloudValue(redactStrictTraceValues(run, redactWorkflowRuntimeValues({
         ...previous.data,
-        content: `${previous.data?.content || ''}${data?.content || ''}`,
-      }, runtimeValues));
+        content: strictSecretMode
+          ? (safeDelta?.content || '')
+          : `${previous.data?.content || ''}${safeDelta?.content || ''}`,
+      }, runtimeValues), strictSecretMode));
       previous.ts = run.updatedAt;
       schedulePersist();
       return;
     }
     run.nextUpdateSeq = (Number(run.nextUpdateSeq) || 0) + 1;
-    const scrubbedData = scrubCloudValue(redactWorkflowRuntimeValues(data, runtimeValues));
+    const safeData = cloudSafeUpdateData(type, data, { strictSecretMode });
+    const scrubbedData = scrubCloudValue(
+      redactStrictTraceValues(run, redactWorkflowRuntimeValues(safeData, runtimeValues), strictSecretMode),
+    );
     run.updates.push({ seq: run.nextUpdateSeq, type, data: scrubbedData, ts: run.updatedAt });
     if (run.updates.length > CLOUD_UPDATE_LIMIT) {
       run.updates.splice(0, run.updates.length - CLOUD_UPDATE_LIMIT);
     }
-    if (type === 'tool_result' && data?.name === 'done_json') {
+    if (type === 'tool_result' && scrubbedData?.name === 'done_json') {
       const result = data.result || {};
+      const safeResult = scrubbedData.result || {};
+      // Two different jobs, so two different redactors. The update row above is
+      // trace and persistence with no contract to honour, and takes the blunt
+      // leaf-type redaction. `run.result` and `run.summary` are the caller's
+      // answer — the schema they asked for — so they take value redaction:
+      // registered credentials are struck and everything else the contract
+      // declares survives. Redacting those by leaf type returned `completed`
+      // with every string and number replaced by a placeholder, which satisfies
+      // strict mode by making the run useless.
+      const publicSummary = strictSecretMode
+        ? redactStrictTraceValues(run, result.summary, true)
+        : safeResult.summary;
       if (result.cloudFailed) {
         run.status = 'failed';
-        run.error = result.error || 'done_json failed';
-        run.summary = result.summary || run.summary;
+        run.error = safeResult.error || 'done_json failed';
+        run.summary = publicSummary || run.summary;
       } else if (Object.prototype.hasOwnProperty.call(result, 'cloudResult')) {
-        run.result = result.cloudResult;
-        run.summary = result.summary || run.summary;
+        run.result = strictSecretMode
+          ? redactStrictSecretValues(run, result.cloudResult, true)
+          : result.cloudResult;
+        run.summary = publicSummary || run.summary;
       }
     }
     if (type === 'captcha_gate') {
@@ -419,25 +1000,29 @@ export function createCloudRunController({
 
   async function startRun(msg = {}) {
     await hydrate();
+    const suppliedRunId = msg.runId ?? msg.run_id;
+    const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
+    let parentRun = null;
     let requestedTabId = msg.tabId ?? msg.tab_id;
     if (parentRunId) {
-      const parent = runs.get(parentRunId);
-      if (parent) {
-        if (!TERMINAL_STATUSES.has(parent.status)) {
+      parentRun = runs.get(parentRunId) || null;
+      if (parentRun) {
+        if (!TERMINAL_STATUSES.has(parentRun.status)) {
           throw cloudRunError('Parent cloud run must be finished before it can be continued.', 409);
         }
         const existingChild = [...runs.values()].find(candidate => candidate.parentRunId === parentRunId);
         if (existingChild) {
           throw cloudRunError(`Cloud run has already been continued as ${existingChild.runId}.`, 409);
         }
-        requestedTabId = parent.tabId;
+        requestedTabId = parentRun.tabId;
       } else if (requestedTabId == null || requestedTabId === '') {
         throw cloudRunError('Parent cloud run is no longer available and has no saved tab.', 409);
       }
     }
     const tabId = await resolveTabId(requestedTabId);
     const workflow = msg._workflow || null;
+    const mode = workflow ? 'act' : normalizeCloudRunMode(msg.mode, parentRun?.mode || 'act');
     const workflowParameters = msg._workflowParameters || {};
     const workflowParameterValues = workflow ? Object.values(workflowParameters) : [];
     const redactWorkflowValue = value => redactWorkflowRuntimeValues(value, workflowParameterValues);
@@ -450,16 +1035,27 @@ export function createCloudRunController({
     const apiMutationsAllowed = msg.apiMutationsAllowed === true || msg.api_mutations_allowed === true;
     const outputSchema = workflow
       ? null
-      : msg.outputSchema || msg.output_schema || msg.responseFormat?.schema || msg.response_format?.schema || null;
+      : msg.outputSchema ?? msg.output_schema ?? msg.responseFormat?.schema ?? msg.response_format?.schema ?? null;
+    const structured = hasCloudOutputSchema(outputSchema);
+    const runId = requestedRunId || String(makeRunId());
+    // Cloud-assigned IDs are valid correlation keys, but they must not replace
+    // an active or persisted run. Besides losing the older run from status
+    // queries, replacement aliases both runs' strict-secret registries; the
+    // first run to finish would then clear the second run's redaction state.
+    if (runs.has(runId)) {
+      throw cloudRunError(`Cloud run ${runId} already exists.`, 409);
+    }
     const createdAt = isoNow();
     const run = {
-      runId: msg.runId || msg.run_id || makeRunId(),
+      runId,
       status: 'running',
       workflowId: workflow?.id || null,
       traceRunId: null,
       parentRunId,
+      mode,
       tabId,
       task,
+      structured,
       outputSchema,
       capture: msg.capture === 'video' ? 'video' : 'none',
       result: undefined,
@@ -479,6 +1075,7 @@ export function createCloudRunController({
 
     (async () => {
       let recordingId = null;
+      const strictSecretMode = agent.strictSecretMode === true;
       try {
         if (run.capture === 'video') {
           try {
@@ -544,7 +1141,7 @@ export function createCloudRunController({
             );
           }
         } else {
-          content = await agent.processMessage(tabId, task, publishUpdate, 'act', [], {
+          content = await agent.processMessage(tabId, task, publishUpdate, mode, [], {
             cloudRun: true,
             independentRun: true,
             outputSchema,
@@ -555,25 +1152,38 @@ export function createCloudRunController({
           });
         }
         run.pendingInput = null;
-        run.content = redactWorkflowValue(content);
-        run.finalUrl = redactWorkflowValue(await getTabUrl(tabId));
+        // Terminal fields are published over the bridge and persisted just like
+        // update rows, so they get the same strict treatment — structured or
+        // not. An unstructured strict run used to return its final answer raw,
+        // which is where a model is most likely to repeat the credential it was
+        // told not to. Value redaction rather than blanking, because for an
+        // unstructured run this text *is* the result: the answer survives with
+        // the literal struck.
+        run.content = strictSecretMode && structured
+          ? (run.summary || '[redacted strict structured completion]')
+          : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
+        run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
         if (run.status === 'aborting') {
           run.status = 'aborted';
           run.error = run.error || 'Aborted by cloud_abort.';
         } else if (run.status !== 'failed') {
-          if (outputSchema && run.result === undefined) {
+          if (structured && run.result === undefined) {
             run.status = 'failed';
             run.error = 'Structured cloud run finished without a valid done_json result.';
           } else {
             run.status = 'completed';
-            if (!outputSchema) run.result = redactWorkflowValue(content);
+            if (!structured) {
+              run.result = redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
+            }
           }
         }
       } catch (error) {
         run.pendingInput = null;
         run.status = run.status === 'aborting' ? 'aborted' : 'failed';
-        run.error = redactWorkflowValue(error?.message || String(error));
-        run.finalUrl = redactWorkflowValue(await getTabUrl(tabId));
+        run.error = redactStrictTerminal(
+          run, redactWorkflowValue(error?.message || String(error)), strictSecretMode,
+        );
+        run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
         // Do not expose a terminal status until the requested recording has
         // finished flushing to Downloads; pollers use terminality as the cue
@@ -600,6 +1210,12 @@ export function createCloudRunController({
         if (terminalStatus) run.status = terminalStatus;
         run.completedAt = isoNow();
         run.updatedAt = run.completedAt;
+        // The run is over, so nothing more can quote these; do not hold the
+        // literals in memory any longer than the run that typed them.
+        strictSecretValues.delete(run.runId);
+        strictTraceValues.delete(run.runId);
+        strictSecretOverflowRuns.delete(run.runId);
+        strictTraceOverflowRuns.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         await persist().catch(() => {});
       }

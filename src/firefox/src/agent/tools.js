@@ -1,4 +1,5 @@
 import { closeToolDefinitions } from './tool-arguments.js';
+import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1123,6 +1124,125 @@ const DONE_JSON_TOOL = {
   },
 };
 
+// `field?` shorthand means the property may be absent *or* null — that is what
+// validateCloudOutput accepts. Advertising the bare type instead would get an
+// explicit null rejected at the argument gate before the run's own validator
+// ever saw it, failing a done_json call the schema actually permits.
+function nullableSchema(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (typeof schema.type === 'string') return { ...schema, type: [schema.type, 'null'] };
+  if (Array.isArray(schema.type) && !schema.type.includes('null')) {
+    return { ...schema, type: [...schema.type, 'null'] };
+  }
+  // A schema with no declared type (`any`) already permits null.
+  return schema;
+}
+
+// Generic tool definitions are closed recursively before they reach a model.
+// Caller-provided JSON Schema has the opposite default: an object that declares
+// `properties` still permits other keys unless `additionalProperties: false`
+// is explicit. Materialize that default throughout the dynamic result schema
+// so the generic closer cannot silently narrow the caller's contract. The
+// shorthand converter below remains closed by construction.
+function preserveJsonSchemaObjectDefaults(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const preserved = { ...schema };
+  if (schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
+    preserved.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, child]) => [
+      key,
+      preserveJsonSchemaObjectDefaults(child),
+    ]));
+    if (!Object.hasOwn(schema, 'additionalProperties')) preserved.additionalProperties = true;
+  }
+  if (schema.items && typeof schema.items === 'object' && !Array.isArray(schema.items)) {
+    preserved.items = preserveJsonSchemaObjectDefaults(schema.items);
+  }
+  if (schema.additionalProperties && typeof schema.additionalProperties === 'object'
+      && !Array.isArray(schema.additionalProperties)) {
+    preserved.additionalProperties = preserveJsonSchemaObjectDefaults(schema.additionalProperties);
+  }
+  for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(schema[keyword])) {
+      preserved[keyword] = schema[keyword].map(preserveJsonSchemaObjectDefaults);
+    }
+  }
+  return preserved;
+}
+
+function doneJsonResultSchema(spec) {
+  // An explicit `$schema` says the caller wrote real JSON Schema, so preserve
+  // its semantics rather than guessing node by node. The marker itself is
+  // dropped — it describes the document, not the argument being validated.
+  if (hasJsonSchemaMarker(spec)) {
+    const { $schema: _marker, ...jsonSchema } = spec;
+    return preserveJsonSchemaObjectDefaults(jsonSchema);
+  }
+  const convert = (value) => {
+    if (typeof value === 'string') {
+      let shorthand = value.trim();
+      const optional = shorthand.endsWith('?');
+      if (optional) shorthand = shorthand.slice(0, -1).trim();
+      if (shorthand.endsWith('[]')) {
+        const itemType = shorthand.slice(0, -2).trim() || 'any';
+        return { schema: { type: 'array', items: convert(itemType).schema }, optional };
+      }
+      if (shorthand === 'any') return { schema: {}, optional };
+      if (['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(shorthand)) {
+        return { schema: { type: shorthand }, optional };
+      }
+      return { schema: {}, optional };
+    }
+    if (Array.isArray(value)) {
+      return { schema: { type: 'array', items: convert(value[0] ?? 'any').schema }, optional: false };
+    }
+    if (!value || typeof value !== 'object') return { schema: {}, optional: false };
+    if (isJsonSchemaSpec(value)) {
+      return { schema: preserveJsonSchemaObjectDefaults(value), optional: false };
+    }
+    const converted = Object.entries(value).map(([key, child]) => [key, convert(child)]);
+    return {
+      schema: {
+        type: 'object',
+        properties: Object.fromEntries(converted.map(([key, child]) => [
+          key,
+          child.optional ? nullableSchema(child.schema) : child.schema,
+        ])),
+        required: converted.filter(([, child]) => !child.optional).map(([key]) => key),
+        additionalProperties: false,
+      },
+      optional: false,
+    };
+  };
+  return convert(spec).schema;
+}
+
+function doneJsonTool(outputSchema, { strictSecretMode = false } = {}) {
+  return {
+    ...DONE_JSON_TOOL,
+    function: {
+      ...DONE_JSON_TOOL.function,
+      ...(strictSecretMode ? {
+        description: `${DONE_JSON_TOOL.function.description} CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, or other secrets anywhere in result or summary; report only non-secret status and evidence.`,
+      } : {}),
+      parameters: {
+        ...DONE_JSON_TOOL.function.parameters,
+        properties: {
+          ...DONE_JSON_TOOL.function.parameters.properties,
+          result: {
+            description: strictSecretMode
+              ? 'Machine-readable result matching the requested output schema. Must not contain credentials, passwords, API keys, tokens, OTPs, recovery codes, or other secrets.'
+              : 'Machine-readable result matching the requested output schema.',
+            ...doneJsonResultSchema(outputSchema),
+          },
+          ...(strictSecretMode ? {
+            summary: { type: 'string', description: 'Short human-readable completion summary without credentials or secrets.' },
+          } : {}),
+        },
+      },
+    },
+  };
+}
+
 const WATCH_BEEP_TOOL = {
   type: 'function',
   function: {
@@ -1218,8 +1338,16 @@ export function getToolsForMode(mode, opts = {}) {
     });
     base = [...base, ...extras];
   }
-  const useDoneJson = normalizedMode === 'act' && tier === 'full' && opts.cloudRun === true && !!opts.outputSchema;
-  if (useDoneJson) return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? DONE_JSON_TOOL : tool)));
+  const useDoneJson = ['ask', 'act'].includes(normalizedMode)
+    && tier === 'full'
+    && opts.cloudRun === true
+    && opts.outputSchema != null;
+  if (useDoneJson) {
+    const structuredDone = doneJsonTool(opts.outputSchema, {
+      strictSecretMode: opts.strictSecretMode === true,
+    });
+    return closeToolDefinitions(base.map(tool => (tool.function.name === 'done' ? structuredDone : tool)));
+  }
   const useOutcomeDone = normalizedMode !== 'ask';
   if (!opts.strictSecretMode && !useOutcomeDone) return closeToolDefinitions(base);
   const replacement = opts.strictSecretMode
