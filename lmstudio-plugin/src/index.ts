@@ -1,6 +1,14 @@
 /**
- * LM Studio plugin entry — registers two web-fetching tools with the
- * host's tool-provider system.
+ * LM Studio plugin entry — registers web-fetching tools plus, when the
+ * WebBrain browser extension is attached, real browser delegation.
+ *
+ * Two tiers, deliberately:
+ *   - `fetch_url` / `research_url` are pure Node HTTP. They need nothing
+ *     installed and work forever, but they have no cookies, no session and
+ *     no JavaScript — anything behind a login is invisible to them.
+ *   - `browser_task` hands a goal to the WebBrain extension running in the
+ *     user's own signed-in browser. It degrades with a clear, actionable
+ *     message when no extension is connected rather than failing opaquely.
  *
  * Tool implementations live in `./tools/*.ts` as pure functions so
  * they stay portable across SDK API changes. Only the `main(ctx)`
@@ -22,6 +30,7 @@ import type { PluginContext } from "@lmstudio/sdk";
 import { z } from "zod";
 import { fetchUrl } from "./tools/fetchUrl.js";
 import { researchUrl } from "./tools/researchUrl.js";
+import { browserStatus, browserTask } from "./tools/browserTask.js";
 
 const fetchUrlTool = tool({
   name: "fetch_url",
@@ -139,15 +148,86 @@ const researchUrlTool = tool({
   },
 });
 
+const browserTaskTool = tool({
+  name: "browser_task",
+  description:
+    "Run a task in the user's REAL browser — already signed in, with their " +
+    "existing cookies and sessions. Use this whenever a page needs " +
+    "authentication or renders client-side: an email inbox, an admin panel, a " +
+    "SaaS dashboard behind SSO, a single-page app. fetch_url and research_url " +
+    "cannot see any of those; they are plain HTTP with no session.\n\n" +
+    "Describe the goal in plain language, as you would to a colleague sharing " +
+    "their screen. mode='ask' is read-only and cannot click, type or submit — " +
+    "prefer it whenever you only need to read. mode='act' allows interaction, " +
+    "and the user approves consequential actions in the browser.\n\n" +
+    "Requires the WebBrain extension (https://webbrain.one) to be installed and " +
+    "pointed at this plugin's bridge. If it is not, the tool returns a hint " +
+    "explaining exactly what to do — relay that to the user rather than retrying.",
+  parameters: {
+    task: z
+      .string()
+      .describe(
+        "The goal in plain language, e.g. 'open my Gmail and list unread " +
+          "messages from this week with sender and subject'.",
+      ),
+    mode: z
+      .enum(["ask", "act"])
+      .optional()
+      .describe(
+        "'ask' (default) is read-only. 'act' permits clicking, typing and " +
+          "navigation, gated by in-browser approval prompts.",
+      ),
+    timeout: z
+      .number()
+      .optional()
+      .describe(
+        "How long to wait in ms before handing control back. Default 180000. " +
+          "The run continues in the browser past this point; it is not cancelled.",
+      ),
+    allowApiMutations: z
+      .boolean()
+      .optional()
+      .describe(
+        "Lift WebBrain's UI-first rule so it may issue mutating HTTP requests " +
+          "directly instead of clicking through the visible interface. Off by " +
+          "default and rarely correct.",
+      ),
+  },
+  implementation: async ({ task, mode, timeout, allowApiMutations }) => {
+    const result = await browserTask({ task, mode, timeout, allowApiMutations });
+    return JSON.stringify(result, null, 2);
+  },
+});
+
+const browserStatusTool = tool({
+  name: "browser_status",
+  description:
+    "Check whether the WebBrain browser extension is currently connected to " +
+    "this plugin. Call this when browser_task reports it is unavailable, so you " +
+    "can tell the user precisely what to fix instead of retrying blindly.",
+  parameters: {},
+  implementation: async () => JSON.stringify(await browserStatus(), null, 2),
+});
+
 /**
  * Plugin entry point. LM Studio's plugin runner calls this once at
- * load time with a `PluginContext` builder. We register both tools
+ * load time with a `PluginContext` builder. We register the tools
  * via the chained `withToolsProvider(...)` API; the callback is
  * invoked any time the host needs a fresh list of tools (e.g. when
  * settings change).
+ *
+ * The browser tools are always advertised, even with no extension attached.
+ * Hiding them would make the model believe the capability does not exist;
+ * offering them with an actionable failure message lets it tell the user how
+ * to turn the capability on.
  */
 export async function main(ctx: PluginContext): Promise<void> {
-  ctx.withToolsProvider(async () => [fetchUrlTool, researchUrlTool]);
+  ctx.withToolsProvider(async () => [
+    fetchUrlTool,
+    researchUrlTool,
+    browserTaskTool,
+    browserStatusTool,
+  ]);
 }
 
 // Some plugin loaders look at the default export instead of `main`.

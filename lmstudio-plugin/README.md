@@ -1,7 +1,9 @@
 # WebBrain Web Tools — LM Studio plugin
 
-Give any LM Studio model the ability to read the live web. Two tools,
-no browser required:
+Give any LM Studio model the ability to read the live web — and, if you
+have the browser extension, to act inside your own signed-in session.
+
+**Works with no browser, nothing installed:**
 
 - **`fetch_url`** — raw HTTP fetch with content-type smarts. JSON gets
   pretty-printed, HTML is stripped to readable text + `<title>`,
@@ -11,6 +13,21 @@ no browser required:
   article body, not the navigation chrome." Extracts `<main>` /
   `<article>`, drops header/nav/footer/aside before stripping tags.
   Best for news, blog posts, READMEs, Wikipedia, docs.
+
+**Adds real browser access when the [WebBrain extension](https://webbrain.one)
+is installed:**
+
+- **`browser_task`** — hand a goal to WebBrain running in the browser
+  you are already logged into. Reaches the authenticated dashboards,
+  webmail and client-rendered apps that plain HTTP cannot see.
+  `mode='ask'` is read-only; `mode='act'` can click and type, gated by
+  in-browser approval prompts.
+- **`browser_status`** — report whether the extension is attached, and
+  what to do if it isn't.
+
+The browser tools are always offered. Without an extension they return an
+actionable message instead of failing opaquely, so the model can tell you
+how to switch the capability on rather than retrying blindly.
 
 Long text results are context-friendly by default. Instead of dumping
 the first N characters and losing everything after the cutoff, the tools
@@ -46,23 +63,39 @@ Try it:
 The model should call `research_url` and come back with live
 headlines.
 
-## What this plugin can't do
+## Connect your browser (optional)
 
-Listed up front so it doesn't bite you mid-session:
+`browser_task` needs the [WebBrain extension](https://webbrain.one). The
+extension dials out to this plugin — a Manifest V3 extension cannot listen
+on a socket, so the plugin hosts the listener.
+
+1. Install the extension and open your browser.
+2. In **WebBrain → Settings → Cloud bridge**, set the URL to
+   `ws://127.0.0.1:17375/extension` and enable it.
+3. Ask the model to call `browser_status` to confirm.
+
+> **One bridge at a time.** The extension holds exactly one outbound bridge
+> socket. Pointing it here means it is *not* pointed at WebBrain Cloud
+> (`17373`) or the MCP server (`17374`). Override the port with
+> `WEBBRAIN_BRIDGE_PORT`.
+
+Try it:
+
+> Check my GitHub notifications and summarise anything that mentions me.
+
+## What the HTTP tools can't do
+
+Listed up front so it doesn't bite you mid-session. All three limits apply
+to `fetch_url` and `research_url` only — `browser_task` is the answer to
+every one of them:
 
 - **No JavaScript rendering.** Single-page apps that hydrate from
   JSON (Twitter, Notion, modern dashboards) return near-empty text.
   The plugin flags this with `spaSuspected: true` so the model can
   give up gracefully instead of looping.
-- **No clicks, no typing, no screenshots.** Those need a real
-  browser. The WebBrain extension does that; this plugin is the
-  read-only subset.
+- **No clicks, no typing, no screenshots.** Those need a real browser.
 - **No cookies, no login.** Each fetch is anonymous from your IP
   with no shared session — pages behind a login are out of reach.
-
-If you need any of the above, install the [WebBrain browser
-extension](https://webbrain.one) instead (or alongside) — same
-model server, full agent loop with browser interaction.
 
 ## Develop locally
 
@@ -88,15 +121,23 @@ Node project.
 ├── package.json           ← npm deps + build scripts
 ├── tsconfig.json          ← strict-mode TS, ES2022
 └── src/
-    ├── index.ts           ← plugin registration glue
+    ├── index.ts            ← plugin registration glue
     ├── tools/
-    │   ├── fetchUrl.ts    ← fetch_url implementation
-    │   └── researchUrl.ts ← research_url implementation
+    │   ├── fetchUrl.ts     ← fetch_url implementation
+    │   ├── researchUrl.ts  ← research_url implementation
+    │   └── browserTask.ts  ← browser_task + browser_status
     └── util/
-        ├── htmlToText.ts  ← regex HTML stripper
-        ├── safeFetch.ts   ← redirect-revalidating wrapper + streaming cap
-        └── urlGuard.ts    ← private-IP / file:// blocker
+        ├── htmlToText.ts   ← regex HTML stripper
+        ├── safeFetch.ts    ← redirect-revalidating wrapper + streaming cap
+        ├── urlGuard.ts     ← private-IP / file:// blocker
+        └── bridgeClient.ts ← WebSocket listener the extension dials into
 ```
+
+`bridgeClient.ts` is a deliberate standalone copy of the same protocol in
+[`mcp-server/src/bridge.ts`](../mcp-server/src/bridge.ts). The two ship to
+different registries — LM Studio Hub and npm — and sharing a package would
+drag the monorepo into both installs. **Change the protocol in one, change
+it in the other.**
 
 `tools/` and `util/` are pure functions with no SDK dependency — you
 can `import` them from any Node project that wants the same
@@ -108,6 +149,24 @@ The plugin runs in your local Node process, so anything reachable
 from that process is reachable from the LLM. The defenses below are
 layered — each closes a class of bypass the previous one missed —
 but DNS rebinding is a known residual gap (see end of this section).
+
+**The browser bridge is a separate trust surface from the HTTP tools.**
+Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
+
+- The bridge listener binds `127.0.0.1` only. Anything that can reach that
+  port can drive your signed-in browser — never expose it to a network or a
+  container bridge.
+- Connections must send the extension's `hello` frame with
+  `client: "webbrain-extension"`; anything else is closed. This is **not**
+  authentication — the shipping extension sends no shared secret, so a local
+  process could impersonate it. Treat the port as trusted-local.
+- `browser_task` delegates a *goal*, never individual clicks. WebBrain's
+  capability × origin permission gate runs inside its own agent loop, so
+  every approval prompt a human would see still fires. That is why this
+  plugin does not expose the low-level browser primitives.
+- A `timeout` does **not** cancel the run. A task that already submitted a
+  form should not be silently killed; the browser keeps going and the result
+  stays visible in the WebBrain side panel.
 
 - **URL guard, structural (sync).** Requests to RFC1918 (`10.*`,
   `172.16-31.*`, `192.168.*`), loopback (`127.*`, `::1`), link-local

@@ -1,0 +1,52 @@
+{
+  "name": "@webbrain/mcp-server",
+  "displayName": "WebBrain MCP Server",
+  "description": "Model Context Protocol server that lets any MCP client (Claude Code, Codex, Cursor, OpenClaw) delegate browser tasks to a running WebBrain extension — in the user's real, already-authenticated browser session.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "webbrain-mcp": "dist/index.js"
+  },
+  "license": "MIT",
+  "homepage": "https://webbrain.one",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/webbrain-one/webbrain.git",
+    "directory": "mcp-server"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "webbrain",
+    "browser-agent",
+    "browser-automation",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.5.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
