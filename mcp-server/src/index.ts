@@ -257,10 +257,10 @@ server.registerTool(
 async function main(): Promise<void> {
   await bridge.start();
 
-  // Best-effort: gives the extension a moment to reconnect if the browser is
-  // already open, so the first tool call usually succeeds rather than teaching
-  // the model that browser tools are flaky.
-  void bridge.waitForExtension(3_000);
+  // Give an already-open extension a bounded chance to reconnect before the
+  // stdio server advertises browser tools. If this promise is discarded, the
+  // grace period is illusory and the first tool call can race the reconnect.
+  await bridge.waitForExtension(3_000);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

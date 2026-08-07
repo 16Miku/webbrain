@@ -24,7 +24,11 @@ is installed on a Chromium browser** (Chrome, Edge, Brave, Opera, Vivaldi —
   `mode='ask'` is read-only; `mode='act'` can click and type, gated by
   in-browser approval prompts.
 - **`browser_status`** — report whether the extension is attached, and
-  what to do if it isn't.
+  what to do if it isn't. Pass a `runId` to poll a task that outlived its
+  initial timeout and retrieve the eventual result.
+- **`browser_respond`** — forward the user's answer when a task pauses with
+  `needs_user_input`. Use the `runId` and `clarifyId` returned by the task;
+  never guess the answer on the user's behalf.
 
 The browser tools are always offered. Without an extension they return an
 actionable message instead of failing opaquely, so the model can tell you
@@ -135,7 +139,7 @@ Node project.
     ├── tools/
     │   ├── fetchUrl.ts     ← fetch_url implementation
     │   ├── researchUrl.ts  ← research_url implementation
-    │   └── browserTask.ts  ← browser_task + browser_status
+    │   └── browserTask.ts  ← browser task + status/respond recovery tools
     └── util/
         ├── htmlToText.ts   ← regex HTML stripper
         ├── safeFetch.ts    ← redirect-revalidating wrapper + streaming cap

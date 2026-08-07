@@ -3,6 +3,7 @@
   "displayName": "WebBrain Web Tools",
   "description": "Web tools for LM Studio. fetch_url (raw HTTP, content-type aware) and research_url (readable article body) work with pure Node and no dependencies. With the WebBrain extension installed on a Chromium browser (Chrome, Edge, Brave), browser_task additionally delegates goals to your real, already-signed-in browser session — pages behind a login or rendered client-side that plain HTTP cannot reach. Firefox is not supported for browser_task: that build has no offscreen document, so it cannot host the bridge.",
   "version": "0.2.0",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "MIT",
@@ -15,6 +16,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
     "clean": "rm -rf dist"
   },
   "keywords": [

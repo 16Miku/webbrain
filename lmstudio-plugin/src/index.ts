@@ -30,7 +30,7 @@ import type { PluginContext } from "@lmstudio/sdk";
 import { z } from "zod";
 import { fetchUrl } from "./tools/fetchUrl.js";
 import { researchUrl } from "./tools/researchUrl.js";
-import { browserStatus, browserTask } from "./tools/browserTask.js";
+import { browserRespond, browserStatus, browserTask } from "./tools/browserTask.js";
 
 const fetchUrlTool = tool({
   name: "fetch_url",
@@ -160,6 +160,8 @@ const browserTaskTool = tool({
     "their screen. mode='ask' is read-only and cannot click, type or submit — " +
     "prefer it whenever you only need to read. mode='act' allows interaction, " +
     "and the user approves consequential actions in the browser.\n\n" +
+    "If a task keeps running, poll browser_status with its runId. If it needs user " +
+    "input, ask the user and forward their answer with browser_respond.\n\n" +
     "Requires the WebBrain extension (https://webbrain.one) on a Chromium browser " +
     "(Chrome, Edge, Brave), pointed at this plugin's bridge. Firefox cannot host the " +
     "bridge. If it is not connected the tool returns a hint explaining exactly what to " +
@@ -203,11 +205,40 @@ const browserTaskTool = tool({
 const browserStatusTool = tool({
   name: "browser_status",
   description:
-    "Check whether the WebBrain browser extension is currently connected to " +
-    "this plugin. Call this when browser_task reports it is unavailable, so you " +
-    "can tell the user precisely what to fix instead of retrying blindly.",
-  parameters: {},
-  implementation: async () => JSON.stringify(await browserStatus(), null, 2),
+    "With no runId, check whether the WebBrain extension is connected to this plugin. " +
+    "With a runId returned by browser_task or browser_respond, retrieve that run's " +
+    "current progress or final result. Poll the existing run instead of starting a " +
+    "duplicate task after a timeout.",
+  parameters: {
+    runId: z
+      .string()
+      .optional()
+      .describe("Existing browser run to inspect. Omit for connection status only."),
+  },
+  implementation: async ({ runId }) =>
+    JSON.stringify(await browserStatus(runId), null, 2),
+});
+
+const browserRespondTool = tool({
+  name: "browser_respond",
+  description:
+    "Answer a question from a browser run whose status is needs_user_input, then wait " +
+    "for the run to continue. The answer must come from the user; never invent it. Use " +
+    "the runId and clarifyId returned by browser_task or browser_status.",
+  parameters: {
+    runId: z.string().min(1).describe("The browser run waiting for an answer."),
+    clarifyId: z.string().min(1).describe("The pending clarification to answer."),
+    answer: z.string().min(1).describe("The user's answer, forwarded verbatim."),
+    timeout: z
+      .number()
+      .optional()
+      .describe(
+        "How long to wait in ms after answering. Default 180000. The run continues " +
+          "after a timeout and can be polled with browser_status.",
+      ),
+  },
+  implementation: async ({ runId, clarifyId, answer, timeout }) =>
+    JSON.stringify(await browserRespond({ runId, clarifyId, answer, timeout }), null, 2),
 });
 
 /**
@@ -228,6 +259,7 @@ export async function main(ctx: PluginContext): Promise<void> {
     researchUrlTool,
     browserTaskTool,
     browserStatusTool,
+    browserRespondTool,
   ]);
 }
 
