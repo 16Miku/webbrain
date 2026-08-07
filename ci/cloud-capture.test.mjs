@@ -336,12 +336,14 @@ assert.equal(JSON.stringify(storedRows).includes(OTP), false);
 assert.match(strictProseSnapshot.content, /^Signup finished\. The code was \[redacted strict value\]\.$/);
 assert.equal(strictProseSnapshot.result, strictProseSnapshot.content);
 
-// A secret is not always a string: an OTP typed as text comes back as a JSON
-// number. The trace row takes the blunt leaf-type redaction, while the public
-// result keeps every schema-valid value and strikes only the registered
-// credential — a strict run has to stay useful to its caller.
+// A secret is not always a string: request bodies and tool results can carry an
+// OTP or PIN as a JSON number. The trace row takes the blunt leaf-type
+// redaction, while the public result keeps every schema-valid value and strikes
+// only the registered credential — a strict run has to stay useful to its
+// caller.
 storedRows = [];
-const NUMERIC_OTP = 481920;
+const NUMERIC_OTP = 735914;
+const NUMERIC_RESULT_PIN = 864209;
 const BODY_PASSWORD = 'Tr0ub4dor-correct-horse';
 const strictLeafController = createCloudRunController({
   chromeApi,
@@ -352,19 +354,32 @@ const strictLeafController = createCloudRunController({
     abort() {},
     async processMessage(_tabId, _task, publishUpdate) {
       // Minted in a request body and never typed, so only the body parser can
-      // register it; and typed into the page, so the numeric form is known too.
+      // register its numeric form.
       publishUpdate('tool_call', {
         name: 'fetch_url',
         args: {
           url: 'https://api.mail.tm/accounts',
           method: 'POST',
-          body: JSON.stringify({ address: 'ci@mail.tm', password: BODY_PASSWORD }),
+          body: JSON.stringify({
+            address: 'ci@mail.tm',
+            password: BODY_PASSWORD,
+            otp: NUMERIC_OTP,
+          }),
         },
       });
       publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_otp', text: OTP } });
+      publishUpdate('tool_result', {
+        name: 'read_page',
+        result: { success: true, pin: NUMERIC_RESULT_PIN },
+      });
       const payload = {
         verification_code: NUMERIC_OTP,
-        nested: { pin_digits: [NUMERIC_OTP, 7], note: `code ${OTP}`, account: BODY_PASSWORD },
+        nested: {
+          pin_digits: [NUMERIC_OTP, 7],
+          result_pin: NUMERIC_RESULT_PIN,
+          note: `code ${OTP}`,
+          account: BODY_PASSWORD,
+        },
         item_name: 'widget',
         item_count: 3,
         signup_completed: true,
@@ -400,6 +415,7 @@ for (const source of [JSON.stringify(strictLeafSnapshot), JSON.stringify(storedR
 // Public result: registered credentials struck, the caller's contract intact.
 assert.equal(strictLeafSnapshot.result.verification_code, '[redacted strict value]');
 assert.deepEqual(strictLeafSnapshot.result.nested.pin_digits, ['[redacted strict value]', 7]);
+assert.equal(strictLeafSnapshot.result.nested.result_pin, '[redacted strict value]');
 assert.equal(strictLeafSnapshot.result.nested.note, 'code [redacted strict value]');
 assert.equal(strictLeafSnapshot.result.nested.account, '[redacted strict value]');
 assert.equal(strictLeafSnapshot.result.item_name, 'widget', 'a schema-valid string must survive');

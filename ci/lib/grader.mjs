@@ -53,12 +53,14 @@ export function inferStuckAt({
   trace,
   setupError,
   scheduledError,
+  postStartError,
   artifactError,
   cleanupErrors = [],
   checks,
 }) {
   if (setupError) return 'setup';
   if (scheduledError) return 'scheduled_execution';
+  if (postStartError) return run?.status === 'completed' ? 'verification' : 'execution';
   if (!run) return 'run_start';
   if (run.status === 'needs_user_input') return 'user_handoff';
   const updates = trace?.run?.updates || run.updates || [];
@@ -84,6 +86,7 @@ export function gradeScenario({
   scheduledState,
   setupError,
   scheduledError,
+  postStartError,
   artifactError,
   cleanupErrors = [],
   captureRequired = false,
@@ -98,7 +101,7 @@ export function gradeScenario({
     'Cloud run completed',
     20,
     run?.status === 'completed',
-    run?.status || scheduledError?.message || setupError?.message || 'run unavailable',
+    run?.status || scheduledError?.message || postStartError?.message || setupError?.message || 'run unavailable',
   );
 
   if (scenario.verify?.mode) {
@@ -338,7 +341,7 @@ export function gradeScenario({
   const requiredPassed = checks.every((check) => check.passed);
   return {
     scenario_id: scenario.id,
-    passed: requiredPassed && !setupError && !scheduledError,
+    passed: requiredPassed && !setupError && !scheduledError && !postStartError,
     score,
     earned,
     available,
@@ -347,12 +350,13 @@ export function gradeScenario({
       trace,
       setupError,
       scheduledError,
+      postStartError,
       artifactError,
       cleanupErrors,
       checks,
     }),
     checks,
-    error: scheduledError?.message || setupError?.message || run?.error || '',
+    error: scheduledError?.message || postStartError?.message || setupError?.message || run?.error || '',
     artifact_warning: artifactError?.message || '',
   };
 }

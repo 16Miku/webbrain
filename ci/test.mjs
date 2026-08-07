@@ -23,6 +23,7 @@ const manualWorkflow = await fs.readFile(
   path.join(root, '..', '.github', 'workflows', 'cloud-e2e.yml'),
   'utf8',
 );
+const runnerSource = await fs.readFile(path.join(root, 'run.mjs'), 'utf8');
 
 assert.equal(new Set(scenarios.map((scenario) => scenario.id)).size, scenarios.length);
 assert.ok(scenarios.every((scenario) => scenario.output_schema?.type === 'object'));
@@ -367,6 +368,17 @@ const missingVideo = gradeScenario({
 });
 assert.equal(missingVideo.passed, false);
 assert.equal(missingVideo.stuck_at, 'artifact_capture');
+
+const postStartFailure = gradeScenario({
+  scenario: { id: 'post-start-failure', verify: {} },
+  run: { status: 'completed', updates: [] },
+  postStartError: new Error('trace export failed'),
+});
+assert.equal(postStartFailure.passed, false);
+assert.equal(postStartFailure.stuck_at, 'verification');
+assert.equal(postStartFailure.error, 'trace export failed');
+assert.match(runnerSource, /if \(reachedRunStart\) postStartError = error;/);
+assert.match(runnerSource, /postStartError: sensitive && postStartError/);
 
 const skillGrade = gradeScenario({
   scenario: {

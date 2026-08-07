@@ -252,22 +252,31 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
   return data;
 }
 
-// Walks a raw tool result for string values sitting under a key the scrubber
-// already treats as sensitive. Depth-bounded: a page read can be enormous, and
-// this runs on every update.
-function collectSensitiveStrings(value, into, depth = 0) {
+// Walks a raw tool result for string or numeric values sitting under a key the
+// scrubber already treats as sensitive. Depth-bounded: a page read can be
+// enormous, and this runs on every update.
+function collectSensitiveStrings(value, into, depth = 0, sensitiveParent = false) {
   if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (typeof value === 'string') {
+    if (sensitiveParent) into.push(value);
+    return;
+  }
+  if (typeof value === 'number') {
+    if (sensitiveParent && Number.isFinite(value)) into.push(String(value));
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const item of value) collectSensitiveStrings(item, into, depth + 1);
+    for (const item of value) collectSensitiveStrings(item, into, depth + 1, sensitiveParent);
     return;
   }
   if (!value || typeof value !== 'object') return;
   for (const [key, item] of Object.entries(value)) {
-    if (typeof item === 'string') {
-      if (isSensitiveCloudKey(key)) into.push(item);
-    } else {
-      collectSensitiveStrings(item, into, depth + 1);
-    }
+    collectSensitiveStrings(
+      item,
+      into,
+      depth + 1,
+      sensitiveParent || isSensitiveCloudKey(key),
+    );
     if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
   }
 }

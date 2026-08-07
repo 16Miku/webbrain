@@ -184,9 +184,14 @@ export function validateCloudOutput(value, schema) {
   };
 
   // A branch check needs a yes/no answer without polluting the caller's error
-  // list, so it runs its own collection and reports only whether it was empty.
+  // list. Reuse this document's validator so a root `$schema` marker keeps the
+  // whole tree in JSON-Schema-only mode, then discard the branch diagnostics.
   function matches(item, branchSpec) {
-    return validateCloudOutput(item, branchSpec).ok;
+    const errorCount = errors.length;
+    validate(item, branchSpec);
+    const matched = errors.length === errorCount;
+    errors.length = errorCount;
+    return matched;
   }
 
   validate(value, schema);

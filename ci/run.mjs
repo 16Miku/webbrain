@@ -176,6 +176,7 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
   let scheduledState = null;
   let scheduledError = null;
   let setupError = null;
+  let postStartError = null;
   let artifactError = null;
   // Everything from provisioning through startRun is setup. After that a
   // throw belongs to the run itself, and forcing it into setupError would make
@@ -296,7 +297,10 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
       }
     }
   } catch (error) {
-    if (!scheduledError && !reachedRunStart) setupError = error;
+    if (!scheduledError) {
+      if (reachedRunStart) postStartError = error;
+      else setupError = error;
+    }
     run ||= error.latest || null;
     await writeJson(path.join(scenarioDir, 'error.json'), {
       name: error.name,
@@ -328,6 +332,9 @@ async function executeScenario({ scenario, suiteDir, cloud, gnippets, video }) {
     setupError: sensitive && setupError
       ? new Error('Sensitive scenario failed; raw diagnostics were omitted.')
       : setupError,
+    postStartError: sensitive && postStartError
+      ? new Error('Sensitive scenario execution or verification failed; raw diagnostics were omitted.')
+      : postStartError,
     artifactError,
     cleanupErrors: sensitive
       ? cleanupErrors.map(() => new Error('Sensitive scenario cleanup failed; raw diagnostics were omitted.'))

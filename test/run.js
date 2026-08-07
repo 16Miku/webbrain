@@ -11062,6 +11062,14 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       true,
       `${label}: a marked document was still read as shorthand`,
     );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        'string',
+        { $schema: DRAFT, anyOf: [{ const: 'string' }, { type: 'boolean' }] },
+      ).ok,
+      true,
+      `${label}: a marked document lost JSON Schema mode inside an anyOf branch`,
+    );
     // The marker describes the document, not the argument, so it is not
     // advertised on the done_json parameter.
     const markedDone = advertised({ $schema: DRAFT, const: 'string' });
