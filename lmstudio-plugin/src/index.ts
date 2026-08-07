@@ -160,9 +160,10 @@ const browserTaskTool = tool({
     "their screen. mode='ask' is read-only and cannot click, type or submit — " +
     "prefer it whenever you only need to read. mode='act' allows interaction, " +
     "and the user approves consequential actions in the browser.\n\n" +
-    "Requires the WebBrain extension (https://webbrain.one) to be installed and " +
-    "pointed at this plugin's bridge. If it is not, the tool returns a hint " +
-    "explaining exactly what to do — relay that to the user rather than retrying.",
+    "Requires the WebBrain extension (https://webbrain.one) on a Chromium browser " +
+    "(Chrome, Edge, Brave), pointed at this plugin's bridge. Firefox cannot host the " +
+    "bridge. If it is not connected the tool returns a hint explaining exactly what to " +
+    "do — relay that to the user rather than retrying.",
   parameters: {
     task: z
       .string()

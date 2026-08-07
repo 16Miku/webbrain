@@ -243,10 +243,13 @@ server.registerTool(
     }
     return ok(
       `Not connected. Listening on ${bridgeUrl()}, but no extension has dialled in.\n\n` +
-        "To connect: open the browser, then in WebBrain → Settings set the bridge URL to\n" +
+        "To connect: open a Chromium browser (Chrome, Edge, Brave), then in " +
+        "WebBrain → Settings set the bridge URL to\n" +
         `  ${bridgeUrl()}\n` +
-        "and enable it. Note the extension holds one bridge socket at a time, so this " +
-        "cannot run at the same time as WebBrain Cloud on port 17373.",
+        "and enable it. The extension holds one bridge socket at a time, so this cannot " +
+        "run at the same time as WebBrain Cloud on port 17373.\n\n" +
+        "Firefox cannot host the bridge — that build has no offscreen document. If the " +
+        "user is on Firefox, say so rather than suggesting settings changes.",
     );
   },
 );

@@ -256,7 +256,9 @@ claude mcp add webbrain -- npx -y @webbrain/mcp-server
 ```
 
 Then point **WebBrain → Settings → Cloud bridge** at
-`ws://127.0.0.1:17374/extension` and enable it.
+`ws://127.0.0.1:17374/extension` and enable it. **Chromium only** — the bridge
+runs from the extension's offscreen document, which the Firefox build does not
+have.
 
 ```
 webbrain_run(task: "open the Stripe dashboard and list last week's failed
@@ -283,10 +285,11 @@ lms clone webbrain/web-tools
 ```
 
 `fetch_url` and `research_url` are pure Node HTTP — no browser needed, but also
-no cookies, no session and no JavaScript. With the extension installed,
-`browser_task` adds delegation to your real signed-in browser, reaching the
-authenticated and client-rendered pages plain HTTP cannot. It degrades with an
-actionable message when no extension is attached.
+no cookies, no session and no JavaScript. With the extension installed on a
+Chromium browser, `browser_task` adds delegation to your real signed-in browser,
+reaching the authenticated and client-rendered pages plain HTTP cannot. It
+degrades with an actionable message when no extension is attached, and the HTTP
+tools keep working on Firefox.
 
 Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 

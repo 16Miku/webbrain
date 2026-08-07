@@ -22,6 +22,8 @@ cd mcp-server && npm install && npm run build
 
 ## Connect the browser
 
+> **Chromium only.** Chrome, Edge, Brave, Opera, Vivaldi. The bridge runs from the extension's **offscreen document**, and the Firefox build has none — `cloud-bridge.js` and `cloud-runs.js` live only under `src/chrome/`. See [`src/firefox/ARCHITECTURE.md`](../src/firefox/ARCHITECTURE.md).
+
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 
 1. Install the [WebBrain extension](https://webbrain.one) and open your browser.

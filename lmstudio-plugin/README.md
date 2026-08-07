@@ -15,7 +15,8 @@ have the browser extension, to act inside your own signed-in session.
   Best for news, blog posts, READMEs, Wikipedia, docs.
 
 **Adds real browser access when the [WebBrain extension](https://webbrain.one)
-is installed:**
+is installed on a Chromium browser** (Chrome, Edge, Brave, Opera, Vivaldi —
+[not Firefox](#why-not-firefox)):
 
 - **`browser_task`** — hand a goal to WebBrain running in the browser
   you are already logged into. Reaches the authenticated dashboards,
@@ -65,9 +66,18 @@ headlines.
 
 ## Connect your browser (optional)
 
-`browser_task` needs the [WebBrain extension](https://webbrain.one). The
-extension dials out to this plugin — a Manifest V3 extension cannot listen
-on a socket, so the plugin hosts the listener.
+`browser_task` needs the [WebBrain extension](https://webbrain.one) on a
+**Chromium browser** — Chrome, Edge, Brave, Opera or Vivaldi. The extension
+dials out to this plugin; a Manifest V3 extension cannot listen on a socket,
+so the plugin hosts the listener.
+
+### Why not Firefox
+
+The bridge runs from the extension's **offscreen document**, and the Firefox
+build has none — see [`src/firefox/ARCHITECTURE.md`](../src/firefox/ARCHITECTURE.md).
+`cloud-bridge.js` and `cloud-runs.js` exist only under `src/chrome/`. On
+Firefox, `browser_task` will always return the not-connected response.
+`fetch_url` and `research_url` are unaffected and work everywhere.
 
 1. Install the extension and open your browser.
 2. In **WebBrain → Settings → Cloud bridge**, set the URL to
