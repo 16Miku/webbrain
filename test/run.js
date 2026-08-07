@@ -11907,6 +11907,7 @@ test('cloud run controller forwards Ask mode and inherits it for continuations',
   const session = {};
   const tab = { id: 81, url: 'https://en.wikipedia.org/wiki/Alan_Turing', active: true, windowId: 8 };
   const modes = [];
+  const apiMutationDenials = [];
   let nextRun = 0;
   const controller = createCloudRunController({
     chromeApi: {
@@ -11928,8 +11929,9 @@ test('cloud run controller forwards Ask mode and inherits it for continuations',
     agent: {
       isRunning: () => false,
       abort: () => {},
-      processMessage: async (_tabId, task, _onUpdate, mode) => {
+      processMessage: async (_tabId, task, _onUpdate, mode, _attachments, runOptions) => {
         modes.push(mode);
+        apiMutationDenials.push(runOptions.apiMutationsDenied);
         return `Finished: ${task}`;
       },
     },
@@ -11945,6 +11947,8 @@ test('cloud run controller forwards Ask mode and inherits it for continuations',
   assert.equal(parent.mode, 'ask');
   assert.equal(child.mode, 'ask');
   assert.deepEqual(modes, ['ask', 'ask']);
+  assert.deepEqual(apiMutationDenials, [true, true],
+    'Ask cloud runs did not override existing API mutation grants at dispatch');
   await assert.rejects(
     () => controller.startRun({ task: 'Invalid mode', mode: 'dev' }),
     /must be `ask` or `act`/,
@@ -44169,6 +44173,48 @@ test('agent allows mutating fetch_url after conversation or persistent API appro
       assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${AgentClass.name}: ${approval} mutation was still blocked`);
     }
   }
+});
+
+test('cloud Ask dispatch blocks API mutations even with an existing conversation grant', async () => {
+  const agent = new AgentCh({ getVisionProvider: async () => null });
+  const tabId = 4906;
+  let executed = false;
+  agent.executeTool = async () => {
+    executed = true;
+    return { success: true };
+  };
+  agent._ensureGateSetting = async () => {};
+  agent._skipPermissionGate = true;
+  agent.setApiMutationsAllowed(tabId, true);
+  const messages = [];
+  const updates = [];
+
+  await agent._executeToolBatch(
+    tabId,
+    [{
+      id: 'ask_mutation',
+      function: {
+        name: 'fetch_url',
+        arguments: '{"url":"https://example.test/account","method":"POST"}',
+      },
+    }],
+    messages,
+    (type, data) => updates.push({ type, data }),
+    { supportsVision: false },
+    '',
+    new Set(['fetch_url']),
+    1,
+    { apiMutationsDenied: true },
+  );
+
+  assert.equal(executed, false, 'Ask run dispatched a mutating API call');
+  assert.equal(agent.isApiMutationsAllowed(tabId), true,
+    'Ask run erased the conversation grant instead of overriding it temporarily');
+  const denied = JSON.parse(messages[0].content);
+  assert.equal(denied.denied, true);
+  assert.equal(denied.requiresApiAllow, false);
+  assert.match(denied.error, /not allowed in Ask mode/);
+  assert.ok(updates.some(update => /Ask mode is read-only/.test(update.data?.message || '')));
 });
 
 test('agent counts failed API mutation batch as one loop strategy', async () => {

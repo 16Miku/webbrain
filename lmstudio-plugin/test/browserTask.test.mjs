@@ -169,6 +169,16 @@ test("browser_task bounds a stalled status request by its run timeout", async ()
   assert.ok(elapsedMs < 1_500, `command timeout lost the run for ${elapsedMs}ms`);
 });
 
+test("browser_task honors a timeout below five seconds", async () => {
+  const startedAt = Date.now();
+  const result = await browserTask({ task: "stall status response", timeout: 100 });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.stillRunning, true);
+  assert.equal(result.runId, "stalled-run");
+  assert.ok(elapsedMs < 500, `100ms timeout was stretched to ${elapsedMs}ms`);
+});
+
 test("browser_task preserves its generated run ID when the initial response stalls", async () => {
   const startedAt = Date.now();
   const result = await browserTask({ task: "stall initial response", timeout: 5_000 });

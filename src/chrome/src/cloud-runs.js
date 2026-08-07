@@ -1149,6 +1149,7 @@ export function createCloudRunController({
           content = await agent.processMessage(tabId, task, publishUpdate, mode, [], {
             cloudRun: true,
             independentRun: true,
+            apiMutationsDenied: mode === 'ask',
             outputSchema,
             onTraceStarted(traceRunId) {
               run.traceRunId = traceRunId;

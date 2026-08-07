@@ -53,7 +53,7 @@ const POLL_INTERVAL_MS = 1_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function timeoutMs(value: number | undefined): number {
-  return Math.min(Math.max(value ?? 180_000, 5_000), 3_600_000);
+  return Math.min(Math.max(value ?? 180_000, 1), 3_600_000);
 }
 
 function bodyOf(snapshot: CloudSnapshot): string {

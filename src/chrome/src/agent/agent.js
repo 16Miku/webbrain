@@ -4457,6 +4457,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
     let didStateChange = false;
+    const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
+    const apiMutationsAllowedForRun = () =>
+      !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
     const promptTier = this._resolvePromptTier();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     // Set of tools whose side effect can navigate the page. We snapshot the
@@ -4727,18 +4730,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message });
         continue;
       }
-      if (isNetworkMutation(fnName, fnArgs) && !this.isApiMutationsAllowed(tabId)) {
+      if (isNetworkMutation(fnName, fnArgs) && !apiMutationsAllowedForRun()) {
+        const askModeError = apiMutationsDeniedForRun
+          ? `API mutations via ${fnName} are not allowed in Ask mode. Do not retry this mutating API call in this run; continue with read-only tools or return what you can observe.`
+          : `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`;
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
           content: JSON.stringify({
             success: false,
             denied: true,
-            requiresApiAllow: true,
-            error: `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`,
+            requiresApiAllow: !apiMutationsDeniedForRun,
+            error: askModeError,
           }),
         });
-        onUpdate('warning', { message: 'API mutation blocked until /allow-api is enabled.' });
+        onUpdate('warning', {
+          message: apiMutationsDeniedForRun
+            ? 'API mutation blocked because Ask mode is read-only.'
+            : 'API mutation blocked until /allow-api is enabled.',
+        });
         continue;
       }
       const formValidationCandidate = !protectedPageFailure
@@ -4882,7 +4892,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         for (const capability of capabilities) {
           if (!requiresMandatoryWebMCPGates && this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
-          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && this.isApiMutationsAllowed(tabId)) continue;
+          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
           const gateArgs = this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);

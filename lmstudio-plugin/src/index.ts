@@ -189,10 +189,14 @@ const browserTaskTool = tool({
       ),
     timeout: z
       .number()
+      .int()
+      .positive()
+      .max(3_600_000)
       .optional()
       .describe(
         "How long to wait in ms before handing control back. Default 180000. " +
-          "The run continues in the browser past this point; it is not cancelled.",
+          "Minimum 1, maximum 3600000. The run continues in the browser past " +
+          "this point; it is not cancelled.",
       ),
     allowApiMutations: z
       .boolean()
