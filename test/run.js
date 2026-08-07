@@ -11123,6 +11123,65 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       );
     }
 
+    // A schema keyword is useful only if local completion validation enforces
+    // it. Provider-side tool-schema enforcement is optional, so supported
+    // bounds must be checked here and every other assertion keyword must fail
+    // closed instead of silently weakening the caller's contract.
+    for (const [spec, value, expected] of [
+      [{ type: 'array', minItems: 3 }, [], false],
+      [{ type: 'array', minItems: 3 }, [1, 2, 3], true],
+      [{ type: 'array', maxItems: 1 }, [1, 2], false],
+      [{ type: 'string', pattern: '^safe$' }, 'unsafe', false],
+      [{ type: 'string', pattern: '^safe$' }, 'safe', true],
+      [{ type: 'string', minLength: 2, maxLength: 3 }, 'x', false],
+      [{ type: 'string', minLength: 2, maxLength: 3 }, 'xy', true],
+      [{ type: 'number', minimum: 5 }, 3, false],
+      [{ type: 'number', minimum: 5, maximum: 10 }, 7, true],
+      [{ type: 'number', maximum: 5 }, 10, false],
+      [{ type: 'object', minProperties: 1, maxProperties: 2 }, {}, false],
+      [{ type: 'object', minProperties: 1, maxProperties: 2 }, { a: 1 }, true],
+      [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 1 }, false],
+      [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 'x' }, true],
+    ]) {
+      assert.equal(
+        cloudModule.validateCloudOutput(value, spec).ok,
+        expected,
+        `${label}: supported constraint ${JSON.stringify(spec)} mis-validated ${JSON.stringify(value)}`,
+      );
+    }
+    for (const [spec, value, keyword] of [
+      [{ type: 'array', uniqueItems: true }, [1], 'uniqueItems'],
+      [{ type: 'array', contains: { type: 'number' } }, [1], 'contains'],
+      [{ type: 'string', format: 'email' }, 'a@example.com', 'format'],
+      [{ type: 'number', multipleOf: 2 }, 4, 'multipleOf'],
+      [{ type: 'number', exclusiveMinimum: 1 }, 2, 'exclusiveMinimum'],
+      [{ type: 'string', not: { const: 'x' } }, 'y', 'not'],
+      [{ type: 'object', properties: { n: { type: 'number', multipleOf: 2 } } }, { n: 4 }, 'multipleOf'],
+    ]) {
+      const validation = cloudModule.validateCloudOutput(value, spec);
+      assert.equal(validation.ok, false, `${label}: unsupported ${keyword} constraint was silently accepted`);
+      assert.match(validation.errors.join('\n'), new RegExp(`unsupported JSON Schema keyword.*${keyword}`));
+      const completion = cloudModule.handleDoneJson(
+        { outputSchema: spec, schemaRepairUsed: false },
+        { result: value, summary: 'done' },
+      );
+      assert.equal(completion.success, false, `${label}: done_json completed through unsupported ${keyword}`);
+      assert.equal(completion.schemaValidationError, true, `${label}: unsupported ${keyword} was not a schema failure`);
+    }
+    assert.equal(
+      cloudModule.validateCloudOutput({ maximum: 5 }, { maximum: 'number' }).ok,
+      true,
+      `${label}: unsupported-keyword checks reinterpreted a shorthand field as JSON Schema`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput(
+        { answer: 'string' },
+        { type: 'object', properties: { answer: { const: 'string' } }, required: ['answer'] },
+      ).ok,
+      true,
+      `${label}: a JSON Schema child was reinterpreted as shorthand`,
+    );
+
     // `field?` means absent or null, so the advertised type must admit null —
     // otherwise the argument gate rejects a call the schema itself permits.
     const optionalSchema = { nickname: 'string?', tags: 'string[]?', name: 'string' };
@@ -11337,7 +11396,6 @@ test('cloud run controller uses the visible tab and persists terminal status', a
   assert.deepEqual(running.updates[5].data.args, {
     method: 'POST',
     url_origin: 'https://api.mail.tm',
-    url_path_root: '/accounts',
     body: '[redacted request body]',
   });
   assert.deepEqual(running.updates[6].data.result, {
@@ -11445,6 +11503,34 @@ test('strict cloud runs register credential-labeled form values and fail closed 
     oversizedRun.updates.find(update => update.type === 'clarify')?.data?.question,
     '[redacted strict value]',
     'an uninspectable request body must fail closed before later prose is published',
+  );
+
+  const pathToken = 'share-token-should-stay-private';
+  const queryToken = 'download-key-should-stay-private';
+  const capabilityRun = await runStrictCase('run_strict_capability_url', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: `https://files.example/${pathToken}?download_key=${queryToken}`,
+        method: 'GET',
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_capability_question',
+      question: `Confirm ${pathToken} and ${queryToken}?`,
+    });
+  }, `Finished with ${pathToken} and ${queryToken}.`);
+  const capabilityJson = JSON.stringify(capabilityRun);
+  assert.doesNotMatch(capabilityJson, new RegExp(`${pathToken}|${queryToken}`));
+  assert.deepEqual(
+    capabilityRun.updates.find(update => update.type === 'tool_call')?.data?.args,
+    { method: 'GET', url_origin: 'https://files.example' },
+    'strict fetch evidence must not publish arbitrary URL path or query components',
+  );
+  assert.match(
+    capabilityRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'URL credentials repeated in clarification prose were not redacted',
   );
 });
 

@@ -6,24 +6,9 @@ function httpRequestEvidence(args = {}) {
     return {};
   }
   if (!['http:', 'https:'].includes(url.protocol)) return {};
-  const rawPathRoot = String(args.url_path_root || '');
-  let firstSegment = '';
-  if (String(args.url || '').length) {
-    try {
-      firstSegment = new URL(String(args.url)).pathname.split('/').filter(Boolean)[0] || '';
-    } catch {}
-  }
-  const urlPathRoot = /^\/[A-Za-z0-9._~-]{1,64}$/.test(rawPathRoot)
-    ? rawPathRoot
-    : rawPathRoot === '/'
-      ? '/'
-      : firstSegment
-        ? `/${firstSegment}`
-        : '/';
   const method = String(args.method || '').toUpperCase();
   return {
     url_origin: url.origin,
-    url_path_root: urlPathRoot,
     ...(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method) ? { method } : {}),
   };
 }

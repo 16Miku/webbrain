@@ -31,8 +31,8 @@ const CLOUD_STRICT_DROPPED_MESSAGE_TYPES = new Set(['error', 'run_status']);
 // redactors below; every other tool result is reduced to a bare envelope.
 const CLOUD_STRICT_STRUCTURED_RESULT_TOOLS = new Set(['done_json', 'verify_form']);
 // Scalar, non-page-derived argument keys. `fetch_url` is handled separately so
-// its URL is reduced to origin + path root rather than dropped.
-const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origin', 'url_path_root']);
+// its URL is reduced to origin-only evidence rather than dropped.
+const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origin']);
 // A caller has to read a clarification to answer it, so `clarify` cannot be
 // blanked the way model prose is. Prompt instructions are not a redaction
 // boundary either, so strict runs additionally redact by *value*: every secret
@@ -108,11 +108,7 @@ function cloudUrlEvidence(value) {
   try {
     const url = new URL(String(value || ''));
     if (!['http:', 'https:'].includes(url.protocol)) return {};
-    const firstSegment = url.pathname.split('/').filter(Boolean)[0] || '';
-    return {
-      url_origin: url.origin,
-      url_path_root: firstSegment ? `/${firstSegment}` : '/',
-    };
+    return { url_origin: url.origin };
   } catch {
     return {};
   }
@@ -280,6 +276,41 @@ function collectSensitiveStrings(value, into, depth = 0, sensitiveParent = false
     );
     if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
   }
+}
+
+// A capability credential may be carried by any non-origin URL component,
+// including an otherwise unremarkable first path segment. Strict traces never
+// publish those components, and remembering their literal forms also prevents
+// the model from repeating them later in clarification or terminal prose.
+function collectUrlSecretStrings(value, into) {
+  let url;
+  try {
+    url = new URL(String(value || ''));
+  } catch {
+    return;
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) return;
+  const add = (candidate) => {
+    const text = String(candidate || '');
+    if (text && into.length <= CLOUD_STRICT_SECRET_VALUE_LIMIT) into.push(text);
+  };
+  const addEncoded = (candidate) => {
+    add(candidate);
+    try {
+      add(decodeURIComponent(String(candidate || '')));
+    } catch {}
+  };
+  add(url.href);
+  addEncoded(url.username);
+  addEncoded(url.password);
+  addEncoded(url.pathname);
+  for (const segment of url.pathname.split('/').filter(Boolean)) addEncoded(segment);
+  add(url.search);
+  for (const [key, item] of url.searchParams) {
+    add(key);
+    add(item);
+  }
+  addEncoded(url.hash.replace(/^#/, ''));
 }
 
 // verify_form represents an input's identity and value as siblings, for
@@ -671,6 +702,7 @@ export function createCloudRunController({
     if (type === 'tool_call') {
       const args = data?.args && typeof data.args === 'object' ? data.args : {};
       if (CLOUD_TEXT_ENTRY_TOOLS.has(name)) candidates.push(args.text, args.value);
+      if (name === 'fetch_url') collectUrlSecretStrings(args.url, candidates);
       // A credential does not have to be typed into a page to exist. The
       // disposable-signup scenario mints its account password inside the JSON
       // body of `POST /accounts` and never types it, so registering only

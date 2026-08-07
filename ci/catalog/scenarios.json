@@ -470,7 +470,6 @@
           "tool": "fetch_url",
           "method": "POST",
           "origin": "https://api.mail.tm",
-          "pathRoot": "/accounts",
           "label": "Created a disposable Mail.tm account",
           "weight": 10
         },
@@ -478,7 +477,6 @@
           "tool": "fetch_url",
           "method": "GET",
           "origin": "https://api.mail.tm",
-          "pathRoot": "/messages",
           "label": "Read the disposable Mail.tm inbox",
           "weight": 10
         }

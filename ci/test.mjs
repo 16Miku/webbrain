@@ -242,7 +242,7 @@ const sensitiveTrace = sanitizeTrace({
         data: {
           name: 'fetch_url',
           args: {
-            url: 'https://api.mail.tm/accounts?address=private%40example.test',
+            url: 'https://api.mail.tm/request-path-secret?address=private%40example.test',
             method: 'POST',
             body: '{"address":"private@example.test","password":"mailbox-secret"}',
           },
@@ -266,7 +266,6 @@ const sensitiveTrace = sanitizeTrace({
 assert.equal(sensitiveTrace.run.final_url, 'https://gnippets.com/');
 assert.deepEqual(sensitiveTrace.run.updates[0].data.args, {
   url_origin: 'https://api.mail.tm',
-  url_path_root: '/accounts',
   method: 'POST',
 });
 assert.deepEqual(sensitiveTrace.run.updates[1], {
@@ -276,7 +275,7 @@ assert.deepEqual(sensitiveTrace.run.updates[1], {
 assert.deepEqual(sensitiveTrace.run.updates[2].data, { name: 'set_field' });
 assert.doesNotMatch(
   JSON.stringify(sensitiveTrace),
-  /private@example|mailbox-secret|provider-secret|654321|capability-secret|fixture-secret/,
+  /private@example|mailbox-secret|provider-secret|654321|request-path-secret|capability-secret|fixture-secret/,
 );
 const sensitiveRun = sanitizeRun({
   run_id: 'run_sensitive',
@@ -588,7 +587,6 @@ const mailTmGrade = gradeScenario({
         tool: 'fetch_url',
         method: 'POST',
         origin: 'https://api.mail.tm',
-        pathRoot: '/accounts',
       }],
     },
   },
@@ -604,7 +602,6 @@ const failedMailTmGrade = gradeScenario({
         tool: 'fetch_url',
         method: 'POST',
         origin: 'https://api.mail.tm',
-        pathRoot: '/accounts',
       }],
     },
   },
@@ -618,7 +615,6 @@ const failedMailTmGrade = gradeScenario({
             name: 'fetch_url',
             args: {
               url_origin: 'https://api.mail.tm',
-              url_path_root: '/accounts',
               method: 'POST',
             },
           },
@@ -641,7 +637,7 @@ const missingMailTmGrade = gradeScenario({
     id: 'mailtm-missing',
     verify: {
       skills: ['disposable-email-mailtm'],
-      toolRequests: [{ tool: 'fetch_url', origin: 'https://api.mail.tm', pathRoot: '/messages' }],
+      toolRequests: [{ tool: 'fetch_url', origin: 'https://api.mail.tm', method: 'GET' }],
     },
   },
   run: { status: 'completed' },
@@ -656,7 +652,6 @@ const unconfirmedMailTmGrade = gradeScenario({
         tool: 'fetch_url',
         method: 'POST',
         origin: 'https://api.mail.tm',
-        pathRoot: '/accounts',
       }],
     },
   },
@@ -669,7 +664,6 @@ const unconfirmedMailTmGrade = gradeScenario({
           name: 'fetch_url',
           args: {
             url_origin: 'https://api.mail.tm',
-            url_path_root: '/accounts',
             method: 'POST',
           },
         },

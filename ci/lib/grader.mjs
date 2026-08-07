@@ -177,12 +177,11 @@ export function gradeScenario({
     const candidates = calls.filter((call) => (
       call.name === expected.tool
       && (!expected.origin || call.args?.url_origin === expected.origin)
-      && (!expected.pathRoot || call.args?.url_path_root === expected.pathRoot)
       && (!expected.method || String(call.args?.method || 'GET').toUpperCase() === expected.method.toUpperCase())
     ));
     const matched = candidates.find(successfulToolRequest);
     const attempted = candidates.at(-1);
-    const target = [expected.method, expected.origin, expected.pathRoot].filter(Boolean).join(' ');
+    const target = [expected.method, expected.origin].filter(Boolean).join(' ');
     const attemptedStatus = Number(attempted?.result?.status);
     const evidence = matched
       ? `${target} -> HTTP ${matched.result.status}`
