@@ -8832,7 +8832,7 @@ function appendVerboseToolCall(name, args) {
       priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
       priorRejected.querySelector('.tool-result')?.remove();
       const priorLabel = priorRejected.querySelector('.tool-call-name');
-      if (priorLabel) priorLabel.textContent = ' done';
+      if (priorLabel) priorLabel.textContent = t('sp.tool.done.completed');
       priorRejected.dataset.rejectedCompletion = 'pending';
       priorRejected.dataset.awaitingResult = 'true';
       return;
@@ -8880,8 +8880,8 @@ function appendVerboseToolResult(name, result) {
       lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
       const nameLabel = lastTool.querySelector('.tool-call-name');
       if (nameLabel) nameLabel.textContent = rejected
-        ? ' done (rejected)'
-        : (failed ? ' done (failed)' : ' done');
+        ? t('sp.tool.done.rejected')
+        : (failed ? t('sp.tool.done.failed') : t('sp.tool.done.completed'));
     }
     lastTool.dataset.awaitingResult = 'false';
   }
