@@ -1673,8 +1673,26 @@ export class Agent extends LoopDetector {
   }
 
   setAlwaysAllowApiMutations(allowed) {
-    this.alwaysAllowApiMutations = allowed === true;
-    if (!this.alwaysAllowApiMutations) this.apiAllowedInjected.clear();
+    const nextAllowed = allowed === true;
+    const revoked = this.alwaysAllowApiMutations && !nextAllowed;
+    this.alwaysAllowApiMutations = nextAllowed;
+    if (!revoked) return;
+
+    // The allow note lives in trusted user-message history, so refreshing the
+    // system prompt cannot retract it. Append the live state only for chats
+    // that actually saw that note and lost their effective authorization.
+    for (const tabId of [...this.apiAllowedInjected]) {
+      if (this.apiAllowedTabs.has(tabId)) continue;
+      const messages = this.conversations.get(tabId);
+      if (Array.isArray(messages)) {
+        messages.push({
+          role: 'user',
+          content: '[CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED: The persistent API mutation setting was disabled and this conversation has no /allow-api override. This current state supersedes any earlier [USER OVERRIDE — API MUTATIONS ALLOWED] note. Do not plan or call POST/PUT/PATCH/DELETE requests through fetch_url or research_url unless the user explicitly enables /allow-api for this conversation. Continue through the visible UI or ask for /allow-api.]',
+        });
+        this._persist(tabId);
+      }
+      this.apiAllowedInjected.delete(tabId);
+    }
   }
 
   isApiMutationsAllowed(tabId) {

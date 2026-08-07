@@ -21494,6 +21494,9 @@ test('persistent API mutation permission is opt-in, portable, and mirrored', () 
     const config = fs.readFileSync(path.join(ROOT, configRel), 'utf8');
 
     assert.match(html, /advanced-settings-body[\s\S]*id="toggle-always-allow-api-mutations"/, `${label}: persistent permission toggle should live under Advanced`);
+    assert.match(html, /id="always-allow-api-mutations-label"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.label"/, `${label}: persistent permission label should expose a stable accessible-name target`);
+    assert.match(html, /id="always-allow-api-mutations-desc"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.desc"/, `${label}: persistent permission description should expose a stable accessible-description target`);
+    assert.match(html, /id="toggle-always-allow-api-mutations"[^>]*aria-labelledby="always-allow-api-mutations-label"[^>]*aria-describedby="always-allow-api-mutations-desc"/, `${label}: persistent permission toggle should reference its translated label and description`);
     assert.doesNotMatch(html, /id="toggle-always-allow-api-mutations"\s+checked/, `${label}: persistent permission must default off`);
     assert.match(settings, /alwaysAllowApiMutationsToggle\.checked = stored\.alwaysAllowApiMutations === true/, `${label}: settings should load only explicit persistent opt-in`);
     assert.match(settings, /alwaysAllowApiMutations:\s*alwaysAllowApiMutationsToggle\.checked/, `${label}: settings should save the persistent permission`);
@@ -40018,6 +40021,45 @@ test('persistent API mutation permission is global and independent of /allow-api
     agent.setAlwaysAllowApiMutations(true);
     agent.clearConversation(tabId);
     assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: reset cleared the persistent permission`);
+  }
+});
+
+test('disabling persistent API permission retracts stale prompt authorization in both builds', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const revokedTabId = 4898;
+    const stillAllowedTabId = 4899;
+    const allowedNote = '[USER OVERRIDE — API MUTATIONS ALLOWED: earlier trusted authorization]';
+    const revokedMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: allowedNote },
+    ];
+    const stillAllowedMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: allowedNote },
+    ];
+    const persisted = [];
+    agent._persist = (tabId) => persisted.push(tabId);
+    agent.conversations.set(revokedTabId, revokedMessages);
+    agent.conversations.set(stillAllowedTabId, stillAllowedMessages);
+    agent.setAlwaysAllowApiMutations(true);
+    agent.apiAllowedInjected.add(revokedTabId);
+    agent.apiAllowedInjected.add(stillAllowedTabId);
+    agent.setApiMutationsAllowed(stillAllowedTabId, true);
+
+    agent.setAlwaysAllowApiMutations(false);
+
+    assert.equal(agent.isApiMutationsAllowed(revokedTabId), false, `${AgentClass.name}: persistent revocation did not update effective permission`);
+    assert.equal(revokedMessages.length, 3, `${AgentClass.name}: persistent revocation did not append a current-state note`);
+    assert.equal(revokedMessages.at(-1)?.role, 'user', `${AgentClass.name}: revocation note should remain in trusted user-message history`);
+    assert.match(revokedMessages.at(-1)?.content || '', /CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED/, `${AgentClass.name}: revocation note did not state the current denial`);
+    assert.match(revokedMessages.at(-1)?.content || '', /supersedes any earlier \[USER OVERRIDE — API MUTATIONS ALLOWED\]/, `${AgentClass.name}: revocation note did not supersede stale authorization`);
+    assert.equal(agent.apiAllowedInjected.has(revokedTabId), false, `${AgentClass.name}: revoked tab retained its injection marker`);
+    assert.deepEqual(persisted, [revokedTabId], `${AgentClass.name}: revocation note was not persisted exactly once`);
+
+    assert.equal(agent.isApiMutationsAllowed(stillAllowedTabId), true, `${AgentClass.name}: persistent revocation overrode /allow-api`);
+    assert.equal(stillAllowedMessages.length, 2, `${AgentClass.name}: tab with /allow-api received a contradictory denial`);
+    assert.equal(agent.apiAllowedInjected.has(stillAllowedTabId), true, `${AgentClass.name}: tab with /allow-api lost its valid injection marker`);
   }
 });
 
