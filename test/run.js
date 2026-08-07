@@ -434,6 +434,7 @@ const {
   PLANNER_SYSTEM_PROMPT,
   PLANNER_INTENT_SYSTEM_PROMPT,
   PLANNER_API_REPLAY_RULE,
+  PLANNER_RESPONSE_ONLY_RULES,
   buildPlannerSystemPrompt,
   buildPlannerIntentMessages,
   parsePlanFromContent,
@@ -449,6 +450,7 @@ const {
   PLANNER_SYSTEM_PROMPT: PLANNER_SYSTEM_PROMPT_FX,
   PLANNER_INTENT_SYSTEM_PROMPT: PLANNER_INTENT_SYSTEM_PROMPT_FX,
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
+  PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
   buildPlannerSystemPrompt: buildPlannerSystemPromptFx,
   buildPlannerMessages: buildPlannerMessagesFx,
   buildPlannerIntentMessages: buildPlannerIntentMessagesFx,
@@ -20515,8 +20517,8 @@ test('sidepanel verbose tool-call headers treat tool names as text', () => {
     );
     assert.match(
       body,
-      /const icon = document\.createElement\('span'\);[\s\S]*?icon\.textContent = '\\u26A1';[\s\S]*?header\.append\(icon, document\.createTextNode\(` \$\{name \|\| ''\}`\)\);/,
-      `${label}: verbose tool-call header should append the icon element and tool name text node`,
+      /const icon = document\.createElement\('span'\);[\s\S]*?icon\.textContent = '\\u26A1';[\s\S]*?nameLabel\.textContent = ` \$\{name \|\| ''\}`;[\s\S]*?header\.append\(icon, nameLabel\);/,
+      `${label}: verbose tool-call header should append the icon element and a textContent-only tool name label`,
     );
   }
 });
@@ -56749,6 +56751,128 @@ test('planner routes existing-context artifact requests to a tool-free response'
   });
 });
 
+test('full planner rechecks read-only follow-ups against existing assistant context', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+      const fullExecute = plannerFixtureJson({
+        request_kind: 'execute',
+        requires_state_change: false,
+        summary: 'Read the issue and revise the response.',
+        confidence: 0.99,
+        steps: [
+          { id: '1', action: 'Read the current issue.', tools: ['read_page'] },
+          { id: '2', action: 'Return a revised response.', tools: ['done'] },
+        ],
+        localized: {
+          locale: 'en',
+          summary: 'Read the issue and revise the response.',
+          steps: [
+            { id: '1', action: 'Read the current issue.' },
+            { id: '2', action: 'Return a revised response.' },
+          ],
+          risks: [],
+        },
+      });
+      const respond = plannerFixtureJson({
+        request_kind: 'respond',
+        requires_state_change: false,
+        summary: 'Revise the existing draft from conversation context.',
+        steps: [],
+        localized: {
+          locale: 'en',
+          summary: 'Revise the existing draft from conversation context.',
+          steps: [],
+          risks: [],
+        },
+      });
+      const responses = [fullExecute, respond];
+      const requests = [];
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-test',
+        name: 'planner-test',
+        chat: async (messages) => {
+          requests.push(messages);
+          return { content: responses.shift(), usage: {} };
+        },
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.planReviewMode = 'never';
+      const gate = await agent._runPlannerGate(
+        9275 + index,
+        { role: 'user', content: "It's not true; the PRs are by us to help people. I won't apologize." },
+        () => {},
+        null,
+        null,
+        'User: Is my draft a good response?\nAssistant: The draft is too defensive; here is a revised response.',
+        { tabUrl: 'https://github.com/example/repo/issues/1', tabTitle: 'Issue #1' },
+        'try',
+        'act',
+        { locale: 'en' },
+        { priorUserTask: 'Is my draft a good response?', scratchpadFacts: '' },
+      );
+
+      assert.equal(requests.length, 2, `${label}: suspicious read-only follow-up was not intent-rechecked`);
+      assert.equal(gate.requestKind, 'respond', `${label}: correction follow-up remained execute`);
+      assert.equal(gate.responseOnly, true, `${label}: correction follow-up did not bypass browser tools`);
+      assert.match(requests[1][0].content, /compact planning subsystem|intent and compact planning subsystem/i, `${label}: recheck did not use the compact intent prompt`);
+    }
+  });
+});
+
+test('full planner keeps explicit fresh reads executable after follow-up recheck', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+      const execute = plannerFixtureJson({
+        request_kind: 'execute',
+        requires_state_change: false,
+        summary: 'Reread the current issue and revise the response.',
+        confidence: 0.99,
+        steps: [
+          { id: '1', action: 'Reread the current issue.', tools: ['read_page'] },
+          { id: '2', action: 'Return a revised response.', tools: ['done'] },
+        ],
+        localized: {
+          locale: 'en',
+          summary: 'Reread the current issue and revise the response.',
+          steps: [
+            { id: '1', action: 'Reread the current issue.' },
+            { id: '2', action: 'Return a revised response.' },
+          ],
+          risks: [],
+        },
+      });
+      const responses = [execute, execute];
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-test',
+        name: 'planner-test',
+        chat: async () => ({ content: responses.shift(), usage: {} }),
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.planReviewMode = 'never';
+      const gate = await agent._runPlannerGate(
+        9277 + index,
+        { role: 'user', content: 'Reread the issue and revise your answer.' },
+        () => {},
+        null,
+        null,
+        'User: Is my draft a good response?\nAssistant: Here is a suggested response.',
+        { tabUrl: 'https://github.com/example/repo/issues/1', tabTitle: 'Issue #1' },
+        'try',
+        'act',
+        { locale: 'en' },
+        { priorUserTask: 'Is my draft a good response?', scratchpadFacts: '' },
+      );
+
+      assert.equal(responses.length, 0, `${label}: explicit fresh read did not receive exactly one intent recheck`);
+      assert.equal(gate.requestKind, 'execute', `${label}: explicit fresh read was downgraded to respond`);
+      assert.equal(gate.responseOnly, undefined, `${label}: explicit fresh read bypassed browser tools`);
+      assert.match(gate.approvedScratchpadText || '', /Reread the current issue/, `${label}: original full execution plan was not retained`);
+    }
+  });
+});
+
 test('planner rechecks tool-dependent respond and plan-only intents before routing', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
@@ -67183,12 +67307,18 @@ test('execute protocol suppresses planner payloads, rejects false Ask claims, an
   }
 });
 
-test('planner routes Act advice follow-ups to respond and protects unknown required form values', () => {
-  for (const build of ['chrome', 'firefox']) {
-    const planner = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/planner.js`), 'utf8');
-    assert.match(planner, /Runtime mode does not force execute/, `${build}: Act advice routing rule missing`);
-    assert.match(planner, /trusted conversation context already contains everything needed/, `${build}: conversation-only respond rule missing`);
-    assert.match(planner, /required form value is unavailable[\s\S]*?leave the field untouched/, `${build}: missing form-value guard missing`);
+test('both planner variants share Act advice follow-up routing rules', () => {
+  assert.equal(PLANNER_RESPONSE_ONLY_RULES, PLANNER_RESPONSE_ONLY_RULES_FX, 'Chrome/Firefox response-only rules diverged');
+  for (const [build, fullPrompt, intentPrompt] of [
+    ['chrome', PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    assert.ok(fullPrompt.includes(PLANNER_RESPONSE_ONLY_RULES), `${build}: full planner is missing shared advice-follow-up rules`);
+    assert.ok(intentPrompt.includes(PLANNER_RESPONSE_ONLY_RULES), `${build}: compact intent planner is missing shared advice-follow-up rules`);
+    assert.match(fullPrompt, /corrects, qualifies, or revises an answer or draft/, `${build}: full planner lacks correction-follow-up guidance`);
+    assert.match(intentPrompt, /corrects, qualifies, or revises an answer or draft/, `${build}: intent planner lacks correction-follow-up guidance`);
+    assert.match(fullPrompt, /required form value is unavailable[\s\S]*?leave the field untouched/, `${build}: full planner missing form-value guard`);
+    assert.match(intentPrompt, /required form value is unavailable[\s\S]*?leave the field untouched/, `${build}: intent planner missing form-value guard`);
   }
 });
 
@@ -67211,6 +67341,7 @@ test('error formatting is bounded and never exposes object coercion text', async
     assert.match(panel, /const existing = content\.querySelector\('\.msg-copy-btn:not\(\.scratchpad-copy-btn\)'\)/, `${build}: message Copy insertion is not idempotent`);
     assert.match(panel, /btn\.title = t\('sp\.copy\.message\.title'\)/, `${build}: message Copy still reuses the code tooltip`);
     assert.match(panel, /data-rejected-completion[\s\S]*?rejectedCompletion = 'pending'/, `${build}: rejected done retries are not collapsed`);
+    assert.match(panel, /done \(rejected\)[\s\S]*?done \(failed\)/, `${build}: rejected and failed completion attempts are still labelled as successful done calls`);
   }
 });
 

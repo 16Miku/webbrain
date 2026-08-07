@@ -9178,6 +9178,8 @@ function appendVerboseToolCall(name, args) {
     if (priorRejected) {
       priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
       priorRejected.querySelector('.tool-result')?.remove();
+      const priorLabel = priorRejected.querySelector('.tool-call-name');
+      if (priorLabel) priorLabel.textContent = ' done';
       priorRejected.dataset.rejectedCompletion = 'pending';
       priorRejected.dataset.awaitingResult = 'true';
       return;
@@ -9194,7 +9196,10 @@ function appendVerboseToolCall(name, args) {
   const icon = document.createElement('span');
   icon.className = 'icon';
   icon.textContent = '\u26A1';
-  header.append(icon, document.createTextNode(` ${name || ''}`));
+  const nameLabel = document.createElement('span');
+  nameLabel.className = 'tool-call-name';
+  nameLabel.textContent = ` ${name || ''}`;
+  header.append(icon, nameLabel);
 
   const body = document.createElement('div');
   body.className = 'tool-call-body';
@@ -9217,7 +9222,13 @@ function appendVerboseToolResult(name, result) {
     resultEl.textContent = truncate(JSON.stringify(result), 200);
     lastTool.appendChild(resultEl);
     if (name === 'done') {
-      lastTool.dataset.rejectedCompletion = result?.blockedDone === true ? 'true' : 'false';
+      const rejected = result?.blockedDone === true;
+      const failed = result?.success === false && (result?.done === true || result?.planOnlyTerminal === true);
+      lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
+      const nameLabel = lastTool.querySelector('.tool-call-name');
+      if (nameLabel) nameLabel.textContent = rejected
+        ? ' done (rejected)'
+        : (failed ? ' done (failed)' : ' done');
     }
     lastTool.dataset.awaitingResult = 'false';
   }
