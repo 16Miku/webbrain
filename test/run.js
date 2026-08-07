@@ -11083,6 +11083,8 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
     for (const schemaSpec of [
       { const: 'ok' }, { const: { a: 1 } }, { $ref: '#/$defs/x' }, { anyOf: [{ type: 'string' }] },
       { enum: ['a', 'b'] }, { items: { type: 'string' } }, { properties: { a: { type: 'string' } } },
+      { minLength: 3 }, { maximum: 10 }, { pattern: '^safe$' },
+      { items: false }, { anyOf: [false, { type: 'string' }] }, { additionalProperties: false },
     ]) {
       assert.equal(
         cloudModule.isJsonSchemaSpec(schemaSpec),
@@ -11219,6 +11221,18 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       [{ type: 'object', minProperties: 1, maxProperties: 2 }, { a: 1 }, true],
       [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 1 }, false],
       [{ type: 'object', additionalProperties: { type: 'string' } }, { a: 'x' }, true],
+      // Constraint-only schemas are valid JSON Schema even without `type` or a
+      // top-level `$schema` marker. They must not fall into object shorthand.
+      [{ minLength: 3 }, 'ab', false],
+      [{ minLength: 3 }, 'abc', true],
+      [{ pattern: '^safe$' }, 'unsafe', false],
+      [{ minimum: 5 }, 3, false],
+      [{ minItems: 2 }, [1], false],
+      [{ minProperties: 1 }, {}, false],
+      [{ items: false }, [], true],
+      [{ items: false }, [1], false],
+      [{ anyOf: [false, { minLength: 3 }] }, 'abc', true],
+      [{ anyOf: [false, { minLength: 3 }] }, 'a', false],
     ]) {
       assert.equal(
         cloudModule.validateCloudOutput(value, spec).ok,
@@ -11226,6 +11240,21 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
         `${label}: supported constraint ${JSON.stringify(spec)} mis-validated ${JSON.stringify(value)}`,
       );
     }
+    assert.equal(
+      validate({ minLength: 3 }, { result: 'abc', summary: 'ok' }).ok,
+      true,
+      `${label}: argument schema advertised a constraint-only result as shorthand object`,
+    );
+    assert.equal(
+      validate({ minLength: 3 }, { result: 'ab', summary: 'ok' }).ok,
+      false,
+      `${label}: argument gate lost a type-agnostic minLength constraint`,
+    );
+    assert.equal(
+      cloudModule.validateCloudOutput('anything', { minLength: -1 }).ok,
+      false,
+      `${label}: invalid type-agnostic constraint shape escaped fail-closed support checks`,
+    );
     for (const [spec, value, keyword] of [
       [{ type: 'array', uniqueItems: true }, [1], 'uniqueItems'],
       [{ type: 'array', contains: { type: 'number' } }, [1], 'contains'],
@@ -11580,6 +11609,41 @@ test('strict cloud runs register credential-labeled form values and fail closed 
     oversizedRun.updates.find(update => update.type === 'clarify')?.data?.question,
     '[redacted strict value]',
     'an uninspectable request body must fail closed before later prose is published',
+  );
+
+  const verificationCode = 481920;
+  const genericCode = '730155';
+  const publicAddress = 'public-address@example.test';
+  const requestBodyRun = await runStrictCase('run_strict_request_body_codes', (publishUpdate) => {
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/verify',
+        method: 'POST',
+        body: JSON.stringify({ verification_code: verificationCode, address: publicAddress }),
+      },
+    });
+    publishUpdate('tool_call', {
+      name: 'fetch_url',
+      args: {
+        url: 'https://api.example.test/confirm',
+        method: 'POST',
+        body: new URLSearchParams({ code: genericCode }).toString(),
+      },
+    });
+    publishUpdate('clarify', {
+      clarifyId: 'strict_request_body_question',
+      question: `Confirm ${verificationCode}, ${genericCode}, and ${publicAddress}?`,
+    });
+  }, `Finished with ${verificationCode}, ${genericCode}, and ${publicAddress}.`);
+  const requestBodyJson = JSON.stringify(requestBodyRun);
+  assert.doesNotMatch(requestBodyJson, new RegExp(`${verificationCode}|${genericCode}`));
+  assert.equal(requestBodyJson.includes(publicAddress), true,
+    'non-credential request-body siblings should not poison later public prose');
+  assert.match(
+    requestBodyRun.updates.find(update => update.type === 'clarify')?.data?.question || '',
+    /\[redacted strict value\]/,
+    'verification-code request-body values repeated in clarification prose were not redacted',
   );
 
   const pathToken = 'share-token-should-stay-private';
@@ -34950,6 +35014,11 @@ test('detects name= matching credential vocab', () => {
   assert.equal(isCredentialField({ type: 'text', name: 'seed-phrase' }).sensitive, true);
   assert.equal(isCredentialField({ type: 'text', name: 'passphrase' }).sensitive, true);
   assert.equal(isCredentialField({ type: 'text', name: 'pin_code' }).sensitive, true);
+  for (const detector of [isCredentialField, isCredentialFieldFx]) {
+    assert.equal(detector({ type: 'text', name: 'verification_code' }).sensitive, true);
+    assert.equal(detector({ type: 'text', name: 'confirmation-code' }).sensitive, true);
+    assert.equal(detector({ type: 'text', name: 'one_time_code' }).sensitive, true);
+  }
 });
 
 test('detects id / aria-label / placeholder / labelText', () => {

@@ -28,21 +28,39 @@ function isShorthandToken(value) {
   return SHORTHAND_TYPE_TOKENS.has(token);
 }
 
+function isNumericSchemaValue(value) {
+  return typeof value === 'number';
+}
+
+function isSchemaBranch(value) {
+  return typeof value === 'boolean' || isSchemaObject(value);
+}
+
 // A keyword only signals JSON Schema when its value has the shape JSON Schema
 // requires. Presence alone is not enough: `const`, `items`, `enum`, and the
 // rest are all legal shorthand field names.
 const JSON_SCHEMA_KEYWORD_SHAPES = {
   properties: isSchemaObject,
-  items: (value) => isSchemaObject(value) || Array.isArray(value),
+  additionalProperties: (value) => typeof value === 'boolean',
+  items: (value) => typeof value === 'boolean' || isSchemaObject(value) || Array.isArray(value),
   enum: Array.isArray,
-  anyOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
-  oneOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
-  allOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaObject),
+  anyOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaBranch),
+  oneOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaBranch),
+  allOf: (value) => Array.isArray(value) && value.length > 0 && value.every(isSchemaBranch),
   // Both take free values, so the only tell is that a shorthand type token is
   // never what a caller means by `{ const: 'ok' }` or `{ $ref: '#/$defs/x' }`.
   const: (value) => !isShorthandToken(value),
   $ref: (value) => typeof value === 'string' && !isShorthandToken(value),
   $schema: (value) => typeof value === 'string' && value.length > 0,
+  minLength: isNumericSchemaValue,
+  maxLength: isNumericSchemaValue,
+  pattern: (value) => typeof value === 'string' && !isShorthandToken(value),
+  minimum: isNumericSchemaValue,
+  maximum: isNumericSchemaValue,
+  minItems: isNumericSchemaValue,
+  maxItems: isNumericSchemaValue,
+  minProperties: isNumericSchemaValue,
+  maxProperties: isNumericSchemaValue,
 };
 
 /**

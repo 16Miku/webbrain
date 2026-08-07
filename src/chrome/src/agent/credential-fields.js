@@ -30,7 +30,7 @@
 // Separator class: hyphen, underscore, or whitespace. Field names in
 // attributes use - or _; aria-label / placeholder / <label> text often use
 // human spaces ("API key", "One-time password"). All three must hit.
-export const SENSITIVE_NAME_RE = /pwd|password|passwd|secret|token|api[-_\s]?key|otp|2fa|mfa|credential|recovery[-_\s]?code|backup[-_\s]?code|access[-_\s]?token|refresh[-_\s]?token|client[-_\s]?secret|private[-_\s]?key|seed[-_\s]?phrase|passphrase|pin[-_\s]?code/i;
+export const SENSITIVE_NAME_RE = /pwd|password|passwd|secret|token|api[-_\s]?key|otp|2fa|mfa|credential|verification[-_\s]?code|confirmation[-_\s]?code|security[-_\s]?code|one[-_\s]?time[-_\s]?code|email[-_\s]?code|recovery[-_\s]?code|backup[-_\s]?code|access[-_\s]?token|refresh[-_\s]?token|client[-_\s]?secret|private[-_\s]?key|seed[-_\s]?phrase|passphrase|pin[-_\s]?code/i;
 
 export const SENSITIVE_AUTOCOMPLETE_RE = /^(current-password|new-password|one-time-code)$/i;
 
