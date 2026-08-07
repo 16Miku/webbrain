@@ -12569,6 +12569,14 @@ test('cloud run status exposes persistence truncation after service-worker resta
   assert.equal(restored.persistenceTruncated?.omittedResult, true);
 });
 
+test('cloud run default IDs use cryptographically secure randomness', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  const controllerStart = source.indexOf('export function createCloudRunController(');
+  const controllerBody = source.slice(controllerStart, source.indexOf('\n  const api = chromeApi;', controllerStart));
+  assert.match(controllerBody, /makeRunId = \(\) => `run_\$\{globalThis\.crypto\.randomUUID\(\)\}`/);
+  assert.doesNotMatch(controllerBody, /Math\.random\(/);
+});
+
 test('cloud bridge accepts only loopback WebSocket URLs', () => {
   assert.equal(normalizeCloudBridgeUrl('ws://127.0.0.1:17373/extension'), 'ws://127.0.0.1:17373/extension');
   assert.equal(normalizeCloudBridgeUrl('ws://localhost:17373/extension'), 'ws://localhost:17373/extension');

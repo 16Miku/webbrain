@@ -691,7 +691,7 @@ export function createCloudRunController({
   stopRecording = null,
   workflowTrace = null,
   now = () => new Date(),
-  makeRunId = () => `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+  makeRunId = () => `run_${globalThis.crypto.randomUUID()}`,
 } = {}) {
   const api = chromeApi;
   const runs = new Map();
