@@ -653,6 +653,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Gaano katagal maghintay ng sagot sa clarify bago awtomatikong piliin ang unang opsyon (o mag-timeout kung walang opsyon). 0 = Agad (palaging auto-select). Higit sa 1200s ay walang hangganan (Naka-off). Default 60s. Hindi para sa permission o form-submit confirmations.',
   'st.display.clarify_timeout.off': 'Naka-off',
   'st.display.clarify_timeout.instant': 'Agad',
+  'st.display.always_allow_api_mutations.label': "Palaging payagan ang mga pagbabago sa API",
+  'st.display.always_allow_api_mutations.desc': "Payagan ang WebBrain na gumamit ng POST, PUT, PATCH, at DELETE sa pamamagitan ng fetch_url o research_url nang hindi kailangan ang /allow-api sa bawat usapan. Nalalapat pa rin ang gabay na unahin ang UI at mga pagsusuri sa kumpirmasyon. Naka-off bilang default.",
   'st.display.api_mutation_observer.label': 'Tagamasid ng mutasyon ng API',
   'st.display.api_mutation_observer.desc': 'Obserbahan ang mga URL at paraan ng XHR/fetch request sa parehong tab upang matukoy ng WebBrain ang mga paulit-ulit na aksyon sa UI at magmungkahi ng mga pattern ng shortcut sa API. Naka-off bilang default; paganahin lamang habang iniimbestigahan ang pag-uugali ng shortcut o latency.',
   'st.display.openai_ask_streaming.label': "I-stream ang mga sagot sa Ask mode",

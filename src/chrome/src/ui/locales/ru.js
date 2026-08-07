@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Сколько ждать ответа на уточняющий вопрос, прежде чем автоматически выбрать первый вариант (или зафиксировать таймаут без вариантов). 0 — сразу (всегда автовыбор). Больше 1200 с — ждать бесконечно (Выкл.). По умолчанию 60 с. Не применяется к разрешениям и подтверждениям отправки форм.',
   'st.display.clarify_timeout.off': 'Выкл.',
   'st.display.clarify_timeout.instant': 'Сразу',
+  'st.display.always_allow_api_mutations.label': "Всегда разрешать изменения через API",
+  'st.display.always_allow_api_mutations.desc': "Разрешить WebBrain использовать POST, PUT, PATCH и DELETE через fetch_url или research_url без команды /allow-api в каждом разговоре. Правило приоритета интерфейса и проверки подтверждения продолжают действовать. По умолчанию выключено.",
   'st.display.api_mutation_observer.label': 'Наблюдатель мутаций API',
   'st.display.api_mutation_observer.desc': 'Наблюдайте за URL-адресами и методами запросов XHR/fetch на той же вкладке, чтобы WebBrain мог обнаруживать повторяющиеся действия UI и предлагать шаблоны API-шорткатов. Отключено по умолчанию; включайте только при исследовании поведения шорткатов или задержек.',
   'st.display.openai_ask_streaming.label': "????????? ?????? ? ?????? Ask",

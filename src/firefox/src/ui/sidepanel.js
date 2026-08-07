@@ -3584,9 +3584,11 @@ async function init() {
     }
   });
 
-  // Load verbose setting
-  const stored = await browser.storage.local.get('verboseMode');
+  // Load settings that affect the composer state.
+  const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
   verboseMode = stored.verboseMode || false;
+  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
+  syncApiMutationsAllowedForCurrentTab();
 
   // Restore prior conversation for this tab (if any) — survives close/reopen.
   const restoreTabId = currentTabId;
@@ -3640,6 +3642,10 @@ async function init() {
     if (changes.verboseMode) {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    }
+    if (changes.alwaysAllowApiMutations) {
+      alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
+      syncApiMutationsAllowedForCurrentTab();
     }
     if (changes.providers || changes.activeProvider) {
       void loadProviders();
@@ -6293,6 +6299,7 @@ function handleInput() {
 // --- Message Sending ---
 
 // Per-conversation API mutation override (set via /allow-api).
+let alwaysAllowApiMutations = false;
 let apiMutationsAllowed = false;
 const apiMutationsAllowedByTab = new Map();
 
@@ -6311,7 +6318,7 @@ function setApiMutationsAllowedForTab(tabId, allowed) {
 }
 
 function syncApiMutationsAllowedForCurrentTab() {
-  apiMutationsAllowed = isApiMutationsAllowedForTab(currentTabId);
+  apiMutationsAllowed = alwaysAllowApiMutations || isApiMutationsAllowedForTab(currentTabId);
   updateApiBadge();
 }
 

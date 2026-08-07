@@ -495,6 +495,8 @@ export default {
   'st.display.site_adapters.desc': 'Injecteer korte, handgeschreven begeleiding voor bekende sites met veel verkeer...',
   'st.display.voice_input.label': 'Spraakinvoer',
   'st.display.voice_input.desc': 'Laat de microfoonknop in de chatinvoer tekst dicteren via de spraakherkenning van uw browser...',
+  'st.display.always_allow_api_mutations.label': "API-mutaties altijd toestaan",
+  'st.display.always_allow_api_mutations.desc': "Sta WebBrain toe POST, PUT, PATCH en DELETE via fetch_url of research_url te gebruiken zonder /allow-api in elk gesprek. Richtlijnen die de UI vooropstellen en bevestigingscontroles blijven van toepassing. Standaard uit.",
   'st.display.api_mutation_observer.label': 'API-wijzigingsobserver',
   'st.display.api_mutation_observer.desc': 'Observeer XHR/fetch-verzoek-URL\'s en -methoden op hetzelfde tabblad...',
   'st.display.webmcp.label': 'Experimenteel WebMCP',

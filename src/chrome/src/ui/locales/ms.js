@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan soalan penjelasan sebelum memilih pilihan pertama secara automatik (atau tamat masa jika tiada pilihan). 0 = Segera (sentiasa auto-pilih). Melebihi 1200s tunggu tanpa had (Mati). Lalai 60s. Tidak digunakan untuk kebenaran atau pengesahan hantar borang.',
   'st.display.clarify_timeout.off': 'Mati',
   'st.display.clarify_timeout.instant': 'Segera',
+  'st.display.always_allow_api_mutations.label': "Sentiasa benarkan mutasi API",
+  'st.display.always_allow_api_mutations.desc': "Benarkan WebBrain menggunakan POST, PUT, PATCH dan DELETE melalui fetch_url atau research_url tanpa memerlukan /allow-api dalam setiap perbualan. Panduan mengutamakan UI dan semakan pengesahan masih terpakai. Dimatikan secara lalai.",
   'st.display.api_mutation_observer.label': 'Pemerhati mutasi API',
   'st.display.api_mutation_observer.desc': 'Perhatikan URL dan metode permintaan XHR/fetch tab yang sama supaya WebBrain dapat mengesan tindakan UI berulang dan mencadangkan corak pintasan API. Dimatikan secara lalai; aktifkan hanya semasa menyiasat tingkah laku pintasan atau kependaman.',
   'st.display.openai_ask_streaming.label': "Strim respons dalam mod Ask",

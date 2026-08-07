@@ -416,6 +416,10 @@ export class Agent extends LoopDetector {
     this.lastAutoScreenshotTs = new Map();
     this.lastSeenAdapter = new Map();
     this.apiAllowedTabs = new Set();
+    // Global Advanced-setting opt-in. Keep it separate from the tab set so
+    // /reset clears only the conversation override and live setting changes
+    // can revoke global permission without erasing explicit /allow-api state.
+    this.alwaysAllowApiMutations = false;
     this.apiAllowedInjected = new Set();
     this.bulkApiMutationClicks = new Map();
     this.bulkApiMutationHints = new Map();
@@ -1109,7 +1113,7 @@ export class Agent extends LoopDetector {
       user_memory_enabled: this.userMemoryEnabled === true,
       // Per-tab authorizations only mean something in a tab's context.
       ...(tabId != null ? {
-        api_mutations_allowed: this.apiAllowedTabs.has(tabId),
+        api_mutations_allowed: this.isApiMutationsAllowed(tabId),
         selection_grounded: this.selectionGroundingScopes.has(tabId),
       } : {}),
       image_detail: this.imageDetail,
@@ -1739,6 +1743,15 @@ export class Agent extends LoopDetector {
       this.apiAllowedTabs.delete(tabId);
       this.apiAllowedInjected.delete(tabId);
     }
+  }
+
+  setAlwaysAllowApiMutations(allowed) {
+    this.alwaysAllowApiMutations = allowed === true;
+    if (!this.alwaysAllowApiMutations) this.apiAllowedInjected.clear();
+  }
+
+  isApiMutationsAllowed(tabId) {
+    return this.alwaysAllowApiMutations || this.apiAllowedTabs.has(tabId);
   }
 
   // Browser-free loop detection is inherited from LoopDetector. These
@@ -2663,7 +2676,7 @@ export class Agent extends LoopDetector {
       replayRequestId: replaySource?.replayRequestId || null,
       replayHasBody: !!replaySource?.hasBody,
       replayHeaderNames: replaySource?.headerNames || [],
-      apiAllowed: this.apiAllowedTabs.has(tabId),
+      apiAllowed: this.isApiMutationsAllowed(tabId),
     };
   }
 
@@ -4282,7 +4295,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message });
         continue;
       }
-      if (isNetworkMutation(fnName, fnArgs) && !this.apiAllowedTabs.has(tabId)) {
+      if (isNetworkMutation(fnName, fnArgs) && !this.isApiMutationsAllowed(tabId)) {
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -4407,7 +4420,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         for (const capability of capabilities) {
           if (this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
-          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && this.apiAllowedTabs.has(tabId)) continue;
+          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && this.isApiMutationsAllowed(tabId)) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
           const gateArgs = this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
@@ -6565,8 +6578,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       contextLine += `[Current page context — applies to this user message and supersedes older page context for phrases like "this page". URL: ${safeField(url)}${title ? ` — Title: ${safeField(title)}` : ''}]\n\n`;
     }
 
-    if (this.apiAllowedTabs.has(tabId) && !this.apiAllowedInjected.has(tabId)) {
-      contextLine += `[USER OVERRIDE — /allow-api: For this conversation the user has explicitly authorized you to use API mutations (POST/PUT/PATCH/DELETE via fetch_url, or fetch() with mutation methods via execute_js) when you judge API to be more reliable than UI for a specific step. The default UI-first rule still applies — reach for the API when UI has failed/is genuinely unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] for repeated successful same-kind UI actions. Before any destructive API call, state the URL, method, and payload in plain text in your response so the user can see what you're about to do.]\n\n`;
+    if (this.isApiMutationsAllowed(tabId) && !this.apiAllowedInjected.has(tabId)) {
+      contextLine += `[USER OVERRIDE — API MUTATIONS ALLOWED: The user has authorized API mutations (POST/PUT/PATCH/DELETE via fetch_url or research_url). The default UI-first rule still applies — reach for the API when UI has failed/is genuinely unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] for repeated successful same-kind UI actions. Before any destructive API call, state the URL, method, and payload in plain text in your response so the user can see what you're about to do.]\n\n`;
       this.apiAllowedInjected.add(tabId);
     }
 
@@ -7852,7 +7865,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const skillCatalog = this._skillCatalog(conversationMode, tier);
     const plannerMessages = buildPlannerMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
-      allowApi: this.apiAllowedTabs.has(tabId),
+      allowApi: this.isApiMutationsAllowed(tabId),
       skillCatalog,
       locale,
       priorUserTask: followUpContext.priorUserTask,

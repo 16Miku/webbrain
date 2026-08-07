@@ -96,7 +96,7 @@
 | **分层工具暴露** | 提供商层级（`compact | mid | full`）限制较小模型的普通浏览器智能体操作面。Compact 获得最小的操作面；Mid 添加常见任务工具；Full 添加高级 UI/DOM 回退。Compact Dev 被阻止。 |
 | **行动前规划** | 启用时，行动模式的运行首先生成结构化计划，并等待侧面板批准后才执行任何浏览器工具。定时运行仅通过调度器策略可自动批准计划。 |
 | **技能导入边界** | 技能可通过 `webbrain-tools` 清单暴露只读 HTTP 工具和下载任务工具。导入或保持技能启用是对声明的 HTTPS 端点的信任决策；声明的技能工具使用 `credentials: "omit"` 并应将第三方结果标记为 `resultPolicy: "untrusted"`。下载任务技能工具在保存文件前仍需行动模式和正常的下载权限门。 |
-| **`/allow-api`** | 每个对话的 `/allow-api` 标记，*免除*写方法网络出口（`fetch_url`/`research_url` 的 POST/PUT/PATCH/DELETE）的权限提示。不免除 GET 出口或任何其他能力。对话重置时清除。 |
+| **API 变更覆盖** | 每个对话的 `/allow-api` 标记，或“常规 → 高级”中默认关闭的持久设置，都会*免除*写方法网络出口（`fetch_url`/`research_url` 的 POST/PUT/PATCH/DELETE）的权限提示。两者都不免除 GET 出口或任何其他能力。对话重置仅清除斜杠命令覆盖。 |
 | **`done()` 阻塞** | 在接受完成前，智能体探测是否有打开的对话框/表单。如果摘要声称"已创建"/"已保存"但模态框仍打开，则强制智能体继续。 |
 | **重复提交防护** | 在 45 秒窗口内，每个标签页+URL 阻止对类似提交文本（create/save/submit/add/post/publish/send/confirm/sign up/log in/pay/checkout/order 等）的点击（Chrome）。 |
 | **CLICK 遮挡测试** | 在点击前，解析器调用 `elementFromPoint()`。如果另一个元素视觉上位于上方，则拒绝点击。 |
@@ -117,7 +117,9 @@
 
 ## `/allow-api` 标记
 
-通过侧面板中的 `/allow-api` 斜杠命令为每个对话设置。激活时，它仅免除**写方法网络出口**的权限提示：
+可通过侧面板中的 `/allow-api` 斜杠命令为每个对话设置，也可在**设置 → 常规 → 高级**中
+开启**始终允许 API 变更**使其持久生效。持久设置默认关闭。任一选项激活时，都仅免除
+**写方法网络出口**的权限提示：
 
 - `fetch_url` / `research_url` 使用 `method: POST/PUT/PATCH/DELETE`
 
@@ -127,9 +129,9 @@
 - 在任何破坏性 API 调用前以纯文本说明 URL、方法和载荷
 - 默认优先使用 UI，仅在 UI 确实失败时才使用 API
 
-循环检测 API 快捷提示不会绕过此策略。它们可以暴露页面已在调用的确切方法和 URL，包括 POST/PATCH 等，但写方法的 `fetch_url` / `research_url` 调用仍需要对话的 `/allow-api` 状态。GET 请求和非网络能力仍通过正常的能力 × 来源门。
+循环检测 API 快捷提示不会绕过此策略。它们可以暴露页面已在调用的确切方法和 URL，包括 POST/PATCH 等，但写方法的 `fetch_url` / `research_url` 调用仍需要对话的 `/allow-api` 状态或持久设置。GET 请求和非网络能力仍通过正常的能力 × 来源门。
 
-对话重置时清除。
+对话重置会清除斜杠命令覆盖，但不会更改持久设置；后者会一直生效到用户手动关闭。
 
 ---
 

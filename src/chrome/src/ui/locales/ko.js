@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': '명확화 질문에 대한 답변 대기 시간입니다. 시간이 지나면 첫 번째 옵션을 자동 선택합니다(옵션이 없으면 시간 초과). 0은 즉시(항상 자동 선택). 1200초 초과는 무제한(끔). 기본 60초. 권한 또는 양식 제출 확인에는 적용되지 않습니다.',
   'st.display.clarify_timeout.off': '끔',
   'st.display.clarify_timeout.instant': '즉시',
+  'st.display.always_allow_api_mutations.label': "API 변경 항상 허용",
+  'st.display.always_allow_api_mutations.desc': "대화마다 /allow-api를 입력하지 않아도 WebBrain이 fetch_url 또는 research_url을 통해 POST, PUT, PATCH, DELETE를 사용하도록 허용합니다. UI 우선 지침과 확인 검사는 계속 적용됩니다. 기본적으로 꺼져 있습니다.",
   'st.display.api_mutation_observer.label': 'API 변경 관찰자',
   'st.display.api_mutation_observer.desc': '동일한 탭의 XHR/fetch 요청 URL 및 메서드를 관찰하여 WebBrain이 반복되는 UI 작업을 감지하고 API 바로가기 패턴을 제안할 수 있도록 합니다. 기본적으로 꺼져 있습니다. 바로가기 동작이나 지연 시간을 조사할 때만 활성화하세요.',
   'st.display.openai_ask_streaming.label': "Ask ?? ????",

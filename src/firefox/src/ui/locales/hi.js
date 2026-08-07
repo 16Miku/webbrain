@@ -515,6 +515,8 @@ export default {
   'st.display.site_adapters.desc': "एजेंट के पहले संदेश में ज्ञात उच्च-ट्रैफ़िक साइटों (GitHub, Gmail, Stripe, AWS, आदि) के लिए संक्षिप्त, हाथ से क्यूरेटेड मार्गदर्शन शामिल करें। एजेंट को सामान्य गतिरोधों से बचने में मदद करता है। मेल खाने वाली साइटों पर बातचीत के पहले दौर में एक छोटी सी टोकन लागत जुड़ जाती है।",
   'st.display.voice_input.label': "ध्वनि इनपुट",
   'st.display.voice_input.desc': "चैट इनपुट में माइक बटन को अपने ब्राउज़र की वाक् पहचान के माध्यम से टेक्स्ट निर्देशित करने दें। इसका समर्थन करने वाले ब्राउज़र में डिफ़ॉल्ट रूप से चालू।",
+  'st.display.always_allow_api_mutations.label': "API बदलावों को हमेशा अनुमति दें",
+  'st.display.always_allow_api_mutations.desc': "WebBrain को हर बातचीत में /allow-api की आवश्यकता के बिना fetch_url या research_url के माध्यम से POST, PUT, PATCH और DELETE का उपयोग करने दें। UI-प्रथम मार्गदर्शन और पुष्टि जाँचें लागू रहेंगी। डिफ़ॉल्ट रूप से बंद।",
   'st.display.api_mutation_observer.label': "एपीआई उत्परिवर्तन पर्यवेक्षक",
   'st.display.api_mutation_observer.desc': "समान-टैब XHR/फ़ेच अनुरोध URL और विधियों का निरीक्षण करें ताकि WebBrain बार-बार होने वाली UI क्रियाओं का पता लगा सके और API शॉर्टकट पैटर्न सुझा सके। डिफ़ॉल्ट रूप से बंद; शॉर्टकट व्यवहार या विलंबता की जांच करते समय ही सक्षम करें।",
   'st.display.openai_ask_streaming.label': "Ask ??? ??? ????? ??????? ????",

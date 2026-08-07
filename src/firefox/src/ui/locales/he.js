@@ -478,6 +478,8 @@ export default {
   "st.display.site_adapters.desc": "הזרקו הדרכה קצרה, שנקבעה ביד לאתרים ידועים בעלי תנועה גבוהה (GitHub, Gmail, Stripe, AWSוכו') בהודעה הראשונה של הסוכן. עוזר לסוכן להימנע ממבוי סתום שכיח. מוסיף עלות סמלית קטנה בסיבוב הראשון של שיחות באתרים תואמים.",
   "st.display.voice_input.label": "קלט קולי",
   "st.display.voice_input.desc": "תן ללחצן המיקרופון בקלט הצ'אט להכתיב טקסט באמצעות זיהוי הדיבור של הדפדפן שלך. פועל כברירת מחדל בדפדפנים התומכים בו.",
+  'st.display.always_allow_api_mutations.label': "לאפשר תמיד שינויי API",
+  'st.display.always_allow_api_mutations.desc': "אפשר ל-WebBrain להשתמש ב-POST, PUT, PATCH ו-DELETE דרך fetch_url או research_url בלי לדרוש /allow-api בכל שיחה. הנחיות להעדפת הממשק ובדיקות אישור עדיין חלות. כבוי כברירת מחדל.",
   "st.display.api_mutation_observer.label": "מעקב אחר שינויי API",
   "st.display.api_mutation_observer.desc": "עקוב אחר כתובות URL ושיטות של בקשות XHR/fetch באותה כרטיסייה, כדי ש-WebBrain יוכל לזהות פעולות חוזרות בממשק ולהציע דפוסי קיצור דרך דרך ה-API. כבוי כברירת מחדל; הפעל רק בעת בדיקת קיצורי דרך או זמני תגובה.",
   'st.display.openai_ask_streaming.label': "????? ?????? ???? Ask",

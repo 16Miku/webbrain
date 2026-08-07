@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Durée d’attente d’une réponse à une question de clarification avant de sélectionner automatiquement la première option (ou d’expirer s’il n’y a pas d’options). 0 = Immédiat (auto-sélection). Au-delà de 1200s = attendre indéfiniment (Désactivé). Par défaut 60s. Ne s’applique pas aux permissions ni aux confirmations d’envoi de formulaire.',
   'st.display.clarify_timeout.off': 'Désactivé',
   'st.display.clarify_timeout.instant': 'Immédiat',
+  'st.display.always_allow_api_mutations.label': "Toujours autoriser les mutations API",
+  'st.display.always_allow_api_mutations.desc': "Autoriser WebBrain à utiliser POST, PUT, PATCH et DELETE via fetch_url ou research_url sans exiger /allow-api dans chaque conversation. Les directives UI-d’abord et les confirmations restent applicables. Désactivé par défaut.",
   'st.display.api_mutation_observer.label': 'Observateur de mutations API',
   'st.display.api_mutation_observer.desc': 'Observer les URLs et méthodes des requêtes XHR/fetch dans le même onglet pour que WebBrain puisse détecter des actions UI répétées et suggérer des modèles de raccourcis API. Désactivé par défaut ; activer seulement lors de l\'investigation de comportements de raccourci ou de latence.',
   'st.display.openai_ask_streaming.label': "Diffuser les r?ponses en mode Ask",
