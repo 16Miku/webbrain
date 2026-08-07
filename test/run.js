@@ -20523,6 +20523,23 @@ test('sidepanel verbose tool-call headers treat tool names as text', () => {
   }
 });
 
+test('sidepanel verbose done labels recognize explicit failed outcomes', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const start = panel.indexOf('function appendVerboseToolResult(name, result) {');
+    assert.notEqual(start, -1, `${label}: appendVerboseToolResult missing`);
+    const body = panel.slice(start, panel.indexOf('\n}\n', start) + 2);
+    assert.match(
+      body,
+      /const failed = result\?\.outcome === 'failed'[\s\S]*?\|\| \(result\?\.success === false/,
+      `${label}: explicit failed done outcomes should use the failed completion label`,
+    );
+  }
+});
+
 test('sidepanel suppresses streamed raw tool-call text before rendering tool steps', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
@@ -56873,6 +56890,66 @@ test('full planner keeps explicit fresh reads executable after follow-up recheck
   });
 });
 
+test('full planner propagates terminal intent recheck failures', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+      const fullExecute = plannerFixtureJson({
+        request_kind: 'execute',
+        requires_state_change: false,
+        summary: 'Read the issue and revise the response.',
+        confidence: 0.99,
+        steps: [
+          { id: '1', action: 'Read the current issue.', tools: ['read_page'] },
+          { id: '2', action: 'Return a revised response.', tools: ['done'] },
+        ],
+        localized: {
+          locale: 'en',
+          summary: 'Read the issue and revise the response.',
+          steps: [
+            { id: '1', action: 'Read the current issue.' },
+            { id: '2', action: 'Return a revised response.' },
+          ],
+          risks: [],
+        },
+      });
+      const allowanceMessage = 'Cloud cost allowance reached: this session is $1.00 against the $1.00 limit.';
+      let requests = 0;
+      const provider = {
+        promptTier: 'full',
+        model: 'planner-test',
+        name: 'planner-test',
+        chat: async () => {
+          requests += 1;
+          if (requests === 1) return { content: fullExecute, usage: {} };
+          const error = new Error(allowanceMessage);
+          error.code = 'WB_COST_ALLOWANCE';
+          throw error;
+        },
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.planReviewMode = 'never';
+      const gate = await agent._runPlannerGate(
+        9279 + index,
+        { role: 'user', content: "It's not true; revise your answer." },
+        () => {},
+        null,
+        null,
+        'User: Is my draft a good response?\nAssistant: Here is a suggested response.',
+        { tabUrl: 'https://github.com/example/repo/issues/1', tabTitle: 'Issue #1' },
+        'try',
+        'act',
+        { locale: 'en' },
+        { priorUserTask: 'Is my draft a good response?', scratchpadFacts: '' },
+      );
+
+      assert.equal(requests, 2, `${label}: suspicious read-only follow-up was not intent-rechecked`);
+      assert.equal(gate.proceed, false, `${label}: terminal intent recheck result was ignored`);
+      assert.equal(gate.reason, 'cost_limit', `${label}: terminal intent recheck reason was lost`);
+      assert.equal(gate.message, allowanceMessage, `${label}: terminal intent recheck message was lost`);
+    }
+  });
+});
+
 test('planner rechecks tool-dependent respond and plan-only intents before routing', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
@@ -67341,7 +67418,7 @@ test('error formatting is bounded and never exposes object coercion text', async
     assert.match(panel, /const existing = content\.querySelector\('\.msg-copy-btn:not\(\.scratchpad-copy-btn\)'\)/, `${build}: message Copy insertion is not idempotent`);
     assert.match(panel, /btn\.title = t\('sp\.copy\.message\.title'\)/, `${build}: message Copy still reuses the code tooltip`);
     assert.match(panel, /data-rejected-completion[\s\S]*?rejectedCompletion = 'pending'/, `${build}: rejected done retries are not collapsed`);
-    assert.match(panel, /done \(rejected\)[\s\S]*?done \(failed\)/, `${build}: rejected and failed completion attempts are still labelled as successful done calls`);
+    assert.match(panel, /sp\.tool\.done\.rejected[\s\S]*?sp\.tool\.done\.failed/, `${build}: rejected and failed completion attempts are still labelled as successful done calls`);
   }
 });
 

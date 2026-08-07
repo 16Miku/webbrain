@@ -8876,7 +8876,8 @@ function appendVerboseToolResult(name, result) {
     lastTool.appendChild(resultEl);
     if (name === 'done') {
       const rejected = result?.blockedDone === true;
-      const failed = result?.success === false && (result?.done === true || result?.planOnlyTerminal === true);
+      const failed = result?.outcome === 'failed'
+        || (result?.success === false && (result?.done === true || result?.planOnlyTerminal === true));
       lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
       const nameLabel = lastTool.querySelector('.tool-call-name');
       if (nameLabel) nameLabel.textContent = rejected

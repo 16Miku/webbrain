@@ -8037,6 +8037,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this._checkAbort(tabId)) {
           return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
         }
+        if (intentGate?.proceed === false) return intentGate;
         if (intentGate?.proceed && intentGate.responseOnly === true) return intentGate;
       }
       if (plan.request_kind === 'respond') {
