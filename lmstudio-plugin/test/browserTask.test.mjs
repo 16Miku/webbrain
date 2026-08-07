@@ -193,6 +193,23 @@ test("browser_abort forwards the continuing run ID", async () => {
   assert.deepEqual(abort.payload, { runId: "stalled-run" });
 });
 
+test("a web-page origin cannot replace the connected extension", async () => {
+  const page = new WebSocket(sharedBridge().url, {
+    headers: { Origin: "https://attacker.example" },
+  });
+  let receivedCommands = 0;
+  page.on("message", () => {
+    receivedCommands += 1;
+  });
+  await once(page, "close");
+
+  assert.equal(sharedBridge().isConnected(), true);
+  const result = await browserStatus("origin-safe-run");
+  assert.equal(result.ok, true);
+  assert.equal(result.runId, "origin-safe-run");
+  assert.equal(receivedCommands, 0);
+});
+
 test("browser_task preserves its generated run ID when the start socket disconnects", async () => {
   const result = await browserTask({ task: "disconnect initial response", timeout: 5_000 });
 

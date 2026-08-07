@@ -80,6 +80,17 @@ function log(...args: unknown[]): void {
   console.error("[webbrain-mcp]", ...args);
 }
 
+function isAllowedBridgeOrigin(origin: string | string[] | undefined): boolean {
+  if (origin == null) return true;
+  if (Array.isArray(origin)) return false;
+  try {
+    const protocol = new URL(origin).protocol;
+    return protocol === "chrome-extension:" || protocol === "moz-extension:";
+  } catch {
+    return false;
+  }
+}
+
 export class WebBrainBridge {
   private wss: WebSocketServer | null = null;
   private socket: WebSocket | null = null;
@@ -106,6 +117,14 @@ export class WebBrainBridge {
 
     this.wss!.on("connection", (socket, request) => {
       const url = request.url || "";
+      const origin = request.headers.origin;
+      // Browser WebSocket clients always send Origin. Only extension pages may
+      // reach this trusted-local command channel; native clients send none.
+      if (!isAllowedBridgeOrigin(origin)) {
+        log(`rejected WebSocket origin: ${String(origin)}`);
+        socket.close(1008, "Untrusted Origin");
+        return;
+      }
       if (!url.startsWith(config.bridgePath)) {
         log(`rejected connection on unexpected path: ${url}`);
         socket.close(1008, "Unexpected path");

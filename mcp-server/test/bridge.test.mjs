@@ -155,6 +155,38 @@ test("a client that is not the extension is rejected", async () => {
   await bridge.stop();
 });
 
+test("a web-page origin cannot replace the connected extension", async () => {
+  const bridge = new WebBrainBridge();
+  await bridge.start();
+
+  const extension = fakeExtension(bridgeUrl(), (msg) => ({
+    ok: true,
+    result: { runId: msg.payload.runId || "safe-run", status: "running" },
+  }));
+  await bridge.waitForExtension(3000);
+
+  const page = new WebSocket(bridgeUrl(), {
+    headers: { Origin: "https://attacker.example" },
+  });
+  let receivedCommands = 0;
+  page.on("message", () => {
+    receivedCommands += 1;
+  });
+  await new Promise((resolve) => page.on("close", resolve));
+
+  assert.equal(bridge.isConnected(), true, "page origin replaced the extension socket");
+  const result = await bridge.request("cloud_run", {
+    runId: "origin-safe-run",
+    task: "private task",
+    mode: "ask",
+  });
+  assert.equal(result.runId, "origin-safe-run");
+  assert.equal(receivedCommands, 0, "page origin received a task frame");
+
+  extension.close();
+  await bridge.stop();
+});
+
 test("a new socket cannot inherit an earlier extension handshake", async () => {
   const bridge = new WebBrainBridge();
   await bridge.start();

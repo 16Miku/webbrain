@@ -75,6 +75,17 @@ export interface BridgeOptions {
   commandTimeoutMs?: number;
 }
 
+function isAllowedBridgeOrigin(origin: string | string[] | undefined): boolean {
+  if (origin == null) return true;
+  if (Array.isArray(origin)) return false;
+  try {
+    const protocol = new URL(origin).protocol;
+    return protocol === "chrome-extension:" || protocol === "moz-extension:";
+  } catch {
+    return false;
+  }
+}
+
 export class BridgeClient {
   private wss: WebSocketServer | null = null;
   private socket: WebSocket | null = null;
@@ -114,6 +125,10 @@ export class BridgeClient {
     });
 
     this.wss!.on("connection", (socket, request) => {
+      if (!isAllowedBridgeOrigin(request.headers.origin)) {
+        socket.close(1008, "Untrusted Origin");
+        return;
+      }
       if (!(request.url || "").startsWith(this.path)) {
         socket.close(1008, "Unexpected path");
         return;
