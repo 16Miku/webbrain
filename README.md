@@ -209,7 +209,8 @@ configuration. Bug reports and feature requests belong in
 src/chrome/     Manifest V3 build — service worker, chrome.scripting, sidePanel
 src/firefox/    Manifest V2 build — background page, executeScript, sidebar_action
 docs/           Design and reference docs (en, zh-CN, fr)
-lmstudio-plugin/  fetch_url + research_url as a standalone LM Studio plugin
+mcp-server/     MCP server — delegate browser tasks from Claude Code, Codex, Cursor
+lmstudio-plugin/  Web tools + browser delegation as a standalone LM Studio plugin
 web/            Landing site and docs site
 test/           Node test suite, LLM scenario benchmarks, security corpora
 ```
@@ -243,17 +244,52 @@ register it in `providers/manager.js` — mirroring both changes to
 
 Recent changes are in [CHANGELOG.md](CHANGELOG.md).
 
+## MCP server
+
+Let a coding agent use *your* browser. Claude Code, Codex, Cursor and OpenClaw
+can delegate a task to WebBrain running in the session you are already signed
+into — cookies present, SSO already passed. A headless framework starts logged
+out and stalls at the first login wall; this does not.
+
+```bash
+claude mcp add webbrain -- npx -y @webbrain/mcp-server
+```
+
+Then point **WebBrain → Settings → Cloud bridge** at
+`ws://127.0.0.1:17374/extension` and enable it. **Chromium only** — the bridge
+runs from the extension's offscreen document, which the Firefox build does not
+have.
+
+```
+webbrain_run(task: "open the Stripe dashboard and list last week's failed
+             payments with amounts and customer emails", mode: "ask")
+```
+
+`mode='ask'` is read-only. `mode='act'` can click and type, gated by the same
+in-browser approval prompts a human gets. The server exposes task delegation
+rather than the ~50 low-level browser primitives: WebBrain's permission gate
+lives in the agent loop, so per-primitive access over a socket would sit below
+the gate and bypass it. Details in [`mcp-server/`](mcp-server/).
+
+> The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
+> the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
+> the URL in Settings.
+
 ## LM Studio plugin
 
-`fetch_url` and `research_url` also ship as a standalone
-[LM Studio](https://lmstudio.ai) plugin at
-[`webbrain/web-tools`](https://lmstudio.ai/webbrain/web-tools), for web-fetching
-tool-use inside LM Studio chats without the browser extension. Pure Node, no
-headless browser.
+A standalone [LM Studio](https://lmstudio.ai) plugin at
+[`webbrain/web-tools`](https://lmstudio.ai/webbrain/web-tools):
 
 ```bash
 lms clone webbrain/web-tools
 ```
+
+`fetch_url` and `research_url` are pure Node HTTP — no browser needed, but also
+no cookies, no session and no JavaScript. With the extension installed on a
+Chromium browser, `browser_task` adds delegation to your real signed-in browser,
+reaching the authenticated and client-rendered pages plain HTTP cannot. It
+degrades with an actionable message when no extension is attached, and the HTTP
+tools keep working on Firefox.
 
 Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
