@@ -84,8 +84,15 @@ leur navigateur est dédié à la tâche.
 ## `/allow-api`
 
 `/allow-api` lève la restriction UI-d'abord pour la conversation en cours, afin
-que l'agent puisse utiliser POST/PUT/PATCH/DELETE via `fetch_url` lorsque l'UI
-échoue. Un badge apparaît pendant l'activation, et il s'efface au `/reset`.
+que l'agent puisse utiliser POST/PUT/PATCH/DELETE via `fetch_url` ou
+`research_url` lorsque l'UI échoue. Un badge apparaît pendant l'activation, et
+il s'efface au `/reset`.
+
+Pour conserver la même politique entre les conversations et les redémarrages
+du navigateur, activez **Toujours autoriser les mutations API** sous
+**Paramètres → Général → Avancé**. Ce réglage est désactivé par défaut et reste
+actif jusqu'à sa désactivation. `/reset` efface toujours la dérogation
+`/allow-api` de la conversation, mais ne modifie pas ce réglage persistant.
 
 La règle UI-d'abord par défaut existe parce que les actions API sont invisibles
 (vous ne voyez pas ce qui est envoyé), nécessitent souvent des jetons

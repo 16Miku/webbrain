@@ -515,6 +515,8 @@ export default {
   'st.display.site_adapters.desc': "এজেন্টের প্রথম বার্তায় পরিচিত উচ্চ-ট্রাফিক সাইটগুলির (GitHub, Gmail, Stripe, AWS, ইত্যাদি) জন্য সংক্ষিপ্ত, হাতে-কলমে নির্দেশিকা প্রবেশ করান৷ এজেন্টকে সাধারণ ডেড-এন্ড এড়াতে সাহায্য করে। মিলিত সাইটগুলিতে কথোপকথনের প্রথম পালায় একটি ছোট টোকেন খরচ যোগ করে।",
   'st.display.voice_input.label': "ভয়েস ইনপুট",
   'st.display.voice_input.desc': "চ্যাট ইনপুটে মাইক বোতামটিকে আপনার ব্রাউজারের স্পিচ রিকগনিশনের মাধ্যমে পাঠ্য নির্দেশ করতে দিন। এটি সমর্থন করে এমন ব্রাউজারগুলিতে ডিফল্টরূপে চালু৷",
+  'st.display.always_allow_api_mutations.label': "সর্বদা API পরিবর্তনের অনুমতি দিন",
+  'st.display.always_allow_api_mutations.desc': "প্রতিটি কথোপকথনে /allow-api ছাড়াই WebBrain-কে fetch_url বা research_url-এর মাধ্যমে POST, PUT, PATCH ও DELETE ব্যবহার করতে দিন। UI-প্রথম নির্দেশনা ও নিশ্চিতকরণ যাচাই এখনও প্রযোজ্য। ডিফল্টভাবে বন্ধ।",
   'st.display.api_mutation_observer.label': "API মিউটেশন পর্যবেক্ষক",
   'st.display.api_mutation_observer.desc': "একই-ট্যাব XHR/ফেচ অনুরোধ URL এবং পদ্ধতিগুলি পর্যবেক্ষণ করুন যাতে WebBrain বারবার UI অ্যাকশন সনাক্ত করতে পারে এবং API শর্টকাট প্যাটার্নের পরামর্শ দিতে পারে। ডিফল্টরূপে বন্ধ; শুধুমাত্র শর্টকাট আচরণ বা লেটেন্সি তদন্ত করার সময় সক্ষম করুন।",
   'st.display.openai_ask_streaming.label': "Ask ????? ????? ??????? ????",

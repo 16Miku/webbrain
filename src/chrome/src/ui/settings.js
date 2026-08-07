@@ -79,6 +79,7 @@ const maxScreenshotsSelect = document.getElementById('select-max-screenshots');
 const maxImageDimensionSelect = document.getElementById('select-max-image-dimension');
 const siteAdaptersToggle = document.getElementById('toggle-site-adapters');
 const voiceInputToggle = document.getElementById('toggle-voice-input');
+const alwaysAllowApiMutationsToggle = document.getElementById('toggle-always-allow-api-mutations');
 const apiMutationObserverToggle = document.getElementById('toggle-api-mutation-observer');
 const webMcpToggle = document.getElementById('toggle-webmcp');
 const openAIAskStreamingToggle = document.getElementById('toggle-openai-ask-streaming');
@@ -405,7 +406,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -455,6 +456,7 @@ async function init() {
   maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
+  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
   apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
   if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
@@ -1094,6 +1096,10 @@ if (voiceInputToggle) {
 
 apiMutationObserverToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ apiMutationObserverEnabled: apiMutationObserverToggle.checked }).catch(() => {});
+});
+
+alwaysAllowApiMutationsToggle.addEventListener('change', async () => {
+  await chrome.storage.local.set({ alwaysAllowApiMutations: alwaysAllowApiMutationsToggle.checked }).catch(() => {});
 });
 
 if (webMcpToggle) {

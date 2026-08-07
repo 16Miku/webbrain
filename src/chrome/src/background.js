@@ -89,6 +89,15 @@ import {
 
 const providerManager = new ProviderManager();
 const agent = new Agent(providerManager);
+const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
+const alwaysAllowApiMutationsReady = chrome.storage.local
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .then((stored) => {
+    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
+  })
+  .catch(() => {
+    agent.setAlwaysAllowApiMutations(false);
+  });
 agent.setConversationScopeChangeListener((tabId, state) => {
   chrome.runtime.sendMessage({
     target: 'sidepanel',
@@ -121,6 +130,7 @@ const scheduler = new ScheduledJobManager({
   agent,
   loadProviders: async () => {
     await customSkillsReady;
+    await alwaysAllowApiMutationsReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -159,7 +169,9 @@ const cloudRunController = createCloudRunController({
   stopRecording: stopTabRecording,
   workflowTrace,
 });
-cloudRunController.syncBridge().catch(() => {});
+alwaysAllowApiMutationsReady
+  .then(() => cloudRunController.syncBridge())
+  .catch(() => {});
 
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
@@ -895,6 +907,10 @@ chrome.storage.onChanged.addListener((changes) => {
   // already-open conversations so the next turn sees the update — without
   // wiping the chat history.
   let refreshPrompts = false;
+  if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
+    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    refreshPrompts = true;
+  }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
     refreshPrompts = true;
@@ -1983,6 +1999,7 @@ async function handleMessage(msg, sender) {
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await alwaysAllowApiMutationsReady;
     await webMcpEnabledReady;
     await screenshotRedactionReady;
     await imageBudgetReady;

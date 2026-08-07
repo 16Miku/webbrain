@@ -81,8 +81,14 @@ browser is dedicated to the task.
 ## `/allow-api`
 
 `/allow-api` lifts the UI-first restriction for the current conversation so the
-agent may use POST/PUT/PATCH/DELETE via `fetch_url` when the UI is failing. A
-badge appears while it is active, and it clears on `/reset`.
+agent may use POST/PUT/PATCH/DELETE via `fetch_url` or `research_url` when the UI
+is failing. A badge appears while it is active, and it clears on `/reset`.
+
+To keep the same policy active across conversations and browser restarts, turn
+on **Always allow API mutations** under **Settings → General → Advanced**. The
+setting is off by default and remains active until you turn it off. `/reset`
+still clears the conversation-only `/allow-api` override, but does not change
+the persistent setting.
 
 The default UI-first rule exists because API actions are invisible (you don't
 see what's being sent), often require separate auth tokens you may not have

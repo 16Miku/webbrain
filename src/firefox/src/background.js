@@ -79,6 +79,15 @@ import {
 
 const providerManager = new ProviderManager();
 const agent = new Agent(providerManager);
+const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
+const alwaysAllowApiMutationsReady = browser.storage.local
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .then((stored) => {
+    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
+  })
+  .catch(() => {
+    agent.setAlwaysAllowApiMutations(false);
+  });
 agent.setConversationScopeChangeListener((tabId, state) => {
   browser.runtime.sendMessage({
     target: 'sidepanel',
@@ -100,6 +109,7 @@ const scheduler = new ScheduledJobManager({
   agent,
   loadProviders: async () => {
     await customSkillsReady;
+    await alwaysAllowApiMutationsReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -841,6 +851,10 @@ browser.storage.onChanged.addListener((changes) => {
     agent.autoScreenshot = changes.autoScreenshot.newValue;
   }
   let refreshPrompts = false;
+  if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
+    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    refreshPrompts = true;
+  }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
     refreshPrompts = true;
@@ -1776,6 +1790,7 @@ async function handleMessage(msg, sender) {
     // Hydrate agent toggles and prompt add-ons once at boot (not per message);
     // onChanged keeps them in sync afterward.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await alwaysAllowApiMutationsReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
   }

@@ -515,6 +515,8 @@ export default {
   'st.display.site_adapters.desc': "راهنمای کوتاه و دستی برای سایت‌های پربازدید شناخته شده (GitHub، Gmail، Stripe، AWS، و غیره) در اولین پیام نماینده وارد کنید. به عامل کمک می کند تا از بن بست های رایج جلوگیری کند. در اولین نوبت مکالمه در سایت های منطبق، هزینه رمز اندکی اضافه می کند.",
   'st.display.voice_input.label': "ورودی صوتی",
   'st.display.voice_input.desc': "اجازه دهید دکمه میکروفون در ورودی چت، متن را از طریق تشخیص گفتار مرورگر شما دیکته کند. به طور پیش فرض در مرورگرهایی که از آن پشتیبانی می کنند روشن است.",
+  'st.display.always_allow_api_mutations.label': "همیشه تغییرات API مجاز باشد",
+  'st.display.always_allow_api_mutations.desc': "به WebBrain اجازه دهید بدون نیاز به /allow-api در هر گفتگو، از POST، PUT، PATCH و DELETE از طریق fetch_url یا research_url استفاده کند. راهنمای اولویت رابط کاربری و بررسی‌های تأیید همچنان اعمال می‌شوند. به‌طور پیش‌فرض خاموش است.",
   'st.display.api_mutation_observer.label': "مشاهده گر جهش API",
   'st.display.api_mutation_observer.desc': "نشانی‌های وب و روش‌های درخواستی XHR/واکشی همان تب را مشاهده کنید تا WebBrain بتواند اقدامات مکرر UI را تشخیص دهد و الگوهای میانبر API را پیشنهاد کند. خاموش به طور پیش فرض؛ فقط هنگام بررسی رفتار میانبر یا تأخیر فعال شود.",
   'st.display.openai_ask_streaming.label': "??? ??????? ?? ???? Ask",

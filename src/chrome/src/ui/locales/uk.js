@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Скільки чекати відповіді на уточнювальне запитання, перш ніж автоматично обрати перший варіант (або зафіксувати таймаут без варіантів). 0 — миттєво (завжди автовибір). Понад 1200 с — чекати необмежено (Вимк.). За замовчуванням 60 с. Не застосовується до дозволів і підтверджень надсилання форм.',
   'st.display.clarify_timeout.off': 'Вимк.',
   'st.display.clarify_timeout.instant': 'Миттєво',
+  'st.display.always_allow_api_mutations.label': "Завжди дозволяти зміни через API",
+  'st.display.always_allow_api_mutations.desc': "Дозволити WebBrain використовувати POST, PUT, PATCH і DELETE через fetch_url або research_url без команди /allow-api в кожній розмові. Правило пріоритету інтерфейсу та перевірки підтвердження залишаються чинними. Типово вимкнено.",
   'st.display.api_mutation_observer.label': 'Спостерігач мутацій API',
   'st.display.api_mutation_observer.desc': 'Спостерігайте за URL-адресами та методами запитів XHR/fetch на тій самій вкладці, щоб WebBrain міг виявляти повторювані дії інтерфейсу та пропонувати шаблони API-скорочень. Вимкнено за замовчуванням; вмикайте лише під час дослідження поведінки скорочень або затримки.',
   'st.display.openai_ask_streaming.label': "???????? ????????? ? ?????? Ask",

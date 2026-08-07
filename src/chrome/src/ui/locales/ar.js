@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'مدة انتظار الرد على سؤال التوضيح قبل اختيار الخيار الأول تلقائيًا (أو انتهاء المهلة إن لم توجد خيارات). 0 = فوري (اختيار تلقائي دائمًا). أعلى من 1200 ثانية = انتظار بلا حدود (إيقاف). الافتراضي 60 ثانية. لا ينطبق على أذونات أو تأكيدات إرسال النماذج.',
   'st.display.clarify_timeout.off': 'إيقاف',
   'st.display.clarify_timeout.instant': 'فوري',
+  'st.display.always_allow_api_mutations.label': "السماح دائمًا بتعديلات API",
+  'st.display.always_allow_api_mutations.desc': "اسمح لـ WebBrain باستخدام POST وPUT وPATCH وDELETE عبر fetch_url أو research_url دون الحاجة إلى /allow-api في كل محادثة. تظل إرشادات أولوية واجهة المستخدم وفحوصات التأكيد سارية. معطّل افتراضيًا.",
   'st.display.api_mutation_observer.label': 'مراقب تحولات API',
   'st.display.api_mutation_observer.desc': 'مراقبة عناوين URL وطرق طلبات XHR/fetch في نفس التبويب ليتمكن WebBrain من اكتشاف إجراءات الواجهة المتكررة واقتراح أنماط اختصارات API. معطل افتراضياً؛ قم بتفعيله فقط أثناء التحقيق في سلوك الاختصار أو زمن الاستجابة.',
   'st.display.openai_ask_streaming.label': "?? ?????? ?? ??? ??????",

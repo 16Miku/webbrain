@@ -653,6 +653,8 @@ export default {
   'st.display.clarify_timeout.desc': '等待澄清问题回复的时长；超时后自动选择第一个选项（若无选项则记为超时）。0 = 立即（始终自动选择）。超过 1200 秒为无限等待（关闭）。默认 60 秒。不适用于权限或表单提交确认。',
   'st.display.clarify_timeout.off': '关闭',
   'st.display.clarify_timeout.instant': '立即',
+  'st.display.always_allow_api_mutations.label': "始终允许 API 变更",
+  'st.display.always_allow_api_mutations.desc': "允许 WebBrain 通过 fetch_url 或 research_url 使用 POST、PUT、PATCH 和 DELETE，无需在每个对话中输入 /allow-api。仍会遵循 UI 优先指引和确认检查。默认关闭。",
   'st.display.api_mutation_observer.label': 'API 变更观察器',
   'st.display.api_mutation_observer.desc': '观察同标签页中的 XHR/fetch 请求 URL 和方法，以便 WebBrain 可以检测重复的界面操作并建议 API 快捷模式。默认关闭；仅在调查快捷行为或延迟时启用。',
   'st.display.openai_ask_streaming.label': "? Ask ????????",

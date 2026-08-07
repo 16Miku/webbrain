@@ -9,7 +9,7 @@ import { sanitizeText } from './text-sanitize.js';
 const UNTRUSTED_PAGE_CONTENT_TAG_RE = /<\/?untrusted_page_content\b[^>]*>/gi;
 const REQUEST_KINDS = new Set(['execute', 'respond', 'plan_only', 'clarify']);
 
-export const PLANNER_API_REPLAY_RULE = '- Because /allow-api is enabled for this conversation, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
+export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
 export const PLANNER_SYSTEM_PROMPT = `You are the planning subsystem for WebBrain, a browser automation agent. Given the user's task and current page context, output ONLY a single JSON object (no markdown fences, no commentary outside the JSON).
 

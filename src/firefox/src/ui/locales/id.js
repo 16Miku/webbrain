@@ -653,6 +653,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Berapa lama menunggu balasan pada prompt klarifikasi sebelum memilih opsi pertama secara otomatis (atau timeout jika tidak ada opsi). 0 = Instan (selalu pilih otomatis). Di atas 1200 detik menunggu tanpa batas (Nonaktif). Default 60 detik. Tidak berlaku untuk izin atau konfirmasi kirim formulir.',
   'st.display.clarify_timeout.off': 'Nonaktif',
   'st.display.clarify_timeout.instant': 'Instan',
+  'st.display.always_allow_api_mutations.label': "Selalu izinkan mutasi API",
+  'st.display.always_allow_api_mutations.desc': "Izinkan WebBrain menggunakan POST, PUT, PATCH, dan DELETE melalui fetch_url atau research_url tanpa memerlukan /allow-api di setiap percakapan. Panduan yang mengutamakan UI dan pemeriksaan konfirmasi tetap berlaku. Nonaktif secara default.",
   'st.display.api_mutation_observer.label': 'Pengamat mutasi API',
   'st.display.api_mutation_observer.desc': 'Amati URL dan metode permintaan XHR/fetch pada tab yang sama sehingga WebBrain dapat mendeteksi tindakan UI berulang dan menyarankan pola pintasan API. Nonaktif secara default; aktifkan hanya saat menyelidiki perilaku pintasan atau latensi.',
   'st.display.openai_ask_streaming.label': "Streaming respons dalam mode Ask",

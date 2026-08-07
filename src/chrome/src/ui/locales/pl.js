@@ -653,6 +653,8 @@ export default {
   'st.display.clarify_timeout.desc': 'Jak długo czekać na odpowiedź na dopytanie, zanim automatycznie wybrana zostanie pierwsza opcja (lub upłynie limit, gdy brak opcji). 0 = Natychmiast (zawsze auto-wybór). Powyżej 1200s czekaj bez limitu (Wył.). Domyślnie 60s. Nie dotyczy uprawnień ani potwierdzeń wysyłki formularza.',
   'st.display.clarify_timeout.off': 'Wył.',
   'st.display.clarify_timeout.instant': 'Natychmiast',
+  'st.display.always_allow_api_mutations.label': "Zawsze zezwalaj na mutacje API",
+  'st.display.always_allow_api_mutations.desc': "Zezwól WebBrain na używanie POST, PUT, PATCH i DELETE przez fetch_url lub research_url bez wymagania /allow-api w każdej rozmowie. Nadal obowiązują wskazówki preferujące interfejs oraz kontrole potwierdzeń. Domyślnie wyłączone.",
   'st.display.api_mutation_observer.label': 'Obserwator mutacji API',
   'st.display.api_mutation_observer.desc': 'Obserwuj URL-e i metody żądań XHR/fetch w tej samej karcie, aby WebBrain mógł wykrywać powtarzające się akcje UI i sugerować wzorce skrótów API. Wyłączone domyślnie; włącz tylko podczas badania zachowania skrótów lub opóźnień.',
   'st.display.openai_ask_streaming.label': "Strumieniuj odpowiedzi w trybie Ask",

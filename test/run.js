@@ -21482,6 +21482,35 @@ test('API mutation observer setting is opt-in and controls the request observer'
   }
 });
 
+test('persistent API mutation permission is opt-in, portable, and mirrored', () => {
+  for (const [label, bgRel, settingsRel, htmlRel, panelRel, configRel] of [
+    ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/config-transfer.js'],
+    ['firefox', 'src/firefox/src/background.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/config-transfer.js'],
+  ]) {
+    const bg = fs.readFileSync(path.join(ROOT, bgRel), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const config = fs.readFileSync(path.join(ROOT, configRel), 'utf8');
+
+    assert.match(html, /advanced-settings-body[\s\S]*id="toggle-always-allow-api-mutations"/, `${label}: persistent permission toggle should live under Advanced`);
+    assert.match(html, /id="always-allow-api-mutations-label"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.label"/, `${label}: persistent permission label should expose a stable accessible-name target`);
+    assert.match(html, /id="always-allow-api-mutations-desc"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.desc"/, `${label}: persistent permission description should expose a stable accessible-description target`);
+    assert.match(html, /id="toggle-always-allow-api-mutations"[^>]*aria-labelledby="always-allow-api-mutations-label"[^>]*aria-describedby="always-allow-api-mutations-desc"/, `${label}: persistent permission toggle should reference its translated label and description`);
+    assert.doesNotMatch(html, /id="toggle-always-allow-api-mutations"\s+checked/, `${label}: persistent permission must default off`);
+    assert.match(settings, /alwaysAllowApiMutationsToggle\.checked = stored\.alwaysAllowApiMutations === true/, `${label}: settings should load only explicit persistent opt-in`);
+    assert.match(settings, /alwaysAllowApiMutations:\s*alwaysAllowApiMutationsToggle\.checked/, `${label}: settings should save the persistent permission`);
+    assert.match(bg, /const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';/, `${label}: background storage key missing`);
+    assert.match(bg, /setAlwaysAllowApiMutations\(stored\[ALWAYS_ALLOW_API_MUTATIONS_KEY\] === true\)/, `${label}: background should initialize the Agent from storage`);
+    assert.match(bg, /await alwaysAllowApiMutationsReady;/, `${label}: first agent runs should wait for persistent permission hydration`);
+    assert.match(bg, /changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\][\s\S]*setAlwaysAllowApiMutations\(changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\]\.newValue === true\)/, `${label}: background should apply live revocation`);
+    assert.match(panel, /alwaysAllowApiMutations = stored\.alwaysAllowApiMutations === true/, `${label}: side panel should load the persistent badge state`);
+    assert.match(panel, /alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\)/, `${label}: badge should combine persistent and conversation permission`);
+    assert.match(config, /alwaysAllowApiMutations:\s*false/, `${label}: config export default should remain off`);
+    assert.match(config, /'alwaysAllowApiMutations'/, `${label}: config import should validate the boolean setting`);
+  }
+});
+
 test('settings async test controls surface rejected background results', () => {
   for (const [label, settingsRel, htmlRel] of [
     ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
@@ -22439,7 +22468,7 @@ test('sidepanel scopes allow-api override to the tab conversation', () => {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     assert.match(panel, /const apiMutationsAllowedByTab = new Map\(\);/, `${label}: /allow-api should be tracked per tab`);
     assert.match(panel, /function isApiMutationsAllowedForTab\(tabId\) \{[\s\S]*?apiMutationsAllowedByTab\.get\(tabId\) === true;[\s\S]*?\}/, `${label}: /allow-api per-tab read helper missing`);
-    assert.match(panel, /function syncApiMutationsAllowedForCurrentTab\(\) \{[\s\S]*?apiMutationsAllowed = isApiMutationsAllowedForTab\(currentTabId\);[\s\S]*?updateApiBadge\(\);[\s\S]*?\}/, `${label}: tab switches should resync /allow-api badge state`);
+    assert.match(panel, /function syncApiMutationsAllowedForCurrentTab\(\) \{[\s\S]*?apiMutationsAllowed = alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\);[\s\S]*?updateApiBadge\(\);[\s\S]*?\}/, `${label}: tab switches should combine persistent and conversation API badge state`);
 
     const switchStart = panel.indexOf('function switchToTab(newTabId)');
     assert.notEqual(switchStart, -1, `${label}: switchToTab missing`);
@@ -39972,6 +40001,68 @@ test('agent clearConversation drops /allow-api override in both builds', () => {
   }
 });
 
+test('persistent API mutation permission is global and independent of /allow-api lifecycle', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const tabId = 4896;
+
+    assert.equal(agent.isApiMutationsAllowed(tabId), false, `${AgentClass.name}: persistent permission should default off`);
+
+    agent.setAlwaysAllowApiMutations(true);
+    assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: persistent permission did not enable a fresh conversation`);
+
+    agent.setApiMutationsAllowed(tabId, true);
+    agent.setAlwaysAllowApiMutations(false);
+    assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: disabling the global setting cleared the conversation override`);
+
+    agent.clearConversation(tabId);
+    assert.equal(agent.isApiMutationsAllowed(tabId), false, `${AgentClass.name}: conversation override survived reset after global permission was disabled`);
+
+    agent.setAlwaysAllowApiMutations(true);
+    agent.clearConversation(tabId);
+    assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: reset cleared the persistent permission`);
+  }
+});
+
+test('disabling persistent API permission retracts stale prompt authorization in both builds', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const revokedTabId = 4898;
+    const stillAllowedTabId = 4899;
+    const allowedNote = '[USER OVERRIDE — API MUTATIONS ALLOWED: earlier trusted authorization]';
+    const revokedMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: allowedNote },
+    ];
+    const stillAllowedMessages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: allowedNote },
+    ];
+    const persisted = [];
+    agent._persist = (tabId) => persisted.push(tabId);
+    agent.conversations.set(revokedTabId, revokedMessages);
+    agent.conversations.set(stillAllowedTabId, stillAllowedMessages);
+    agent.setAlwaysAllowApiMutations(true);
+    agent.apiAllowedInjected.add(revokedTabId);
+    agent.apiAllowedInjected.add(stillAllowedTabId);
+    agent.setApiMutationsAllowed(stillAllowedTabId, true);
+
+    agent.setAlwaysAllowApiMutations(false);
+
+    assert.equal(agent.isApiMutationsAllowed(revokedTabId), false, `${AgentClass.name}: persistent revocation did not update effective permission`);
+    assert.equal(revokedMessages.length, 3, `${AgentClass.name}: persistent revocation did not append a current-state note`);
+    assert.equal(revokedMessages.at(-1)?.role, 'user', `${AgentClass.name}: revocation note should remain in trusted user-message history`);
+    assert.match(revokedMessages.at(-1)?.content || '', /CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED/, `${AgentClass.name}: revocation note did not state the current denial`);
+    assert.match(revokedMessages.at(-1)?.content || '', /supersedes any earlier \[USER OVERRIDE — API MUTATIONS ALLOWED\]/, `${AgentClass.name}: revocation note did not supersede stale authorization`);
+    assert.equal(agent.apiAllowedInjected.has(revokedTabId), false, `${AgentClass.name}: revoked tab retained its injection marker`);
+    assert.deepEqual(persisted, [revokedTabId], `${AgentClass.name}: revocation note was not persisted exactly once`);
+
+    assert.equal(agent.isApiMutationsAllowed(stillAllowedTabId), true, `${AgentClass.name}: persistent revocation overrode /allow-api`);
+    assert.equal(stillAllowedMessages.length, 2, `${AgentClass.name}: tab with /allow-api received a contradictory denial`);
+    assert.equal(agent.apiAllowedInjected.has(stillAllowedTabId), true, `${AgentClass.name}: tab with /allow-api lost its valid injection marker`);
+  }
+});
+
 test('agent clearConversation drops transient page-run state in both builds', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
@@ -43053,36 +43144,42 @@ test('agent blocks captured replay mutations until /allow-api when method is omi
   }
 });
 
-test('agent allows mutating fetch_url after /allow-api', async () => {
+test('agent allows mutating fetch_url after conversation or persistent API approval', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({ getVisionProvider: async () => null });
-    let executed = false;
-    agent.executeTool = async () => {
-      executed = true;
-      return { success: true };
-    };
-    agent._ensureGateSetting = async () => {};
-    agent._skipPermissionGate = true;
-    agent.setApiMutationsAllowed(4896, true);
-    const messages = [];
+    for (const [approval, enable] of [
+      ['/allow-api', (agent, tabId) => agent.setApiMutationsAllowed(tabId, true)],
+      ['persistent setting', (agent) => agent.setAlwaysAllowApiMutations(true)],
+    ]) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      let executed = false;
+      agent.executeTool = async () => {
+        executed = true;
+        return { success: true };
+      };
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      const tabId = 4896;
+      enable(agent, tabId);
+      const messages = [];
 
-    await agent._executeToolBatch(
-      4896,
-      [{
-        id: 'tool_1',
-        function: { name: 'fetch_url', arguments: '{"url":"https://github.com/users/follow?target=alice","method":"POST"}' },
-      }],
-      messages,
-      () => {},
-      { supportsVision: false },
-      '',
-      new Set(['fetch_url']),
-      1,
-    );
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: 'tool_1',
+          function: { name: 'fetch_url', arguments: '{"url":"https://github.com/users/follow?target=alice","method":"POST"}' },
+        }],
+        messages,
+        () => {},
+        { supportsVision: false },
+        '',
+        new Set(['fetch_url']),
+        1,
+      );
 
-    assert.equal(executed, true, `${AgentClass.name}: mutating fetch_url did not run after /allow-api`);
-    assert.equal(messages.length, 1, `${AgentClass.name}: expected executed tool result message`);
-    assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${AgentClass.name}: allowed mutation was still blocked`);
+      assert.equal(executed, true, `${AgentClass.name}: mutating fetch_url did not run after ${approval}`);
+      assert.equal(messages.length, 1, `${AgentClass.name}: expected executed tool result message after ${approval}`);
+      assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${AgentClass.name}: ${approval} mutation was still blocked`);
+    }
   }
 });
 

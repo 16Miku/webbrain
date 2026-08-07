@@ -100,7 +100,7 @@ La menace principale : une page malveillante conçoit un contenu qui, lorsqu'il 
 | **Exposition d'outils par niveau** | Les niveaux de fournisseur (`compact | mid | full`) limitent la surface d'agent navigateur normale pour les modèles plus petits. Compact obtient la surface d'action la plus petite ; Mid ajoute des outils de tâches courantes ; Full ajoute des solutions de repli UI/DOM avancées. Dev en Compact est bloqué. |
 | **Plan avant Act** | Lorsqu'il est activé, les exécutions en mode action produisent d'abord un plan structuré et attendent l'approbation du panneau latéral avant que tout outil navigateur ne s'exécute. Les exécutions planifiées peuvent auto-approuver le plan uniquement via la politique du planificateur. |
 | **Limite d'import de compétence** | Les compétences peuvent exposer des outils HTTP en lecture seule et des outils de téléchargement via un manifeste `webbrain-tools`. Importer ou garder la compétence activée est la décision de confiance pour le point de terminaison HTTPS déclaré ; les outils de compétence déclarés utilisent `credentials: "omit"` et doivent marquer les résultats tiers `resultPolicy: "untrusted"`. Les outils de compétence de téléchargement nécessitent toujours un mode action et la passerelle de permission Téléchargements normale avant d'enregistrer des fichiers. |
-| **`/allow-api`** | Un indicateur `/allow-api` par conversation qui *supprime* la demande de permission pour les sorties réseau avec méthode d'écriture (`fetch_url`/`research_url` avec POST/PUT/PATCH/DELETE). Il ne supprime PAS la sortie GET ni aucune autre capacité. S'efface à la réinitialisation de la conversation. |
+| **Dérogation de mutation API** | Un indicateur `/allow-api` par conversation, ou le réglage persistant désactivé par défaut sous Général → Avancé, *supprime* la demande de permission pour les sorties réseau avec méthode d'écriture (`fetch_url`/`research_url` avec POST/PUT/PATCH/DELETE). Aucun des deux ne supprime la sortie GET ni aucune autre capacité. La réinitialisation n'efface que la dérogation de la commande. |
 | **Blocage `done()`** | Avant d'accepter la complétion, l'agent vérifie la présence de dialogues/formulaires ouverts. Si le résumé prétend "créé"/"sauvegardé" mais qu'une modale est encore ouverte, l'agent est forcé de continuer. |
 | **Garde anti-soumission en double** | Les clics sur du texte de type soumission (créer/sauvegarder/soumettre/ajouter/poster/publier/envoyer/confirmer/s'inscrire/se connecter/payer/commander/checkout, etc.) sont bloqués pendant une fenêtre de 45 secondes par onglet+URL (Chrome). |
 | **Test d'occlusion CLICK** | Avant de cliquer, le résolveur appelle `elementFromPoint()`. Si un autre élément est visuellement au-dessus, le clic est refusé. |
@@ -121,7 +121,11 @@ La menace principale : une page malveillante conçoit un contenu qui, lorsqu'il 
 
 ## Indicateur `/allow-api`
 
-Défini par conversation via la commande `/allow-api` dans le panneau latéral. Lorsqu'il est actif, il supprime la demande de permission pour **les sorties réseau avec méthode d'écriture uniquement** :
+Défini par conversation via la commande `/allow-api` dans le panneau latéral,
+ou de façon persistante avec **Toujours autoriser les mutations API** sous
+**Paramètres → Général → Avancé**. Le réglage persistant est désactivé par
+défaut. Lorsque l'une des options est active, elle supprime la demande de
+permission pour **les sorties réseau avec méthode d'écriture uniquement** :
 
 - `fetch_url` / `research_url` avec `method: POST/PUT/PATCH/DELETE`
 
@@ -137,10 +141,11 @@ Le prompt système ajoute un préambule indiquant au modèle de :
 Les indices de raccourcis API de détection de boucle ne contournent pas cette politique. Ils peuvent exposer
 la méthode et l'URL exactes que la page appelait déjà, y compris POST/PATCH/etc.,
 mais les appels `fetch_url` / `research_url` avec méthode d'écriture nécessitent toujours
-l'état `/allow-api` de la conversation. Les requêtes GET et les capacités non réseau
+l'état `/allow-api` de la conversation ou le réglage persistant. Les requêtes GET et les capacités non réseau
 passent toujours par la passerelle normale capacité × origine.
 
-Effacé à la réinitialisation de la conversation.
+La réinitialisation de la conversation efface la dérogation de la commande, mais
+ne modifie pas le réglage persistant, qui reste actif jusqu'à sa désactivation.
 
 ---
 

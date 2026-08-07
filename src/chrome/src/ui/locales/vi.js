@@ -518,6 +518,8 @@ export default {
   'st.display.site_adapters.desc': "Đưa hướng dẫn ngắn gọn, được tuyển chọn thủ công cho các trang web có lưu lượng truy cập cao đã biết (GitHub, Gmail, Stripe, AWS, v.v.) vào tin nhắn đầu tiên của tổng đài viên. Giúp tác nhân tránh được những ngõ cụt thông thường. Thêm một khoản phí mã thông báo nhỏ vào lượt trò chuyện đầu tiên trên các trang web phù hợp.",
   'st.display.voice_input.label': "Nhập bằng giọng nói",
   'st.display.voice_input.desc': "Để nút micrô trong đầu vào trò chuyện đọc chính tả văn bản thông qua tính năng nhận dạng giọng nói của trình duyệt. Bật theo mặc định trong các trình duyệt hỗ trợ nó.",
+  'st.display.always_allow_api_mutations.label': "Luôn cho phép thay đổi qua API",
+  'st.display.always_allow_api_mutations.desc': "Cho phép WebBrain dùng POST, PUT, PATCH và DELETE qua fetch_url hoặc research_url mà không cần /allow-api trong mỗi cuộc trò chuyện. Hướng dẫn ưu tiên giao diện và các bước kiểm tra xác nhận vẫn được áp dụng. Tắt theo mặc định.",
   'st.display.api_mutation_observer.label': "Người quan sát đột biến API",
   'st.display.api_mutation_observer.desc': "Quan sát các URL và phương thức yêu cầu XHR/tìm nạp cùng một tab để WebBrain có thể phát hiện các hành động giao diện người dùng lặp lại và đề xuất các mẫu phím tắt API. Tắt theo mặc định; chỉ bật trong khi điều tra hành vi hoặc độ trễ của phím tắt.",
   'st.display.webmcp.label': "WebMCP thử nghiệm",

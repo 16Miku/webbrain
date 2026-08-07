@@ -1477,7 +1477,7 @@ UI vs API — read this carefully:
 - The user wants to see what's happening, verify before submission, and have actions look like a human did them through the page. UI flows also work with the user's existing session, while API endpoints often require separate tokens.
 - TWO exceptions where API mutations are allowed:
   (1) The user explicitly says "use the API" or "POST to /foo".
-  (2) The conversation has the [USER OVERRIDE — /allow-api] flag set (you'll see it as a context note). When that's set, you may use API mutations when UI is genuinely failing/unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] showing repeated successful same-kind UI actions and matching background API requests. Without /allow-api, mutating fetch_url calls are blocked. Before any destructive API call, state the URL, method, and payload in plain text in your response.
+  (2) The [USER OVERRIDE — API MUTATIONS ALLOWED] context note is present. It can come from /allow-api for this conversation or the user's persistent setting. When present, you may use API mutations when UI is genuinely failing/unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] showing repeated successful same-kind UI actions and matching background API requests. Without this authorization, mutating fetch_url/research_url calls are blocked. Before any destructive API call, state the URL, method, and payload in plain text in your response.
 - For READING data (looking things up, fetching a README, comparing prices, checking a status page), \`fetch_url\` and \`research_url\` are the RIGHT tool. Reading is fine.
 - Examples:
   - "Create a release on GitHub" → navigate to /releases/new, fill the form, click Publish. NOT a POST to api.github.com.
@@ -1671,7 +1671,7 @@ FORMS & MODALS:
 
 IFRAMES & UI-vs-API:
 - Cross-origin iframes (Stripe, payment widgets, embedded forms) are NOT a blocker. Start with iframe_read to enumerate labels and matchIndex values; iframe_click/type fail closed on ambiguity. If the embed remains hard to target and no fields have been changed, use promote_iframe({urlFilter}) to load it standalone in the current run tab. After iframe form edits, call verify_form({urlFilter}) and compare labels/values before done, even when the user will submit later.
-- For anything that creates, modifies, deletes, sends, submits, buys, transfers, or posts: go through the visible UI unless /allow-api is enabled and either UI is failing/unworkable or WebBrain reports a [BULK API MUTATION PATTERN]. Do NOT call REST/GraphQL endpoints via fetch_url with POST/PUT/PATCH/DELETE without /allow-api. Reading data (fetch_url / research_url GET) is fine.
+- For anything that creates, modifies, deletes, sends, submits, buys, transfers, or posts: go through the visible UI unless API mutations are authorized and either UI is failing/unworkable or WebBrain reports a [BULK API MUTATION PATTERN]. Do NOT call REST/GraphQL endpoints via fetch_url or research_url with POST/PUT/PATCH/DELETE without that authorization. Reading data (fetch_url / research_url GET) is fine.
 
 SCRATCHPAD & DON'T REDO WORK:
 - On long tasks, scratchpad_write({text}) pins miscellaneous facts (IDs, plans) that survive context summarization; downloads are auto-pinned for you (scan the \`[auto]\` lines for downloadIds). Keep entries short and factual.

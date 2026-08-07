@@ -513,6 +513,8 @@ export default {
   'st.display.site_adapters.desc': 'Fügt kurze, handverlesene Anleitungen für bekannte, stark frequentierte Websites in die erste Nachricht des Agents ein.',
   'st.display.voice_input.label': 'Spracheingabe',
   'st.display.voice_input.desc': 'Ermöglicht dem Mikrofon-Button in der Chat-Eingabe, Text über die Spracherkennung Ihres Browsers zu diktieren.',
+  'st.display.always_allow_api_mutations.label': "API-Änderungen immer erlauben",
+  'st.display.always_allow_api_mutations.desc': "WebBrain darf POST, PUT, PATCH und DELETE über fetch_url oder research_url verwenden, ohne dass in jeder Unterhaltung /allow-api erforderlich ist. UI-zuerst-Hinweise und Bestätigungsprüfungen gelten weiterhin. Standardmäßig aus.",
   'st.display.api_mutation_observer.label': 'API-Mutations-Observer',
   'st.display.api_mutation_observer.desc': 'Beobachtet XHR/fetch-Anfragen-URLs und Methoden im selben Tab, damit WebBrain wiederkehrende UI-Aktionen erkennen und API-Verknüpfungsmuster vorschlagen kann.',
   'st.display.webmcp.label': 'Experimentelles WebMCP',

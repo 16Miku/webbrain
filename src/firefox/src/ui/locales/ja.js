@@ -653,6 +653,8 @@ export default {
   'st.display.clarify_timeout.desc': 'clarify の返答を待つ時間。経過すると最初の選択肢を自動選択（選択肢がなければタイムアウト）。0 で即時（常に自動選択）。1200 秒超は無制限（オフ）。既定 60 秒。権限やフォーム送信確認には適用されません。',
   'st.display.clarify_timeout.off': 'オフ',
   'st.display.clarify_timeout.instant': '即時',
+  'st.display.always_allow_api_mutations.label': "API変更を常に許可",
+  'st.display.always_allow_api_mutations.desc': "会話ごとに /allow-api を必要とせず、WebBrain が fetch_url または research_url で POST、PUT、PATCH、DELETE を使用できるようにします。UI優先の指針と確認チェックは引き続き適用されます。既定ではオフです。",
   'st.display.api_mutation_observer.label': 'API変更オブザーバー',
   'st.display.api_mutation_observer.desc': '同じタブの XHR/fetch リクエスト URL とメソッドを監視し、WebBrain が繰り返しの UI アクションを検出して API ショートカットパターンを提案できるようにします。デフォルトではオフ。ショートカット動作やレイテンシの調査中のみ有効にしてください。',
   'st.display.openai_ask_streaming.label': "Ask ???????????",

@@ -662,6 +662,8 @@ export default {
   'st.display.clarify_timeout.desc': 'ระยะเวลารอคำตอบ clarify ก่อนเลือกตัวเลือกแรกอัตโนมัติ (หรือหมดเวลาหากไม่มีตัวเลือก) 0 = ทันที (เลือกอัตโนมัติเสมอ) เกิน 1200 วินาที = รอไม่จำกัด (ปิด) ค่าเริ่มต้น 60 วินาที ไม่ใช้กับสิทธิ์หรือการยืนยันส่งฟอร์ม',
   'st.display.clarify_timeout.off': 'ปิด',
   'st.display.clarify_timeout.instant': 'ทันที',
+  'st.display.always_allow_api_mutations.label': "อนุญาตการเปลี่ยนแปลง API เสมอ",
+  'st.display.always_allow_api_mutations.desc': "อนุญาตให้ WebBrain ใช้ POST, PUT, PATCH และ DELETE ผ่าน fetch_url หรือ research_url โดยไม่ต้องใช้ /allow-api ในทุกการสนทนา แนวทางที่ให้ความสำคัญกับ UI และการตรวจสอบการยืนยันยังคงมีผล ปิดไว้โดยค่าเริ่มต้น",
   'st.display.api_mutation_observer.label': 'ตัวสังเกตการกลายพันธุ์ของ API',
   'st.display.api_mutation_observer.desc': 'สังเกต URL และวิธีการของคำขอ XHR/fetch ในแท็บเดียวกัน เพื่อให้ WebBrain ตรวจจับการกระทำ UI ที่ซ้ำและแนะนำรูปแบบทางลัด API ปิดโดยค่าเริ่มต้น เปิดใช้งานเฉพาะเมื่อตรวจสอบพฤติกรรมทางลัดหรือความหน่วง',
   'st.display.openai_ask_streaming.label': "???????????????? Ask",

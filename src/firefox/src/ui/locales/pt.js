@@ -515,6 +515,8 @@ export default {
   'st.display.site_adapters.desc': "Injete orientações curtas e selecionadas manualmente para sites conhecidos de alto tráfego (GitHub, Gmail, Stripe, AWS, etc.) na primeira mensagem do agente. Ajuda o agente a evitar becos sem saída comuns. Adiciona um pequeno custo de token na primeira rodada de conversas em sites correspondentes.",
   'st.display.voice_input.label': "Entrada de voz",
   'st.display.voice_input.desc': "Deixe o botão do microfone na entrada do bate-papo ditar o texto por meio do reconhecimento de fala do seu navegador. Ativado por padrão em navegadores compatíveis.",
+  'st.display.always_allow_api_mutations.label': "Sempre permitir mutações de API",
+  'st.display.always_allow_api_mutations.desc': "Permita que o WebBrain use POST, PUT, PATCH e DELETE por fetch_url ou research_url sem exigir /allow-api em cada conversa. As orientações de priorizar a interface e as verificações de confirmação continuam válidas. Desativado por padrão.",
   'st.display.api_mutation_observer.label': "Observador de mutação de API",
   'st.display.api_mutation_observer.desc': "Observe URLs e métodos de solicitação de busca/XHR na mesma guia para que WebBrain possa detectar ações repetidas da interface do usuário e sugerir padrões de atalho de API. Desativado por padrão; habilite apenas ao investigar o comportamento ou a latência do atalho.",
   'st.display.openai_ask_streaming.label': "Transmitir respostas no modo Ask",
