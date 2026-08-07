@@ -255,10 +255,24 @@ out and stalls at the first login wall; this does not.
 claude mcp add webbrain -- npx -y @webbrain/mcp-server
 ```
 
-Then point **WebBrain → Settings → Cloud bridge** at
-`ws://127.0.0.1:17374/extension` and enable it. **Chromium only** — the bridge
-runs from the extension's offscreen document, which the Firefox build does not
-have.
+Claude Code launches the server automatically when it starts an MCP session.
+To launch it yourself instead, run the following command and leave that terminal
+open (press `Ctrl+C` to stop it):
+
+```bash
+npx -y @webbrain/mcp-server
+```
+
+Once the server is running, open **WebBrain → Settings → General → Advanced →
+Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+**Chromium only** — the control and bridge runtime use the extension's offscreen
+document, which the Firefox build does not have.
+
+If Settings reports **Connection error: WebSocket error**, nothing is normally
+listening at the configured URL. Start the MCP server, confirm that the URL uses
+port `17374`, and leave its process running. See the
+[`mcp-server` troubleshooting guide](mcp-server/README.md#troubleshooting) for a
+listener check and the other bridge ports.
 
 ```
 webbrain_run(task: "open the Stripe dashboard and list last week's failed
@@ -273,7 +287,7 @@ the gate and bypass it. Details in [`mcp-server/`](mcp-server/).
 
 > The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
 > the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
-> the URL in Settings.
+> the URL under **Settings → General → Advanced → Cloud bridge**.
 
 ## LM Studio plugin
 

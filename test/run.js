@@ -33331,6 +33331,66 @@ test('inspect_event_listeners resolves marked ref targets through CDP and always
   }
 });
 
+test('Cloud bridge settings are Chromium-only, live under Advanced, and keep setup guidance in sync', () => {
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
+  const chromeSettings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const chromeLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
+  const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8');
+  const firefoxSettings = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.js'), 'utf8');
+  const firefoxLocale = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
+
+  const generalStart = chromeHtml.indexOf('<section class="tab-panel" data-panel="display"');
+  const providersStart = chromeHtml.indexOf('<section class="tab-panel active" data-panel="providers"', generalStart);
+  const generalPanel = chromeHtml.slice(generalStart, providersStart);
+  const advancedStart = generalPanel.indexOf('<details class="advanced-settings">');
+  const bridgeStart = generalPanel.indexOf('id="cloud-bridge-setting"');
+  assert.notEqual(generalStart, -1, 'Chrome General settings panel missing');
+  assert.notEqual(advancedStart, -1, 'Chrome General settings should include Advanced');
+  assert.ok(bridgeStart > advancedStart, 'Cloud bridge should live inside General > Advanced');
+  assert.match(generalPanel, /id="toggle-cloud-bridge"/, 'Chrome Advanced should expose the bridge toggle');
+  assert.match(generalPanel, /id="input-cloud-bridge-url"/, 'Chrome Advanced should expose the bridge URL');
+  assert.match(generalPanel, /id="cloud-bridge-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
+  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'Cloud bridge must default off');
+  assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
+
+  assert.doesNotMatch(firefoxHtml, /cloud-bridge-setting|toggle-cloud-bridge|input-cloud-bridge-url/, 'Firefox should not show unsupported bridge controls');
+  assert.doesNotMatch(firefoxSettings, /webbrainCloudBridgeEnabled|webbrainCloudBridgeUrl|cloud_bridge_status/, 'Firefox settings should not wire the Chromium bridge');
+  assert.doesNotMatch(firefoxLocale, /st\.display\.cloud_bridge/, 'Firefox should not ship copy for an unavailable setting');
+
+  assert.match(chromeSettings, /const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';/, 'Chrome settings should use the runtime bridge enable key');
+  assert.match(chromeSettings, /const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';/, 'Chrome settings should use the runtime bridge URL key');
+  assert.match(chromeSettings, /cloudBridgeToggle\.checked = stored\[CLOUD_BRIDGE_ENABLED_KEY\] === true/, 'bridge should hydrate only explicit opt-in');
+  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_start', \{ url: normalized \}\)/, 'bridge controls should start the configured endpoint');
+  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_stop'\)/, 'bridge controls should stop the endpoint');
+  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_status'\)/, 'bridge controls should report live connection status');
+  const saveUrlStart = chromeSettings.indexOf('async function saveCloudBridgeUrl()');
+  const toggleStart = chromeSettings.indexOf('async function toggleCloudBridge()', saveUrlStart);
+  const saveUrlBody = chromeSettings.slice(saveUrlStart, toggleStart);
+  assert.doesNotMatch(saveUrlBody, /setCloudBridgeControlsBusy|cloudBridgeToggle\.disabled/, 'URL blur saves must not disable and cancel the pending bridge-toggle click');
+  assert.match(chromeSettings, /status\.lastError === 'WebSocket error'[\s\S]*status_unreachable/, 'generic WebSocket failures should explain that the local bridge is unreachable');
+  assert.match(chromeSettings, /url\.protocol !== 'ws:'[\s\S]*127\.0\.0\.1[\s\S]*localhost[\s\S]*\[::1\]/, 'settings should reject non-loopback bridge URLs before saving');
+  assert.match(chromeLocale, /'st\.display\.cloud_bridge\.label': 'Cloud bridge'/, 'Chrome English bridge label missing');
+  assert.match(chromeLocale, /Use port 17373 for WebBrain Cloud, 17374 for MCP clients, or 17375 for LM Studio/, 'bridge copy should explain the one-socket destinations');
+
+  for (const rel of ['README.md', 'mcp-server/README.md', 'lmstudio-plugin/README.md']) {
+    const readme = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    assert.match(readme, /Settings → General → Advanced → Cloud bridge/, `${rel}: bridge setup path should match the Chromium UI`);
+  }
+  const rootReadme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const mcpReadme = fs.readFileSync(path.join(ROOT, 'mcp-server/README.md'), 'utf8');
+  for (const [label, readme] of [['root README', rootReadme], ['MCP README', mcpReadme]]) {
+    assert.match(readme, /npx -y @webbrain\/mcp-server/, `${label}: should document how to launch the MCP bridge`);
+    assert.match(readme, /Connection error: WebSocket error/, `${label}: should explain the generic listener failure`);
+    assert.match(readme, /17373[\s\S]*17374[\s\S]*17375/, `${label}: should distinguish the three bridge destinations`);
+  }
+  const mcpBridge = fs.readFileSync(path.join(ROOT, 'mcp-server/src/bridge.ts'), 'utf8');
+  const mcpIndex = fs.readFileSync(path.join(ROOT, 'mcp-server/src/index.ts'), 'utf8');
+  const lmBridge = fs.readFileSync(path.join(ROOT, 'lmstudio-plugin/src/util/bridgeClient.ts'), 'utf8');
+  for (const [label, source] of [['MCP error', mcpBridge], ['MCP connection', mcpIndex], ['LM Studio connection', lmBridge]]) {
+    assert.match(source, /Settings → General → Advanced → Cloud bridge/, `${label}: runtime setup guidance should match the UI`);
+  }
+});
+
 test('Experimental WebMCP is Chrome-only, opt-in, and absent from default model context', async () => {
   const html = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8');

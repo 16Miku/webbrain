@@ -815,6 +815,69 @@
       border-color: var(--accent);
       box-shadow: 0 0 0 2px rgba(108,99,255,0.22);
     }
+    .cloud-bridge-setting {
+      align-items: stretch;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .cloud-bridge-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+    }
+    .cloud-bridge-url-field {
+      display: block;
+      width: 100%;
+    }
+    .cloud-bridge-url-label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--text2);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.55px;
+      text-transform: uppercase;
+    }
+    .cloud-bridge-url-field .setting-input {
+      width: 100%;
+      max-width: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+    .cloud-bridge-url-field .setting-input[aria-invalid="true"] {
+      border-color: var(--error);
+      box-shadow: 0 0 0 2px rgba(244,67,54,0.16);
+    }
+    .cloud-bridge-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 16px;
+      color: var(--text2);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .cloud-bridge-status-dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .cloud-bridge-status[data-state="connected"] { color: var(--success); }
+    .cloud-bridge-status[data-state="waiting"] { color: var(--accent); }
+    .cloud-bridge-status[data-state="error"] { color: var(--error); }
+    .cloud-bridge-status[data-state="waiting"] .cloud-bridge-status-dot {
+      animation: cloud-bridge-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes cloud-bridge-pulse {
+      50% { opacity: 0.35; transform: scale(0.78); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cloud-bridge-status[data-state="waiting"] .cloud-bridge-status-dot { animation: none; }
+    }
     .skill-source {
       max-width: 340px;
       overflow: hidden;
@@ -1295,6 +1358,27 @@
       <details class="advanced-settings">
         <summary data-i18n="st.display.advanced"></summary>
         <div class="advanced-settings-body">
+          <div class="setting-row cloud-bridge-setting" id="cloud-bridge-setting">
+            <div class="cloud-bridge-header">
+              <div class="setting-info">
+                <div class="setting-label" id="cloud-bridge-label" data-i18n="st.display.cloud_bridge.label"></div>
+                <div class="setting-desc" id="cloud-bridge-desc" data-i18n="st.display.cloud_bridge.desc"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-cloud-bridge" aria-labelledby="cloud-bridge-label" aria-describedby="cloud-bridge-desc cloud-bridge-status">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <label class="cloud-bridge-url-field" for="input-cloud-bridge-url">
+              <span class="cloud-bridge-url-label" data-i18n="st.display.cloud_bridge.url_label"></span>
+              <input class="setting-input" type="text" id="input-cloud-bridge-url" inputmode="url" autocomplete="off" spellcheck="false"
+                     data-i18n-placeholder="st.display.cloud_bridge.url_placeholder">
+            </label>
+            <div class="cloud-bridge-status" id="cloud-bridge-status" data-state="disabled" role="status" aria-live="polite">
+              <span class="cloud-bridge-status-dot" aria-hidden="true"></span>
+              <span id="cloud-bridge-status-text" data-i18n="st.display.cloud_bridge.status_disabled"></span>
+            </div>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label" data-i18n="st.display.screenshot.label"></div>
