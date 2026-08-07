@@ -84,7 +84,7 @@ export async function awaitSettled(
   let last: CloudSnapshot | null = null;
 
   while (Date.now() < deadline) {
-    await sleep(config.pollIntervalMs);
+    await sleep(Math.min(config.pollIntervalMs, Math.max(0, deadline - Date.now())));
 
     const result = await getStatus(bridge, runId);
     const snapshot = (result as { runs?: CloudSnapshot[] }).runs

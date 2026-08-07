@@ -9,9 +9,11 @@ import {
   browserStatus,
   browserTask,
 } from "../dist/tools/browserTask.js";
+import { main } from "../dist/index.js";
 import { sharedBridge } from "../dist/util/bridgeClient.js";
 
 let socket;
+let toolsProvider;
 const received = [];
 
 async function freePort() {
@@ -31,8 +33,15 @@ function reply(message, result) {
 
 before(async () => {
   process.env.WEBBRAIN_BRIDGE_PORT = String(await freePort());
+  const context = {
+    withToolsProvider(provider) {
+      toolsProvider = provider;
+      return context;
+    },
+  };
+  await main(context);
+
   const bridge = sharedBridge();
-  await bridge.ensureStarted();
 
   socket = new WebSocket(bridge.url);
   socket.on("message", (raw) => {
@@ -72,6 +81,15 @@ after(async () => {
   await sharedBridge().stop();
 });
 
+test("plugin initialization starts the bridge and registers browser recovery tools", async () => {
+  assert.equal(typeof toolsProvider, "function");
+  const tools = await toolsProvider();
+  const names = tools.map((registeredTool) => registeredTool.name);
+  assert.ok(names.includes("browser_status"));
+  assert.ok(names.includes("browser_respond"));
+  assert.equal(sharedBridge().isConnected(), true);
+});
+
 test("browser_status polls an existing run and returns its result", async () => {
   const result = await browserStatus("finished-run");
   assert.equal(result.ok, true);
@@ -104,4 +122,24 @@ test("browser_respond forwards IDs and the user's answer, then returns completio
     clarifyId: "clarify-1",
     answer: "The work account",
   });
+});
+
+test("a replacement socket receives nothing until it sends a valid hello", async () => {
+  const rogue = new WebSocket(sharedBridge().url);
+  let receivedCommands = 0;
+  rogue.on("message", () => {
+    receivedCommands += 1;
+  });
+  await once(rogue, "open");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(sharedBridge().isConnected(), false);
+  await assert.rejects(
+    () => sharedBridge().request("cloud_run", { task: "private task", mode: "ask" }),
+    /No WebBrain browser extension is connected/,
+  );
+  assert.equal(receivedCommands, 0);
+
+  rogue.close();
+  await once(rogue, "close");
 });

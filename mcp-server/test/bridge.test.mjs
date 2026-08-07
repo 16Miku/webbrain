@@ -155,6 +155,34 @@ test("a client that is not the extension is rejected", async () => {
   await bridge.stop();
 });
 
+test("a new socket cannot inherit an earlier extension handshake", async () => {
+  const bridge = new WebBrainBridge();
+  await bridge.start();
+
+  const extension = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }));
+  await bridge.waitForExtension(3000);
+  assert.equal(bridge.isConnected(), true);
+
+  const rogue = new WebSocket(bridgeUrl());
+  let receivedCommands = 0;
+  rogue.on("message", () => {
+    receivedCommands += 1;
+  });
+  await new Promise((resolve) => rogue.on("open", resolve));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(bridge.isConnected(), false, "the replacement socket has not sent hello");
+  await assert.rejects(
+    () => bridge.request("cloud_run", { task: "private task", mode: "ask" }),
+    /No WebBrain extension is connected/,
+  );
+  assert.equal(receivedCommands, 0, "an unverified socket must not receive task frames");
+
+  rogue.close();
+  extension.close();
+  await bridge.stop();
+});
+
 test("disconnect mid-command rejects rather than hanging", async () => {
   const bridge = new WebBrainBridge();
   await bridge.start();

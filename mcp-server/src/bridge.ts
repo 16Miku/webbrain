@@ -81,6 +81,7 @@ export class WebBrainBridge {
   private nextId = 1;
   private extensionCapabilities: string[] = [];
   private extensionProtocol: number | null = null;
+  private handshakenSocket: WebSocket | null = null;
   private waiters: Array<() => void> = [];
 
   async start(): Promise<void> {
@@ -109,6 +110,9 @@ export class WebBrainBridge {
       // browser restart or an offscreen-document teardown, and the stale socket
       // is never reused.
       if (this.socket) {
+        this.failAllPending(
+          new BridgeError("WebBrain extension connection was superseded mid-command."),
+        );
         try {
           this.socket.close(1000, "Superseded by a newer extension connection");
         } catch {
@@ -117,6 +121,9 @@ export class WebBrainBridge {
       }
 
       this.socket = socket;
+      this.handshakenSocket = null;
+      this.extensionCapabilities = [];
+      this.extensionProtocol = null;
       log(`extension connected on ${config.bridgePath}`);
 
       socket.on("message", (raw) => this.handleMessage(socket, raw.toString()));
@@ -124,6 +131,7 @@ export class WebBrainBridge {
       socket.on("close", () => {
         if (this.socket !== socket) return;
         this.socket = null;
+        this.handshakenSocket = null;
         this.extensionCapabilities = [];
         this.extensionProtocol = null;
         log("extension disconnected");
@@ -139,6 +147,8 @@ export class WebBrainBridge {
   }
 
   private handleMessage(socket: WebSocket, data: string): void {
+    if (this.socket !== socket) return;
+
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(data);
@@ -152,9 +162,13 @@ export class WebBrainBridge {
       if (msg.client !== "webbrain-extension") {
         log(`rejecting unknown bridge client: ${String(msg.client)}`);
         socket.close(1008, "Unknown client");
-        if (this.socket === socket) this.socket = null;
+        if (this.socket === socket) {
+          this.socket = null;
+          this.handshakenSocket = null;
+        }
         return;
       }
+      this.handshakenSocket = socket;
       this.extensionProtocol = typeof msg.protocolVersion === "number" ? msg.protocolVersion : null;
       this.extensionCapabilities = Array.isArray(msg.capabilities)
         ? (msg.capabilities as string[])
@@ -194,7 +208,11 @@ export class WebBrainBridge {
   }
 
   isConnected(): boolean {
-    return this.socket !== null && this.socket.readyState === 1; // OPEN
+    return (
+      this.socket !== null &&
+      this.socket.readyState === 1 &&
+      this.handshakenSocket === this.socket
+    );
   }
 
   capabilities(): string[] {
@@ -203,7 +221,7 @@ export class WebBrainBridge {
 
   /** Resolve once the extension has connected and completed its handshake. */
   waitForExtension(timeoutMs: number): Promise<boolean> {
-    if (this.isConnected() && this.extensionProtocol !== null) return Promise.resolve(true);
+    if (this.isConnected()) return Promise.resolve(true);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w !== wake);
@@ -223,7 +241,7 @@ export class WebBrainBridge {
     payload: Record<string, unknown> = {},
   ): Promise<T> {
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1) {
+    if (!socket || !this.isConnected()) {
       throw new BridgeError(
         "No WebBrain extension is connected. Open the browser, then set " +
           "WebBrain → Settings → Cloud bridge to " +
@@ -269,6 +287,7 @@ export class WebBrainBridge {
         /* ignore */
       }
       this.socket = null;
+      this.handshakenSocket = null;
     }
     if (this.wss) {
       await new Promise<void>((resolve) => this.wss!.close(() => resolve()));

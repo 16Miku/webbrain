@@ -31,6 +31,7 @@ import { z } from "zod";
 import { fetchUrl } from "./tools/fetchUrl.js";
 import { researchUrl } from "./tools/researchUrl.js";
 import { browserRespond, browserStatus, browserTask } from "./tools/browserTask.js";
+import { sharedBridge } from "./util/bridgeClient.js";
 
 const fetchUrlTool = tool({
   name: "fetch_url",
@@ -254,6 +255,19 @@ const browserRespondTool = tool({
  * to turn the capability on.
  */
 export async function main(ctx: PluginContext): Promise<void> {
+  // Open the listener while the plugin initializes. The extension reconnects
+  // with exponential backoff, so deferring this until the first browser tool
+  // call can leave a correctly configured user waiting up to 30 seconds.
+  // Listener failure must not take down the pure-HTTP tools.
+  try {
+    await sharedBridge().ensureStarted();
+  } catch (error) {
+    console.error(
+      "[webbrain-lmstudio] browser bridge listener could not start:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   ctx.withToolsProvider(async () => [
     fetchUrlTool,
     researchUrlTool,

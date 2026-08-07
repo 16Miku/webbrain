@@ -75,7 +75,7 @@ export class BridgeClient {
   private pending = new Map<number, Pending>();
   private nextId = 1;
   private waiters: Array<() => void> = [];
-  private handshakeDone = false;
+  private handshakenSocket: WebSocket | null = null;
 
   readonly port: number;
   readonly path: string;
@@ -100,7 +100,10 @@ export class BridgeClient {
       // Loopback only. Anything that can reach this port can drive the user's
       // logged-in browser, so it must never bind a routable interface.
       const wss = new WebSocketServer({ host: "127.0.0.1", port: this.port }, () => resolve());
-      wss.on("error", reject);
+      wss.on("error", (error) => {
+        if (this.wss === wss && !wss.address()) this.wss = null;
+        reject(error);
+      });
       this.wss = wss;
     });
 
@@ -110,6 +113,7 @@ export class BridgeClient {
         return;
       }
       if (this.socket) {
+        this.failAllPending(new BridgeError("WebBrain extension connection was superseded."));
         try {
           this.socket.close(1000, "Superseded");
         } catch {
@@ -117,13 +121,13 @@ export class BridgeClient {
         }
       }
       this.socket = socket;
-      this.handshakeDone = false;
+      this.handshakenSocket = null;
 
       socket.on("message", (raw) => this.handleMessage(socket, raw.toString()));
       socket.on("close", () => {
         if (this.socket !== socket) return;
         this.socket = null;
-        this.handshakeDone = false;
+        this.handshakenSocket = null;
         this.failAllPending(new BridgeError("WebBrain extension disconnected mid-command."));
       });
       socket.on("error", () => {
@@ -133,6 +137,8 @@ export class BridgeClient {
   }
 
   private handleMessage(socket: WebSocket, data: string): void {
+    if (this.socket !== socket) return;
+
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(data);
@@ -143,10 +149,13 @@ export class BridgeClient {
     if (msg.type === "hello") {
       if (msg.client !== "webbrain-extension") {
         socket.close(1008, "Unknown client");
-        if (this.socket === socket) this.socket = null;
+        if (this.socket === socket) {
+          this.socket = null;
+          this.handshakenSocket = null;
+        }
         return;
       }
-      this.handshakeDone = true;
+      this.handshakenSocket = socket;
       const waiters = this.waiters;
       this.waiters = [];
       for (const wake of waiters) wake();
@@ -181,7 +190,11 @@ export class BridgeClient {
   }
 
   isConnected(): boolean {
-    return this.socket !== null && this.socket.readyState === 1 && this.handshakeDone;
+    return (
+      this.socket !== null &&
+      this.socket.readyState === 1 &&
+      this.handshakenSocket === this.socket
+    );
   }
 
   waitForExtension(timeoutMs: number): Promise<boolean> {
@@ -218,7 +231,7 @@ export class BridgeClient {
   ): Promise<T> {
     await this.ensureStarted();
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1) {
+    if (!socket || !this.isConnected()) {
       throw new BridgeError(this.notConnectedMessage());
     }
 
@@ -260,6 +273,7 @@ export class BridgeClient {
         /* ignore */
       }
       this.socket = null;
+      this.handshakenSocket = null;
     }
     if (this.wss) {
       await new Promise<void>((resolve) => this.wss!.close(() => resolve()));
