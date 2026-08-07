@@ -804,7 +804,7 @@ Key points:
 - Plan before Act can require human approval before any action-mode tool call
 - `/allow-api` flag gates destructive HTTP methods via `fetch_url`
 - Tool results capped at 8 KB to limit prompt-injection surface
-- `strictSecretMode` instructs the model not to quote credentials in summaries, and redacts known credential values out of everything a cloud run publishes
+- `strictSecretMode` instructs the model not to quote credentials in summaries, redacts known credential values (including short numeric PIN/CVV values) out of everything a cloud run publishes, and fails closed to scalar redaction if its bounded secret registry fills
 - Trace data is local-only (IndexedDB), never transmitted
 - Offscreen proxy only forwards provider SDK traffic
 - Finance adapters inject extra confirmation guidance

@@ -122,6 +122,7 @@ for (const secret of ['fixture-user', 'fixture-password', '123456']) {
 // than redact a list of known-risky tools.
 storedRows = [];
 const OTP = '481920';
+const SHORT_PIN = '731';
 const strictLeakAgent = {
   strictSecretMode: true,
   isRunning() { return false; },
@@ -132,6 +133,7 @@ const strictLeakAgent = {
     // Typing a secret registers it, so any later quote of the literal is struck
     // by value rather than left to a key-name guess.
     publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_otp', text: OTP } });
+    publishUpdate('tool_call', { name: 'set_field', args: { ref_id: 'ref_pin', text: SHORT_PIN } });
     publishUpdate('tool_result', { name: 'set_field', result: { success: true } });
     // A clarification cannot be blanked — the caller has to read it to answer —
     // so it must come through usable but with the literal removed.
@@ -142,6 +144,7 @@ const strictLeakAgent = {
       reason: `Confirm before submitting ${OTP}.`,
     });
     publishUpdate('warning', { message: `Retrying submission with code ${OTP}.` });
+    publishUpdate('warning', { message: `Temporary PIN ${SHORT_PIN}; unrelated x${SHORT_PIN}x stays ordinary.` });
     // The OTP is now sitting in a visible input, so every read echoes it.
     publishUpdate('tool_result', {
       name: 'get_accessibility_tree',
@@ -192,6 +195,12 @@ assert.equal(
   false,
   'a strict run must not publish a secret through page reads, model prose, or the structured result',
 );
+assert.equal(JSON.stringify(strictLeakSnapshot).includes(`PIN ${SHORT_PIN}`), false);
+assert.equal(
+  strictLeakSnapshot.updates.some(update => String(update.data?.message || '').includes(`x${SHORT_PIN}x`)),
+  true,
+  'short secret replacement must use token boundaries instead of mangling unrelated text',
+);
 // Persistence is a second publication path with its own copy of the updates.
 assert.equal(JSON.stringify(storedRows).includes(OTP), false, 'a strict run must not persist a secret');
 // Booleans are what scenario grading reads, so redaction must leave them alone.
@@ -220,6 +229,46 @@ assert.match(strictClarify.data.question, /\[redacted strict value\]/);
 const strictWarning = strictLeakSnapshot.updates.find(update => update.type === 'warning');
 assert.match(strictWarning.data.message, /Retrying submission/);
 assert.equal(strictWarning.data.message.includes(OTP), false);
+
+// The registry is bounded. If a hostile result fills it, strict mode must stop
+// publishing scalar values rather than evict an older secret and leak it.
+storedRows = [];
+const overflowSecrets = Array.from({ length: 257 }, (_value, index) => `overflow-secret-${index}`);
+const strictOverflowController = createCloudRunController({
+  chromeApi,
+  agent: {
+    strictSecretMode: true,
+    isRunning() { return false; },
+    setApiMutationsAllowed() {},
+    abort() {},
+    async processMessage(_tabId, _task, publishUpdate) {
+      publishUpdate('tool_result', {
+        name: 'read_page',
+        result: Object.fromEntries(overflowSecrets.map((secret, index) => [`item_${index}_token`, secret])),
+      });
+      publishUpdate('clarify', {
+        clarifyId: 'clarify_overflow',
+        question: `Should ${overflowSecrets.at(-1)} be submitted?`,
+        options: ['yes', 'no'],
+      });
+      return `Finished with ${overflowSecrets[0]}.`;
+    },
+  },
+  ensureOffscreen: async () => {},
+  makeRunId: () => 'run_strict_overflow_fixture',
+});
+await strictOverflowController.startRun({ task: 'strict overflow fixture' });
+let strictOverflowSnapshot;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  strictOverflowSnapshot = await strictOverflowController.status({ runId: 'run_strict_overflow_fixture' });
+  if (strictOverflowSnapshot.status === 'completed') break;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+assert.equal(strictOverflowSnapshot.status, 'completed');
+for (const secret of [overflowSecrets[0], overflowSecrets.at(-1)]) {
+  assert.equal(JSON.stringify(strictOverflowSnapshot).includes(secret), false);
+  assert.equal(JSON.stringify(storedRows).includes(secret), false);
+}
 
 // A secret surfaced under a key the scrubber already knows is registered too,
 // so a later quote of the literal is struck rather than masked only in place.

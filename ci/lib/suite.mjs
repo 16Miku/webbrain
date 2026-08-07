@@ -29,7 +29,7 @@ const CONFIG_REJECTED_LIST_KEYS = [
   'failed', 'failedKeys', 'failed_keys',
   'invalid', 'invalidKeys', 'invalid_keys',
 ];
-const CONFIG_APPLIED_LIST_KEYS = ['applied', 'appliedKeys', 'applied_keys'];
+const CONFIG_APPLIED_LIST_KEYS = ['accepted', 'applied', 'appliedKeys', 'applied_keys'];
 const CONFIG_OK_STATUSES = new Set(['ok', 'applied', 'success', 'succeeded', 'complete', 'completed']);
 
 function isPlainObject(value) {
@@ -37,8 +37,10 @@ function isPlainObject(value) {
 }
 
 function settingName(entry) {
-  if (isPlainObject(entry)) return String(entry.key ?? entry.name ?? entry.setting ?? '');
-  return String(entry ?? '');
+  const value = isPlainObject(entry)
+    ? String(entry.key ?? entry.name ?? entry.setting ?? entry.field ?? '')
+    : String(entry ?? '');
+  return value.replace(/^settings\./, '');
 }
 
 /**
@@ -62,20 +64,41 @@ export function unappliedSessionSettings(configResult, requiredSettings = {}) {
   if (status && !CONFIG_OK_STATUSES.has(status)) {
     return `provisioning reported configuration status "${configResult.status}"`;
   }
+
+  // webbrain.cloud keeps security properties platform-managed. It therefore
+  // reports the requested field as ignored, but separately attests the value
+  // that the managed runtime forces on every launch. An attested value is
+  // stronger evidence than an echoed import list; a conflicting value must
+  // still fail closed.
+  const enforced = isPlainObject(configResult.enforced) ? configResult.enforced : null;
+  const enforcedNames = new Set();
+  if (enforced) {
+    const mismatched = required.filter((name) => (
+      Object.hasOwn(enforced, name)
+      && JSON.stringify(enforced[name]) !== JSON.stringify(requiredSettings[name])
+    ));
+    if (mismatched.length) return `provisioning enforced the wrong value for ${mismatched.join(', ')}`;
+    for (const name of required) {
+      if (Object.hasOwn(enforced, name)) enforcedNames.add(name);
+    }
+  }
+  const pending = required.filter((name) => !enforcedNames.has(name));
+  if (!pending.length) return '';
+
   const rejected = new Set();
   for (const key of CONFIG_REJECTED_LIST_KEYS) {
     if (Array.isArray(configResult[key])) {
       for (const entry of configResult[key]) rejected.add(settingName(entry));
     }
   }
-  const refused = required.filter((name) => rejected.has(name));
+  const refused = pending.filter((name) => rejected.has(name));
   if (refused.length) return `provisioning did not apply ${refused.join(', ')}`;
 
   // An echoed settings object confirms the value, not just the key — prefer it.
   const echoed = [configResult.settings, configResult.applied, configResult.appliedSettings]
     .find(isPlainObject);
   if (echoed) {
-    const mismatched = required.filter((name) => (
+    const mismatched = pending.filter((name) => (
       !Object.hasOwn(echoed, name)
       || JSON.stringify(echoed[name]) !== JSON.stringify(requiredSettings[name])
     ));
@@ -86,7 +109,7 @@ export function unappliedSessionSettings(configResult, requiredSettings = {}) {
     .find(Array.isArray);
   if (appliedList) {
     const names = new Set(appliedList.map(settingName));
-    const missing = required.filter((name) => !names.has(name));
+    const missing = pending.filter((name) => !names.has(name));
     return missing.length ? `provisioning did not confirm ${missing.join(', ')}` : '';
   }
   return 'provisioning did not report which settings were applied';

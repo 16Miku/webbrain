@@ -44,6 +44,11 @@ Optional configuration:
 Artifacts are written beneath `ci/artifacts/<timestamp>/` and ignored by Git.
 The GitHub Actions workflow uploads that directory even when a scenario fails.
 
+Scenario `session_settings` are hard requirements. Provisioning must either
+report them in an applied/accepted list or attest their exact values in
+`webbrain_config_result.enforced`; a managed-but-unattested setting fails the
+scenario before the browser run starts.
+
 ## Gnippets deployment
 
 The sibling Gnippets app must explicitly enable its challenge lab:

@@ -38,8 +38,10 @@ const CLOUD_STRICT_ARG_EVIDENCE_KEYS = new Set(['skill_id', 'method', 'url_origi
 // this run typed into a page is remembered and struck from the text of every
 // later update, clarifications included. That leaves a usable question while
 // removing the literal the key-based scrubber cannot recognize.
-const CLOUD_STRICT_SECRET_VALUE_LIMIT = 32;
+const CLOUD_STRICT_SECRET_VALUE_LIMIT = 256;
 // Short values would mangle ordinary prose on a coincidental substring match.
+// Numeric PIN/CVV fragments are still security-sensitive, so they are tracked
+// with boundary-aware replacement below.
 const CLOUD_STRICT_SECRET_MIN_LENGTH = 4;
 const WORKFLOW_PARAMETER_VALUE_LIMIT = 10_000;
 
@@ -254,7 +256,7 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
 // already treats as sensitive. Depth-bounded: a page read can be enormous, and
 // this runs on every update.
 function collectSensitiveStrings(value, into, depth = 0) {
-  if (depth > 6 || into.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
+  if (depth > 6 || into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
   if (Array.isArray(value)) {
     for (const item of value) collectSensitiveStrings(item, into, depth + 1);
     return;
@@ -266,6 +268,7 @@ function collectSensitiveStrings(value, into, depth = 0) {
     } else {
       collectSensitiveStrings(item, into, depth + 1);
     }
+    if (into.length > CLOUD_STRICT_SECRET_VALUE_LIMIT) return;
   }
 }
 
@@ -323,6 +326,21 @@ function redactWorkflowRuntimeValues(value, runtimeValues = [], label = '[workfl
     let offset = 0;
     let index = normalizedText.indexOf(normalizedValue, offset);
     while (index !== -1) {
+      const boundaryMatch = parameterValue.length >= CLOUD_STRICT_SECRET_MIN_LENGTH
+        || (
+          (index === 0 || !/[A-Za-z0-9]/.test(normalizedText[index - 1]))
+          && (
+            index + normalizedValue.length === normalizedText.length
+            || !/[A-Za-z0-9]/.test(normalizedText[index + normalizedValue.length])
+          )
+        );
+      if (!boundaryMatch) {
+        const nextOffset = index + normalizedValue.length;
+        result += text.slice(offset, nextOffset);
+        offset = nextOffset;
+        index = normalizedText.indexOf(normalizedValue, offset);
+        continue;
+      }
       result += `${text.slice(offset, index)}${label}`;
       offset = index + parameterValue.length;
       index = normalizedText.indexOf(normalizedValue, offset);
@@ -592,6 +610,7 @@ export function createCloudRunController({
   // Kept out of the run object so a literal secret can never reach session
   // storage or a persistence row. Dropped when the run leaves the map.
   const strictSecretValues = new Map();
+  const strictSecretOverflowRuns = new Set();
 
   // Whatever a strict run types into a page is a value the caller must never
   // read back, wherever it later resurfaces — a clarification question, a
@@ -626,18 +645,27 @@ export function createCloudRunController({
     const known = strictSecretValues.get(run.runId) || [];
     for (const candidate of candidates) {
       if (typeof candidate !== 'string') continue;
-      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH) continue;
+      const shortNumericSecret = /^\d{1,3}$/.test(candidate);
+      if (candidate.length < CLOUD_STRICT_SECRET_MIN_LENGTH && !shortNumericSecret) continue;
       if (candidate.length > WORKFLOW_PARAMETER_VALUE_LIMIT) continue;
       if (known.includes(candidate)) continue;
+      if (known.length >= CLOUD_STRICT_SECRET_VALUE_LIMIT) {
+        // Never evict an earlier credential and silently expose it later. This
+        // is extremely rare, so losing free-text utility is preferable to
+        // publishing an unknown secret after the bounded registry fills.
+        strictSecretOverflowRuns.add(run.runId);
+        break;
+      }
       known.push(candidate);
     }
     if (known.length) {
-      strictSecretValues.set(run.runId, known.slice(-CLOUD_STRICT_SECRET_VALUE_LIMIT));
+      strictSecretValues.set(run.runId, known);
     }
   }
 
   function redactStrictSecretValues(run, value, strictSecretMode) {
     if (!strictSecretMode) return value;
+    if (strictSecretOverflowRuns.has(run.runId)) return redactStrictStructuredValues(value);
     const known = strictSecretValues.get(run.runId);
     if (!known?.length) return value;
     return redactWorkflowRuntimeValues(value, known, '[redacted strict value]');
@@ -964,6 +992,7 @@ export function createCloudRunController({
         // The run is over, so nothing more can quote these; do not hold the
         // literals in memory any longer than the run that typed them.
         strictSecretValues.delete(run.runId);
+        strictSecretOverflowRuns.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         await persist().catch(() => {});
       }

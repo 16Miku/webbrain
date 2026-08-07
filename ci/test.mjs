@@ -717,6 +717,11 @@ assert.equal(unappliedSessionSettings(null, {}), '');
 assert.equal(unappliedSessionSettings({ settings: { strictSecretMode: true } }, strictRequired), '');
 assert.equal(unappliedSessionSettings({ applied: ['strictSecretMode'] }, strictRequired), '');
 assert.equal(unappliedSessionSettings({ status: 'ok', applied: ['strictSecretMode'] }, strictRequired), '');
+assert.equal(unappliedSessionSettings({
+  accepted: ['settings.wbLocale'],
+  ignored: [{ field: 'settings.strictSecretMode', reason: 'platform_managed' }],
+  enforced: { strictSecretMode: true },
+}, strictRequired), '');
 // Every way provisioning can decline, and silence, must fail closed.
 for (const [label, result] of [
   ['no result at all', null],
@@ -728,6 +733,10 @@ for (const [label, result] of [
   ['echoed with wrong value', { settings: { strictSecretMode: false } }],
   ['echoed without the key', { settings: { wbLocale: 'en' } }],
   ['applied list omits it', { applied: ['wbLocale'] }],
+  ['enforced with wrong value', {
+    ignored: [{ field: 'settings.strictSecretMode', reason: 'platform_managed' }],
+    enforced: { strictSecretMode: false },
+  }],
 ]) {
   assert.ok(
     unappliedSessionSettings(result, strictRequired),
