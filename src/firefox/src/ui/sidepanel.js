@@ -1996,10 +1996,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -4299,6 +4299,22 @@ async function applyActiveRunState(numericTabId, state) {
     renderPlanReviewCard({ ...pendingPlan, tabId: numericTabId, requestId: runUi?.requestId || null, runId: runUi?.runId || null });
     return;
   }
+  const restoredPlanResolution = lastPlanLifecycleEvent?.type === 'plan_resolved'
+    ? lastPlanLifecycleEvent.data
+    : runUi?.lastPlanResolution;
+  if (restoredPlanResolution?.decision === 'timeout') {
+    expirePlanReviewCards({
+      tabId: numericTabId,
+      planId: restoredPlanResolution.planId,
+      requestId: runUi?.requestId,
+      runId: runUi?.runId,
+      retryPayload: retryPayloadForRunAssistant(currentAssistantEl),
+    });
+  }
+  // Always sweep the tab: a run that died without a plan_resolved leaves a card
+  // with a different planId that expirePlanReviewCards' filter never matches,
+  // and its Approve/Cancel would post a decision the background has no plan for.
+  // The card just expired above is skipped by invalidatePlanReviewCards' guard.
   invalidatePlanReviewCards({ tabId: numericTabId });
   if (state?.running || state?.starting) {
     setTabProcessing(numericTabId, true);
@@ -5607,6 +5623,10 @@ function rebindRetryButtons() {
   document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
 }
 
+function rebindPlanReviewRetryButtons() {
+  document.querySelectorAll('.plan-review-retry').forEach(bindErrorRetryButton);
+}
+
 function createActiveChatPayloadState(retryPayload, requestId = '') {
   return {
     retryPayload,
@@ -5800,6 +5820,7 @@ function rebindRestoredMessageControls() {
   rebindCopyButtons();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
+  rebindPlanReviewRetryButtons();
   rebindPlannerRequestFailureControls();
   rebindContinueButtons();
   rebindClarifyCards();
@@ -7674,7 +7695,9 @@ async function sendMessage(extraChatParams = {}) {
         textEl.innerHTML = t('sp.stopped_by_user_html');
         addMessageCopyButton(assistantEl);
       }
-    } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl) {
+    } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl
+        && !(assistantEl.querySelector('.plan-review-expired')
+          && isPlanReviewTimeoutTerminal(res.content))) {
       const textEl = assistantEl.querySelector('.message-text');
       if (textEl && parseCostAllowanceError(res.content)) {
         if (!textEl.classList.contains('cost-allowance-error')) {
@@ -7880,6 +7903,84 @@ function suppressRunUpdatesForClearedConversation(tabId) {
   }
 }
 
+function isPlanReviewTimeoutTerminal(content) {
+  return String(content || '').trim() === 'Task cancelled — plan was not approved.';
+}
+
+function expirePlanReviewCards({
+  tabId = currentTabId,
+  planId = '',
+  requestId = '',
+  runId = '',
+  retryPayload = null,
+} = {}) {
+  for (const card of messagesEl.querySelectorAll('.plan-review-card')) {
+    if (tabId != null && String(card.dataset.tabId || '') !== String(tabId)) continue;
+    if (planId && String(card.dataset.planId || '') !== String(planId)) continue;
+    if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
+    if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
+
+    setPlanReviewAwaiting(tabId, false);
+    card.classList.add('plan-reviewed', 'plan-review-expired');
+    card.dataset.planResolution = 'timeout';
+    // Skip the timeout footer: a repeat expire pass (journal replay, panel
+    // reopen) must not disable the Retry button an earlier pass appended.
+    card.querySelectorAll('button, textarea').forEach(el => {
+      if (el.closest('.plan-review-timeout-footer')) return;
+      el.disabled = true;
+    });
+    card.querySelectorAll('[draggable="true"]').forEach(el => { el.draggable = false; });
+    card.querySelector('.plan-review-view')?.setAttribute('inert', '');
+
+    const assistantEl = card.closest('.message.assistant');
+    const textEl = assistantEl?.querySelector('.message-text');
+    if (isPlanReviewTimeoutTerminal(textEl?.textContent)) {
+      // Hide the raw terminal string in favour of the footer below, but leave a
+      // marker behind: extractChatHistoryMessages drops assistant messages with
+      // an empty .message-text, which would erase the turn from saved history.
+      const historyNote = document.createElement('span');
+      historyNote.className = 'plan-review-timeout-history-note';
+      historyNote.textContent = t('sp.plan.timed_out');
+      textEl.replaceChildren(historyNote);
+      assistantEl.querySelector('.msg-copy-btn')?.remove();
+    }
+
+    let footer = card.querySelector('.plan-review-timeout-footer');
+    if (!footer) {
+      footer = document.createElement('div');
+      footer.className = 'plan-review-timeout-footer';
+      footer.setAttribute('role', 'status');
+
+      const title = document.createElement('div');
+      title.className = 'plan-review-timeout-title';
+      title.textContent = t('sp.plan.timed_out');
+
+      const hint = document.createElement('div');
+      hint.className = 'plan-review-timeout-hint';
+      hint.textContent = t('sp.plan.timed_out_hint');
+
+      footer.append(title, hint);
+      card.appendChild(footer);
+    }
+
+    let retryBtn = footer.querySelector('.plan-review-retry');
+    if (!retryBtn && retryPayload?.text) {
+      retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'plan-review-retry';
+      retryBtn.textContent = t('sp.retry');
+      retryBtn.title = t('sp.retry');
+      retryBtn.setAttribute('aria-label', t('sp.retry'));
+      if (configureRetryButton(retryBtn, retryPayload)) footer.appendChild(retryBtn);
+    } else if (retryBtn) {
+      // Restored from persisted HTML, where an earlier disabled state may have
+      // been serialized along with the button.
+      retryBtn.disabled = false;
+      bindErrorRetryButton(retryBtn);
+    }
+  }
+}
+
 function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestId = '', runId = '', remove = true } = {}) {
   for (const card of messagesEl.querySelectorAll('.plan-review-card')) {
     if (tabId != null && String(card.dataset.tabId || '') !== String(tabId)) continue;
@@ -7887,6 +7988,7 @@ function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestI
     if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
     if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
     setPlanReviewAwaiting(tabId, false);
+    if (remove && card.classList.contains('plan-review-expired')) continue;
     if (remove) card.remove();
     else {
       card.classList.add('plan-reviewed');
@@ -8091,7 +8193,10 @@ function handleAgentUpdateMessage(msg) {
         data?.attachmentDeliveryState,
       );
       invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
-      if (currentAssistantEl && data?.finalContent) {
+      const suppressTimedOutPlanTerminal = !!(eventAssistantEl || currentAssistantEl)
+        ?.querySelector('.plan-review-expired')
+        && isPlanReviewTimeoutTerminal(data?.finalContent);
+      if (currentAssistantEl && data?.finalContent && !suppressTimedOutPlanTerminal) {
         const textEl = currentAssistantEl.querySelector('.message-text');
         const streamedText = getStreamedAssistantText(textEl);
         const hasStreamedText = hasStreamedAssistantText(textEl);
@@ -8173,7 +8278,23 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'plan_resolved':
-      invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, planId: data?.planId, requestId: msg.requestId, runId: msg.runId });
+      if (data?.decision === 'timeout') {
+        expirePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+          retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId)
+            || retryPayloadForRunAssistant(eventAssistantEl || currentAssistantEl),
+        });
+      } else {
+        invalidatePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+        });
+      }
       schedulePersist();
       break;
 

@@ -299,6 +299,8 @@ export default {
   'sp.plan.approved': "Kế hoạch đã được phê duyệt — đang chạy…",
   'sp.plan.cancelled': "Kế hoạch bị hủy bỏ.",
   'sp.plan.expired': "Kế hoạch này không còn chờ xem xét nữa — cuộc chạy đã bị hủy.",
+  'sp.plan.timed_out': 'Đã hết thời gian phê duyệt',
+  'sp.plan.timed_out_hint': 'Chưa có thao tác nào được chạy. Hãy thử lại để xem một kế hoạch mới.',
   'sp.plan.awaiting_review': "Phê duyệt hoặc hủy gói trên trước khi gửi tin nhắn khác.",
   'sp.plan.intent_unavailable': "Người lập kế hoạch không thể trả về kết quả có cấu trúc hợp lệ sau một lần sửa chữa. Tiếp tục lượt này ở chế độ chỉ đọc.",
 

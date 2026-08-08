@@ -652,6 +652,8 @@ export default {
   'sp.plan.approved': '計画承認済み — 実行中…',
   'sp.plan.cancelled': '計画がキャンセルされました。',
   'sp.plan.expired': 'この計画はレビュー待ちではなくなりました — 実行はキャンセルされました。',
+  'sp.plan.timed_out': '承認の待機時間が終了しました',
+  'sp.plan.timed_out_hint': '何も実行されていません。再試行して新しい計画を確認してください。',
   'sp.plan.awaiting_review': '別のメッセージを送信する前に、上の計画を承認またはキャンセルしてください。',
   'sp.plan.intent_unavailable': 'プランナーは1回の修復後も有効な構造化出力を返せませんでした。このターンは読み取り専用モードで続行します。',
   'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',

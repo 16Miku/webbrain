@@ -280,6 +280,8 @@ export default {
   "sp.plan.approved": "התוכנית אושרה - פועל...",
   "sp.plan.cancelled": "התוכנית בוטלה.",
   "sp.plan.expired": "התוכנית הזו כבר לא ממתינה לבדיקה - הריצה בוטלה.",
+  "sp.plan.timed_out": "תם הזמן לאישור",
+  "sp.plan.timed_out_hint": "שום דבר לא הופעל. נסו שוב כדי לבדוק תוכנית חדשה.",
   "sp.plan.awaiting_review": "אשר או בטל את התוכנית שלמעלה לפני שליחת הודעה נוספת.",
   "sp.plan.intent_unavailable": "המתכנן לא הצליח להחזיר פלט מובנה תקין לאחר ניסיון תיקון אחד. התור הזה ימשיך במצב קריאה בלבד.",
   "sp.perm.question": "WebBrain רוצה {verb} {host}. לאפשר את זה?",
