@@ -1679,9 +1679,32 @@ function schedulePersist() {
   if (tabId != null) scheduleHistoryPersist(tabId);
 }
 
+function assistantMessageHasRenderableContent(msgEl) {
+  const contentEl = msgEl?.querySelector?.('.message-content');
+  if (!contentEl) return false;
+  if (contentEl.textContent.trim()) return true;
+  return !!contentEl.querySelector(
+    'img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress',
+  );
+}
+
+function syncAssistantMessageVisibility() {
+  for (const msgEl of messagesEl.querySelectorAll('.message.assistant')) {
+    msgEl.classList.toggle(
+      'assistant-awaiting-content',
+      !assistantMessageHasRenderableContent(msgEl),
+    );
+  }
+}
+
 // Observe the messages container so any DOM mutation (new message, streamed
-// delta, tool step update) eventually gets persisted.
-const persistObserver = new MutationObserver(schedulePersist);
+// delta, tool step update) both reveals populated assistant output and
+// eventually gets persisted. Attribute changes are not observed, so toggling
+// the visibility class here cannot recurse.
+const persistObserver = new MutationObserver(() => {
+  syncAssistantMessageVisibility();
+  schedulePersist();
+});
 
 // Durable offline chat history. The live per-tab restore above stays in
 // storage.session; this writes a compact, queryable record to IndexedDB so
@@ -3875,7 +3898,9 @@ async function init() {
     }
   }
 
-  // Start observing the messages container for changes to persist.
+  // Normalize restored markup before the first paint, then observe later
+  // streamed text, tool steps, and interactive cards.
+  syncAssistantMessageVisibility();
   persistObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
   await restoreActiveRunState(restoreTabId);
   if (restoreTabId != null && currentTabId === restoreTabId) {
@@ -9881,6 +9906,11 @@ function addMessage(role, content, options = {}) {
 
   contentEl.appendChild(textEl);
   msgEl.appendChild(contentEl);
+  if (role === 'assistant' && !assistantMessageHasRenderableContent(msgEl)) {
+    // Keep the node as the run's event target, but do not paint its bordered
+    // shell until text, a tool step, or an interactive card arrives.
+    msgEl.classList.add('assistant-awaiting-content');
+  }
   if (role === 'user' && Array.isArray(options.attachments) && options.attachments.length) {
     renderMessageAttachments(msgEl, options.attachments, options.attachmentState || 'included');
   }

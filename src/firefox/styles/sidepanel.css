@@ -1235,6 +1235,10 @@ body {
   width: 95%;
 }
 
+.message.assistant.assistant-awaiting-content {
+  display: none;
+}
+
 .message-content {
   padding: 10px 14px;
   border-radius: var(--radius);
