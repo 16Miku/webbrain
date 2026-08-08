@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'اختر ملف إصدار بصيغة .zip.',
   'st.skills.cws.package_too_large': 'يجب أن يكون حجم الملف بين 1 بايت و100 ميجابايت.',
   'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
+  "sp.workflows.healing.question": "تعذّر على سير العمل «{name}» مطابقة الخطوة {step}. اختر بديلاً لتجربته؛ ولن يُحفظ إلا بعد تحقق ناجح.",
+  "sp.workflows.healing.previous": "الهدف المحفوظ: {target}",
+  "sp.workflows.healing.use": "جرّب واحفظ {target}",
+  "sp.workflows.healing.keep": "الاحتفاظ بالهدف المحفوظ",
+  "sp.workflows.healing.saved": "تم تحديث {count} محددات في «{name}».",
+  "sp.workflows.healing.not_saved": "لم يُحفظ المحدد الموافق عليه لـ «{name}» لأن سير العمل تغيّر أو لأن التحقق لم يكن حاسماً.",
 };

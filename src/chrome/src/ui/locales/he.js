@@ -902,4 +902,10 @@ export default {
   'st.skills.cws.package_zip_only': 'בחר חבילת פרסום בפורמט .zip.',
   'st.skills.cws.package_too_large': 'קובץ ZIP חייב להיות בין 1 bait ל-100 MB.',
   'sp.run_progress_replay_gap': 'לא ניתן היה להציג מחדש חלק מהתקדמות ההרצה הקודמת',
+  "sp.workflows.healing.question": "תהליך העבודה „{name}” לא הצליח להתאים את שלב {step}. בחרו יעד חלופי לניסיון; הוא יישמר רק לאחר אימות מוצלח.",
+  "sp.workflows.healing.previous": "היעד השמור: {target}",
+  "sp.workflows.healing.use": "לנסות ולשמור את {target}",
+  "sp.workflows.healing.keep": "להשאיר את היעד השמור",
+  "sp.workflows.healing.saved": "עודכנו {count} מאתרים ב־„{name}”.",
+  "sp.workflows.healing.not_saved": "המאתר שאושר עבור „{name}” לא נשמר משום שתהליך העבודה השתנה או שהאימות לא היה חד־משמעי.",
 };

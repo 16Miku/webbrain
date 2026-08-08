@@ -73,6 +73,7 @@ import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefi
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
 import {
+  findWorkflowHealingCandidates,
   findWorkflowTarget,
   parseAccessibilityTreeDescriptors,
   redactWorkflowArgsForTelemetry,
@@ -10925,6 +10926,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return 'deny';
   }
 
+  async _promptWorkflowTargetHealing(tabId, workflow, step, stepIndex, candidates, onUpdate) {
+    const choices = Array.isArray(candidates) ? candidates.slice(0, 5) : [];
+    if (!choices.length) return null;
+    const clarifyId = `workflow_heal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now() });
+    });
+    try {
+      onUpdate('clarify', {
+        clarifyId,
+        workflowHealing: {
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          stepId: step.id,
+          stepNumber: stepIndex + 1,
+          tool: step.tool,
+          previousTarget: step.target,
+          candidates: choices.map((candidate, index) => ({
+            id: `candidate_${index}`,
+            target: candidate.target,
+          })),
+        },
+        question: `Choose a replacement target for saved workflow step ${stepIndex + 1}. The workflow will update only if the action succeeds and its postcondition is verified.`,
+        options: ['deny'],
+      });
+    } catch {}
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0) this._pendingClarifications.delete(tabId);
+    if (response?.cancelled || ['timeout', 'auto'].includes(response?.source)) return null;
+    const match = String(response?.answer || '').match(/^candidate_(\d)$/);
+    const index = match ? Number(match[1]) : -1;
+    return choices[index] || null;
+  }
+
   /**
    * Check and clear abort flag.
    */
@@ -15579,6 +15617,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let traceStatus = 'workflow_stopped';
     let finalContent = '';
     let matchedSteps = 0;
+    const verifiedHealings = [];
 
     const finishStopped = (reason, stepIndex = 0) => {
       const summary = `Saved workflow "${workflow.name}" stopped safely at step ${stepIndex + 1}: ${reason}.`;
@@ -15588,7 +15627,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       traceStatus = 'workflow_stopped';
       finalContent = summary;
-      return { status: 'stopped', summary, reason, stepIndex, matchedSteps };
+      return { status: 'stopped', summary, reason, stepIndex, matchedSteps, healings: verifiedHealings };
     };
 
     try {
@@ -15605,6 +15644,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason,
           stepIndex: 0,
           matchedSteps,
+          healings: verifiedHealings,
           prompt: workflowFallbackPrompt(workflow, 0, reason),
         };
       }
@@ -15629,6 +15669,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             reason,
             stepIndex: index,
             matchedSteps,
+            healings: verifiedHealings,
             prompt: workflowFallbackPrompt(workflow, index, reason),
           };
         }
@@ -15640,6 +15681,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         let targetMatch = null;
+        let pendingHealing = null;
         if (step.target) {
           const treeResult = await this.executeTool(tabId, 'get_accessibility_tree', {
             filter: 'all',
@@ -15650,6 +15692,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             : treeResult?.pageContent || treeResult?.tree || treeResult?.content || '';
           const candidates = parseAccessibilityTreeDescriptors(treeText);
           targetMatch = findWorkflowTarget(step.target, candidates);
+          if (targetMatch.status !== 'matched') {
+            const healingCandidates = findWorkflowHealingCandidates(step.target, candidates);
+            const approved = await this._promptWorkflowTargetHealing(
+              tabId, workflow, step, index, healingCandidates, onUpdate,
+            );
+            if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
+            if (approved) {
+              const approvalUrl = await this._currentUrl(tabId);
+              const approvalScope = step.scope || workflow.start;
+              if (workflowUrlMatches(approvalScope, approvalUrl)) {
+                const refreshedTreeResult = await this.executeTool(tabId, 'get_accessibility_tree', {
+                  filter: 'all',
+                  maxChars: 60000,
+                });
+                const refreshedTreeText = typeof refreshedTreeResult === 'string'
+                  ? refreshedTreeResult
+                  : refreshedTreeResult?.pageContent || refreshedTreeResult?.tree
+                    || refreshedTreeResult?.content || '';
+                const refreshedMatch = findWorkflowTarget(
+                  approved.target,
+                  parseAccessibilityTreeDescriptors(refreshedTreeText),
+                );
+                if (refreshedMatch.status === 'matched') {
+                  targetMatch = refreshedMatch;
+                  pendingHealing = {
+                    stepId: step.id,
+                    previousTarget: step.target,
+                    target: approved.target,
+                  };
+                  trace.recordNote(traceRunId, index + 1, 'workflow_target_healing_approved', {
+                    workflowId: workflow.id,
+                    stepId: step.id,
+                    tool: step.tool,
+                    candidateScore: approved.score,
+                  });
+                }
+              }
+            }
+          }
           if (targetMatch.status !== 'matched') {
             trace.recordNote(traceRunId, index + 1, 'workflow_replay_target_miss', {
               workflowId: workflow.id,
@@ -15665,6 +15746,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               reason,
               stepIndex: index,
               matchedSteps,
+              healings: verifiedHealings,
               prompt: workflowFallbackPrompt(workflow, index, reason),
             };
           }
@@ -15731,8 +15813,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             reason: validation.reason,
             stepIndex: index,
             matchedSteps,
+            healings: verifiedHealings,
             prompt: workflowFallbackPrompt(workflow, index, validation.reason),
           };
+        }
+        if (pendingHealing) {
+          const healingVerified = rawResult?.success === true
+            && rawResult?.dispatched !== false
+            && rawResult?.verified !== false
+            && rawResult?.noProgress !== true
+            && rawResult?.inconclusive !== true
+            && rawResult?.outcomeUnknown !== true
+            && rawResult?.ambiguous !== true
+            && rawResult?.stale !== true
+            && rawResult?.wrongTarget !== true;
+          trace.recordNote(traceRunId, index + 1, 'workflow_target_healing_verification', {
+            workflowId: workflow.id,
+            stepId: step.id,
+            tool: step.tool,
+            verified: healingVerified,
+          });
+          if (healingVerified) verifiedHealings.push(pendingHealing);
         }
         matchedSteps += 1;
       }
@@ -15750,7 +15851,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       traceStatus = 'done';
       finalContent = summary;
-      return { status: 'completed', summary, matchedSteps, estimatedLlmCallsSaved: matchedSteps };
+      return {
+        status: 'completed',
+        summary,
+        matchedSteps,
+        estimatedLlmCallsSaved: matchedSteps,
+        healings: verifiedHealings,
+      };
     } finally {
       await trace.endRun(traceRunId, { status: traceStatus, finalContent });
       this.currentCostState.delete(tabId);

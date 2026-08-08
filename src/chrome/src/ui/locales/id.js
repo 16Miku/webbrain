@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Pilih paket rilis berekstensi .zip.',
   'st.skills.cws.package_too_large': 'ZIP harus berukuran antara 1 byte hingga 100 MB.',
   'sp.run_progress_replay_gap': 'Sebagian kemajuan proses sebelumnya tidak dapat ditampilkan ulang',
+  "sp.workflows.healing.question": "Alur kerja “{name}” tidak dapat mencocokkan langkah {step}. Pilih pengganti untuk dicoba; pengganti hanya disimpan setelah verifikasi berhasil.",
+  "sp.workflows.healing.previous": "Target tersimpan: {target}",
+  "sp.workflows.healing.use": "Coba dan simpan {target}",
+  "sp.workflows.healing.keep": "Pertahankan target tersimpan",
+  "sp.workflows.healing.saved": "Memperbarui {count} locator di “{name}”.",
+  "sp.workflows.healing.not_saved": "Locator yang disetujui untuk “{name}” tidak disimpan karena alur kerja berubah atau verifikasi tidak meyakinkan.",
 };

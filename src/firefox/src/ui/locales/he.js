@@ -875,4 +875,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "עלות משוערת לכתיבה למטמון ל-5 דקות ($ / מיליון אסימונים)",
   'st.provider.field.cache_write_1h_cost_per_million': "עלות משוערת לכתיבה למטמון לשעה ($ / מיליון אסימונים)",
   'sp.run_progress_replay_gap': 'לא ניתן היה להציג מחדש חלק מהתקדמות ההרצה הקודמת',
+  "sp.workflows.healing.question": "תהליך העבודה „{name}” לא הצליח להתאים את שלב {step}. בחרו יעד חלופי לניסיון; הוא יישמר רק לאחר אימות מוצלח.",
+  "sp.workflows.healing.previous": "היעד השמור: {target}",
+  "sp.workflows.healing.use": "לנסות ולשמור את {target}",
+  "sp.workflows.healing.keep": "להשאיר את היעד השמור",
+  "sp.workflows.healing.saved": "עודכנו {count} מאתרים ב־„{name}”.",
+  "sp.workflows.healing.not_saved": "המאתר שאושר עבור „{name}” לא נשמר משום שתהליך העבודה השתנה או שהאימות לא היה חד־משמעי.",
 };

@@ -882,4 +882,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Szacowany koszt zapisu do pamięci podręcznej (5 min) ($ / 1M tokenów)",
   'st.provider.field.cache_write_1h_cost_per_million': "Szacowany koszt zapisu do pamięci podręcznej (1 godz.) ($ / 1M tokenów)",
   'sp.run_progress_replay_gap': 'Nie udało się ponownie wyświetlić części wcześniejszego postępu wykonania',
+  "sp.workflows.healing.question": "Przepływ „{name}” nie dopasował kroku {step}. Wybierz cel zastępczy do wypróbowania; zostanie zapisany dopiero po pomyślnej weryfikacji.",
+  "sp.workflows.healing.previous": "Zapisany cel: {target}",
+  "sp.workflows.healing.use": "Wypróbuj i zapisz {target}",
+  "sp.workflows.healing.keep": "Zachowaj zapisany cel",
+  "sp.workflows.healing.saved": "Zaktualizowano {count} lokalizatorów w „{name}”.",
+  "sp.workflows.healing.not_saved": "Zatwierdzony lokalizator dla „{name}” nie został zapisany, ponieważ przepływ się zmienił lub weryfikacja nie była jednoznaczna.",
 };

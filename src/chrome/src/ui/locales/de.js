@@ -920,4 +920,10 @@ export default {
   'tr.event.result': 'Ergebnis',
   'tr.event.step': 'Schritt {step}',
   'sp.run_progress_replay_gap': 'Ein Teil des früheren Ausführungsverlaufs konnte nicht erneut angezeigt werden',
+  "sp.workflows.healing.question": "Workflow „{name}“ konnte Schritt {step} nicht zuordnen. Wähle ein Ersatzziel zum Testen; es wird erst nach erfolgreicher Prüfung gespeichert.",
+  "sp.workflows.healing.previous": "Gespeichertes Ziel: {target}",
+  "sp.workflows.healing.use": "{target} testen und speichern",
+  "sp.workflows.healing.keep": "Gespeichertes Ziel beibehalten",
+  "sp.workflows.healing.saved": "{count} Locator in „{name}“ aktualisiert.",
+  "sp.workflows.healing.not_saved": "Der bestätigte Locator für „{name}“ wurde nicht gespeichert, weil sich der Workflow geändert hat oder die Prüfung nicht eindeutig war.",
 };

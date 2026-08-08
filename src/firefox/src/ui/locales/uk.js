@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Орієнтовна вартість запису в кеш на 5 хвилин ($ / 1 млн токенів)",
   'st.provider.field.cache_write_1h_cost_per_million': "Орієнтовна вартість запису в кеш на 1 годину ($ / 1 млн токенів)",
   'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
+  "sp.workflows.healing.question": "Робочий процес «{name}» не зміг зіставити крок {step}. Виберіть заміну для перевірки; її буде збережено лише після успішної верифікації.",
+  "sp.workflows.healing.previous": "Збережена ціль: {target}",
+  "sp.workflows.healing.use": "Перевірити й зберегти {target}",
+  "sp.workflows.healing.keep": "Залишити збережену ціль",
+  "sp.workflows.healing.saved": "Оновлено локаторів у «{name}»: {count}.",
+  "sp.workflows.healing.not_saved": "Схвалений локатор для «{name}» не збережено: робочий процес змінився або результат перевірки був неоднозначним.",
 };

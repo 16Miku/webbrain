@@ -948,4 +948,10 @@ export default {
   'st.skills.cws.package_zip_only': '.zip biçiminde bir sürüm paketi seçin.',
   'st.skills.cws.package_too_large': 'ZIP 1 bayt ile 100 MB arasında olmalıdır.',
   'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
+  "sp.workflows.healing.question": "“{name}” iş akışı {step}. adımı eşleştiremedi. Denemek için bir yedek hedef seçin; yalnızca başarılı doğrulamadan sonra kaydedilir.",
+  "sp.workflows.healing.previous": "Kayıtlı hedef: {target}",
+  "sp.workflows.healing.use": "{target} hedefini dene ve kaydet",
+  "sp.workflows.healing.keep": "Kayıtlı hedefi koru",
+  "sp.workflows.healing.saved": "“{name}” içinde {count} bulucu güncellendi.",
+  "sp.workflows.healing.not_saved": "İş akışı değiştiği veya doğrulama kesin olmadığı için “{name}” için onaylanan bulucu kaydedilmedi.",
 };

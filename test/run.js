@@ -25989,8 +25989,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      3,
-      `${label}: submit, permission, and clarify prompts should override reading-first scroll suppression`,
+      4,
+      `${label}: workflow healing, submit, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -63800,6 +63800,100 @@ test('saved workflow target matching fails closed on ambiguity', () => {
   assert.equal(matched.candidate.refId, 'ref_3');
 });
 
+test('saved workflow healing candidates remain strong, user-reviewable, and unambiguous', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const candidates = module.findWorkflowHealingCandidates(
+      { role: 'button', name: 'Submit order' },
+      [
+        { refId: 'ref_1', role: 'button', name: 'Place order', id: 'checkout-primary', selector: '#raw' },
+        { refId: 'ref_2', role: 'button', name: 'Cancel order' },
+        { refId: 'ref_3', role: 'link', name: 'Place order' },
+        { refId: 'ref_4', role: 'button', name: 'Duplicate' },
+        { refId: 'ref_5', role: 'button', name: 'Duplicate' },
+      ],
+    );
+    assert.deepEqual(candidates.map((candidate) => candidate.refId).sort(), ['ref_1', 'ref_2']);
+    assert.deepEqual(candidates.find((candidate) => candidate.refId === 'ref_1').target, {
+      role: 'button',
+      name: 'Place order',
+      id: 'checkout-primary',
+    });
+    assert.doesNotMatch(JSON.stringify(candidates), /selector|#raw|ref_3|ref_4|ref_5/);
+    const links = module.findWorkflowHealingCandidates(
+      { role: 'link', name: 'Old docs', href: 'https://example.com/docs/old' },
+      [
+        { refId: 'ref_6', role: 'link', name: 'New docs', href: 'https://example.com/docs/new' },
+        { refId: 'ref_7', role: 'link', name: 'New docs', href: 'https://evil.example/docs/new' },
+        { refId: 'ref_8', role: 'link', name: 'New docs' },
+      ],
+    );
+    assert.deepEqual(links.map((candidate) => candidate.refId), ['ref_6']);
+  }
+});
+
+test('approved workflow target healings apply atomically without storing live refs', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const workflow = module.normalizeSavedWorkflow({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_heal',
+      name: 'Checkout',
+      createdAt: 1000,
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    }, { now: 1000 });
+    const healed = module.applyWorkflowTargetHealings(workflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Submit order' },
+      target: { role: 'button', name: 'Place order', id: 'checkout-primary', refId: 'ref_9' },
+    }], { now: 2000 });
+    assert.equal(healed.changed, true);
+    assert.equal(healed.healedStepCount, 1);
+    assert.deepEqual(healed.workflow.steps[0].target, {
+      role: 'button', name: 'Place order', id: 'checkout-primary',
+    });
+    assert.equal(healed.workflow.updatedAt, 2000);
+    assert.doesNotMatch(JSON.stringify(healed.workflow), /ref_9/);
+
+    const stale = module.applyWorkflowTargetHealings(workflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Something else' },
+      target: { role: 'button', name: 'Place order' },
+    }], { now: 2000 });
+    assert.equal(stale.changed, false);
+    assert.equal(stale.reason, 'stale_target');
+
+    const fieldWorkflow = module.normalizeSavedWorkflow({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_sensitive_heal',
+      name: 'Fill credential',
+      start: { origin: 'https://example.com', pathFamily: '/account' },
+      parameters: [{ id: 'account', label: 'Account', required: true, sensitive: false, type: 'text' }],
+      steps: [{
+        id: 'step_1',
+        tool: 'type_ax',
+        args: { text: { [module.WORKFLOW_PARAM_REF_KEY]: 'account' }, clear: true },
+        target: { role: 'textbox', name: 'Account' },
+        expected: { kind: 'tool_verified' },
+      }],
+    }, { now: 1000 });
+    const sensitive = module.applyWorkflowTargetHealings(fieldWorkflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'textbox', name: 'Account' },
+      target: { role: 'textbox', name: 'Password', type: 'password' },
+    }], { now: 2000 });
+    assert.equal(sensitive.changed, true);
+    assert.equal(sensitive.workflow.parameters[0].sensitive, true);
+  }
+});
+
 test('saved workflow telemetry redacts runtime parameters and validates postconditions', () => {
   const template = { text: { [SavedWorkflowsCh.WORKFLOW_PARAM_REF_KEY]: 'password' }, clear: true };
   const redactedArgs = SavedWorkflowsCh.redactWorkflowArgsForTelemetry(template, {
@@ -63925,6 +64019,167 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.equal(agent.isRunning(77), false);
     assert.equal(agent.selectionGroundingScopes.has(77), false, `${browser}: completed replay kept stale selection scope`);
     assert.ok(persistCalls >= 1, `${browser}: completed replay did not persist selection-scope removal`);
+  });
+
+  test(`${browser} saved workflow heals only an explicitly approved and verified target`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    let executedArgs = null;
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({
+      pageContent: 'button "Place order" [ref_9] id="checkout-primary"',
+    });
+    agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+      executedArgs = JSON.parse(calls[0].function.arguments);
+      onUpdate('tool_result', {
+        name: 'click_ax',
+        result: { success: true, dispatched: true },
+      });
+      return { action: 'continue' };
+    };
+
+    const replayPromise = agent.replaySavedWorkflow(
+      84, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    assert.equal(prompt.workflowHealing.previousTarget.name, 'Submit order');
+    assert.equal(prompt.workflowHealing.candidates[0].target.name, 'Place order');
+    assert.equal(agent.submitClarifyResponse(84, prompt.clarifyId, 'candidate_0', 'option'), true);
+    const result = await replayPromise;
+
+    assert.equal(result.status, 'completed');
+    assert.equal(executedArgs.ref_id, 'ref_9');
+    assert.deepEqual(result.healings, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Submit order' },
+      target: { role: 'button', name: 'Place order', id: 'checkout-primary' },
+    }]);
+    assert.doesNotMatch(JSON.stringify(result.healings), /ref_9/);
+  });
+
+  test(`${browser} saved workflow does not persist an approved target after inconclusive verification`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing_inconclusive',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({ pageContent: 'button "Place order" [ref_9]' });
+    agent._executeToolBatch = async (_tabId, _calls, _messages, onUpdate) => {
+      onUpdate('tool_result', {
+        name: 'click_ax',
+        result: { success: true, dispatched: true, inconclusive: true },
+      });
+      return { action: 'continue' };
+    };
+    const replayPromise = agent.replaySavedWorkflow(
+      85, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    agent.submitClarifyResponse(85, prompt.clarifyId, 'candidate_0', 'option');
+    const result = await replayPromise;
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.healings, []);
+  });
+
+  test(`${browser} saved workflow revalidates an approved target before dispatch`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing_stale_page',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1', tool: 'click_ax', args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    let treeReads = 0;
+    let dispatched = false;
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({
+      pageContent: ++treeReads === 1
+        ? 'button "Place order" [ref_9]'
+        : 'button "Cancel" [ref_10]',
+    });
+    agent._executeToolBatch = async () => {
+      dispatched = true;
+      throw new Error('stale approved target must not dispatch');
+    };
+    const replayPromise = agent.replaySavedWorkflow(
+      86, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    agent.submitClarifyResponse(86, prompt.clarifyId, 'candidate_0', 'option');
+    const result = await replayPromise;
+    assert.equal(result.status, 'fallback');
+    assert.equal(dispatched, false);
+    assert.deepEqual(result.healings, []);
+  });
+
+  test(`${browser} saved workflow rejects unattended locator-healing approval`, async () => {
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    const choicePromise = agent._promptWorkflowTargetHealing(
+      87,
+      { id: 'workflow_heal_prompt', name: 'Checkout' },
+      { id: 'step_1', tool: 'click_ax', target: { role: 'button', name: 'Submit order' } },
+      0,
+      [{ refId: 'ref_9', target: { role: 'button', name: 'Place order' }, score: 2 }],
+      (type, data) => updates.push({ type, data }),
+    );
+    const prompt = updates[0].data;
+    assert.equal(agent.submitClarifyResponse(87, prompt.clarifyId, 'candidate_0', 'auto'), true);
+    assert.equal(await choicePromise, null);
   });
 
   test(`${browser} saved workflow replay fails closed before a semantic target miss`, async () => {
@@ -64175,6 +64430,77 @@ test('saved workflow store normalizes writes and resolves runtime parameters wit
   assert.equal((await store.rename('workflow_missing', 'Missing')).reason, 'not_found');
   assert.equal((await store.delete(compiled.id)).changed, true);
   assert.equal((await store.list()).length, 0);
+});
+
+test('saved workflow store rejects healing after a concurrent workflow update', async () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+    };
+    let now = 5000;
+    const store = module.createSavedWorkflowStore(storage, { now: () => now++ });
+    const put = await store.put({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_atomic_heal',
+      name: 'Checkout',
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1', tool: 'click_ax', args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    });
+    const healed = await store.healTargets('workflow_atomic_heal', {
+      expectedUpdatedAt: put.workflow.updatedAt,
+      healings: [{
+        stepId: 'step_1',
+        previousTarget: { role: 'button', name: 'Submit order' },
+        target: { role: 'button', name: 'Place order', refId: 'ref_9' },
+      }],
+    });
+    assert.equal(healed.changed, true);
+    assert.equal(healed.healedStepCount, 1);
+    assert.equal((await store.get('workflow_atomic_heal')).steps[0].target.name, 'Place order');
+    assert.doesNotMatch(JSON.stringify(memory), /ref_9/);
+
+    const staleTimestamp = healed.workflow.updatedAt;
+    await store.put({ ...healed.workflow, name: 'Checkout renamed' });
+    const rejected = await store.healTargets('workflow_atomic_heal', {
+      expectedUpdatedAt: staleTimestamp,
+      healings: [{
+        stepId: 'step_1',
+        previousTarget: { role: 'button', name: 'Place order' },
+        target: { role: 'button', name: 'Confirm order' },
+      }],
+    });
+    assert.equal(rejected.changed, false);
+    assert.equal(rejected.reason, 'workflow_changed');
+    assert.equal((await store.get('workflow_atomic_heal')).name, 'Checkout renamed');
+  }
+});
+
+test('workflow healing approval and persistence wiring is mirrored across browsers', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
+    assert.match(agent, /workflowHealing:[\s\S]*?previousTarget:[\s\S]*?candidates:/);
+    assert.match(agent, /\['timeout', 'auto'\]\.includes\(response\?\.source\)/,
+      `${build}: unattended clarification could authorize workflow healing`);
+    assert.match(agent, /rawResult\?\.success === true[\s\S]*?rawResult\?\.inconclusive !== true/,
+      `${build}: healing did not require a conclusive successful result`);
+    assert.match(agent, /const refreshedTreeResult = await this\.executeTool[\s\S]*?findWorkflowTarget\([\s\S]*?approved\.target/,
+      `${build}: approved target was not re-resolved before dispatch`);
+    assert.match(background, /savedWorkflowStore\.healTargets\([\s\S]*?expectedUpdatedAt: workflow\.updatedAt/,
+      `${build}: verified healing was not persisted with optimistic concurrency`);
+    assert.match(panel, /if \(data\.workflowHealing\)[\s\S]*?button\.textContent = t\('sp\.workflows\.healing\.use'/,
+      `${build}: structured healing card missing`);
+    assert.match(panel, /submitClarify\([\s\S]*?candidate\.id, 'option'/,
+      `${build}: candidate selection must return a stable value`);
+  }
 });
 
 test('saved workflow store rejects a new workflow after the 100-workflow limit', async () => {

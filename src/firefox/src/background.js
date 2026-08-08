@@ -2060,6 +2060,18 @@ async function handleMessage(msg, sender) {
             runOptions,
           );
           result = replay.summary || '';
+          if (Array.isArray(replay.healings) && replay.healings.length) {
+            const healed = await withSavedWorkflowStoreLock(() => savedWorkflowStore.healTargets(
+              workflow.id,
+              { expectedUpdatedAt: workflow.updatedAt, healings: replay.healings },
+            ));
+            publishUpdate(healed.changed ? 'workflow_healed' : 'workflow_healing_not_saved', {
+              workflowId: workflow.id,
+              workflowName: workflow.name,
+              count: healed.healedStepCount || 0,
+              reason: healed.reason || '',
+            });
+          }
           if (replay.status === 'fallback') {
             publishUpdate('workflow_fallback', {
               workflowId: workflow.id,

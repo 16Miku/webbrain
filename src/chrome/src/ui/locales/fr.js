@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': "Choisissez un package de publication au format .zip.",
   'st.skills.cws.package_too_large': "Le fichier ZIP doit faire entre 1 octet et 100 Mo.",
   'sp.run_progress_replay_gap': 'Une partie de la progression précédente de l’exécution n’a pas pu être réaffichée',
+  "sp.workflows.healing.question": "Le workflow « {name} » n’a pas pu faire correspondre l’étape {step}. Choisissez une cible de remplacement à essayer ; elle ne sera enregistrée qu’après une vérification réussie.",
+  "sp.workflows.healing.previous": "Cible enregistrée : {target}",
+  "sp.workflows.healing.use": "Essayer et enregistrer {target}",
+  "sp.workflows.healing.keep": "Conserver la cible enregistrée",
+  "sp.workflows.healing.saved": "{count} localisateur(s) mis à jour dans « {name} ».",
+  "sp.workflows.healing.not_saved": "Le localisateur approuvé pour « {name} » n’a pas été enregistré, car le workflow a changé ou la vérification était incertaine.",
 };

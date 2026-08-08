@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Coût estimé d’écriture du cache (5 min) ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Coût estimé d’écriture du cache (1 h) ($ / 1M tokens)",
   'sp.run_progress_replay_gap': 'Une partie de la progression précédente de l’exécution n’a pas pu être réaffichée',
+  "sp.workflows.healing.question": "Le workflow « {name} » n’a pas pu faire correspondre l’étape {step}. Choisissez une cible de remplacement à essayer ; elle ne sera enregistrée qu’après une vérification réussie.",
+  "sp.workflows.healing.previous": "Cible enregistrée : {target}",
+  "sp.workflows.healing.use": "Essayer et enregistrer {target}",
+  "sp.workflows.healing.keep": "Conserver la cible enregistrée",
+  "sp.workflows.healing.saved": "{count} localisateur(s) mis à jour dans « {name} ».",
+  "sp.workflows.healing.not_saved": "Le localisateur approuvé pour « {name} » n’a pas été enregistré, car le workflow a changé ou la vérification était incertaine.",
 };

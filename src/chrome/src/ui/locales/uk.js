@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Виберіть пакет публікації у форматі .zip.',
   'st.skills.cws.package_too_large': 'ZIP-файл повинен бути від 1 байта до 100 МБ.',
   'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
+  "sp.workflows.healing.question": "Робочий процес «{name}» не зміг зіставити крок {step}. Виберіть заміну для перевірки; її буде збережено лише після успішної верифікації.",
+  "sp.workflows.healing.previous": "Збережена ціль: {target}",
+  "sp.workflows.healing.use": "Перевірити й зберегти {target}",
+  "sp.workflows.healing.keep": "Залишити збережену ціль",
+  "sp.workflows.healing.saved": "Оновлено локаторів у «{name}»: {count}.",
+  "sp.workflows.healing.not_saved": "Схвалений локатор для «{name}» не збережено: робочий процес змінився або результат перевірки був неоднозначним.",
 };

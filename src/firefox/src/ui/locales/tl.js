@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Tinatayang gastos sa 5 minutong pagsulat ng cache ($ / 1M token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Tinatayang gastos sa 1 oras na pagsulat ng cache ($ / 1M token)",
   'sp.run_progress_replay_gap': 'Hindi maipakita muli ang ilang naunang progreso ng run',
+  "sp.workflows.healing.question": "Hindi maitugma ng workflow na “{name}” ang hakbang {step}. Pumili ng kapalit na susubukan; ise-save lamang ito pagkatapos ng matagumpay na beripikasyon.",
+  "sp.workflows.healing.previous": "Naka-save na target: {target}",
+  "sp.workflows.healing.use": "Subukan at i-save ang {target}",
+  "sp.workflows.healing.keep": "Panatilihin ang naka-save na target",
+  "sp.workflows.healing.saved": "Na-update ang {count} locator sa “{name}”.",
+  "sp.workflows.healing.not_saved": "Hindi na-save ang inaprubahang locator para sa “{name}” dahil nagbago ang workflow o hindi tiyak ang beripikasyon.",
 };

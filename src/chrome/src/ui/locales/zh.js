@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': '请选择 .zip 格式的发布包。',
   'st.skills.cws.package_too_large': 'ZIP 文件大小必须在 1 字节到 100 MB 之间。',
   'sp.run_progress_replay_gap': '部分较早的运行进度无法重新显示',
+  "sp.workflows.healing.question": "工作流“{name}”无法匹配第 {step} 步。请选择一个替代目标进行尝试；只有验证成功后才会保存。",
+  "sp.workflows.healing.previous": "已保存的目标：{target}",
+  "sp.workflows.healing.use": "尝试并保存 {target}",
+  "sp.workflows.healing.keep": "保留原目标",
+  "sp.workflows.healing.saved": "已更新“{name}”中的 {count} 个定位器。",
+  "sp.workflows.healing.not_saved": "“{name}”中已批准的定位器未保存，因为工作流已发生变化或验证结果不确定。",
 };

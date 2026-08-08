@@ -895,4 +895,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Kies een .zip release-pakket.',
   'st.skills.cws.package_too_large': 'De ZIP moet tussen 1 byte en 100 MB zijn.',
   'sp.run_progress_replay_gap': 'Een deel van de eerdere uitvoeringsvoortgang kon niet opnieuw worden weergegeven',
+  "sp.workflows.healing.question": "Workflow ‘{name}’ kon stap {step} niet koppelen. Kies een vervangend doel om te proberen; het wordt pas na geslaagde verificatie opgeslagen.",
+  "sp.workflows.healing.previous": "Opgeslagen doel: {target}",
+  "sp.workflows.healing.use": "{target} proberen en opslaan",
+  "sp.workflows.healing.keep": "Opgeslagen doel behouden",
+  "sp.workflows.healing.saved": "{count} locator(s) in ‘{name}’ bijgewerkt.",
+  "sp.workflows.healing.not_saved": "De goedgekeurde locator voor ‘{name}’ is niet opgeslagen omdat de workflow was gewijzigd of de verificatie niet overtuigend was.",
 };

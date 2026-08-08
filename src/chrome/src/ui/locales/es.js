@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Elige un paquete de publicación en formato .zip.',
   'st.skills.cws.package_too_large': 'El archivo ZIP debe tener entre 1 byte y 100 MB.',
   'sp.run_progress_replay_gap': 'No se pudo volver a mostrar parte del progreso anterior de la ejecución',
+  "sp.workflows.healing.question": "El flujo «{name}» no pudo encontrar el paso {step}. Elige un reemplazo para probarlo; solo se guardará después de una verificación correcta.",
+  "sp.workflows.healing.previous": "Objetivo guardado: {target}",
+  "sp.workflows.healing.use": "Probar y guardar {target}",
+  "sp.workflows.healing.keep": "Conservar el objetivo guardado",
+  "sp.workflows.healing.saved": "Se actualizaron {count} localizadores en «{name}».",
+  "sp.workflows.healing.not_saved": "El localizador aprobado para «{name}» no se guardó porque el flujo cambió o la verificación no fue concluyente.",
 };

@@ -7886,6 +7886,19 @@ function handleAgentUpdateMessage(msg) {
       }
       break;
 
+    case 'workflow_healed':
+      showComposerToast(t('sp.workflows.healing.saved', {
+        name: data?.workflowName || '',
+        count: data?.count || 0,
+      }), { duration: 7000 });
+      break;
+
+    case 'workflow_healing_not_saved':
+      showComposerToast(t('sp.workflows.healing.not_saved', {
+        name: data?.workflowName || '',
+      }), { duration: 9000 });
+      break;
+
     case 'run_complete':
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
       invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
@@ -7997,6 +8010,23 @@ browser.runtime.onMessage.addListener((msg) => {
  * the card and routes the answer to the background. UI stays visible
  * after answering so the user can see what they chose.
  */
+function workflowHealingTargetLabel(target) {
+  const role = String(target?.role || 'element').slice(0, 40);
+  const primary = String(
+    target?.name || target?.label || target?.ariaLabel || target?.placeholder
+      || target?.fieldName || target?.id || target?.href || '',
+  ).trim().slice(0, 180);
+  const identity = [
+    target?.label && target.label !== primary ? `label=${String(target.label).slice(0, 80)}` : '',
+    target?.ariaLabel && target.ariaLabel !== primary ? `aria-label=${String(target.ariaLabel).slice(0, 80)}` : '',
+    target?.id ? `id=${String(target.id).slice(0, 80)}` : '',
+    target?.fieldName ? `name=${String(target.fieldName).slice(0, 80)}` : '',
+    target?.type ? `type=${String(target.type).slice(0, 40)}` : '',
+    target?.href && target.href !== primary ? `href=${String(target.href).slice(0, 120)}` : '',
+  ].filter(Boolean).join(', ');
+  return `${role}${primary ? ` “${primary}”` : ''}${identity ? ` (${identity})` : ''}`;
+}
+
 function renderClarifyCard(data) {
   hideActivity();
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
@@ -8029,11 +8059,13 @@ function renderClarifyCard(data) {
   card.dataset.tabId = String(tabId);
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
-    : data.submitConfirmation
-      ? 'form_confirmation'
-      : data.permission
-        ? 'permission'
-        : 'clarification_response';
+    : data.workflowHealing
+      ? ''
+      : data.submitConfirmation
+        ? 'form_confirmation'
+        : data.permission
+          ? 'permission'
+          : 'clarification_response';
   if (card.dataset.memorySource === 'clarification_response') {
     card.dataset.memoryQuestion = String(data.question || '').slice(0, 600);
   }
@@ -8056,6 +8088,49 @@ function renderClarifyCard(data) {
   qEl.className = 'clarify-question';
   qEl.textContent = String(data.question || '').slice(0, 600);
   card.appendChild(qEl);
+
+  if (data.workflowHealing) {
+    card.dataset.workflowHealing = '1';
+    const healing = data.workflowHealing;
+    qEl.textContent = t('sp.workflows.healing.question', {
+      name: String(healing.workflowName || '').slice(0, 80),
+      step: Number(healing.stepNumber) || 1,
+    });
+    const previousEl = document.createElement('div');
+    previousEl.className = 'clarify-reason';
+    previousEl.textContent = t('sp.workflows.healing.previous', {
+      target: workflowHealingTargetLabel(healing.previousTarget),
+    });
+    card.appendChild(previousEl);
+
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const candidate of Array.isArray(healing.candidates) ? healing.candidates.slice(0, 5) : []) {
+      if (!/^candidate_[0-4]$/.test(String(candidate?.id || ''))) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'clarify-option';
+      button.textContent = t('sp.workflows.healing.use', {
+        target: workflowHealingTargetLabel(candidate.target),
+      });
+      button.dataset.value = candidate.id;
+      button.addEventListener('click', () => submitClarify(
+        card, tabId, clarifyId, candidate.id, 'option',
+      ));
+      optionsEl.appendChild(button);
+    }
+    const deny = document.createElement('button');
+    deny.type = 'button';
+    deny.className = 'clarify-option';
+    deny.textContent = t('sp.workflows.healing.keep');
+    deny.dataset.value = 'deny';
+    deny.addEventListener('click', () => submitClarify(card, tabId, clarifyId, 'deny', 'option'));
+    optionsEl.appendChild(deny);
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
 
   if (data.submitConfirmation) {
     card.dataset.submitConfirmation = '1';

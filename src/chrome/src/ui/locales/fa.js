@@ -947,4 +947,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "تخمینی هزینه نوشتن 5 دقیقه ای کش ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_1h_cost_per_million': "تخمینی هزینه نوشتن حافظه پنهان 1 ساعته ($ / 1 میلیون توکن)",
   'sp.run_progress_replay_gap': 'بخشی از پیشرفت پیشین اجرا قابل بازپخش نبود',
+  "sp.workflows.healing.question": "گردش‌کار «{name}» نتوانست مرحلهٔ {step} را تطبیق دهد. یک جایگزین برای آزمایش انتخاب کنید؛ فقط پس از تأیید موفق ذخیره می‌شود.",
+  "sp.workflows.healing.previous": "هدف ذخیره‌شده: {target}",
+  "sp.workflows.healing.use": "آزمایش و ذخیرهٔ {target}",
+  "sp.workflows.healing.keep": "حفظ هدف ذخیره‌شده",
+  "sp.workflows.healing.saved": "{count} مکان‌یاب در «{name}» به‌روزرسانی شد.",
+  "sp.workflows.healing.not_saved": "مکان‌یاب تأییدشدهٔ «{name}» ذخیره نشد، زیرا گردش‌کار تغییر کرده بود یا نتیجهٔ تأیید قطعی نبود.",
 };

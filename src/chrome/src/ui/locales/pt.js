@@ -947,4 +947,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Custo estimado de gravação em cache de 5 minutos ($/1 milhão de tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Custo estimado de gravação de cache em 1 hora ($/1 milhão de tokens)",
   'sp.run_progress_replay_gap': 'Não foi possível reexibir parte do progresso anterior da execução',
+  "sp.workflows.healing.question": "O fluxo “{name}” não conseguiu corresponder à etapa {step}. Escolha um substituto para testar; ele só será salvo após uma verificação bem-sucedida.",
+  "sp.workflows.healing.previous": "Alvo salvo: {target}",
+  "sp.workflows.healing.use": "Testar e salvar {target}",
+  "sp.workflows.healing.keep": "Manter o alvo salvo",
+  "sp.workflows.healing.saved": "Foram atualizados {count} localizadores em “{name}”.",
+  "sp.workflows.healing.not_saved": "O localizador aprovado para “{name}” não foi salvo porque o fluxo mudou ou a verificação foi inconclusiva.",
 };

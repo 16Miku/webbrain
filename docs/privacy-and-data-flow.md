@@ -146,6 +146,13 @@ delete or redact that source trace.
 Replay traces contain workflow/step IDs, semantic match status and score,
 postcondition status, fallback status, and estimated model calls saved. They do
 not contain runtime parameter values or freshly resolved element references.
+If a saved locator stops matching, WebBrain may show sanitized semantic target
+descriptions for the user to choose from. It never selects or persists a
+replacement automatically: the user must explicitly choose it, the attempted
+action must pass its saved postcondition, and the workflow must still be the
+same version. The temporary live `ref_id` is never written to storage. A field
+repair can upgrade its runtime parameter to sensitive (for example, when the
+new target is a password field), but it can never downgrade that protection.
 If deterministic replay cannot safely continue, a fallback Agent receives only
 saved metadata and must ask the user again for any still-needed value.
 
