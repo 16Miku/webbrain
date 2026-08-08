@@ -4,6 +4,38 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [27.1.0] - 2026-08-08
+
+### Added
+- Added a value-free teacher mode (`/teach --start <name>` / `/teach --end`) that records a user's demonstrated clicks, field completions, checkbox/radio toggles, Enter submissions, and navigations into a tab-scoped session. The capture code never reads field values — only semantic identity — and every field action becomes a runtime parameter at the capture boundary. The session persists across navigation and compiles into the same `webbrain-workflow/1` format as successful runs. Automated runs are blocked while a teacher session is active for a tab.
+- Added an interactive saved workflow manager (`/workflow`) to list, run, rename, export, and delete saved workflows in Chrome and Firefox.
+- Added user-approved workflow locator healing: when a saved workflow target no longer matches uniquely, up to five independently replayable semantic candidates are presented for explicit single-selection. Approved replacements are applied atomically against the workflow's previous `updatedAt` value, so a concurrent edit wins instead of being overwritten; concurrent edits, unattended answers, and duplicate candidates can never authorize a healing.
+- Added a WebBrain MCP server introduction blog post covering setup for Claude Code, OpenCode, Codex, and Cursor, the loopback security model, and how WebBrain MCP differs from headless browser tools.
+
+### Changed
+- Excluded WebBrain Cloud from per-run cost limits and metered dedicated vision provider costs separately, so vision-heavy WebBrain Cloud work does not count against the local/router cost allowance (Chrome and Firefox parity).
+- Merged Cloud Bridge (MCP/LM Studio browser delegation) settings into Settings → General → Advanced → Cloud bridge, with synchronized setup guidance and the three bridge ports (MCP `17374`, LM Studio `17375`, WebBrain Cloud `17373`).
+- Hardened screenshot and attachment handling: staged screenshots persist durably until delivery is confirmed at every call site, the per-turn screenshot budget charges only when a model actually receives the capture (vision description or attachment), redaction binds to capture time and scopes to rendered frames, and a child frame URL that cannot identify exactly one descriptor fails closed instead of risking mis-paired redaction regions.
+- Did not stage a full-page screenshot when the capture-time privacy scan cannot prepare redaction geometry; the capture now reports `redactionUnavailable`, explains the blocker, and skips staging while still rendering the preview and save button (Chrome only).
+- Removed the sticky API mutation badge from the Chrome and Firefox side panels. The `/allow-api` override now confirms once in the transcript instead of as a persistent composer badge.
+- Passed trace run options through both Chrome and Firefox builds at startup.
+- Allowed automatic i18n for AMO links and updated slash-command documentation across locales.
+
+### Fixed
+- Fixed a screenshot redaction fail-open path: the deferred full-page redaction now refuses the send when the snapshot had regions but `_redactScreenshotDataUrl` returned the bytes unchanged.
+- Fixed `mergeRedactionFrameRegions` to return `null` under `requireCompleteFrameCoverage` when an object/embed subdocument or unpaired child frame has no DOM descriptor, instead of reporting the snapshot as complete.
+- Fixed `loadStagedScreenshots` and `clearStagedScreenshots` to enumerate keys per-tab instead of reading all of `storage.local`, preventing 16 MB record churn on tab switch and reconnect.
+- Fixed `consumePendingAttachmentsForTab` to key on `stagedAttachmentId` instead of object identity, preventing stale chips from wedging the composer after a rejection reconciled from storage.
+- Fixed `reconcilePersistedStagedScreenshots` to only delete durable pixels on confirmed inclusion, preserving the user's only copy when delivery fails through a torn-down service worker.
+- Fixed teacher submit capture and workflow cleanup to retain workflow claims and prevent stale submissions from clearing run claims prematurely.
+- Preserved screenshots and attachments through terminal delivery, reconnect, and workflow replay, including cancelled-before-validation and unknown-delivery cases.
+
+### Tests
+- Added mirrored Chrome/Firefox coverage for teacher mode: value-free demonstration capture, session store normalization, automated-run rejection, Enter-as-submit semantics, and cross-browser slash-command wiring.
+- Added mirrored coverage for the saved workflow manager, user-approved locator healing, atomic healing persistence with concurrent-update rejection, and workflow run-claim lifecycle.
+- Added mirrored coverage for screenshot redaction fail-closed behavior, staged attachment recovery, viewport budget charging, full-page capture refusals, Cloud Bridge settings placement, and the WebBrain Cloud cost-limit exclusion.
+- Updated `test/run.js` with the API badge removal assertions and the sidepanel authorization state checks.
+
 ## [27.0.0] - 2026-08-07
 
 ### Added
