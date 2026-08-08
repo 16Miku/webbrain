@@ -643,6 +643,8 @@ export default {
   'sp.plan.approved': 'План схвалено — виконується…',
   'sp.plan.cancelled': 'План скасовано.',
   'sp.plan.expired': 'Цей план більше не очікує розгляду — запуск скасовано.',
+  'sp.plan.timed_out': 'Час очікування схвалення минув',
+  'sp.plan.timed_out_hint': 'Нічого не було запущено. Повторіть спробу, щоб переглянути новий план.',
   'sp.plan.awaiting_review': 'Схваліть або скасуйте план вище, перш ніж надсилати інше повідомлення.',
   'sp.plan.intent_unavailable': 'Планувальник не повернув коректний структурований результат після однієї спроби виправлення. Цей хід продовжиться в режимі лише для читання.',
   'sp.slash.busy_only_oob': 'Поки WebBrain зайнятий, повідомлення ставляться в чергу. Лише /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces та /verbose можуть запускатися одразу як slash-команди.',

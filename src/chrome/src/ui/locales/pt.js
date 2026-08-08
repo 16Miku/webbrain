@@ -299,6 +299,8 @@ export default {
   'sp.plan.approved': "Plano aprovado – em execução…",
   'sp.plan.cancelled': "Plano cancelado.",
   'sp.plan.expired': "Este plano não está mais aguardando revisão – a execução foi cancelada.",
+  'sp.plan.timed_out': 'O tempo para aprovação expirou',
+  'sp.plan.timed_out_hint': 'Nada foi executado. Tente novamente para revisar um novo plano.',
   'sp.plan.awaiting_review': "Aprove ou cancele o plano acima antes de enviar outra mensagem.",
   'sp.plan.intent_unavailable': "O planejador não conseguiu retornar uma saída estruturada válida após um reparo. Continuando este turno no modo somente leitura.",
 

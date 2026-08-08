@@ -643,6 +643,8 @@ export default {
   'sp.plan.approved': 'Plan zatwierdzony — uruchamianie…',
   'sp.plan.cancelled': 'Plan anulowany.',
   'sp.plan.expired': 'Ten plan nie oczekuje już na przegląd — uruchomienie zostało anulowane.',
+  'sp.plan.timed_out': 'Upłynął czas na zatwierdzenie',
+  'sp.plan.timed_out_hint': 'Nic nie zostało uruchomione. Spróbuj ponownie, aby przejrzeć nowy plan.',
   'sp.plan.awaiting_review': 'Zatwierdź lub anuluj powyższy plan przed wysłaniem kolejnej wiadomości.',
   'sp.plan.intent_unavailable': 'Planer nie zwrócił prawidłowego ustrukturyzowanego wyniku po jednej próbie naprawy. Ta tura będzie kontynuowana w trybie tylko do odczytu.',
   'sp.slash.busy_only_oob': 'Wiadomości są kolejkowane, gdy WebBrain jest zajęty. Tylko /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces i /verbose mogą uruchamiać się od razu jako polecenia slash.',

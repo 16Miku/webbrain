@@ -305,6 +305,8 @@ export default {
   'sp.plan.approved': 'Plan genehmigt — wird ausgeführt…',
   'sp.plan.cancelled': 'Plan abgebrochen.',
   'sp.plan.expired': 'Dieser Plan wartet nicht mehr auf Überprüfung — der Durchlauf wurde abgebrochen.',
+  'sp.plan.timed_out': 'Zeit für die Genehmigung abgelaufen',
+  'sp.plan.timed_out_hint': 'Nichts wurde ausgeführt. Versuche es erneut, um einen neuen Plan zu prüfen.',
   'sp.plan.awaiting_review': 'Genehmigen oder brechen Sie den obigen Plan ab, bevor Sie eine weitere Nachricht senden.',
   'sp.plan.intent_unavailable': 'Der Planer konnte nach einer Reparatur keine gültige strukturierte Ausgabe liefern. Dieser Durchlauf wird im schreibgeschützten Modus fortgesetzt.',
   'sp.step.details': 'Details',
