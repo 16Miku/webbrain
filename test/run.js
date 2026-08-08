@@ -1089,22 +1089,44 @@ test('mergeRedactionFrameRegions maps nested iframe regions into top capture coo
   assert.deepEqual(mergeRedactionFrameRegionsFx(frames), expected, 'Firefox frame mapping should match Chrome');
 
   const incompleteFrames = [
-    { ...frames[0], childFrames: [] },
-    frames[1],
+    frames[0],
+    { ...frames[1], inspectionFailed: true },
   ];
   assert.equal(
     mergeRedactionFrameRegions(incompleteFrames, { requireCompleteFrameCoverage: true }),
     null,
-    'strict Chrome frame mapping should fail when a discovered child cannot be located in the screenshot',
+    'strict Chrome frame mapping should fail when a rendered child cannot be inspected',
   );
   assert.equal(
     mergeRedactionFrameRegionsFx(incompleteFrames, { requireCompleteFrameCoverage: true }),
     null,
-    'strict Firefox frame mapping should fail when a discovered child cannot be located in the screenshot',
+    'strict Firefox frame mapping should fail when a rendered child cannot be inspected',
+  );
+
+  const hiddenFrames = [
+    {
+      ...frames[0],
+      childFrames: [{
+        url: 'https://pay.example/form',
+        rendered: false,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+      }],
+    },
+    { ...frames[1], inspectionFailed: true },
+  ];
+  assert.deepEqual(
+    mergeRedactionFrameRegions(hiddenFrames, { requireCompleteFrameCoverage: true }),
+    [expected[0]],
+    'strict Chrome frame mapping should ignore an uninspectable child that contributes no pixels',
+  );
+  assert.deepEqual(
+    mergeRedactionFrameRegionsFx(hiddenFrames, { requireCompleteFrameCoverage: true }),
+    [expected[0]],
+    'strict Firefox frame mapping should ignore an uninspectable child that contributes no pixels',
   );
 });
 
-test('capture-time redaction snapshots reject any discovered frame that cannot be inspected', async () => {
+test('capture-time redaction snapshots require inspection only for rendered frames', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
   try {
@@ -1141,6 +1163,30 @@ test('capture-time redaction snapshots reject any discovered frame that cannot b
         await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
         null,
         `${label}: one uninspected child frame must invalidate the privacy snapshot`,
+      );
+
+      api.tabs.sendMessage = async (_tabId, _message, options) => {
+        if (options?.frameId === 2) throw new Error('hidden frame unavailable');
+        return {
+          viewport: { width: 800, height: 600 },
+          elements: [{ kind: 'input', type: 'password', rect: { x: 40, y: 50, w: 160, h: 30 } }],
+          childFrames: [{
+            url: 'https://child.example.test/',
+            rendered: false,
+            rect: { x: 0, y: 0, w: 0, h: 0 },
+          }],
+          overflowed: false,
+          complete: true,
+        };
+      };
+      assert.deepEqual(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        {
+          coordinateSpace: 'viewport',
+          viewport: { width: 800, height: 600 },
+          regions: [{ kind: 'password', rect: { x: 40, y: 50, w: 160, h: 30 } }],
+        },
+        `${label}: a hidden uninspectable child must not discard visible top-frame redaction`,
       );
 
       api.webNavigation.getAllFrames = async () => [
@@ -1284,6 +1330,8 @@ test('redaction collectors filter offscreen fields and report incomplete region 
       `${browserName}: per-frame region overflow must be explicit`);
     assert.match(body, /scanned >= MAX_SCANNED_TEXT_NODES[\s\S]*?collectionComplete = false;/,
       `${browserName}: hitting the text scan ceiling must fail closed`);
+    assert.match(body, /const contributesPixels[\s\S]*?style\.visibility === 'hidden'[\s\S]*?childFrames\.push\(\{[\s\S]*?rendered: contributesPixels\(frame, r\),[\s\S]*?rect:/,
+      `${browserName}: child-frame order should be retained while capture visibility is explicit`);
   }
 });
 
@@ -62735,13 +62783,13 @@ test('attachments: capture-time redaction snapshots fail closed instead of trunc
     );
     assert.match(
       source,
-      /if \(frameSnapshots\.some\(frame => !frame\)\) return null/,
-      `${label}: a frame messaging failure must invalidate the complete snapshot`,
+      /return \{ \.\.\.frameMetadata, inspectionFailed: true \}[\s\S]*?mergeRedactionFrameRegions\(frameSnapshots/,
+      `${label}: frame messaging failures must remain available for rendered-coverage validation`,
     );
     assert.match(
       source,
       /if \(!resp \|\| resp\.complete !== true \|\| resp\.overflowed === true/,
-      `${label}: a per-frame overflow or incomplete scan must invalidate the privacy snapshot`,
+      `${label}: a per-frame overflow or incomplete scan must mark that frame uninspected`,
     );
   }
 });

@@ -5821,6 +5821,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return null;
     }
     const frameSnapshots = await Promise.all(navigationFrames.map(async (frame) => {
+      const frameMetadata = {
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        url: frame.url || '',
+      };
       try {
         const resp = await browser.tabs.sendMessage(tabId, {
           target: 'redaction-content',
@@ -5829,13 +5834,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }, { frameId: frame.frameId });
         if (!resp || resp.complete !== true || resp.overflowed === true
             || !Array.isArray(resp.elements) || !Array.isArray(resp.childFrames)
-            || !(Number(resp.viewport?.width) > 0 && Number(resp.viewport?.height) > 0)) return null;
-        return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
+            || !(Number(resp.viewport?.width) > 0 && Number(resp.viewport?.height) > 0)) {
+          return { ...frameMetadata, inspectionFailed: true };
+        }
+        return { ...resp, ...frameMetadata };
       } catch {
-        return null;
+        return { ...frameMetadata, inspectionFailed: true };
       }
     }));
-    if (frameSnapshots.some(frame => !frame)) return null;
     const topFrame = frameSnapshots.find((frame) => frame.frameId === 0);
     if (!topFrame) return null;
     const regions = mergeRedactionFrameRegions(frameSnapshots, {

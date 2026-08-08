@@ -238,7 +238,8 @@ export function mapRegionsToImage(regions, opts = {}) {
  *   url?:string,
  *   elements?:Array,
  *   viewport?:{width:number,height:number},
- *   childFrames?:Array<{url?:string,rect:{x:number,y:number,w:number,h:number}}>
+ *   childFrames?:Array<{url?:string,rendered?:boolean,rect:{x:number,y:number,w:number,h:number}}>
+ *   inspectionFailed?:boolean,
  * }>} frames
  * @param {object} [opts]
  * @param {number} [opts.maxRegions=400]
@@ -254,6 +255,7 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
   const byId = new Map(usable.map((frame) => [frame.frameId, frame]));
   const root = byId.get(0) || usable.find((frame) => frame.parentFrameId == null || frame.parentFrameId < 0);
   if (!root) return [];
+  if (opts.requireCompleteFrameCoverage === true && root.inspectionFailed === true) return null;
   const captureWidth = Number(root.viewport?.width);
   const captureHeight = Number(root.viewport?.height);
 
@@ -275,6 +277,7 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
     const frame = queue.shift();
     const transform = transforms.get(frame.frameId);
     if (!transform) continue;
+    if (opts.requireCompleteFrameCoverage === true && frame.inspectionFailed === true) return null;
     const viewport = frame.viewport || {};
     const localRegions = selectRedactionRegions(frame.elements || [], {
       viewport,
@@ -331,12 +334,34 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
       assignments.push([child, descriptorIndex]);
     }
 
+    const descriptorContributesPixels = (descriptor) => {
+      const rect = descriptor?.rect;
+      if (descriptor?.rendered === false || !rect || !(rect.w > 0 && rect.h > 0)) return false;
+      const mappedRect = {
+        x: transform.x + rect.x * transform.scaleX,
+        y: transform.y + rect.y * transform.scaleY,
+        w: rect.w * transform.scaleX,
+        h: rect.h * transform.scaleY,
+      };
+      return !(Number.isFinite(captureWidth) && Number.isFinite(captureHeight))
+        || rectIntersects(mappedRect, 0, 0, captureWidth, captureHeight);
+    };
+    if (opts.requireCompleteFrameCoverage === true) {
+      for (const descriptorIndex of unused) {
+        if (descriptorContributesPixels(descriptors[descriptorIndex])) return null;
+      }
+    }
+
     for (const [child, descriptorIndex] of assignments) {
       const descriptor = descriptors[descriptorIndex];
+      if (!descriptorContributesPixels(descriptor)) continue;
       const rect = descriptor?.rect;
       const childWidth = Number(child.viewport?.width);
       const childHeight = Number(child.viewport?.height);
-      if (!rect || !(rect.w > 0 && rect.h > 0) || !(childWidth > 0 && childHeight > 0)) continue;
+      if (child.inspectionFailed === true || !(childWidth > 0 && childHeight > 0)) {
+        if (opts.requireCompleteFrameCoverage === true) return null;
+        continue;
+      }
 
       transforms.set(child.frameId, {
         x: transform.x + rect.x * transform.scaleX,
@@ -346,10 +371,6 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
       });
       queue.push(child);
     }
-  }
-
-  if (opts.requireCompleteFrameCoverage === true && transforms.size !== usable.length) {
-    return null;
   }
 
   return merged;

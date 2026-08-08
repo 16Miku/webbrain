@@ -35,6 +35,17 @@
         r.left < window.innerWidth && r.top < window.innerHeight
       )
     );
+    const contributesPixels = (element, r) => {
+      if (!visible(r)) return false;
+      try {
+        for (let current = element; current; current = current.parentElement) {
+          const style = getComputedStyle(current);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse'
+              || Number.parseFloat(style.opacity) === 0) return false;
+        }
+      } catch { /* geometry remains the conservative fallback */ }
+      return true;
+    };
     const looksLikePiiText = (text) => {
       const trimmed = String(text || '').trim();
       const looksLikeEmail = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(trimmed) &&
@@ -110,11 +121,14 @@
     try {
       for (const frame of document.querySelectorAll('iframe, frame')) {
         const r = frame.getBoundingClientRect();
-        if (!(r.width > 0 && r.height > 0)) continue;
         const transformX = r.width / (frame.offsetWidth || r.width || 1);
         const transformY = r.height / (frame.offsetHeight || r.height || 1);
         childFrames.push({
           url: frame.src || frame.getAttribute('src') || 'about:blank',
+          // Keep non-rendered descriptors so navigation-frame order remains
+          // unambiguous, but do not require privacy inspection for frames that
+          // contribute no pixels to this capture.
+          rendered: contributesPixels(frame, r),
           rect: {
             x: r.left + sx + (frame.clientLeft || 0) * transformX,
             y: r.top + sy + (frame.clientTop || 0) * transformY,
