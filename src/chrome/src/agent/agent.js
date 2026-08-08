@@ -465,6 +465,9 @@ export class Agent extends LoopDetector {
     // clearConversation. Persisted with the conversation so a service
     // worker restart preserves it.
     this.apiAllowedTabs = new Set();
+    // Cloud callers can grant API mutations for one managed run without
+    // mutating the conversation's persistent /allow-api choice.
+    this.temporaryApiAllowedTabs = new Set();
     // Global Advanced-setting opt-in. This is deliberately separate from
     // apiAllowedTabs so resetting a conversation clears only its slash-command
     // override, while disabling the stored setting revokes global permission
@@ -1668,6 +1671,30 @@ export class Agent extends LoopDetector {
       this.apiAllowedTabs.add(tabId);
     } else {
       this.apiAllowedTabs.delete(tabId);
+      if (!this.isApiMutationsAllowed(tabId)) this.apiAllowedInjected.delete(tabId);
+    }
+  }
+
+  setTemporaryApiMutationsAllowed(tabId, allowed) {
+    if (allowed) {
+      this.temporaryApiAllowedTabs.add(tabId);
+      return;
+    }
+
+    this.temporaryApiAllowedTabs.delete(tabId);
+    // A user may have enabled /allow-api or the global setting while the run
+    // was active. In that case the injected authorization is still current.
+    if (this.isApiMutationsAllowed(tabId)) return;
+
+    if (this.apiAllowedInjected.has(tabId)) {
+      const messages = this.conversations.get(tabId);
+      if (Array.isArray(messages)) {
+        messages.push({
+          role: 'user',
+          content: '[CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED: The temporary API mutation authorization for the completed browser run has ended. This current state supersedes any earlier [USER OVERRIDE — API MUTATIONS ALLOWED] note. Do not plan or call POST/PUT/PATCH/DELETE requests through fetch_url or research_url unless the user explicitly enables /allow-api for this conversation. Continue through the visible UI or ask for /allow-api.]',
+        });
+        this._persist(tabId);
+      }
       this.apiAllowedInjected.delete(tabId);
     }
   }
@@ -1682,7 +1709,7 @@ export class Agent extends LoopDetector {
     // system prompt cannot retract it. Append the live state only for chats
     // that actually saw that note and lost their effective authorization.
     for (const tabId of [...this.apiAllowedInjected]) {
-      if (this.apiAllowedTabs.has(tabId)) continue;
+      if (this.isApiMutationsAllowed(tabId)) continue;
       const messages = this.conversations.get(tabId);
       if (Array.isArray(messages)) {
         messages.push({
@@ -1696,7 +1723,9 @@ export class Agent extends LoopDetector {
   }
 
   isApiMutationsAllowed(tabId) {
-    return this.alwaysAllowApiMutations || this.apiAllowedTabs.has(tabId);
+    return this.alwaysAllowApiMutations
+      || this.apiAllowedTabs.has(tabId)
+      || this.temporaryApiAllowedTabs.has(tabId);
   }
 
   // Browser-free loop detection is inherited from LoopDetector. These
@@ -4428,6 +4457,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
     let didStateChange = false;
+    const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
+    const apiMutationsAllowedForRun = () =>
+      !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
     const promptTier = this._resolvePromptTier();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     // Set of tools whose side effect can navigate the page. We snapshot the
@@ -4698,18 +4730,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message });
         continue;
       }
-      if (isNetworkMutation(fnName, fnArgs) && !this.isApiMutationsAllowed(tabId)) {
+      if (isNetworkMutation(fnName, fnArgs) && !apiMutationsAllowedForRun()) {
+        const askModeError = apiMutationsDeniedForRun
+          ? `API mutations via ${fnName} are not allowed in Ask mode. Do not retry this mutating API call in this run; continue with read-only tools or return what you can observe.`
+          : `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`;
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
           content: JSON.stringify({
             success: false,
             denied: true,
-            requiresApiAllow: true,
-            error: `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`,
+            requiresApiAllow: !apiMutationsDeniedForRun,
+            error: askModeError,
           }),
         });
-        onUpdate('warning', { message: 'API mutation blocked until /allow-api is enabled.' });
+        onUpdate('warning', {
+          message: apiMutationsDeniedForRun
+            ? 'API mutation blocked because Ask mode is read-only.'
+            : 'API mutation blocked until /allow-api is enabled.',
+        });
         continue;
       }
       const formValidationCandidate = !protectedPageFailure
@@ -4853,7 +4892,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         for (const capability of capabilities) {
           if (!requiresMandatoryWebMCPGates && this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
-          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && this.isApiMutationsAllowed(tabId)) continue;
+          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
           const gateArgs = this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
@@ -11446,6 +11485,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._compactCooldown.delete(tabId);
     this.hydratedTabs.delete(tabId);
     this.apiAllowedTabs.delete(tabId);
+    this.temporaryApiAllowedTabs.delete(tabId);
     this.apiAllowedInjected.delete(tabId);
     this._cleanupTab(tabId, { preserveRunGuard: true });
     const t = this.persistTimers.get(tabId);
