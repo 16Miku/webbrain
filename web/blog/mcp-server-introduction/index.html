@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebBrain MCP: Claude Code + OpenCode + Codex in your real browser — WebBrain Blog</title>
+  <meta name="description" content="The WebBrain MCP server lets any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — delegate browser tasks to your real, already-authenticated browser. No headless login dances, no cookie transfers. Just ask your agent to fill out a form, check a dashboard, or read a page behind SSO, and it runs in the browser you actually use.">
+  <meta name="keywords" content="WebBrain, MCP, Model Context Protocol, Claude Code, OpenCode, Codex, Cursor, browser agent, automation, authentication, headless browser, local LLM, Chrome extension, Firefox extension">
+  <meta property="og:title" content="WebBrain MCP: Claude Code, OpenCode, Codex in your real browser">
+  <meta property="og:description" content="The WebBrain MCP server lets any MCP-capable agent delegate browser tasks to your real, authenticated Chrome or Firefox session. No headless login walls.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/mcp-server-introduction">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="WebBrain MCP: Claude Code, OpenCode, Codex in your real browser">
+  <meta name="twitter:description" content="Give your coding agent the ability to interact with any page you&#39;re already logged into — Stripe, Gmail, GitHub, banking. Just ask.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/mcp-server-introduction">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "WebBrain MCP: Give Claude Code, OpenCode, and Codex access to your real browser session",
+  "description": "The WebBrain MCP server lets any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — delegate browser tasks to your real, already-authenticated browser. No headless login dances, no cookie transfers. Just ask your agent to fill out a form, check a dashboard, or read a page behind SSO, and it runs in the browser you actually use.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-08",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/mcp-server-introduction"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 8, 2026 &middot; 10 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>WebBrain MCP: Give Claude Code, OpenCode, and Codex access to your real browser session</h1>
+    <p class="lede">We built the WebBrain MCP server so that any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — can delegate browser tasks to the user's real, already-authenticated browser session. Instead of spinning up a headless browser that starts logged out of everything, the agent hands a goal to WebBrain running in the user's own Chrome or Firefox, and the extension carries it out in the tab the user is already looking at. This post explains how it works, how it differs from other browser MCP approaches, and how to wire it up to your agent of choice.</p>
+<figure>
+  <img src="/assets/mcp-diagram.png" alt="Claude Code, OpenCode, Codex — each connected via stdio to the WebBrain MCP server, which connects over WebSocket to the WebBrain browser extension, which controls the user's authenticated browser tabs.">
+  <figcaption>The WebBrain MCP server sits between your coding agent and your browser. The extension runs in your real session — already logged in, cookies present, MFA passed.</figcaption>
+</figure>
+<h2 id="why-an-mcp-server-for-browser-automation">Why an MCP server for browser automation?</h2>
+<p>A headless browser automation tool starts fresh every time. No cookies. No signed-in sessions. No MFA tokens. The first useful page hits you with a login wall, and you either hardcode credentials into a script or manually replay cookies after every restart.</p>
+<p>WebBrain is different by design. It runs as a <strong>browser extension</strong> — Chrome (MV3) or Firefox (MV2) — with an embedded agent loop living inside the user's own browser profile. You are already signed in to GitHub, your banking portal, your Stripe dashboard, your internal admin tools. The extension can reach them with the user's full permissions, exactly as if a human were clicking.</p>
+<p>The MCP server exposes that capability to any MCP client:</p>
+<pre><code>Claude Code ──stdio──▶ webbrain-mcp ──ws://127.0.0.1:17374──▶ WebBrain extension ──▶ your tabs</code></pre>
+<p>The MCP client (Claude Code, OpenCode, Codex, Cursor) launches <code>npx -y @webbrain/mcp-server</code> as a child process. That process hosts a local WebSocket listener on <code>127.0.0.1:17374</code>. The WebBrain extension dials <strong>out</strong> to that listener — Manifest V3 extensions can't listen on sockets, so the direction is fixed. Once handshaken, the MCP client sends a task; the extension runs it in the browser; the result flows back through the same channel.</p>
+<h2 id="how-it-differs-from-headless-browser-mcp-tools">How it differs from headless browser MCP tools</h2>
+<p>Other browser MCP servers in the ecosystem typically wrap a <strong>headless Chromium</strong> via Playwright or similar. That approach has tradeoffs:</p>
+<div class="table-wrap"><table><thead><tr><th></th><th><strong>WebBrain MCP</strong></th><th><strong>Headless browser MCP</strong></th></tr></thead><tbody><tr><td><strong>Authentication</strong></td><td>Your real browser session — already signed in, MFA passed</td><td>Fresh browser — login walls on the first useful page</td></tr><tr><td><strong>Cookie management</strong></td><td>None needed — uses existing session cookies</td><td>Manual export/replay, or credential injection in code</td></tr><tr><td><strong>MFA</strong></td><td>Works as-is — your browser already passed it</td><td>Cannot pass MFA programmatically</td></tr><tr><td><strong>Tool surface</strong></td><td>5 task-level tools (delegation pattern)</td><td>8–12 primitive tools (navigate, click, type, screenshot…)</td></tr><tr><td><strong>Safety model</strong></td><td>Ask/Act/Dev modes, per-action permission gate</td><td>Trust boundary at the MCP client only</td></tr><tr><td><strong>Local models</strong></td><td>Full local provider support (llama.cpp, vLLM, Ollama, LM Studio)</td><td>Depends on the agent framework wrapping the MCP server</td></tr><tr><td><strong>Cross-origin frames</strong></td><td>Extension injects into iframes directly (Stripe widgets, embedded forms)</td><td>Blocked by same-origin policy unless explicitly handled</td></tr></tbody></table></div>
+<p>The key architectural difference is <strong>trust boundary placement</strong>. Headless tools expose granular browser primitives (<code>click</code>, <code>type</code>, <code>navigate</code>, <code>screenshot</code>) through MCP — that's the whole surface area. WebBrain deliberately does <strong>not</strong>. It exposes five <strong>task-level</strong> tools instead:</p>
+<div class="table-wrap"><table><thead><tr><th>Tool</th><th>Purpose</th></tr></thead><tbody><tr><td><code>webbrain_run</code></td><td>Delegate a browser task. <code>mode=&#39;ask&#39;</code> is read-only; <code>mode=&#39;act&#39;</code> can click and type, gated by in-browser approval.</td></tr><tr><td><code>webbrain_status</code></td><td>Poll a run, or list every run.</td></tr><tr><td><code>webbrain_respond</code></td><td>Answer a run sitting at <code>needs_user_input</code>.</td></tr><tr><td><code>webbrain_abort</code></td><td>Stop a run. Actions already taken are not undone.</td></tr><tr><td><code>webbrain_connection</code></td><td>Report whether the extension is attached, and how to fix it if not.</td></tr></tbody></table></div>
+<p>This is not a limitation — it's a safety decision. WebBrain's capability × origin permission gate runs inside the extension's agent loop (<code>_executeToolBatch</code>), not inside the MCP tool execution path. A headless MCP tool calling <code>click</code> directly bypasses every approval prompt the product is built on. Delegating a goal instead keeps the trust boundary in the browser, where the human is.</p>
+<h2 id="setup-register-the-mcp-server">Setup: register the MCP server</h2>
+<p>The server is published on npm as <code>@webbrain/mcp-server</code>. Add it to your MCP client's configuration:</p>
+<h3 id="claude-code">Claude Code</h3>
+<pre><code class="language-bash">claude mcp add webbrain -- npx -y @webbrain/mcp-server</code></pre>
+<h3 id="opencode">OpenCode</h3>
+<p>Add to <code>~/.config/opencode/opencode.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;mcp&quot;: {
+    &quot;webbrain&quot;: {
+      &quot;type&quot;: &quot;local&quot;,
+      &quot;command&quot;: [&quot;npx&quot;, &quot;-y&quot;, &quot;@webbrain/mcp-server&quot;]
+    }
+  }
+}</code></pre>
+<h3 id="codex-or-any-mcp-json-consumer">Codex (or any <code>mcp.json</code> consumer)</h3>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;webbrain&quot;: {
+      &quot;command&quot;: &quot;npx&quot;,
+      &quot;args&quot;: [&quot;-y&quot;, &quot;@webbrain/mcp-server&quot;]
+    }
+  }
+}</code></pre>
+<h3 id="cursor">Cursor</h3>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;webbrain&quot;: {
+      &quot;command&quot;: &quot;npx&quot;,
+      &quot;args&quot;: [&quot;-y&quot;, &quot;@webbrain/mcp-server&quot;]
+    }
+  }
+}</code></pre>
+<p>After adding the config, restart the MCP client. On startup, it spawns <code>npx -y @webbrain/mcp-server</code> as a child process. That process binds to <code>127.0.0.1:17374</code> and waits for the extension to connect.</p>
+<h2 id="connecting-the-browser-extension">Connecting the browser extension</h2>
+<p>The MCP server alone is not enough — you need the WebBrain extension installed and pointed at it:</p>
+<ol><li>Install the <a href="https://webbrain.one" target="_blank" rel="noopener">WebBrain extension</a> in Chrome or Firefox and open your browser.</li><li>In <strong>WebBrain → Settings → General → Advanced → Cloud bridge</strong>, set the URL to <code>ws://127.0.0.1:17374/extension</code> and enable it.</li><li>Restart your MCP client (or just restart the MCP server process) and ask the client to call <code>webbrain_connection</code> to verify.</li></ol>
+<p>The extension holds exactly one outbound bridge socket. Pointing it here means it is <em>not</em> pointed at WebBrain Cloud (port <code>17373</code>) or the LM Studio plugin (port <code>17375</code>). Switch it under <strong>Settings → General → Advanced → Cloud bridge</strong> when you need to change destinations.</p>
+<div class="callout">
+**Network binding is loopback-only.** The listener binds `127.0.0.1` only. Anything that can reach this port can drive your signed-in browser — never expose it to a network or container bridge. The shipping extension sends no shared secret, so treat the port as trusted-local.
+</div>
+<h2 id="example-usage">Example usage</h2>
+<p>Once configured, the MCP client sees the five WebBrain tools in its tool list. You interact with them naturally:</p>
+<blockquote><p>"Open my Stripe dashboard and list last week's failed payments with amounts and customer emails."</p></blockquote>
+<p>The agent calls:</p>
+<pre><code>webbrain_run(
+  task: &quot;open the Stripe dashboard and list last week&#39;s failed payments with amounts and customer emails&quot;,
+  mode: &quot;ask&quot;
+)</code></pre>
+<p>The extension receives the task, navigates the already-authenticated dashboard, reads the results, and returns a summary. <code>mode=&#39;ask&#39;</code> is read-only — it cannot click, type, or submit. For interaction, use <code>mode=&#39;act&#39;</code>, which requires in-browser approval for consequential actions via the capability × origin permission gate.</p>
+<p>If a run stops with status <code>needs_user_input</code>, the extension is asking a clarifying question. Answer it with <code>webbrain_respond</code>, passing the <code>run_id</code> and <code>clarify_id</code> from the snapshot.</p>
+<h2 id="configuration-variables">Configuration variables</h2>
+<p>All environment-driven, set these before launching the MCP server if you need non-default behavior:</p>
+<div class="table-wrap"><table><thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead><tbody><tr><td><code>WEBBRAIN_BRIDGE_PORT</code></td><td><code>17374</code></td><td>Port the extension connects to.</td></tr><tr><td><code>WEBBRAIN_BRIDGE_PATH</code></td><td><code>/extension</code></td><td>Path segment; must match the URL in Settings.</td></tr><tr><td><code>WEBBRAIN_COMMAND_TIMEOUT_MS</code></td><td><code>30000</code></td><td>Per-command reply timeout.</td></tr><tr><td><code>WEBBRAIN_RUN_TIMEOUT_MS</code></td><td><code>300000</code></td><td>Default ceiling for <code>webbrain_run</code> polling.</td></tr><tr><td><code>WEBBRAIN_POLL_INTERVAL_MS</code></td><td><code>1000</code></td><td>Status poll interval.</td></tr></tbody></table></div>
+<h2 id="when-to-use-this-vs-a-headless-mcp-server">When to use this vs. a headless MCP server</h2>
+<p>Choose WebBrain MCP when:</p>
+<ul><li>You need to interact with <strong>sites you're already authenticated to</strong> (banking, SaaS dashboards, admin panels, email)</li><li><strong>MFA</strong> is involved and you can't programmatically log in</li><li>You want <strong>explicit safety modes</strong> (read-only first, then gated interactive mode)</li><li>You want <strong>local-first execution</strong> with your own LLMs — no API calls leave your machine</li><li>You need the extension to handle <strong>cross-origin iframes</strong> (Stripe checkout widgets, embedded forms)</li></ul>
+<p>Choose a headless browser MCP server when:</p>
+<ul><li>You're building <strong>automated web workflows in code</strong> (scraping, testing, scheduled form submissions)</li><li>You can <strong>handle authentication programmatically</strong> (known credentials, no MFA)</li><li>You need <strong>tight integration with a Python agent framework</strong> (LangChain, AutoGPT, etc.)</li><li>You're comfortable with the login-wall workaround and managing session state yourself</li></ul>
+<p>They are not mutually exclusive. A headless browser MCP server handles programmatic scraping fine. WebBrain MCP handles authenticated, interactive tasks that need your real browser session.</p>
+<h2 id="security-model">Security model</h2>
+<p>The extension runs with <code>&lt;all_urls&gt;</code> host permissions. The full threat model is in <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/security-model.md" target="_blank" rel="noopener"><code>docs/security-model.md</code></a>. Key points:</p>
+<ul><li><strong>Ask mode is read-only</strong> — only semantic read tools (<code>get_accessibility_tree</code>, <code>read_page</code>, <code>extract_data</code>, etc.) are available. No clicks, no typing, no navigation.</li><li><strong>Act mode requires per-action approval</strong> — every consequential tool (click, type, navigate, execute_js, network, download) goes through a deterministic <code>(capability, host)</code> permission gate. You choose Allow/Always/Deny per origin.</li><li><strong>Plan-before-Act</strong> — an optional structured planner runs before any browser tools execute, and the side panel renders an editable review card for approval.</li><li><strong>Loop detection</strong> — three independent detectors (general repeat, coordinate click, navigation) stop the agent if it's stuck repeating actions.</li><li><strong>Prompt injection defense</strong> — page-derived content is wrapped in <code>&lt;untrusted_page_content&gt;</code> markers so the model treats it as data, not instructions.</li></ul>
+<p>The bridge itself is loopback-only. Connections from HTTP(S) pages and non-extension browser origins are rejected before they can replace the extension socket. Accepted connections must present the extension's <code>hello</code> frame with <code>client: &quot;webbrain-extension&quot;</code>.</p>
+<p>Tags: #MCP #ModelContextProtocol #ClaudeCode #OpenCode #Codex #Cursor #BrowserAgent #Automation #LocalLLM</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>
