@@ -9410,6 +9410,42 @@ test('sidepanels wire highlighting and heading rendering into fenced Markdown', 
   }
 });
 
+test('sidepanels hide empty assistant placeholders until output renders', () => {
+  for (const [label, panelRel, cssRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/styles/sidepanel.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/styles/sidepanel.css'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+
+    assert.match(
+      panel,
+      /function assistantMessageHasRenderableContent\(msgEl\) \{[\s\S]*?contentEl\.textContent\.trim\(\)[\s\S]*?img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress/,
+      `${label}: assistant visibility should recognize text and non-text output`,
+    );
+    assert.match(
+      panel,
+      /function syncAssistantMessageVisibility\(\) \{[\s\S]*?classList\.toggle\([\s\S]*?'assistant-awaiting-content'[\s\S]*?!assistantMessageHasRenderableContent\(msgEl\)/,
+      `${label}: assistant visibility should follow rendered content`,
+    );
+    assert.match(
+      panel,
+      /const persistObserver = new MutationObserver\(\(\) => \{\s*syncAssistantMessageVisibility\(\);\s*schedulePersist\(\);\s*\}\);/,
+      `${label}: streamed text and cards should reveal the waiting assistant node`,
+    );
+    assert.match(
+      panel,
+      /if \(role === 'assistant' && !assistantMessageHasRenderableContent\(msgEl\)\) \{[\s\S]*?classList\.add\('assistant-awaiting-content'\);/,
+      `${label}: an empty assistant node should be hidden before it is appended`,
+    );
+    assert.match(
+      css,
+      /\.message\.assistant\.assistant-awaiting-content \{\s*display: none;\s*\}/,
+      `${label}: empty assistant shells should not occupy chat space`,
+    );
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // validateFetchUrl — the agent's network gate
 // ────────────────────────────────────────────────────────────────────────
