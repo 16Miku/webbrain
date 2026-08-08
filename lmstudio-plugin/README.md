@@ -1,5 +1,20 @@
 # WebBrain Web Tools — LM Studio plugin
 
+> Listing on LM Studio Hub: `webbrain/web-tools` (owner `webbrain`, name `web-tools`,
+> public) — https://lmstudio.ai/webbrain/web-tools
+>
+> **One-click install while LM Studio is open:** click the *Run in LM Studio*
+> button on the Hub page, or open this URL on your machine:
+>
+> ```
+> lmstudio://plugin?owner=webbrain&name=web-tools
+> ```
+>
+> That triggers LM Studio to download the plugin from the Hub into your local
+> plugins directory. You can also install from inside LM Studio (integrations
+> icon next to the chat input → toggle **webbrain/web-tools** on) or via CLI
+> with `lms clone webbrain/web-tools`.
+
 Give any LM Studio model the ability to read the live web — and, if you
 have the browser extension, to act inside your own signed-in session.
 
