@@ -207,7 +207,6 @@ export default {
   'sp.step.result_label': 'Sonuç',
 
   'sp.api.enabled_html': '🔓 Bu konuşma için <strong>API mutasyonları etkin</strong>. Aracı artık bir adım için API\'nin arayüzden daha güvenilir olduğuna karar verirse fetch_url ve execute_js üzerinden POST/PUT/PATCH/DELETE kullanabilir. Varsayılan yine arayüz öncelikli kalır. Bu bayrak konuşmayı sıfırladığında temizlenir.',
-  'sp.api.badge_html': '<span>🔓 API mutasyonlarına izin verildi</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>İzin istemleri KAPALI.</strong> WebBrain, sormadan tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kayıt yapacak ve gelecek işleri zamanlayacaktır. Bunu Ayarlar → İzinler → Önemli işlemlerden önce sor ayarlarından yeniden etkinleştirin.',
 
   'tool.read_page': 'Sayfa okunuyor',

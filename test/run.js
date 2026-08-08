@@ -19561,7 +19561,7 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.ok(fullScreenIdx >= 0 && recordIdx >= 0 && fullScreenIdx < recordIdx, 'chrome: full-screen route must run before tab recording');
   const fullScreenBody = panel.slice(fullScreenIdx, recordIdx);
   const helperStart = panel.indexOf('async function startFullScreenRecording');
-  const helperBody = panel.slice(helperStart, panel.indexOf('function updateApiBadge', helperStart));
+  const helperBody = panel.slice(helperStart, panel.indexOf('async function sendMessage', helperStart));
   assert.match(fullScreenBody, /startFullScreenRecording\(tabId/, 'chrome: parser should route /record --full-screen through helper');
   assert.match(helperBody, /prepare_recording_host/, 'chrome: full-screen route should prepare offscreen before recording');
   assert.match(fullScreenBody, /showBanner:\s*!optionValues\.has\('--hide-recording-indicator'\)/, 'chrome: full-screen route should hide the banner only when explicitly requested');
@@ -22989,8 +22989,8 @@ test('persistent API mutation permission is opt-in, portable, and mirrored', () 
     assert.match(bg, /setAlwaysAllowApiMutations\(stored\[ALWAYS_ALLOW_API_MUTATIONS_KEY\] === true\)/, `${label}: background should initialize the Agent from storage`);
     assert.match(bg, /await alwaysAllowApiMutationsReady;/, `${label}: first agent runs should wait for persistent permission hydration`);
     assert.match(bg, /changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\][\s\S]*setAlwaysAllowApiMutations\(changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\]\.newValue === true\)/, `${label}: background should apply live revocation`);
-    assert.match(panel, /alwaysAllowApiMutations = stored\.alwaysAllowApiMutations === true/, `${label}: side panel should load the persistent badge state`);
-    assert.match(panel, /alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\)/, `${label}: badge should combine persistent and conversation permission`);
+    assert.match(panel, /alwaysAllowApiMutations = stored\.alwaysAllowApiMutations === true/, `${label}: side panel should load the persistent authorization state`);
+    assert.match(panel, /alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\)/, `${label}: authorization should combine persistent and conversation permission`);
     assert.match(config, /alwaysAllowApiMutations:\s*false/, `${label}: config export default should remain off`);
     assert.match(config, /'alwaysAllowApiMutations'/, `${label}: config import should validate the boolean setting`);
   }
@@ -23945,7 +23945,7 @@ test('agent propagates status-bearing terminal tool-batch returns to callers', (
   }
 });
 
-test('sidepanel scopes allow-api override to the tab conversation', () => {
+test('sidepanel scopes allow-api override to the tab conversation and confirms it once in the transcript', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
@@ -23953,7 +23953,8 @@ test('sidepanel scopes allow-api override to the tab conversation', () => {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     assert.match(panel, /const apiMutationsAllowedByTab = new Map\(\);/, `${label}: /allow-api should be tracked per tab`);
     assert.match(panel, /function isApiMutationsAllowedForTab\(tabId\) \{[\s\S]*?apiMutationsAllowedByTab\.get\(tabId\) === true;[\s\S]*?\}/, `${label}: /allow-api per-tab read helper missing`);
-    assert.match(panel, /function syncApiMutationsAllowedForCurrentTab\(\) \{[\s\S]*?apiMutationsAllowed = alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\);[\s\S]*?updateApiBadge\(\);[\s\S]*?\}/, `${label}: tab switches should combine persistent and conversation API badge state`);
+    assert.match(panel, /function syncApiMutationsAllowedForCurrentTab\(\) \{\s*apiMutationsAllowed = alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\);\s*\}/, `${label}: tab switches should combine persistent and conversation API authorization state`);
+    assert.doesNotMatch(panel, /api-badge|updateApiBadge|sp\.api\.badge_html/, `${label}: API authorization should not render a sticky composer badge`);
 
     const switchStart = panel.indexOf('function switchToTab(newTabId)');
     assert.notEqual(switchStart, -1, `${label}: switchToTab missing`);
@@ -23969,6 +23970,7 @@ test('sidepanel scopes allow-api override to the tab conversation', () => {
     assert.notEqual(allowIdx, -1, `${label}: /allow-api parser missing`);
     const allowBody = panel.slice(allowIdx, panel.indexOf("if (command.value === '/dangerously-skip-permissions')", allowIdx));
     assert.match(allowBody, /const wasAlreadyAllowed = isApiMutationsAllowedForTab\(tabId\);[\s\S]*?setApiMutationsAllowedForTab\(tabId, true\);/, `${label}: /allow-api should enable only the initiating tab conversation`);
+    assert.match(allowBody, /if \(!wasAlreadyAllowed\) \{[\s\S]*?addPersistentSlashMessage\(systemHtml\(t\('sp\.api\.enabled_html'\)\)\);[\s\S]*?\}/, `${label}: /allow-api should add one transcript confirmation bubble`);
     assert.doesNotMatch(allowBody, /apiMutationsAllowed = true;/, `${label}: /allow-api should not enable a global mutation override`);
   }
 });

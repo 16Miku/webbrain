@@ -313,7 +313,6 @@ export default {
   'sp.step.input_label': 'Invoer',
   'sp.step.result_label': 'Resultaat',
   'sp.api.enabled_html': '🔓 <strong>API-wijzigingen ingeschakeld</strong> voor dit gesprek...',
-  'sp.api.badge_html': '<span>🔓 API-wijzigingen toegestaan</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Machtigingsvragen zijn UIT.</strong> WebBrain klikt, typt, navigeert, voert JavaScript uit, uploadt, downloadt, neemt op en plant toekomstige taken in zonder eerst te vragen...',
   "sp.help.shortcuts_html": "<strong>Sneltoetsen</strong><br>...",
   "sp.slash.record_transcribe": "Opnemen en Whisper-transcriptie opslaan na stop",

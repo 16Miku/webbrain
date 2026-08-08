@@ -298,7 +298,6 @@ export default {
   "sp.step.input_label": "קלט",
   "sp.step.result_label": "תוצאה",
   "sp.api.enabled_html": "🔓 <strong>שינויי API מופעלים</strong> בשיחה הזו. הסוכן יכול כעת להשתמש בבקשות POST/PUT/PATCH/DELETE דרך fetch_url ו-execute_js כאשר הוא מעריך שה-API אמין יותר מממשק המשתמש בשלב מסוים. ממשק המשתמש נשאר ברירת המחדל. הדגל נמחק בעת איפוס השיחה.",
-  "sp.api.badge_html": "<span>🔓 שינויי API מותרים</span>",
   "sp.permissions.disabled_html": "⚠️ <strong>בקשות ההרשאה כבויות.</strong> WebBrain ילחץ, יקליד, ינווט, יריץ JavaScript, יעלה ויוריד קבצים, יקליט ויתזמן עבודה עתידית בלי לשאול תחילה. ניתן להפעיל אותן מחדש דרך הגדרות ← הרשאות ← בקש אישור לפני פעולות משמעותיות.",
   "sp.help.shortcuts_html": "<strong>קיצורי מקלדת</strong><br><code>Ctrl/Cmd+/</code> — מקד את שדה הקלט<br><code>Ctrl/Cmd+Shift+A</code> — עבור למצב שאל<br><code>Ctrl/Cmd+Shift+X</code> — עבור למצב פעולה<br><code>Ctrl/Cmd+Shift+D</code> — עבור למצב Dev<br><code>Ctrl/Cmd+M</code> — הפעל או השבת קלט קולי",
   "sp.slash.record_transcribe": "הקלט ושמור תמלול Whisper לאחר העצירה",

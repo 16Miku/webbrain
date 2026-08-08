@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'ผลลัพธ์',
 
   'sp.api.enabled_html': '🔓 <strong>เปิดการแก้ไขผ่าน API</strong> สำหรับการสนทนานี้แล้ว เอเจนต์สามารถใช้ POST/PUT/PATCH/DELETE ผ่าน fetch_url และ execute_js เมื่อพิจารณาว่า API น่าเชื่อถือกว่า UI สำหรับขั้นตอนหนึ่ง โดย UI ยังคงเป็นค่าเริ่มต้น แฟล็กนี้จะถูกล้างเมื่อคุณรีเซ็ตการสนทนา',
-  'sp.api.badge_html': '<span>🔓 อนุญาตการแก้ไขผ่าน API</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>การถามสิทธิ์ถูกปิดอยู่</strong> WebBrain จะคลิก พิมพ์ นำทาง รัน JavaScript อัปโหลด ดาวน์โหลด บันทึก และจัดงานในอนาคตโดยไม่ถามก่อน เปิดใช้งานอีกครั้งได้จาก การตั้งค่า → สิทธิ์ → ถามก่อนการดำเนินการสำคัญ',
 
   'tool.read_page': 'กำลังอ่านหน้า',

@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': '结果',
 
   'sp.api.enabled_html': '🔓 本次会话已<strong>启用 API 变更</strong>。当代理判断 API 比界面更可靠时，可以通过 fetch_url 和 execute_js 使用 POST/PUT/PATCH/DELETE。默认仍优先使用界面。重置会话后此标志会清除。',
-  'sp.api.badge_html': '<span>🔓 已允许 API 变更</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>权限提示已关闭。</strong>WebBrain 将在不事先询问的情况下点击、输入、导航、运行 JavaScript、上传、下载、录制和安排后续任务。请在设置 → 权限 → 执行重要操作前询问中重新启用。',
 
   'tool.read_page': '正在阅读页面',

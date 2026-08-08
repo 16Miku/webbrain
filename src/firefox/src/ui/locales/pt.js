@@ -325,7 +325,6 @@ export default {
   'sp.step.result_label': "Resultado",
 
   'sp.api.enabled_html': "🔓 <strong>Mutações de API ativadas</strong> para esta conversa. O agente agora pode usar POST/PUT/PATCH/DELETE via fetch_url e execute_js quando julgar que a API é mais confiável do que a UI para uma etapa. UI-first continua sendo o padrão. Esse sinalizador é apagado quando você reinicia a conversa.",
-  'sp.api.badge_html': "<span>🔓 Mutações de API permitidas</span>",
   'sp.permissions.disabled_html': "⚠️ <strong>Os prompts de permissão estão DESATIVADOS.</strong> WebBrain clicará, digitará, navegará, executará JavaScript, fará upload, baixará, gravará e agendará trabalhos futuros sem perguntar primeiro. Reative isso em Configurações → Permissões → Perguntar antes de ações consequentes.",
   "sp.help.shortcuts_html": "<strong>Atalhos de teclado</strong><br><code>Ctrl/Cmd+/</code> - Concentre a entrada<br><code>Ctrl/Cmd+Shift+A</code> — Mudar para o modo Perguntar<br><code>Ctrl/Cmd+Shift+X</code> — Mudar para o modo Agir<br><code>Ctrl/Cmd+Shift+D</code> — Mudar para o modo Dev<br><code>Escape</code> — Pare a execução ativa",
   "sp.slash.record_transcribe": "Grave e salve uma transcrição do Whisper após parar",

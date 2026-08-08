@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'Résultat',
 
   'sp.api.enabled_html': '🔓 <strong>Mutations d\'API activées</strong> pour cette conversation. L\'agent peut désormais utiliser POST/PUT/PATCH/DELETE via fetch_url et execute_js quand il juge l\'API plus fiable que l\'interface pour une étape. L\'interface reste privilégiée par défaut. Ce drapeau s\'efface quand vous réinitialisez la conversation.',
-  'sp.api.badge_html': '<span>🔓 Mutations d\'API autorisées</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Les demandes d\'autorisation sont DÉSACTIVÉES.</strong> WebBrain cliquera, saisira du texte, naviguera, exécutera du JavaScript, téléversera, téléchargera, enregistrera et planifiera des travaux futurs sans demander au préalable. Réactivez cette option depuis Paramètres → Autorisations → Demander avant les actions importantes.',
 
   'tool.read_page': 'Lecture de la page',

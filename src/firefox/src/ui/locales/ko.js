@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': '결과',
 
   'sp.api.enabled_html': '🔓 이 대화에서 <strong>API 변경이 허용</strong>되었습니다. 에이전트는 이제 UI보다 API가 더 안정적이라고 판단할 때 fetch_url과 execute_js를 통해 POST/PUT/PATCH/DELETE를 사용할 수 있습니다. 기본적으로는 UI 우선 방침을 유지합니다. 이 플래그는 대화를 초기화하면 해제됩니다.',
-  'sp.api.badge_html': '<span>🔓 API 변경 허용됨</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>권한 확인이 꺼져 있습니다.</strong> WebBrain은 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화, 예약 작업을 미리 묻지 않고 수행합니다. 설정 → 권한 → 중요 작업 전에 확인에서 다시 활성화하세요.',
 
   'tool.read_page': '페이지 읽는 중',

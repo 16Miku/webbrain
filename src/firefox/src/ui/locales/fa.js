@@ -325,7 +325,6 @@ export default {
   'sp.step.result_label': "نتیجه",
 
   'sp.api.enabled_html': "🔓 <strong>جهش های API فعال شد</strong> برای این گفتگو عامل اکنون ممکن است از POST/PUT/PATCH/DELETE از طریق fetch_url و execute_js استفاده کند، زمانی که تشخیص دهد API برای یک مرحله قابل اعتمادتر از UI است. UI-first پیش فرض باقی می ماند. وقتی مکالمه را بازنشانی می کنید، این پرچم پاک می شود.",
-  'sp.api.badge_html': "<span>🔓 جهش API مجاز است</span>",
   'sp.permissions.disabled_html': "⚠️ <strong>درخواست‌های مجوز خاموش هستند.</strong> WebBrain کلیک می کند، تایپ می کند، پیمایش می کند، جاوا اسکریپت را اجرا می کند، آپلود می کند، دانلود می کند، ضبط می کند و کارهای آینده را بدون درخواست اولیه برنامه ریزی می کند. این را از تنظیمات → مجوزها → قبل از اقدامات بعدی بپرسید دوباره فعال کنید.",
   "sp.help.shortcuts_html": "<strong>میانبرهای صفحه کلید</strong><br><code>Ctrl/Cmd+/</code> - روی ورودی تمرکز کنید<br><code>Ctrl/Cmd+Shift+A</code> - به حالت سؤال بروید<br><code>Ctrl/Cmd+Shift+X</code> - به حالت Act تغییر دهید<br><code>Ctrl/Cmd+Shift+D</code> - به حالت Dev بروید<br><code>Escape</code> - اجرای فعال را متوقف کنید",
   "sp.slash.record_transcribe": "پس از توقف، رونوشت Whisper را ضبط و ذخیره کنید",

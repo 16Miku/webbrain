@@ -327,7 +327,6 @@ export default {
   'sp.step.result_label': "kết quả",
 
   'sp.api.enabled_html': "🔓 <strong>Đã bật đột biến API</strong> cho cuộc trò chuyện này. Hiện tại, tác nhân có thể sử dụng POST/PUT/PATCH/DELETE thông qua get_url và exec_js khi đánh giá API đáng tin cậy hơn giao diện người dùng cho một bước. UI-first vẫn là mặc định. Cờ này sẽ xóa khi bạn đặt lại cuộc trò chuyện.",
-  'sp.api.badge_html': "<span>🔓 Cho phép đột biến API</span>",
   'sp.permissions.disabled_html': "⚠️ <strong>Lời nhắc về quyền đang TẮT.</strong> WebBrain sẽ nhấp, nhập, điều hướng, chạy JavaScript, tải lên, tải xuống, ghi lại và lên lịch công việc trong tương lai mà không cần hỏi trước. Kích hoạt lại tính năng này từ Cài đặt → Quyền → Hỏi trước các hành động tiếp theo.",
   "sp.help.shortcuts_html": "<strong>Phím tắt</strong><br><code>Ctrl/Cmd+/</code> - Tập trung đầu vào<br><code>Ctrl/Cmd+Shift+A</code> - Chuyển sang chế độ Hỏi<br><code>Ctrl/Cmd+Shift+X</code> - Chuyển sang chế độ Act<br><code>Ctrl/Cmd+Shift+D</code> - Chuyển sang chế độ Dev<br><code>Escape</code> - Dừng quá trình chạy đang hoạt động<br><code>Escape</code> hai lần - Dừng quá trình ghi đang hoạt động",
   "sp.slash.record_transcribe": "Ghi và lưu bản ghi Whisper sau khi dừng",
