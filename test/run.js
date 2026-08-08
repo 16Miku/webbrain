@@ -62926,6 +62926,26 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
       redactionSnapshotReady: true,
       redactionSnapshot,
     }, `${label}: an exact persisted screenshot should restore with its capture-time privacy geometry`);
+    const modelDataUrl = 'data:image/png;base64,REDACTED_CAPTURE';
+    assert.deepEqual(runtime.decodeStagedScreenshotMetadata(encoded, rawDataUrl, {
+      dataUrl: rawDataUrl,
+      modelRedactionReady: true,
+      modelDataUrl,
+    }), {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      mimeType: 'image/png',
+      size: 11,
+      source: 'slash_screenshot',
+      stagedAttachmentId: 'screenshot-12345678',
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      modelRedactionReady: true,
+      modelDataUrl,
+      redactionSnapshot,
+    }, `${label}: reload restore should retain the verified model-facing pixels from durable storage`);
     assert.equal(
       runtime.decodeStagedScreenshotMetadata(encoded, 'data:image/png;base64,COMPACTED_PIXEL'),
       null,
@@ -62933,7 +62953,7 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
     );
 
     assert.match(source, /async function stageScreenshotAttachment[\s\S]*?await saveStagedScreenshot\([\s\S]*?if \(!persisted\)[\s\S]*?return null;[\s\S]*?getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)/, `${label}: the UI must confirm a durable pixel write before claiming the screenshot is staged`);
-    assert.match(source, /loadStagedScreenshots\([\s\S]*?decodeStagedScreenshotMetadata\(persistedMetadata, stored\?\.dataUrl \|\| ''\)[\s\S]*?setAttribute\('src', attachment\.dataUrl\)/, `${label}: reload restore should recover exact pixels outside compacted session chat HTML`);
+    assert.match(source, /loadStagedScreenshots\([\s\S]*?decodeStagedScreenshotMetadata\(persistedMetadata, stored\?\.dataUrl \|\| '', stored\)[\s\S]*?setAttribute\('src', attachment\.dataUrl\)/, `${label}: reload restore should recover exact preview and model-facing pixels outside compacted session chat HTML`);
     assert.match(source, /await markStagedScreenshots\([\s\S]*?deliveryState: 'sending', requestId[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: a screenshot must durably acquire request ownership before its pending claim is cleared`);
     assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
     assert.match(source, /const pendingStoredAttachments = storedAttachments\.filter\(attachment => attachment\.deliveryState === 'pending'\)[\s\S]*?Records without a pending result card may belong to a send[\s\S]*?const restoredIds/, `${label}: remount cleanup must preserve records that may be owned by an active request`);

@@ -11409,12 +11409,13 @@ function encodeStagedScreenshotMetadata(attachment) {
   }
 }
 
-function decodeStagedScreenshotMetadata(value, dataUrl) {
+function decodeStagedScreenshotMetadata(value, dataUrl, storedRecord = null) {
   try {
     const metadata = JSON.parse(decodeURIComponent(String(value || '')));
     const stagedAttachmentId = String(metadata?.stagedAttachmentId || '');
     const size = Number(metadata?.size);
     const actualSize = attachmentDataUrlBytes(dataUrl);
+    const modelDataUrl = String(storedRecord?.modelDataUrl || '');
     if (metadata?.version !== 1
         || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
         || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
@@ -11433,6 +11434,10 @@ function decodeStagedScreenshotMetadata(value, dataUrl) {
       capturedAt: Number(metadata.capturedAt) || Date.now(),
       fullPage: metadata.fullPage === true,
       redactionSnapshotReady: metadata.redactionSnapshotReady === true,
+      ...(storedRecord ? { modelRedactionReady: storedRecord.modelRedactionReady === true } : {}),
+      ...(storedRecord?.modelRedactionReady === true && /^data:image\/(?:png|jpeg);base64,/i.test(modelDataUrl)
+        ? { modelDataUrl }
+        : {}),
       ...(metadata.redactionSnapshot ? { redactionSnapshot: metadata.redactionSnapshot } : {}),
       ...(metadata.fullPage === true && metadata.captureBounds ? { captureBounds: metadata.captureBounds } : {}),
     };
@@ -11497,7 +11502,7 @@ async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = ren
       }
       const stagedAttachmentId = String(result.dataset.screenshotAttachmentId || '');
       const stored = storedById.get(stagedAttachmentId);
-      const attachment = decodeStagedScreenshotMetadata(persistedMetadata, stored?.dataUrl || '');
+      const attachment = decodeStagedScreenshotMetadata(persistedMetadata, stored?.dataUrl || '', stored);
       if (!attachment || attachment.stagedAttachmentId !== stagedAttachmentId) {
         delete result.dataset.stagedScreenshot;
         note?.remove();
