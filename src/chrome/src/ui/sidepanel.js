@@ -50,8 +50,9 @@ import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 import {
   clearStagedScreenshots,
   loadStagedScreenshots,
+  markStagedScreenshots,
   removeStagedScreenshot,
-  replaceStagedScreenshots,
+  removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
 
@@ -4356,6 +4357,11 @@ async function applyActiveRunState(numericTabId, state) {
       runUi.attachmentDeliveryState,
       { persist: true },
     );
+    await reconcilePersistedStagedScreenshots(
+      numericTabId,
+      runUi.requestId,
+      runUi.attachmentDeliveryState,
+    );
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -7720,6 +7726,26 @@ async function sendMessage(extraChatParams = {}) {
     : retryOptions
       ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
       : getPendingAttachmentsForTab(tabId, { create: false }).slice();
+  const stagedScreenshotsReady = await markStagedScreenshots(
+    chrome.storage.local,
+    tabId,
+    attachmentsForSend,
+    { deliveryState: 'sending', requestId },
+  ).catch(() => false);
+  if (!stagedScreenshotsReady) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-persistence', retryAfterMs: 1_000 });
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    if (sameTabId(currentTabId, tabId) && !inputEl.value.trim()) {
+      inputEl.value = submittedText;
+      saveInputDraftForTab(tabId, submittedText);
+      autoResizeInput();
+      updateSlashCommandAutocomplete();
+    }
+    showComposerToast(t('sp.persistence.unavailable'));
+    syncSendButtonState();
+    return false;
+  }
   const retryPayload = {
     text,
     mode: modeForSend,
@@ -7830,7 +7856,7 @@ async function sendMessage(extraChatParams = {}) {
     if (attachmentsRejected) {
       setMessageAttachmentState(userEl, 'not-sent');
       await persistMessageAttachmentState(tabId, userEl);
-      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       // Restore the prompt only if the user hasn't started typing a new one
       // while the rejected turn was in flight.
       if (currentTabId === tabId && !inputEl.value.trim()) {
@@ -7840,7 +7866,7 @@ async function sendMessage(extraChatParams = {}) {
         updateSlashCommandAutocomplete();
       }
     } else if (attachmentsForSend.length) {
-      removePersistedStagedAttachments(tabId, attachmentsForSend);
+      await removePersistedStagedAttachments(tabId, attachmentsForSend);
       const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
       setMessageAttachmentState(userEl, deliveryState);
       await persistMessageAttachmentState(tabId, userEl);
@@ -7896,11 +7922,11 @@ async function sendMessage(extraChatParams = {}) {
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
-      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
     } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
-      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       if (renderToCurrentTab && currentTabId === tabId) {
         userEl?.remove();
         assistantEl?.remove();
@@ -7918,8 +7944,8 @@ async function sendMessage(extraChatParams = {}) {
         const deliveryUnknown = isBackgroundConnectionError(e);
         setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
         await persistMessageAttachmentState(tabId, userEl);
-        if (deliveryUnknown) removePersistedStagedAttachments(tabId, attachmentsForSend);
-        else restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+        if (deliveryUnknown) await removePersistedStagedAttachments(tabId, attachmentsForSend);
+        else await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       }
       if (renderToCurrentTab
           && currentTabId === tabId
@@ -8463,6 +8489,11 @@ function handleAgentUpdateMessage(msg) {
         eventAssistantEl || currentAssistantEl,
         data?.attachmentDeliveryState,
         { persist: true },
+      );
+      void reconcilePersistedStagedScreenshots(
+        eventTabId,
+        msg.requestId,
+        data?.attachmentDeliveryState,
       );
       invalidatePlanReviewCards({
         tabId: msg.tabId ?? currentTabId,
@@ -11454,7 +11485,8 @@ async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = ren
     const results = Array.from(root.querySelectorAll?.('.screenshot-result') || []);
     const storedAttachments = await loadStagedScreenshots(chrome.storage.local, numericTabId);
     if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
-    const storedById = new Map(storedAttachments.map(attachment => [attachment.stagedAttachmentId, attachment]));
+    const pendingStoredAttachments = storedAttachments.filter(attachment => attachment.deliveryState === 'pending');
+    const storedById = new Map(pendingStoredAttachments.map(attachment => [attachment.stagedAttachmentId, attachment]));
     const restored = [];
     let changed = false;
     for (const result of results) {
@@ -11479,12 +11511,9 @@ async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = ren
       restored.push({ result, attachment });
     }
 
-    await replaceStagedScreenshots(
-      chrome.storage.local,
-      numericTabId,
-      restored.map(item => item.attachment),
-    );
-    if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+    // Records without a pending result card may belong to a send whose card
+    // was persisted after its staged marker was cleared. Terminal run state,
+    // explicit removal, conversation clear, or tab close owns their cleanup.
     const restoredIds = new Set(restored.map(item => item.attachment.stagedAttachmentId));
     const pending = getPendingAttachmentsForTab(numericTabId).filter(attachment => (
       attachment?.source !== 'slash_screenshot'
@@ -11572,34 +11601,55 @@ function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = fals
   }
 }
 
-function restorePendingAttachmentsForTab(tabId, attachments) {
+async function restorePendingAttachmentsForTab(tabId, attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return;
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return;
+  const screenshotsPersisted = await markStagedScreenshots(
+    chrome.storage.local,
+    numericTabId,
+    attachments,
+    { deliveryState: 'pending' },
+  ).catch(() => false);
+  const restorable = screenshotsPersisted
+    ? attachments
+    : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
   const pending = getPendingAttachmentsForTab(numericTabId);
-  pending.unshift(...attachments.filter(att => !pending.includes(att)));
-  attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, true));
+  const pendingScreenshotIds = new Set(pending
+    .filter(attachment => attachment?.source === 'slash_screenshot')
+    .map(attachment => attachment.stagedAttachmentId));
+  pending.unshift(...restorable.filter(attachment => (
+    !pending.includes(attachment)
+    && (attachment?.source !== 'slash_screenshot'
+      || !pendingScreenshotIds.has(attachment.stagedAttachmentId))
+  )));
+  restorable.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, true));
   if (normalizeAttachmentTabId() === numericTabId) {
     renderAttachmentPreviews();
     syncSendButtonState();
   }
 }
 
-function removePersistedStagedAttachments(tabId, attachments) {
+async function removePersistedStagedAttachments(tabId, attachments) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null || !Array.isArray(attachments)) return;
-  const ids = new Set(attachments
-    .filter(attachment => attachment?.source === 'slash_screenshot')
-    .map(attachment => String(attachment?.stagedAttachmentId || ''))
-    .filter(Boolean));
-  if (!ids.size) return;
-  loadStagedScreenshots(chrome.storage.local, numericTabId)
-    .then(stored => replaceStagedScreenshots(
-      chrome.storage.local,
-      numericTabId,
-      stored.filter(attachment => !ids.has(attachment.stagedAttachmentId)),
-    ))
-    .catch(() => {});
+  await removeStagedScreenshots(chrome.storage.local, numericTabId, attachments).catch(() => {});
+}
+
+async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !['included', 'not-sent', 'unknown'].includes(deliveryState)) return;
+  const stored = await loadStagedScreenshots(chrome.storage.local, numericTabId).catch(() => []);
+  const matching = stored.filter(attachment => (
+    attachment.deliveryState === 'sending'
+    && String(attachment.requestId || '') === String(requestId || '')
+  ));
+  if (!matching.length) return;
+  if (deliveryState === 'not-sent') {
+    await restorePendingAttachmentsForTab(numericTabId, matching);
+  } else {
+    await removePersistedStagedAttachments(numericTabId, matching);
+  }
 }
 
 function consumePendingAttachmentsForTab(tabId, attachments) {

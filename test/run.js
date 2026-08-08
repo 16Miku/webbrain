@@ -62789,7 +62789,10 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
 
     assert.match(source, /async function stageScreenshotAttachment[\s\S]*?await saveStagedScreenshot\([\s\S]*?if \(!persisted\)[\s\S]*?return null;[\s\S]*?getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)/, `${label}: the UI must confirm a durable pixel write before claiming the screenshot is staged`);
     assert.match(source, /loadStagedScreenshots\([\s\S]*?decodeStagedScreenshotMetadata\(persistedMetadata, stored\?\.dataUrl \|\| ''\)[\s\S]*?setAttribute\('src', attachment\.dataUrl\)/, `${label}: reload restore should recover exact pixels outside compacted session chat HTML`);
+    assert.match(source, /await markStagedScreenshots\([\s\S]*?deliveryState: 'sending', requestId[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: a screenshot must durably acquire request ownership before its pending claim is cleared`);
     assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
+    assert.match(source, /const pendingStoredAttachments = storedAttachments\.filter\(attachment => attachment\.deliveryState === 'pending'\)[\s\S]*?Records without a pending result card may belong to a send[\s\S]*?const restoredIds/, `${label}: remount cleanup must preserve records that may be owned by an active request`);
+    assert.match(source, /async function reconcilePersistedStagedScreenshots[\s\S]*?attachment\.deliveryState === 'sending'[\s\S]*?attachment\.requestId[\s\S]*?deliveryState === 'not-sent'[\s\S]*?restorePendingAttachmentsForTab/, `${label}: terminal rejection should return the exact in-flight screenshot to the composer`);
   }
 });
 
@@ -62798,6 +62801,8 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
   for (const build of ['chrome', 'firefox']) {
     const modulePath = path.join(ROOT, `src/${build}/src/ui/staged-screenshot-store.js`);
     sources.push(fs.readFileSync(modulePath, 'utf8'));
+    assert.match(sources.at(-1), /function storageKey\(tabId, stagedAttachmentId\)[\s\S]*?\$\{prefix\}\$\{id\}/, `${build}: each screenshot should have an independent storage key`);
+    assert.doesNotMatch(sources.at(-1), /next\.push\(record\)|storageArea\.set\(\{ \[key\]: next \}\)/, `${build}: storage mutations must not replace a shared per-tab array`);
     const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
     assert.match(
       background,
@@ -62807,9 +62812,17 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
     const store = await import(pathToFileURL(modulePath).href);
     const values = {};
     const storage = {
-      async get(key) { return { [key]: structuredClone(values[key]) }; },
+      async get(key) {
+        if (key == null) return structuredClone(values);
+        const keys = Array.isArray(key) ? key : [key];
+        return Object.fromEntries(keys
+          .filter(item => Object.hasOwn(values, item))
+          .map(item => [item, structuredClone(values[item])]));
+      },
       async set(update) { Object.assign(values, structuredClone(update)); },
-      async remove(key) { delete values[key]; },
+      async remove(key) {
+        for (const item of Array.isArray(key) ? key : [key]) delete values[item];
+      },
     };
     const attachment = {
       stagedAttachmentId: 'screenshot-12345678',
@@ -62829,15 +62842,40 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
 
     assert.equal(await store.saveStagedScreenshot(storage, 55, attachment), true, `${build}: exact readback should confirm staging`);
     assert.equal((await store.loadStagedScreenshots(storage, 55))[0].dataUrl, attachment.dataUrl, `${build}: stored pixels should round-trip exactly`);
+    assert.equal(await store.markStagedScreenshots(storage, 55, [{ ...attachment, source: 'slash_screenshot' }], {
+      deliveryState: 'sending',
+      requestId: 'request-55',
+    }), true, `${build}: in-flight ownership should be durably marked`);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(storage, 55)).map(item => [item.deliveryState, item.requestId]),
+      [['sending', 'request-55']],
+      `${build}: reload should retain the active request association`,
+    );
+    assert.equal(await store.markStagedScreenshots(storage, 55, [{ ...attachment, source: 'slash_screenshot' }], {
+      deliveryState: 'pending',
+    }), true, `${build}: a rejected screenshot should return to pending state`);
     await store.removeStagedScreenshot(storage, 55, attachment.stagedAttachmentId);
     assert.deepEqual(await store.loadStagedScreenshots(storage, 55), [], `${build}: sent or removed screenshots should be deleted`);
+
+    const older = { ...attachment, stagedAttachmentId: 'screenshot-older123' };
+    const newer = { ...attachment, stagedAttachmentId: 'screenshot-newer123', dataUrl: 'data:image/png;base64,NEW_CAPTURE' };
+    await store.saveStagedScreenshot(storage, 57, older);
+    await Promise.all([
+      store.removeStagedScreenshot(storage, 57, older.stagedAttachmentId),
+      store.saveStagedScreenshot(storage, 57, newer),
+    ]);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(storage, 57)).map(item => item.stagedAttachmentId),
+      [newer.stagedAttachmentId],
+      `${build}: cleanup of an older screenshot must not erase or resurrect a concurrent new capture`,
+    );
 
     const corruptingStorage = {
       ...storage,
       async set(update) {
         const copy = structuredClone(update);
         const key = Object.keys(copy)[0];
-        copy[key][0].dataUrl = 'data:image/png;base64,DIFFERENT_PIXELS';
+        copy[key].dataUrl = 'data:image/png;base64,DIFFERENT_PIXELS';
         values[key] = copy[key];
       },
     };
@@ -63153,6 +63191,47 @@ test('attachments: unsupported-attachment rejection emits a structured update', 
   }
 });
 
+test('attachments: Compact-tier Dev rejection preserves the unsent payload', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const provider = {
+      name: 'compact-test',
+      promptTier: 'compact',
+      supportsVision: true,
+      supportsDocuments: true,
+    };
+    const agent = new AgentClass({ getActive: () => provider });
+    const messages = [{ role: 'system', content: 'system' }];
+    agent._hydrate = async () => {};
+    agent.getConversation = () => messages;
+    agent._expireCurrentToolReasoning = () => {};
+    agent._prepareClarificationAuthorizationForRun = () => {};
+    agent._preactivateRecommendedActionSkill = () => {};
+    agent._selectionGroundedRunOptions = (_tabId, _messages, options) => options;
+    agent._augmentScheduledResumeMessage = (_tabId, text) => text;
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _history, text) => ({ role: 'user', content: text });
+    agent._preactivateNyTimesSkillForRun = () => {};
+    agent._preactivateHumanizerSkillForRun = () => {};
+    let persisted = false;
+    agent._persistSubmittedTurn = async () => { persisted = true; };
+    const updates = [];
+
+    const result = await agent._processMessageInner(
+      901,
+      'inspect this screenshot',
+      (type, data) => updates.push({ type, data }),
+      'dev',
+      [{ kind: 'image', source: 'slash_screenshot', name: 'capture.png' }],
+      {},
+    );
+
+    assert.match(result, /Attachments were not sent/, `${label}: Compact Dev should explain attachment ownership`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: Compact Dev should emit a structured rejection`);
+    assert.equal(messages.length, 1, `${label}: a blocked turn must not be added to history`);
+    assert.equal(persisted, false, `${label}: a blocked attachment turn must not be persisted as submitted`);
+  }
+});
+
 test('sidepanel: pending attachments are tab-scoped and send-gated while loading', () => {
   for (const [label, file, htmlFile] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/sidepanel.html'],
@@ -63171,7 +63250,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
-      /function restorePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?pending\.unshift\(\.\.\.attachments\.filter\(att => !pending\.includes\(att\)\)\);[\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
+      /async function restorePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?await markStagedScreenshots\([\s\S]*?const pendingScreenshotIds = new Set\([\s\S]*?pending\.unshift\([\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
       `${label} should restore sent attachments to their originating tab without duplicating existing objects`,
     );
     assert.match(

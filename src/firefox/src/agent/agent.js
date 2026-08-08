@@ -17149,6 +17149,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
+      if (Array.isArray(attachments) && attachments.length) {
+        const error = `${msg} Attachments were not sent.`;
+        onUpdate('attachment_rejected', { error });
+        return (finalResponse = error);
+      }
       messages.push(enriched);
       if (runOptions?.selectionGroundingScopeStarted === true) {
         this._finalizeSelectionGroundingScope(tabId, messages, enriched);

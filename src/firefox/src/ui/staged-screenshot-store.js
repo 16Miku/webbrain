@@ -1,9 +1,17 @@
 export const STAGED_SCREENSHOT_STORAGE_PREFIX = 'stagedScreenshotAttachments:';
 
-function storageKey(tabId) {
+function storagePrefix(tabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId)
-    ? `${STAGED_SCREENSHOT_STORAGE_PREFIX}${numericTabId}`
+    ? `${STAGED_SCREENSHOT_STORAGE_PREFIX}${numericTabId}:`
+    : '';
+}
+
+function storageKey(tabId, stagedAttachmentId) {
+  const prefix = storagePrefix(tabId);
+  const id = String(stagedAttachmentId || '');
+  return prefix && /^screenshot-[A-Za-z0-9-]{8,160}$/.test(id)
+    ? `${prefix}${id}`
     : '';
 }
 
@@ -14,8 +22,11 @@ function normalizeRecord(attachment) {
   if (!/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
       || !/^data:image\/(?:png|jpeg);base64,/i.test(dataUrl)
       || !(Number.isFinite(size) && size > 0)) return null;
+  const deliveryState = attachment?.deliveryState === 'sending' ? 'sending' : 'pending';
   return {
     version: 1,
+    kind: 'image',
+    source: 'slash_screenshot',
     stagedAttachmentId,
     dataUrl,
     name: String(attachment?.name || 'webbrain-screenshot.png').slice(0, 240),
@@ -24,6 +35,10 @@ function normalizeRecord(attachment) {
     capturedAt: Number(attachment?.capturedAt) || Date.now(),
     fullPage: attachment?.fullPage === true,
     redactionSnapshotReady: attachment?.redactionSnapshotReady === true,
+    deliveryState,
+    ...(deliveryState === 'sending' && attachment?.requestId
+      ? { requestId: String(attachment.requestId).slice(0, 200) }
+      : {}),
     ...(attachment?.redactionSnapshot ? { redactionSnapshot: attachment.redactionSnapshot } : {}),
     ...(attachment?.fullPage === true && attachment?.captureBounds
       ? { captureBounds: attachment.captureBounds }
@@ -32,53 +47,86 @@ function normalizeRecord(attachment) {
 }
 
 export async function loadStagedScreenshots(storageArea, tabId) {
-  const key = storageKey(tabId);
-  if (!key) return [];
-  const stored = await storageArea.get(key);
-  return (Array.isArray(stored?.[key]) ? stored[key] : [])
-    .map(normalizeRecord)
+  const prefix = storagePrefix(tabId);
+  if (!prefix) return [];
+  const stored = await storageArea.get(null);
+  return Object.entries(stored || {})
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, value]) => {
+      const record = normalizeRecord(value);
+      return record && key === storageKey(tabId, record.stagedAttachmentId) ? record : null;
+    })
     .filter(Boolean);
 }
 
 export async function saveStagedScreenshot(storageArea, tabId, attachment) {
-  const key = storageKey(tabId);
-  const record = normalizeRecord(attachment);
+  const record = normalizeRecord({ ...attachment, deliveryState: 'pending' });
+  const key = storageKey(tabId, record?.stagedAttachmentId);
   if (!key || !record) return false;
-  const existing = await loadStagedScreenshots(storageArea, tabId);
-  const next = existing.filter(item => item.stagedAttachmentId !== record.stagedAttachmentId);
-  next.push(record);
-  await storageArea.set({ [key]: next });
+  await storageArea.set({ [key]: record });
 
   // A resolved set is not enough evidence for the UI claim: verify that the
   // exact pixels can be read back before calling the screenshot staged.
-  const verified = await loadStagedScreenshots(storageArea, tabId);
-  return verified.some(item => (
-    item.stagedAttachmentId === record.stagedAttachmentId
-    && item.size === record.size
-    && item.dataUrl === record.dataUrl
-  ));
+  const stored = await storageArea.get(key);
+  const verified = normalizeRecord(stored?.[key]);
+  return !!verified
+    && verified.stagedAttachmentId === record.stagedAttachmentId
+    && verified.size === record.size
+    && verified.dataUrl === record.dataUrl
+    && verified.deliveryState === 'pending';
+}
+
+export async function markStagedScreenshots(storageArea, tabId, attachments, {
+  deliveryState = 'pending',
+  requestId = '',
+} = {}) {
+  const screenshotAttachments = (Array.isArray(attachments) ? attachments : [])
+    .filter(attachment => attachment?.source === 'slash_screenshot');
+  if (!screenshotAttachments.length) return true;
+  const existing = new Map(
+    (await loadStagedScreenshots(storageArea, tabId))
+      .map(record => [record.stagedAttachmentId, record]),
+  );
+  const update = {};
+  for (const attachment of screenshotAttachments) {
+    const id = String(attachment?.stagedAttachmentId || '');
+    const current = existing.get(id);
+    const key = storageKey(tabId, id);
+    if (!current || !key) return false;
+    update[key] = normalizeRecord({
+      ...current,
+      deliveryState,
+      requestId: deliveryState === 'sending' ? requestId : '',
+    });
+  }
+  await storageArea.set(update);
+  const verified = await storageArea.get(Object.keys(update));
+  return Object.entries(update).every(([key, expected]) => {
+    const actual = normalizeRecord(verified?.[key]);
+    return !!actual
+      && actual.stagedAttachmentId === expected.stagedAttachmentId
+      && actual.dataUrl === expected.dataUrl
+      && actual.deliveryState === expected.deliveryState
+      && String(actual.requestId || '') === String(expected.requestId || '');
+  });
 }
 
 export async function removeStagedScreenshot(storageArea, tabId, stagedAttachmentId) {
-  const key = storageKey(tabId);
-  if (!key) return;
-  const existing = await loadStagedScreenshots(storageArea, tabId);
-  const next = existing.filter(item => item.stagedAttachmentId !== String(stagedAttachmentId || ''));
-  if (next.length) await storageArea.set({ [key]: next });
-  else await storageArea.remove(key);
+  const key = storageKey(tabId, stagedAttachmentId);
+  if (key) await storageArea.remove(key);
 }
 
-export async function replaceStagedScreenshots(storageArea, tabId, attachments) {
-  const key = storageKey(tabId);
-  if (!key) return;
-  const next = (Array.isArray(attachments) ? attachments : [])
-    .map(normalizeRecord)
+export async function removeStagedScreenshots(storageArea, tabId, attachments) {
+  const keys = (Array.isArray(attachments) ? attachments : [])
+    .map(attachment => storageKey(tabId, attachment?.stagedAttachmentId))
     .filter(Boolean);
-  if (next.length) await storageArea.set({ [key]: next });
-  else await storageArea.remove(key);
+  if (keys.length) await storageArea.remove(keys);
 }
 
 export async function clearStagedScreenshots(storageArea, tabId) {
-  const key = storageKey(tabId);
-  if (key) await storageArea.remove(key);
+  const prefix = storagePrefix(tabId);
+  if (!prefix) return;
+  const stored = await storageArea.get(null);
+  const keys = Object.keys(stored || {}).filter(key => key.startsWith(prefix));
+  if (keys.length) await storageArea.remove(keys);
 }
