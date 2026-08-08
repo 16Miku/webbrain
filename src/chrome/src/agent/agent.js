@@ -17007,8 +17007,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this.screenshotRedaction) {
           dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
         }
+        // Trace the capture itself, but leave the per-turn budget alone until a
+        // model actually receives it below. Charging a slot here would let a
+        // failed vision sub-call on a provider without vision burn the turn's
+        // only inspection and block the retry that would have recovered it.
         if (isViewportInspection) {
-          this._recordAutoScreenshot(tabId);
           const inspectionRunId = this.currentRunId.get(tabId);
           if (inspectionRunId) {
             await trace.recordScreenshot(inspectionRunId, null, dataUrl, 'inspect_viewport capture');
@@ -17030,6 +17033,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             isViewportInspection ? 'inspect_viewport' : 'screenshot_tool',
           );
           if (desc) {
+            if (isViewportInspection) this._recordAutoScreenshot(tabId);
             return {
               success: true,
               method: 'vision_describe',
@@ -17049,6 +17053,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // `_attachImage`. The loop will strip it before stringifying the
           // tool result (keeping the tool-result text tiny) and then push a
           // `user` message containing the image_url block.
+          if (isViewportInspection) this._recordAutoScreenshot(tabId);
           return {
             success: true,
             method: 'image_attach',

@@ -14833,6 +14833,84 @@ test('inspect_viewport is read-only, vision-visible, and shares the screenshot b
   }
 });
 
+test('inspect_viewport charges the screenshot budget only when a model receives the capture', async () => {
+  // A dedicated vision model is configured but its sub-call fails, and the
+  // active provider cannot see images, so nothing reaches a model.
+  const providerManager = {
+    getActive: () => ({ name: 'text-only', supportsVision: false }),
+    getVisionProvider: async () => ({ name: 'vision-sidecar' }),
+  };
+
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (_tabId, method) => (
+      method === 'Page.captureScreenshot' ? { data: 'AA==' } : {}
+    );
+    const agent = new AgentCh(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._compressJpegToByteCeiling = async dataUrl => dataUrl;
+    agent._describeScreenshot = async () => null;
+
+    const undelivered = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(undelivered.success, false, 'chrome: no model can see this capture');
+    assert.match(undelivered.error, /cannot see images/);
+    assert.equal(agent.autoScreenshotCount.get(41), undefined, 'chrome: an undelivered capture must not burn a slot');
+    assert.equal(agent._canTakeAutoScreenshot(41), true, 'chrome: a transient sidecar failure must stay recoverable');
+
+    agent._describeScreenshot = async () => ({ model: 'vision-sidecar', text: 'a login form' });
+    const described = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(described.success, true, 'chrome: the recovered sub-call should succeed');
+    assert.equal(described.method, 'vision_describe');
+    assert.equal(agent.autoScreenshotCount.get(41), 1, 'chrome: a delivered description spends one slot');
+
+    const blocked = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(blocked.success, false);
+    assert.match(blocked.error, /maxScreenshotsPerTurn/, 'chrome: the cap still applies once a slot is spent');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+
+  const previousBrowser = globalThis.browser;
+  try {
+    globalThis.browser = {
+      ...(previousBrowser || {}),
+      tabs: {
+        ...(previousBrowser?.tabs || {}),
+        get: async tabId => ({ id: tabId, active: false, url: 'https://example.test/' }),
+        captureTab: async () => 'data:image/png;base64,AA==',
+      },
+    };
+    const agent = new AgentFx(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    agent._describeScreenshot = async () => null;
+
+    const undelivered = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(undelivered.success, false, 'firefox: no model can see this capture');
+    assert.equal(agent.autoScreenshotCount.get(42), undefined, 'firefox: an undelivered capture must not burn a slot');
+    assert.equal(agent._canTakeAutoScreenshot(42), true, 'firefox: a transient sidecar failure must stay recoverable');
+
+    agent._describeScreenshot = async () => ({ model: 'vision-sidecar', text: 'a login form' });
+    const described = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(described.success, true, 'firefox: the recovered sub-call should succeed');
+    assert.equal(described.method, 'vision_describe');
+    assert.equal(agent.autoScreenshotCount.get(42), 1, 'firefox: a delivered description spends one slot');
+  } finally {
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
 test('LLM trace media counts distinguish actual image and document blocks', () => {
   const messages = [
     { role: 'user', content: 'plain' },
