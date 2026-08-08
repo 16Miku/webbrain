@@ -23072,7 +23072,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const traceTabInfo = await this._getTabUrlTitle(tabId);
       plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions,
       );
     }
 

@@ -62858,6 +62858,28 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
   }
 });
 
+test('attachments: trace startup receives the complete run options in both builds', () => {
+  for (const [label, file] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const helperStart = source.indexOf('async _startTraceRun(');
+    const helperEnd = source.indexOf('\n  /**', helperStart);
+    const helper = source.slice(helperStart, helperEnd);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: trace helper should be present`);
+    assert.match(helper, /runOptions = \{\}/, `${label}: trace helper should receive run options`);
+    assert.match(helper, /attachments: Array\.isArray\(runOptions\?\.traceAttachments\)/, `${label}: trace helper should retain attachment metadata`);
+    assert.match(helper, /force: runOptions\?\.cloudRun === true/, `${label}: trace helper should preserve forced cloud tracing`);
+    assert.match(helper, /runOptions\?\.onTraceStarted/, `${label}: trace helper should publish the started trace ID`);
+
+    const optionAwareCalls = source.match(
+      /this\._startTraceRun\(\s*tabId,\s*userMessage,\s*mode,\s*provider,\s*(?:traceTabInfo|null),\s*runOptions,\s*\)/g,
+    ) || [];
+    assert.equal(optionAwareCalls.length, 3, `${label}: every trace startup path should pass complete run options`);
+  }
+});
+
 test('attachments: slash screenshots stage for the next turn and sent bubbles retain metadata-only evidence', () => {
   for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');

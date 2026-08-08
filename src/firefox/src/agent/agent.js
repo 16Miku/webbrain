@@ -7041,7 +7041,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, onTraceStarted = null) {
+  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
     const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
     // Tracing must never break a run: a recorder failure returns null and the
     // run proceeds untraced rather than throwing out of the message path.
@@ -7059,14 +7059,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         mode,
         attachments: Array.isArray(runOptions?.traceAttachments) ? runOptions.traceAttachments : [],
         conversationId: this.conversationIds.get(tabId) || null,
+        force: runOptions?.cloudRun === true,
       });
     } catch {
       return null;
     }
     if (runId) {
       this.currentRunId.set(tabId, runId);
-      if (typeof onTraceStarted === 'function') {
-        try { onTraceStarted(runId); } catch {}
+      if (typeof runOptions?.onTraceStarted === 'function') {
+        try { runOptions.onTraceStarted(runId); } catch {}
       }
     }
     return runId;
@@ -17213,7 +17214,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const traceTabInfo = await this._getTabUrlTitle(tabId);
       plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions,
       );
     }
 
@@ -17389,7 +17390,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (!runId) {
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, null, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, null, runOptions,
       );
     }
 
@@ -17982,7 +17983,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const traceTabInfo = await this._getTabUrlTitle(tabId);
       plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions,
       );
     }
 
