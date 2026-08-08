@@ -50,10 +50,27 @@ function normalizeRecord(attachment) {
   };
 }
 
+// Enumerate this tab's record keys without deserializing the whole area: every
+// staged record carries multi-megabyte screenshot pixels for every tab, and
+// these reads run on tab switch and on every reconnect probe. getKeys() returns
+// names only; older engines without it fall back to the full enumeration.
+async function stagedScreenshotKeys(storageArea, prefix) {
+  if (typeof storageArea.getKeys === 'function') {
+    try {
+      const keys = await storageArea.getKeys();
+      if (Array.isArray(keys)) return keys.filter(key => key.startsWith(prefix));
+    } catch { /* fall through to the full enumeration */ }
+  }
+  const stored = await storageArea.get(null);
+  return Object.keys(stored || {}).filter(key => key.startsWith(prefix));
+}
+
 export async function loadStagedScreenshots(storageArea, tabId) {
   const prefix = storagePrefix(tabId);
   if (!prefix) return [];
-  const stored = await storageArea.get(null);
+  const keys = await stagedScreenshotKeys(storageArea, prefix);
+  if (!keys.length) return [];
+  const stored = await storageArea.get(keys);
   return Object.entries(stored || {})
     .filter(([key]) => key.startsWith(prefix))
     .map(([key, value]) => {
@@ -134,7 +151,6 @@ export async function removeStagedScreenshots(storageArea, tabId, attachments) {
 export async function clearStagedScreenshots(storageArea, tabId) {
   const prefix = storagePrefix(tabId);
   if (!prefix) return;
-  const stored = await storageArea.get(null);
-  const keys = Object.keys(stored || {}).filter(key => key.startsWith(prefix));
+  const keys = await stagedScreenshotKeys(storageArea, prefix);
   if (keys.length) await storageArea.remove(keys);
 }

@@ -329,7 +329,15 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
     // sibling's exact descriptor.
     for (const child of unmatchedChildren) {
       const descriptorIndex = unused.values().next().value ?? -1;
-      if (descriptorIndex < 0) break;
+      if (descriptorIndex < 0) {
+        // A navigation child frame with no DOM descriptor left to pair with
+        // (an <object>/<embed> sub-document the collector does not enumerate,
+        // or a frame added after the DOM pass). Its pixels are in the capture
+        // but there is no rect to map its regions through, so the snapshot
+        // cannot be proven complete — fail closed instead of dropping it.
+        if (opts.requireCompleteFrameCoverage === true) return null;
+        break;
+      }
       unused.delete(descriptorIndex);
       assignments.push([child, descriptorIndex]);
     }

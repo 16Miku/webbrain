@@ -1124,6 +1124,30 @@ test('mergeRedactionFrameRegions maps nested iframe regions into top capture coo
     [expected[0]],
     'strict Firefox frame mapping should ignore an uninspectable child that contributes no pixels',
   );
+
+  // The DOM collector only enumerates iframe/frame, so an <object>/<embed>
+  // sub-document reaches the mapper as a navigation child with no descriptor
+  // left to pair with. Its pixels are in the capture and there is no rect to
+  // map its regions through, so coverage cannot be claimed.
+  const undescribedChildFrames = [
+    { ...frames[0], childFrames: [] },
+    { ...frames[1], childFrames: [] },
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(undescribedChildFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when a navigation child frame has no DOM descriptor',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(undescribedChildFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when a navigation child frame has no DOM descriptor',
+  );
+  assert.deepEqual(
+    mergeRedactionFrameRegions(undescribedChildFrames),
+    [expected[0]],
+    'non-strict frame mapping should still return the frames it can account for',
+  );
 });
 
 test('capture-time redaction snapshots require inspection only for rendered frames', async () => {
@@ -33377,6 +33401,24 @@ test('user viewport screenshots retain a capture-bound redacted model copy', asy
       assert.equal(result.dataUrl, 'data:image/png;base64,RAW_VIEWPORT', `${label}: local preview pixels should remain untouched`);
       assert.equal(result.modelDataUrl, 'data:image/png;base64,REDACTED_VIEWPORT', `${label}: the model copy should be created during capture`);
       assert.equal(result.modelRedactionReady, true);
+
+      // A page the collector can never run on (PDF viewer, chrome://, the Web
+      // Store) fails both scans, so a retry is a dead end and must not be the
+      // advice the user is given.
+      agent.captureScreenshotRedactionSnapshotForUser = async () => ({ ok: false });
+      const uninspectable = await agent.captureViewportScreenshotForUser(42);
+      assert.equal(uninspectable.ok, false, `${label}: an uninspectable page must not produce a screenshot`);
+      assert.match(uninspectable.error, /redaction cannot inspect this page/i, `${label}: the refusal should name redaction as the blocker`);
+      assert.doesNotMatch(uninspectable.error, /try \/screenshot again/, `${label}: a permanent redaction failure must not be reported as a retryable race`);
+
+      let snapshotCalls = 0;
+      agent.captureScreenshotRedactionSnapshotForUser = async () => {
+        snapshotCalls += 1;
+        return snapshotCalls === 1 ? { ok: true, snapshot } : { ok: false };
+      };
+      const raced = await agent.captureViewportScreenshotForUser(42);
+      assert.equal(raced.ok, false, `${label}: a mid-capture privacy change must not produce a screenshot`);
+      assert.match(raced.error, /try \/screenshot again/, `${label}: a genuine mid-capture change should still suggest a retry`);
     }
   } finally {
     globalThis.chrome = previousChrome;
@@ -62957,7 +62999,7 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
     assert.match(source, /await markStagedScreenshots\([\s\S]*?deliveryState: 'sending', requestId[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: a screenshot must durably acquire request ownership before its pending claim is cleared`);
     assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
     assert.match(source, /const pendingStoredAttachments = storedAttachments\.filter\(attachment => attachment\.deliveryState === 'pending'\)[\s\S]*?Records without a pending result card may belong to a send[\s\S]*?const restoredIds/, `${label}: remount cleanup must preserve records that may be owned by an active request`);
-    assert.match(source, /async function reconcilePersistedStagedScreenshots[\s\S]*?attachment\.deliveryState === 'sending'[\s\S]*?attachment\.requestId[\s\S]*?deliveryState === 'not-sent'[\s\S]*?restorePendingAttachmentsForTab/, `${label}: terminal rejection should return the exact in-flight screenshot to the composer`);
+    assert.match(source, /async function reconcilePersistedStagedScreenshots[\s\S]*?attachment\.deliveryState === 'sending'[\s\S]*?attachment\.requestId[\s\S]*?deliveryState === 'included'[\s\S]*?removePersistedStagedAttachments[\s\S]*?\} else \{[\s\S]*?restorePendingAttachmentsForTab/, `${label}: only a confirmed inclusion may delete the durable pixels; rejected and unconfirmed deliveries return the exact screenshot to the composer`);
   }
 });
 
@@ -63051,8 +63093,89 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
     };
     assert.equal(await store.saveStagedScreenshot(corruptingStorage, 56, attachment), false, `${build}: staging must fail when exact pixels cannot be read back`);
     await store.clearStagedScreenshots(storage, 56);
+
+    // Reads run on every tab switch and every reconnect probe, and each record
+    // holds multi-megabyte pixels for every tab, so they must never deserialize
+    // the whole area.
+    let fullAreaReads = 0;
+    const keyedStorage = {
+      ...storage,
+      async getKeys() { return Object.keys(values); },
+      async get(key) {
+        if (key == null) fullAreaReads += 1;
+        return storage.get(key);
+      },
+    };
+    const otherTabAttachment = { ...attachment, stagedAttachmentId: 'screenshot-othertab1' };
+    await store.saveStagedScreenshot(keyedStorage, 58, attachment);
+    await store.saveStagedScreenshot(keyedStorage, 59, otherTabAttachment);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(keyedStorage, 58)).map(item => item.stagedAttachmentId),
+      [attachment.stagedAttachmentId],
+      `${build}: loading one tab's screenshots should return only that tab's records`,
+    );
+    await store.clearStagedScreenshots(keyedStorage, 58);
+    assert.deepEqual(await store.loadStagedScreenshots(keyedStorage, 58), [], `${build}: clearing a tab should remove its records`);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(keyedStorage, 59)).map(item => item.stagedAttachmentId),
+      [otherTabAttachment.stagedAttachmentId],
+      `${build}: clearing one tab must not touch another tab's records`,
+    );
+    assert.equal(fullAreaReads, 0, `${build}: staged screenshot reads must never deserialize the whole storage area`);
+    await store.clearStagedScreenshots(keyedStorage, 59);
   }
   assert.equal(sources[0], sources[1], 'Chrome and Firefox staged screenshot stores should stay byte-identical');
+});
+
+test('attachments: a full-page screenshot is refused when deferred redaction leaves the pixels unchanged', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.screenshotRedaction = true;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 4000 });
+    // Every non-throwing failure inside _redactScreenshotDataUrl — no mapped
+    // rect in bounds, no OffscreenCanvas, a compression fallback — surfaces as
+    // the input coming back unchanged.
+    agent._redactScreenshotDataUrl = async (_tabId, dataUrl) => dataUrl;
+    const provider = { name: 'vision-test', supportsVision: true };
+    const attachment = {
+      kind: 'image',
+      source: 'slash_screenshot',
+      fullPage: true,
+      name: 'page-screenshot.png',
+      dataUrl: 'data:image/png;base64,FULL_PAGE_CAPTURE',
+      redactionSnapshotReady: true,
+      modelRedactionReady: false,
+      captureBounds: { width: 800, height: 4000 },
+      redactionSnapshot: {
+        coordinateSpace: 'page',
+        viewport: { width: 800, height: 4000 },
+        regions: [{ kind: 'password', rect: { x: 10, y: 20, w: 100, h: 30 } }],
+      },
+    };
+
+    const enriched = { role: 'user', content: 'what is on this page?' };
+    const blocked = await agent._applyAttachments(enriched, [attachment], provider, { tabId: 7 });
+    assert.equal(blocked.ok, false, `${label}: a failed deferred redaction must not be sent`);
+    assert.match(blocked.error, /private model-facing copy/, `${label}: the refusal should name the missing private copy`);
+    assert.equal(
+      JSON.stringify(enriched.content).includes('FULL_PAGE_CAPTURE'),
+      false,
+      `${label}: unredacted full-page pixels must never reach the message content`,
+    );
+
+    // A page with nothing to redact is legitimately byte-identical afterwards.
+    const cleanEnriched = { role: 'user', content: 'what is on this page?' };
+    const clean = await agent._applyAttachments(cleanEnriched, [{
+      ...attachment,
+      redactionSnapshot: { ...attachment.redactionSnapshot, regions: [] },
+    }], provider, { tabId: 7 });
+    assert.equal(clean.ok, true, `${label}: a page with no sensitive regions should still send`);
+    assert.equal(
+      JSON.stringify(cleanEnriched.content).includes('FULL_PAGE_CAPTURE'),
+      true,
+      `${label}: a screenshot with nothing to redact should reach the model`,
+    );
+  }
 });
 
 test('attachments: uploaded documents carry an untrusted content boundary', async () => {
@@ -63425,8 +63548,8 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     );
     assert.match(
       source,
-      /function consumePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?const consumed = new Set\(attachments\);[\s\S]*?pending\.filter\(attachment => !consumed\.has\(attachment\)\)/,
-      `${label} should remove only the retried attachment objects from pending composer state`,
+      /function consumePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?const consumed = new Set\(attachments\);[\s\S]*?const consumedScreenshotIds = new Set\([\s\S]*?pending\.filter\(attachment => !consumed\.has\(attachment\)[\s\S]*?consumedScreenshotIds\.has\(attachment\.stagedAttachmentId\)/,
+      `${label} should remove the retried attachments from pending composer state by object and by durable screenshot id`,
     );
     assert.match(
       source,

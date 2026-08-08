@@ -5888,6 +5888,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const after = await this.captureScreenshotRedactionSnapshotForUser(tabId, {
           coordinateSpace: 'viewport',
         });
+        // Neither scan succeeding means the privacy pass cannot run here at all
+        // (PDF viewer, about: pages, restricted domains) rather than that the
+        // page moved mid-capture, so /screenshot again can never succeed. Name
+        // the real blocker instead of suggesting a guaranteed-to-fail retry.
+        if (this.screenshotRedaction && before?.ok !== true && after?.ok !== true) {
+          return {
+            ok: false,
+            error: 'Screenshot redaction cannot inspect this page, so no private model-facing copy can be made. Turn off screenshot redaction in Settings to capture it.',
+          };
+        }
         if (this.screenshotRedaction && (
           before?.ok !== true
           || after.ok !== true
@@ -17076,6 +17086,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // byte-faithful apart from the existing vision-budget resize.
         let modelDataUrl = shrunk.dataUrl;
         if (deferredFullPageRedaction) {
+          const unredactedDataUrl = modelDataUrl;
           modelDataUrl = await this._redactScreenshotDataUrl(options.tabId, modelDataUrl, {
             coordinateSpace: deferredFullPageRedaction.coordinateSpace,
             redactionSnapshot: deferredFullPageRedaction.redactionSnapshot,
@@ -17083,6 +17094,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             imageWidth: shrunk.width,
             imageHeight: shrunk.height,
           });
+          // _redactScreenshotDataUrl returns its input unchanged on several
+          // non-throwing failure paths (no mapped rect lands in bounds, the
+          // canvas/bitmap APIs are unavailable, JPEG compression falls back).
+          // Refuse the send rather than push unredacted pixels, matching the
+          // viewport guard in captureViewportScreenshotForUser.
+          if (deferredFullPageRedaction.redactionSnapshot.regions.length > 0
+              && modelDataUrl === unredactedDataUrl) {
+            return {
+              ok: false,
+              error: 'Could not create the private model-facing copy of this screenshot. Run /screenshot again before sending it.',
+            };
+          }
         }
         blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: modelDataUrl }) });
       } else if (att.kind === 'document') {

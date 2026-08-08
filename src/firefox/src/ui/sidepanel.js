@@ -11160,10 +11160,17 @@ async function reconcilePersistedStagedScreenshots(tabId, requestId, deliverySta
     && String(attachment.requestId || '') === String(requestId || '')
   ));
   if (!matching.length) return;
-  if (deliveryState === 'not-sent') {
-    await restorePendingAttachmentsForTab(numericTabId, matching);
-  } else {
+  // 'unknown' means the background could not confirm the turn was persisted, so
+  // the turn most likely never landed and these pixels are the only copy left.
+  // Return it to the composer like an outright rejection rather than deleting
+  // the capture: leaving the record 'sending' would preserve the bytes but the
+  // remount restore only re-adopts 'pending' records, so they would be
+  // unreachable. The message card still carries its "delivery not confirmed"
+  // marker, so the user sees both signals and decides whether to re-send.
+  if (deliveryState === 'included') {
     await removePersistedStagedAttachments(numericTabId, matching);
+  } else {
+    await restorePendingAttachmentsForTab(numericTabId, matching);
   }
 }
 
@@ -11174,7 +11181,16 @@ function consumePendingAttachmentsForTab(tabId, attachments) {
   const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
   if (!pending.length) return;
   const consumed = new Set(attachments);
-  const remaining = pending.filter(attachment => !consumed.has(attachment));
+  // A staged screenshot can be re-entered as a fresh object loaded back from
+  // storage, so object identity alone leaves the old chip in the composer and
+  // wedges every later send on the markStagedScreenshots guard. Match the same
+  // durable id the restore paths key on.
+  const consumedScreenshotIds = new Set(attachments
+    .filter(attachment => attachment?.source === 'slash_screenshot' && attachment.stagedAttachmentId)
+    .map(attachment => attachment.stagedAttachmentId));
+  const remaining = pending.filter(attachment => !consumed.has(attachment)
+    && !(attachment?.source === 'slash_screenshot'
+      && consumedScreenshotIds.has(attachment.stagedAttachmentId)));
   attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
   if (remaining.length) pendingAttachmentsByTab.set(numericTabId, remaining);
   else pendingAttachmentsByTab.delete(numericTabId);
