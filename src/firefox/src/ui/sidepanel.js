@@ -7184,6 +7184,7 @@ async function sendMessage(extraChatParams = {}) {
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
+  const isWorkflowRun = !!chatExtraParams.workflowId;
   const contextMenuClaim = chatExtraParams.contextMenuClaim;
   let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
   const claimedContextMenuTabId = contextMenuClaimOwned
@@ -7248,7 +7249,8 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+  if (!retryOptions && !sourceGrounding && !isWorkflowRun
+      && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
     syncSendButtonState();
     return false;
@@ -7411,9 +7413,9 @@ async function sendMessage(extraChatParams = {}) {
 
   let userEl = null;
   let assistantEl = null;
-  // A selection-only shortcut must not inherit unrelated attachment chips
-  // that the user was preparing for a later ordinary chat turn.
-  const attachmentsForSend = sourceGrounding
+  // Selection-only shortcuts and saved workflow replay must not inherit
+  // attachment chips prepared for a later ordinary chat turn.
+  const attachmentsForSend = sourceGrounding || isWorkflowRun
     ? []
     : retryOptions
       ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
@@ -7432,7 +7434,7 @@ async function sendMessage(extraChatParams = {}) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    if (!sourceGrounding) {
+    if (!sourceGrounding && !isWorkflowRun) {
       if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
       else clearPendingAttachmentsForTab(tabId);
       renderAttachmentPreviews();

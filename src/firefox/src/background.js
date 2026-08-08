@@ -2010,7 +2010,9 @@ async function handleMessage(msg, sender) {
         mode,
         kind: 'chat',
         foreground: msg.foreground === true,
-        attachmentCount: Array.isArray(msg.attachments) ? msg.attachments.length : 0,
+        attachmentCount: isWorkflowRun
+          ? 0
+          : Array.isArray(msg.attachments) ? msg.attachments.length : 0,
       });
       const releaseRunKeepalive = acquireRunKeepalive();
 

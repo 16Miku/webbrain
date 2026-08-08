@@ -25054,17 +25054,18 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       panel,
-      /const attachmentsForSend = sourceGrounding\s*\? \[\]\s*: retryOptions/,
+      /const attachmentsForSend = sourceGrounding \|\| isWorkflowRun\s*\? \[\]\s*: retryOptions/,
       `${label}: selection-only runs must not inherit pending attachment chips`,
     );
     assert.match(
       panel,
-      /if \(!sourceGrounding\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId\);/,
+      /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId\);/,
       `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
     );
-    assert.ok(
-      panel.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
-      `${label}: unrelated in-flight attachment reads must not block selection-only runs`,
+    assert.match(
+      panel,
+      /if \(!retryOptions && !sourceGrounding && !isWorkflowRun\s*&& !isProcessing && isAttachmentReadPendingForTab\(tabId\)\)/,
+      `${label}: unrelated in-flight attachment reads must not block selection-only or workflow runs`,
     );
     assert.match(
       panel,
@@ -62737,9 +62738,10 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
-    assert.ok(
-      source.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
-      `${label} should block normal sends while files load without blocking retries or selection-only runs`,
+    assert.match(
+      source,
+      /if \(!retryOptions && !sourceGrounding && !isWorkflowRun\s*&& !isProcessing && isAttachmentReadPendingForTab\(tabId\)\)/,
+      `${label} should block normal sends while files load without blocking retries, selection-only runs, or workflow replay`,
     );
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
@@ -63769,6 +63771,9 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /Array\.isArray\(res\.warnings\)/);
     assert.match(source, /input\.type = parameter\.sensitive \? 'password' : 'text'/);
     assert.match(source, /inputs\.forEach\(\(input\) => \{ input\.value = ''; \}\)/);
+    assert.match(source, /const isWorkflowRun = !!chatExtraParams\.workflowId;/);
+    assert.match(source, /const attachmentsForSend = sourceGrounding \|\| isWorkflowRun\s*\? \[\]/);
+    assert.match(source, /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/);
     assert.match(source, /name_required:\s*'sp\.workflows\.reason\.name_required'/);
     assert.match(source, /http_start_url_required:\s*'sp\.workflows\.reason\.http_start_url'/);
     assert.match(source, /className = 'workflow-manager'/);
@@ -63788,6 +63793,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'export_saved_workflow':/);
     assert.match(source, /case 'import_saved_workflow':/);
     assert.match(source, /agent\.replaySavedWorkflow\(/);
+    assert.match(source, /attachmentCount: isWorkflowRun\s*\? 0\s*: Array\.isArray\(msg\.attachments\) \? msg\.attachments\.length : 0/);
     assert.match(source, /clearUserMemoryTurnContext\(tabId\)/);
     assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }
