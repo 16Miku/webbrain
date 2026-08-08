@@ -1148,6 +1148,88 @@ test('mergeRedactionFrameRegions maps nested iframe regions into top capture coo
     [expected[0]],
     'non-strict frame mapping should still return the frames it can account for',
   );
+
+  // Navigation frames sort by frame id and descriptors keep DOM order, so two
+  // rendered siblings sharing a URL cannot be told apart. Binding the wrong one
+  // maps a frame's password region onto the other frame's rectangle and leaves
+  // the real pixels visible, so an ambiguous URL must fail closed.
+  const duplicateUrlFrames = [
+    {
+      frameId: 0,
+      parentFrameId: -1,
+      url: 'https://shop.example/',
+      viewport: { width: 1000, height: 800 },
+      elements: [],
+      childFrames: [
+        { url: 'https://pay.example/form', rect: { x: 0, y: 0, w: 400, h: 300 } },
+        { url: 'https://pay.example/form', rect: { x: 500, y: 0, w: 400, h: 300 } },
+      ],
+    },
+    {
+      frameId: 2,
+      parentFrameId: 0,
+      url: 'https://pay.example/form',
+      viewport: { width: 400, height: 300 },
+      elements: [{ kind: 'input', type: 'password', rect: { x: 10, y: 10, w: 100, h: 20 } }],
+      childFrames: [],
+    },
+    {
+      frameId: 3,
+      parentFrameId: 0,
+      url: 'https://pay.example/form',
+      viewport: { width: 400, height: 300 },
+      elements: [{ kind: 'input', type: 'password', rect: { x: 10, y: 10, w: 100, h: 20 } }],
+      childFrames: [],
+    },
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(duplicateUrlFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when two rendered siblings share a URL',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(duplicateUrlFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when two rendered siblings share a URL',
+  );
+
+  // Only one of the duplicates is in the capture, but the mapper still cannot
+  // tell which navigation frame owns it.
+  const duplicateUrlOneRendered = [
+    {
+      ...duplicateUrlFrames[0],
+      childFrames: [
+        { url: 'https://pay.example/form', rect: { x: 0, y: 0, w: 400, h: 300 } },
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+      ],
+    },
+    duplicateUrlFrames[1],
+    duplicateUrlFrames[2],
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(duplicateUrlOneRendered, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict frame mapping should fail when a rendered frame cannot be distinguished from a hidden same-URL sibling',
+  );
+
+  // Two same-URL siblings that contribute no pixels are harmless: neither can
+  // put regions into the capture, so mis-pairing them changes nothing.
+  const duplicateUrlNoPixels = [
+    {
+      ...duplicateUrlFrames[0],
+      childFrames: [
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+      ],
+    },
+    duplicateUrlFrames[1],
+    duplicateUrlFrames[2],
+  ];
+  assert.deepEqual(
+    mergeRedactionFrameRegions(duplicateUrlNoPixels, { requireCompleteFrameCoverage: true }),
+    [],
+    'strict frame mapping should tolerate ambiguous siblings that contribute no pixels',
+  );
 });
 
 test('capture-time redaction snapshots require inspection only for rendered frames', async () => {

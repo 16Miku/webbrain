@@ -308,25 +308,45 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
     const assignments = [];
     const unmatchedChildren = [];
 
+    const descriptorContributesPixels = (descriptor) => {
+      const rect = descriptor?.rect;
+      if (descriptor?.rendered === false || !rect || !(rect.w > 0 && rect.h > 0)) return false;
+      const mappedRect = {
+        x: transform.x + rect.x * transform.scaleX,
+        y: transform.y + rect.y * transform.scaleY,
+        w: rect.w * transform.scaleX,
+        h: rect.h * transform.scaleY,
+      };
+      return !(Number.isFinite(captureWidth) && Number.isFinite(captureHeight))
+        || rectIntersects(mappedRect, 0, 0, captureWidth, captureHeight);
+    };
+
+    // Navigation frames arrive in creation order and descriptors in DOM order,
+    // and the two disagree once elements are reordered after creation. A URL is
+    // therefore only an identity when exactly one candidate carries it: binding
+    // a frame to the wrong same-URL sibling maps its sensitive regions onto the
+    // other frame's rectangle and leaves the real pixels in the clear.
     for (const child of children) {
       const childUrl = urlKey(child.url);
-      let descriptorIndex = -1;
-      for (const index of unused) {
-        if (urlKey(descriptors[index]?.url) === childUrl) {
-          descriptorIndex = index;
-          break;
-        }
+      const matches = [...unused].filter(index => urlKey(descriptors[index]?.url) === childUrl);
+      if (!matches.length) {
+        unmatchedChildren.push(child);
+        continue;
       }
-      if (descriptorIndex < 0) unmatchedChildren.push(child);
-      else {
-        unused.delete(descriptorIndex);
-        assignments.push([child, descriptorIndex]);
-      }
+      if (matches.length > 1
+          && opts.requireCompleteFrameCoverage === true
+          && matches.some(index => descriptorContributesPixels(descriptors[index]))) return null;
+      unused.delete(matches[0]);
+      assignments.push([child, matches[0]]);
     }
-    // Redirected/about:blank frames may not match the element's current src.
-    // Pair only the remaining siblings by creation/DOM order after exact URL
-    // matches are claimed, so an earlier unmatched frame cannot steal a later
-    // sibling's exact descriptor.
+    // Redirected/about:blank frames may not match the element's current src, so
+    // the remaining siblings pair by creation/DOM order once exact URL matches
+    // are claimed. Order is a guess rather than an identity, so strict coverage
+    // accepts it only when one child and one descriptor are left and the
+    // pairing is forced.
+    if (opts.requireCompleteFrameCoverage === true
+        && (unmatchedChildren.length > 1 || unused.size > 1)
+        && [...unused].some(index => descriptorContributesPixels(descriptors[index]))) return null;
     for (const child of unmatchedChildren) {
       const descriptorIndex = unused.values().next().value ?? -1;
       if (descriptorIndex < 0) {
@@ -342,18 +362,6 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
       assignments.push([child, descriptorIndex]);
     }
 
-    const descriptorContributesPixels = (descriptor) => {
-      const rect = descriptor?.rect;
-      if (descriptor?.rendered === false || !rect || !(rect.w > 0 && rect.h > 0)) return false;
-      const mappedRect = {
-        x: transform.x + rect.x * transform.scaleX,
-        y: transform.y + rect.y * transform.scaleY,
-        w: rect.w * transform.scaleX,
-        h: rect.h * transform.scaleY,
-      };
-      return !(Number.isFinite(captureWidth) && Number.isFinite(captureHeight))
-        || rectIntersects(mappedRect, 0, 0, captureWidth, captureHeight);
-    };
     if (opts.requireCompleteFrameCoverage === true) {
       for (const descriptorIndex of unused) {
         if (descriptorContributesPixels(descriptors[descriptorIndex])) return null;
