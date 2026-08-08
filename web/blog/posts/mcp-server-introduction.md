@@ -4,7 +4,7 @@ title: >
 slug: mcp-server-introduction
 sortOrder: 90
 date: 2026-08-08
-readTime: 10 min read
+readTime: 11 min read
 description: >
   The WebBrain MCP server lets any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — delegate browser tasks to your real, already-authenticated browser. No headless login dances, no cookie transfers. Just ask your agent to fill out a form, check a dashboard, or read a page behind SSO, and it runs in the browser you actually use.
 excerpt: >
@@ -14,7 +14,7 @@ titleTag: >
 ogTitle: >
   WebBrain MCP: Claude Code, OpenCode, Codex in your real browser
 ogDescription: >
-  The WebBrain MCP server lets any MCP-capable agent delegate browser tasks to your real, authenticated Chrome or Firefox session. No headless login walls.
+  The WebBrain MCP server lets any MCP-capable agent delegate browser tasks to your real, authenticated Chromium session. No headless login walls.
 twitterTitle: >
   WebBrain MCP: Claude Code, OpenCode, Codex in your real browser
 twitterDescription: >
@@ -33,10 +33,9 @@ keywords:
   - headless browser
   - local LLM
   - Chrome extension
-  - Firefox extension
 html: true
 lede: >
-  We built the WebBrain MCP server so that any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — can delegate browser tasks to the user's real, already-authenticated browser session. Instead of spinning up a headless browser that starts logged out of everything, the agent hands a goal to WebBrain running in the user's own Chrome or Firefox, and the extension carries it out in the tab the user is already looking at. This post explains how it works, how it differs from other browser MCP approaches, and how to wire it up to your agent of choice.
+  We built the WebBrain MCP server so that any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — can delegate browser tasks to the user's real, already-authenticated Chromium session. Instead of spinning up a headless browser that starts logged out of everything, the agent hands a goal to WebBrain running in the browser profile the user already uses, and the extension carries it out in the active tab. This post explains how it works, how it differs from other browser MCP approaches, and how to wire it up to your agent of choice.
 ---
 
 ```
@@ -58,7 +57,7 @@ lede: >
 
 A headless browser automation tool starts fresh every time. No cookies. No signed-in sessions. No MFA tokens. The first useful page hits you with a login wall, and you either hardcode credentials into a script or manually replay cookies after every restart.
 
-WebBrain is different by design. It runs as a **browser extension** — Chrome (MV3) or Firefox (MV2) — with an embedded agent loop living inside the user's own browser profile. You are already signed in to GitHub, your banking portal, your Stripe dashboard, your internal admin tools. The extension can reach them with the user's full permissions, exactly as if a human were clicking.
+WebBrain is different by design. Its MCP bridge runs inside the Chromium extension — Chrome, Edge, Brave, Opera, or Vivaldi — with an embedded agent loop living inside the user's own browser profile. You are already signed in to GitHub, your banking portal, your Stripe dashboard, your internal admin tools. The extension can reach them with the user's full permissions, exactly as if a human were clicking. The normal Firefox extension still works as a standalone browser agent, but it cannot host this bridge because Firefox has no matching MV3 offscreen-document runtime.
 
 The MCP server exposes that capability to any MCP client:
 
@@ -77,16 +76,17 @@ Other browser MCP servers in the ecosystem typically wrap a **headless Chromium*
 | **Authentication** | Your real browser session — already signed in, MFA passed | Fresh browser — login walls on the first useful page |
 | **Cookie management** | None needed — uses existing session cookies | Manual export/replay, or credential injection in code |
 | **MFA** | Works as-is — your browser already passed it | Cannot pass MFA programmatically |
-| **Tool surface** | 5 task-level tools (delegation pattern) | 8–12 primitive tools (navigate, click, type, screenshot…) |
+| **Tool surface** | 6 task-level tools (delegation pattern) | 8–12 primitive tools (navigate, click, type, screenshot…) |
 | **Safety model** | Ask/Act/Dev modes, per-action permission gate | Trust boundary at the MCP client only |
 | **Local models** | Full local provider support (llama.cpp, vLLM, Ollama, LM Studio) | Depends on the agent framework wrapping the MCP server |
 | **Cross-origin frames** | Extension injects into iframes directly (Stripe widgets, embedded forms) | Blocked by same-origin policy unless explicitly handled |
 
-The key architectural difference is **trust boundary placement**. Headless tools expose granular browser primitives (`click`, `type`, `navigate`, `screenshot`) through MCP — that's the whole surface area. WebBrain deliberately does **not**. It exposes five **task-level** tools instead:
+The key architectural difference is **trust boundary placement**. Headless tools expose granular browser primitives (`click`, `type`, `navigate`, `screenshot`) through MCP — that's the whole surface area. WebBrain deliberately does **not**. It exposes six **task-level** tools instead:
 
 | Tool | Purpose |
 |---|---|
 | `webbrain_run` | Delegate a browser task. `mode='ask'` is read-only; `mode='act'` can click and type, gated by in-browser approval. |
+| `webbrain_extract` | Return authenticated page data matching a caller-supplied JSON Schema. Always uses read-only Ask mode. |
 | `webbrain_status` | Poll a run, or list every run. |
 | `webbrain_respond` | Answer a run sitting at `needs_user_input`. |
 | `webbrain_abort` | Stop a run. Actions already taken are not undone. |
@@ -101,7 +101,7 @@ The server is published on npm as `@webbrain/mcp-server`. Add it to your MCP cli
 ### Claude Code
 
 ```bash
-claude mcp add webbrain -- npx -y @webbrain/mcp-server
+claude mcp add --transport stdio webbrain -- npx -y @webbrain/mcp-server
 ```
 
 ### OpenCode
@@ -119,18 +119,14 @@ Add to `~/.config/opencode/opencode.json`:
 }
 ```
 
-### Codex (or any `mcp.json` consumer)
+### Codex
 
-```json
-{
-  "mcpServers": {
-    "webbrain": {
-      "command": "npx",
-      "args": ["-y", "@webbrain/mcp-server"]
-    }
-  }
-}
+```bash
+codex mcp add webbrain -- npx -y @webbrain/mcp-server
 ```
+
+Codex stores this as a stdio MCP server in `~/.codex/config.toml`. The Codex
+app, CLI, and IDE extension share that host configuration.
 
 ### Cursor
 
@@ -151,7 +147,7 @@ After adding the config, restart the MCP client. On startup, it spawns `npx -y @
 
 The MCP server alone is not enough — you need the WebBrain extension installed and pointed at it:
 
-1. Install the [WebBrain extension](https://webbrain.one) in Chrome or Firefox and open your browser.
+1. Install the [WebBrain extension](https://webbrain.one) in Chrome, Edge, Brave, Opera, or Vivaldi and open the browser.
 2. In **WebBrain → Settings → General → Advanced → Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
 3. Restart your MCP client (or just restart the MCP server process) and ask the client to call `webbrain_connection` to verify.
 
@@ -163,7 +159,7 @@ The extension holds exactly one outbound bridge socket. Pointing it here means i
 
 ## Example usage
 
-Once configured, the MCP client sees the five WebBrain tools in its tool list. You interact with them naturally:
+Once configured, the MCP client sees the six WebBrain tools in its tool list. You interact with them naturally:
 
 > "Open my Stripe dashboard and list last week's failed payments with amounts and customer emails."
 
@@ -179,6 +175,34 @@ webbrain_run(
 The extension receives the task, navigates the already-authenticated dashboard, reads the results, and returns a summary. `mode='ask'` is read-only — it cannot click, type, or submit. For interaction, use `mode='act'`, which requires in-browser approval for consequential actions via the capability × origin permission gate.
 
 If a run stops with status `needs_user_input`, the extension is asking a clarifying question. Answer it with `webbrain_respond`, passing the `run_id` and `clarify_id` from the snapshot.
+
+For a machine-readable result, use `webbrain_extract` with a JSON Schema. It
+runs through the same agent loop in Ask mode, but requires the final answer to
+match the requested structure:
+
+```
+webbrain_extract(
+  task: "extract each overdue invoice with customer, amount, and due date",
+  output_schema: {
+    type: "object",
+    properties: {
+      invoices: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            customer: { type: "string" },
+            amount: { type: "number" },
+            due_date: { type: "string" }
+          },
+          required: ["customer", "amount", "due_date"]
+        }
+      }
+    },
+    required: ["invoices"]
+  }
+)
+```
 
 ## Configuration variables
 

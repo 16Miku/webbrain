@@ -20,7 +20,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test test/bridge.test.mjs test/config.test.mjs test/runs-request-timeout.test.mjs test/runs-timeout.test.mjs test/stdio-shutdown.test.mjs",
+    "test": "npm run build && node --test test/bridge.test.mjs test/catalog.test.mjs test/config.test.mjs test/runs-request-timeout.test.mjs test/runs-timeout.test.mjs test/stdio-shutdown.test.mjs",
     "clean": "rm -rf dist",
     "prepack": "npm run build",
     "prepare": "npm run build"

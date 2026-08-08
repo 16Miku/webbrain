@@ -29,6 +29,38 @@ test("startRun forwards its caller-supplied run ID and command budget", async ()
   });
 });
 
+test("startRun forwards a structured output schema without changing Ask mode", async () => {
+  let observed;
+  const bridge = {
+    async request(action, payload) {
+      observed = { action, payload };
+      return { runId: payload.runId, status: "running" };
+    },
+  };
+  const outputSchema = {
+    type: "object",
+    properties: { invoices: { type: "array", items: { type: "object" } } },
+    required: ["invoices"],
+  };
+
+  await startRun(bridge, {
+    runId: "structured-read",
+    task: "Extract overdue invoices",
+    mode: "ask",
+    outputSchema,
+  });
+
+  assert.deepEqual(observed, {
+    action: "cloud_run",
+    payload: {
+      runId: "structured-read",
+      task: "Extract overdue invoices",
+      mode: "ask",
+      outputSchema,
+    },
+  });
+});
+
 test("startRun rejects API mutation permission in ask mode before dispatch", async () => {
   let dispatched = false;
   const bridge = {
