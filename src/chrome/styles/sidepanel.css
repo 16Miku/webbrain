@@ -1353,6 +1353,10 @@ body {
   align-self: flex-start;
 }
 
+.message.assistant {
+  width: 95%;
+}
+
 .message-content {
   padding: 10px 14px;
   border-radius: var(--radius);
