@@ -14,11 +14,13 @@ import {
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
 import {
+  compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
   createSavedWorkflowStore,
   exportPortableWorkflowDefinition,
   importPortableWorkflowDefinition,
 } from './agent/workflows.js';
+import { createTeacherSessionStore } from './agent/teacher-mode.js';
 import * as workflowTrace from './trace/recorder.js';
 import {
   startClaudeOAuth,
@@ -109,6 +111,7 @@ agent.setConversationScopeChangeListener((tabId, state) => {
 });
 const userMemoryStore = createUserMemoryStore(chrome.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(chrome.storage.local);
+const teacherSessionStore = createTeacherSessionStore(chrome.storage.session);
 const profileSync = new ProfileSyncManager(chrome.storage.local);
 installDownloadDirectoryRouting(chrome);
 
@@ -372,6 +375,7 @@ let userMemoryExtractionTimer = null;
 let userMemoryExtractionQueueLock = Promise.resolve();
 let userMemoryStoreLock = Promise.resolve();
 let savedWorkflowStoreLock = Promise.resolve();
+let teacherSessionStoreLock = Promise.resolve();
 const userMemoryTurnContextByTab = new Map();
 
 function userMemoryTurnContextKey(tabId) {
@@ -554,6 +558,35 @@ async function withSavedWorkflowStoreLock(task) {
   const run = savedWorkflowStoreLock.then(task, task);
   savedWorkflowStoreLock = run.catch(() => {});
   return run;
+}
+
+async function withTeacherSessionStoreLock(task) {
+  const run = teacherSessionStoreLock.then(task, task);
+  teacherSessionStoreLock = run.catch(() => {});
+  return run;
+}
+
+function publicTeacherSession(session) {
+  return session ? {
+    active: true,
+    name: session.name,
+    actionCount: session.actions?.length || 0,
+    startedAt: session.startedAt,
+  } : { active: false };
+}
+
+async function notifyTeacherState(tabId, session) {
+  if (tabId == null) return false;
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'teacher_state',
+      state: publicTeacherSession(session),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operations) {
@@ -1349,6 +1382,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   activeIndicatorTabs.delete(tabId);
+  withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => {});
 });
 
 const RUN_UI_PREFIX = 'runUi:';
@@ -1779,9 +1813,18 @@ function recordNav(tabId, type, url) {
   lastNavByTab.set(tabId, { ts: Date.now(), type, url: url || '' });
 }
 
+function recordTeacherNavigation(tabId, url, options) {
+  withTeacherSessionStoreLock(() => teacherSessionStore.navigation(tabId, url, options)).catch(() => {});
+}
+
+const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
+  'typed', 'auto_bookmark', 'generated', 'keyword', 'keyword_generated',
+]);
+
 chrome.webNavigation?.onHistoryStateUpdated?.addListener((details) => {
   if (details.frameId !== 0) return;
   recordNav(details.tabId, 'history', details.url);
+  recordTeacherNavigation(details.tabId, details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 chrome.webNavigation?.onReferenceFragmentUpdated?.addListener((details) => {
@@ -1792,6 +1835,9 @@ chrome.webNavigation?.onReferenceFragmentUpdated?.addListener((details) => {
 chrome.webNavigation?.onCommitted?.addListener((details) => {
   if (details.frameId !== 0) return;
   recordNav(details.tabId, 'committed', details.url);
+  recordTeacherNavigation(details.tabId, details.url, {
+    force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
+  });
   invalidateContextMenuForTab(details.tabId);
   agent.clearDevCssPatchesForTab(details.tabId).catch(() => {});
 });
@@ -2174,6 +2220,87 @@ async function handleMessage(msg, sender) {
         conversationId: msg.conversationId,
       });
       return { ok: true, ...result };
+    }
+
+    // --- Teacher Mode ---
+    case 'get_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required', session: { active: false } };
+      const session = await teacherSessionStore.get(tabId);
+      return { ok: true, session: publicTeacherSession(session) };
+    }
+
+    case 'start_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required' };
+      if (agent.isRunning(tabId) || detachedRunStarts.has(tabId)) {
+        return { ok: false, reason: 'agent_running' };
+      }
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      const result = await withTeacherSessionStoreLock(() => teacherSessionStore.start(tabId, {
+        name: msg.name,
+        url: tab?.url,
+        webbrainVersion: chrome.runtime.getManifest().version,
+      }));
+      if (result.changed && !await notifyTeacherState(tabId, result.session)) {
+        await withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId));
+        return { ok: false, reason: 'capture_unavailable', session: { active: false } };
+      }
+      return { ok: result.changed, reason: result.reason, session: publicTeacherSession(result.session) };
+    }
+
+    case 'record_teacher_action': {
+      const tabId = sender.tab?.id;
+      if (!tabId || (sender.frameId != null && sender.frameId !== 0)) {
+        return { ok: false, reason: 'tab_required' };
+      }
+      const result = await withTeacherSessionStoreLock(() => (
+        teacherSessionStore.record(tabId, msg.teacherAction)
+      ));
+      return {
+        ok: result.changed || ['duplicate', 'unsafe_target'].includes(result.reason),
+        reason: result.reason,
+        session: publicTeacherSession(result.session),
+      };
+    }
+
+    case 'end_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required' };
+      const response = await withTeacherSessionStoreLock(async () => {
+        let session = await teacherSessionStore.get(tabId);
+        if (!session) return { ok: false, reason: 'no_active_session', stopped: false };
+        const flushed = await chrome.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'flush_teacher_capture',
+        }).catch(() => null);
+        if (flushed?.teacherAction) {
+          await teacherSessionStore.record(tabId, flushed.teacherAction);
+          session = await teacherSessionStore.get(tabId);
+        }
+        let result;
+        try {
+          const compiled = compileWorkflowFromDemonstration(session);
+          if (!compiled.workflow) {
+            result = { ok: false, ...compiled };
+          } else {
+            const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
+            result = {
+              ok: saved.changed,
+              workflow: saved.workflow,
+              warnings: compiled.warnings,
+              reason: saved.reason || '',
+            };
+          }
+        } catch (error) {
+          result = { ok: false, reason: 'save_failed', error: error?.message || String(error) };
+        } finally {
+          await teacherSessionStore.clear(tabId);
+        }
+        return { ...result, stopped: true };
+      });
+      if (response.stopped) await notifyTeacherState(tabId, null);
+      return response;
     }
 
     // --- Saved Workflows ---

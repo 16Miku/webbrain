@@ -292,6 +292,12 @@ const SavedWorkflowsCh = await import(
 const SavedWorkflowsFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/workflows.js').replace(/\\/g, '/')
 );
+const TeacherModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
+const TeacherModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
 
 // config-transfer.js is the pure schema/allowlist boundary used by the
 // /export --config and /import slash-command handlers.
@@ -63465,6 +63471,176 @@ test('saved workflow exact-run compiler never substitutes a newer trace', async 
     });
     assert.equal(result.workflow.source.runId, 'trace_exact');
     assert.deepEqual(calls, [['run', 'trace_exact'], ['events', 'trace_exact']]);
+  }
+});
+
+test('teacher mode compiles user demonstrations without retaining entered values', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const result = module.compileWorkflowFromDemonstration({
+      name: 'Submit account form',
+      startUrl: 'https://example.com/form?session=start-secret#private',
+      webbrainVersion: '26.2.2',
+      skippedActionCount: 2,
+      actionLimitReached: true,
+      actions: [
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form?session=field-secret',
+          value: 'person@example.com',
+          target: { role: 'textbox', label: 'Email', fieldName: 'email', type: 'email' },
+        },
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form',
+          value: 'correct horse battery staple',
+          submit: true,
+          target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+        },
+        {
+          kind: 'checked',
+          pageUrl: 'https://example.com/settings',
+          checked: true,
+          target: { role: 'checkbox', name: 'Remember this device' },
+        },
+        {
+          kind: 'click',
+          pageUrl: 'https://example.com/settings',
+          target: { role: 'button', name: 'Continue', selector: '#unsafe-selector' },
+        },
+        {
+          kind: 'navigate',
+          pageUrl: 'https://example.com/settings',
+          url: 'https://example.com/complete?token=navigation-secret#done',
+        },
+      ],
+    }, { now: 1700 });
+
+    assert.equal(result.reason, '');
+    assert.deepEqual(result.workflow.start, { origin: 'https://example.com', pathFamily: '/form' });
+    assert.deepEqual(result.workflow.steps.map((step) => step.tool), [
+      'type_ax', 'set_field', 'set_checked', 'click_ax', 'navigate',
+    ]);
+    assert.deepEqual(result.workflow.steps[0].args, {
+      text: { [module.WORKFLOW_PARAM_REF_KEY]: 'email' },
+      clear: true,
+    });
+    assert.equal(result.workflow.steps[1].args.submit, true);
+    assert.equal(result.workflow.parameters[0].sensitive, false);
+    assert.equal(result.workflow.parameters[1].sensitive, true);
+    assert.equal(result.workflow.steps[2].expected.value, true);
+    assert.equal(result.workflow.steps[4].args.url, 'https://example.com/complete');
+    assert.deepEqual(result.workflow.stats, {
+      sourceToolCount: 7,
+      compiledStepCount: 5,
+      skippedToolCount: 2,
+    });
+    assert.equal(result.warnings.length, 2);
+    assert.doesNotMatch(
+      JSON.stringify(result.workflow),
+      /person@example\.com|correct horse|start-secret|field-secret|navigation-secret|unsafe-selector|selector/,
+    );
+  }
+});
+
+test('teacher session store persists only normalized value-free actions', async () => {
+  for (const module of [TeacherModeCh, TeacherModeFx]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    let now = 2000;
+    const store = module.createTeacherSessionStore(storage, { now: () => now++ });
+    const started = await store.start(42, {
+      name: 'Login flow',
+      url: 'https://example.com/login?token=start-secret',
+      webbrainVersion: '26.2.2',
+    });
+    assert.equal(started.changed, true);
+    assert.equal((await store.start(42, { name: 'Other', url: 'https://example.com/' })).reason, 'already_active');
+
+    const recorded = await store.record(42, {
+      kind: 'field',
+      pageUrl: 'https://example.com/login?token=field-secret',
+      value: 'do-not-store-me',
+      target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+    });
+    assert.equal(recorded.changed, true);
+    assert.equal(recorded.session.actions.length, 1);
+    assert.doesNotMatch(JSON.stringify(memory), /do-not-store-me|start-secret|field-secret/);
+
+    const restored = module.createTeacherSessionStore(storage, { now: () => now++ });
+    assert.equal((await restored.get(42)).actions.length, 1);
+    assert.equal((await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button' },
+    })).reason, 'unsafe_target');
+    const afterUnsafeTarget = await restored.get(42);
+    assert.equal(afterUnsafeTarget.actions.length, 1);
+    assert.equal(afterUnsafeTarget.skippedActionCount, 1);
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button', name: 'Continue' },
+    });
+    await restored.navigation(42, 'https://example.com/account?token=click-secret');
+    assert.equal((await restored.get(42)).actions.length, 2, 'click-driven navigation must not add a duplicate step');
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/account',
+      target: { role: 'button', name: 'Open settings' },
+    });
+    await restored.navigation(42, 'https://example.com/settings?token=typed-secret', { force: true });
+    const navigated = await restored.get(42);
+    assert.equal(navigated.actions.length, 4, 'typed navigation must remain replayable after a recent click');
+    assert.deepEqual(navigated.actions.at(-1), {
+      kind: 'navigate',
+      scope: { origin: 'https://example.com', pathFamily: '/account' },
+      url: 'https://example.com/settings',
+    });
+    assert.doesNotMatch(JSON.stringify(memory), /click-secret|typed-secret/);
+    assert.equal((await restored.clear(42)).changed, true);
+    assert.equal(await restored.get(42), null);
+  }
+});
+
+test('teacher slash commands and value-free page capture are wired in both browsers', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const panelPath = `src/${build}/src/ui/sidepanel.js`;
+    const runtime = loadSlashCommandRuntime(panelPath);
+    assert.equal(runtime.parseSlashInvocation('/teach').action, 'status');
+    const start = runtime.parseSlashInvocation('/teach --start Checkout flow');
+    assert.equal(start.action, 'start');
+    assert.equal(start.payload, 'Checkout flow');
+    assert.equal(runtime.slashInvocationIsOutOfBand(start), true);
+    const end = runtime.parseSlashInvocation('/teach --end');
+    assert.equal(end.action, 'end');
+    assert.equal(runtime.slashInvocationIsOutOfBand(end), true);
+    assert.equal(runtime.parseSlashInvocation('/teach --end extra').error, 'invalid-usage');
+
+    const panel = fs.readFileSync(path.join(ROOT, panelPath), 'utf8');
+    assert.match(panel, /sendToBackground\('start_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('end_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('get_teacher_mode'/);
+
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(background, /case 'record_teacher_action':/);
+    assert.match(background, /case 'start_teacher_mode':/);
+    assert.match(background, /case 'end_teacher_mode':/);
+    assert.match(background, /compileWorkflowFromDemonstration/);
+
+    const capturePath = `src/${build}/src/content/teacher-capture.js`;
+    const capture = fs.readFileSync(path.join(ROOT, capturePath), 'utf8');
+    assert.match(capture, /event\.isTrusted/);
+    assert.match(capture, /action: 'record_teacher_action'/);
+    assert.match(capture, /action === 'flush_teacher_capture'/);
+    assert.match(capture, /isSubmitControl\(element\) && Date\.now\(\) - enterSubmitAt < 500/);
+    assert.match(capture, /name: field \? '' : clean\(window\.__wb_ax_name/);
+    assert.doesNotMatch(capture, /\.value\b/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${build}/manifest.json`), 'utf8'));
+    assert.ok(manifest.content_scripts.some((entry) => entry.js?.includes('src/content/teacher-capture.js')));
   }
 });
 

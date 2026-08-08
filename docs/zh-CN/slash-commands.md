@@ -28,6 +28,9 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 | `/workflow --delete <id>` | 删除已保存的工作流 |
 | `/workflow --export <id>` | 下载经过清洗的可移植 `webbrain-workflow/1` JSON 文件 |
 | `/workflow --import --file` | 将可移植工作流文件导入为新的本地工作流 |
+| `/teach` | 显示当前标签页的示教状态和已捕获操作数 |
+| `/teach --start <名称>` | 开始从您演示的点击和字段编辑中学习工作流 |
+| `/teach --end` | 结束示教，并将捕获的操作编译为不含实际输入值的已保存工作流 |
 | `/allow-api` | **按对话的 API 变更覆盖。** 参见[下文](#allow-api)。 |
 | `/foreground [提示词]` | 为视觉兼容性在前台运行一次本地任务 |
 | `/dangerously-skip-permissions` | **全局权限提示绕过。** 无需打开设置即可关闭「操作前询问」。在你重新启用该设置之前，WebBrain 将不再按站点弹出提示。 |

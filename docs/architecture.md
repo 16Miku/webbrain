@@ -531,6 +531,14 @@ action CSS selectors, coordinates, query strings, fragments, and typed values. E
 value becomes a declared runtime parameter; unsupported or failed actions are
 skipped and reported to the user as save warnings.
 
+Teacher mode is a second, value-free compiler input for the same schema.
+`content/teacher-capture.js` observes only trusted top-document clicks, field
+completion, checkbox/radio changes, Enter submissions, and navigation while a
+tab-scoped session is active. Field values are never read or sent; a field
+action becomes a runtime parameter marker as soon as it crosses the capture
+boundary. The sanitized session survives navigation in `storage.session` and
+is removed when `/teach --end` compiles and stores the workflow.
+
 Each compiled step contains semantic target metadata (role, accessible name,
 label, field identity, link, or placeholder), an expected postcondition, and
 the origin/path family observed before that action. `/workflow` renders a

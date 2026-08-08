@@ -391,6 +391,135 @@ export function compileWorkflowFromTrace(run, events, options = {}) {
     : { workflow: null, warnings, reason: 'normalization_failed' };
 }
 
+/** Normalize one value-free user-demonstrated action before session storage. */
+export function normalizeTeacherCaptureAction(input) {
+  const kind = cleanText(input?.kind, 40);
+  const scope = normalizeWorkflowScope(input?.scope) || workflowUrlScope(input?.pageUrl);
+  if (!scope) return null;
+  if (kind === 'navigate') {
+    const url = safeHttpUrl(input?.url);
+    return url ? { kind, scope, url } : null;
+  }
+  if (!['click', 'field', 'checked'].includes(kind)) return null;
+  const target = normalizeTarget(input?.target);
+  if (!isReplayableWorkflowTarget(target)) return null;
+  if (kind === 'checked' && typeof input?.checked !== 'boolean') return null;
+  return {
+    kind,
+    scope,
+    target,
+    ...(kind === 'checked' ? { checked: input.checked } : {}),
+    ...(kind === 'field' && input?.submit === true ? { submit: true } : {}),
+  };
+}
+
+/** Compile a user demonstration into the existing value-free workflow schema. */
+export function compileWorkflowFromDemonstration(input, options = {}) {
+  const ts = timestamp(options.now, nowMs());
+  const name = normalizeSavedWorkflowName(input?.name);
+  if (!name) return { workflow: null, warnings: [], reason: 'name_required' };
+  const start = normalizeWorkflowScope(input?.start) || workflowUrlScope(input?.startUrl);
+  if (!start) return { workflow: null, warnings: [], reason: 'http_start_url_required' };
+
+  const rawActions = Array.isArray(input?.actions) ? input.actions : [];
+  const previouslySkipped = Math.max(0, Math.floor(Number(input?.skippedActionCount) || 0));
+  const warnings = previouslySkipped
+    ? [`Skipped ${previouslySkipped} demonstrated action(s) because no safe, reusable target was available.`]
+    : [];
+  if (input?.actionLimitReached === true) {
+    warnings.push(`Stopped recording additional actions after the ${MAX_STEPS}-step workflow limit.`);
+  }
+  const parameters = [];
+  const steps = [];
+  let skippedActionCount = previouslySkipped;
+  for (const raw of rawActions) {
+    const action = normalizeTeacherCaptureAction(raw);
+    if (!action) {
+      skippedActionCount += 1;
+      warnings.push('Skipped a demonstrated action because it had no safe, reusable target or URL.');
+      continue;
+    }
+    if (action.kind === 'navigate') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'navigate',
+        args: { url: action.url },
+        scope: action.scope,
+        expected: { kind: 'url_changed' },
+      });
+    } else if (action.kind === 'click') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'click_ax',
+        args: {},
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'tool_success' },
+      });
+    } else if (action.kind === 'checked') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'set_checked',
+        args: { checked: action.checked },
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'checked', value: action.checked },
+      });
+    } else if (parameters.length < MAX_PARAMETERS) {
+      const base = parameterBase(action.target, `input_${parameters.length + 1}`);
+      const id = uniqueParameterId(base, parameters);
+      parameters.push({
+        id,
+        label: cleanText(
+          action.target.label || action.target.ariaLabel || action.target.name
+            || action.target.fieldName || id,
+          120,
+        ),
+        required: true,
+        sensitive: sensitiveParameter(action.target),
+        type: 'text',
+      });
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: action.submit ? 'set_field' : 'type_ax',
+        args: {
+          text: { [WORKFLOW_PARAM_REF_KEY]: id },
+          clear: true,
+          ...(action.submit ? { submit: true } : {}),
+        },
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'tool_verified' },
+      });
+    } else {
+      skippedActionCount += 1;
+      warnings.push('Skipped a demonstrated field because the workflow parameter limit was reached.');
+    }
+    if (steps.length >= MAX_STEPS) break;
+  }
+
+  if (!steps.length) return { workflow: null, warnings, reason: 'no_replayable_steps' };
+  const workflow = normalizeSavedWorkflow({
+    schema: SAVED_WORKFLOW_SCHEMA,
+    id: options.id || createSavedWorkflowId(ts),
+    name,
+    createdAt: ts,
+    updatedAt: ts,
+    source: { runId: '', webbrainVersion: cleanText(input?.webbrainVersion, 40) },
+    start,
+    parameters,
+    steps,
+    stats: {
+      sourceToolCount: rawActions.length + previouslySkipped,
+      compiledStepCount: steps.length,
+      skippedToolCount: skippedActionCount,
+    },
+  }, { now: ts });
+  return workflow
+    ? { workflow, warnings, reason: '' }
+    : { workflow: null, warnings, reason: 'normalization_failed' };
+}
+
 function normalizeParameter(input) {
   const id = cleanId(input?.id).toLowerCase();
   if (!id) return null;

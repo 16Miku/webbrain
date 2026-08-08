@@ -30,6 +30,9 @@ d'une espace ouvre l'autocomplétion de ses options disponibles.
 | `/workflow --delete <id>` | Supprimer un workflow enregistré |
 | `/workflow --export <id>` | Télécharger un fichier JSON portable `webbrain-workflow/1` assaini |
 | `/workflow --import --file` | Importer un fichier de workflow portable comme nouveau workflow local |
+| `/teach` | Afficher l’état du mode d’apprentissage et le nombre d’actions capturées dans l’onglet actuel |
+| `/teach --start <nom>` | Commencer à apprendre un workflow à partir de vos clics et modifications de champs |
+| `/teach --end` | Arrêter l’apprentissage et compiler les actions en workflow enregistré sans valeurs saisies |
 | `/allow-api` | **Dérogation de mutation API par conversation.** Voir [plus bas](#allow-api). |
 | `/foreground [invite]` | Exécuter une tâche locale au premier plan pour assurer la compatibilité visuelle |
 | `/dangerously-skip-permissions` | **Contournement global des demandes d'autorisation.** Désactive `Ask before consequential actions` sans ouvrir les Paramètres. WebBrain agira sans demandes par site jusqu'à ce que vous réactiviez le réglage. |
