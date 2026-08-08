@@ -39,10 +39,20 @@ lede: >
   We built the WebBrain MCP server so that any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — can delegate browser tasks to the user's real, already-authenticated browser session. Instead of spinning up a headless browser that starts logged out of everything, the agent hands a goal to WebBrain running in the user's own Chrome or Firefox, and the extension carries it out in the tab the user is already looking at. This post explains how it works, how it differs from other browser MCP approaches, and how to wire it up to your agent of choice.
 ---
 
-<figure>
-  <img src="/assets/mcp-diagram.png" alt="Claude Code, OpenCode, Codex — each connected via stdio to the WebBrain MCP server, which connects over WebSocket to the WebBrain browser extension, which controls the user's authenticated browser tabs.">
-  <figcaption>The WebBrain MCP server sits between your coding agent and your browser. The extension runs in your real session — already logged in, cookies present, MFA passed.</figcaption>
-</figure>
+```
+┌──────────┐  stdio  ┌─────────────────┐  ws://127.0.0.1:17374  ┌──────────────┐
+│ Claude   │ ──────▶ │  webbrain-mcp   │ ────────────────────▶ │  Extension   │
+│ Code     │  (MCP)  │     server      │    (loopback-only)     │  (authenticated)│
+│ OpenCode │         └─────────────────┘                        │  browser      │
+│ Codex    │                                                  └──────────────┘
+└──────────┘                                                         │
+                                                                     ▼
+                                                            ┌────────────────┐
+                                                            │  Your tabs     │
+                                                            │  (signed in,   │
+                                                            │   MFA passed)  │
+                                                            └────────────────┘
+```
 
 ## Why an MCP server for browser automation?
 
@@ -182,7 +192,7 @@ All environment-driven, set these before launching the MCP server if you need no
 | `WEBBRAIN_RUN_TIMEOUT_MS` | `300000` | Default ceiling for `webbrain_run` polling. |
 | `WEBBRAIN_POLL_INTERVAL_MS` | `1000` | Status poll interval. |
 
-## When to use this vs. a headless MCP server
+## When to use WebBrain MCP
 
 Choose WebBrain MCP when:
 
@@ -190,16 +200,7 @@ Choose WebBrain MCP when:
 - **MFA** is involved and you can't programmatically log in
 - You want **explicit safety modes** (read-only first, then gated interactive mode)
 - You want **local-first execution** with your own LLMs — no API calls leave your machine
-- You need the extension to handle **cross-origin iframes** (Stripe checkout widgets, embedded forms)
-
-Choose a headless browser MCP server when:
-
-- You're building **automated web workflows in code** (scraping, testing, scheduled form submissions)
-- You can **handle authentication programmatically** (known credentials, no MFA)
-- You need **tight integration with a Python agent framework** (LangChain, AutoGPT, etc.)
-- You're comfortable with the login-wall workaround and managing session state yourself
-
-They are not mutually exclusive. A headless browser MCP server handles programmatic scraping fine. WebBrain MCP handles authenticated, interactive tasks that need your real browser session.
+  - You need the extension to handle **cross-origin iframes** (Stripe checkout widgets, embedded forms)
 
 ## Security model
 

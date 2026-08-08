@@ -526,10 +526,18 @@
     <div class="meta">August 8, 2026 &middot; 10 min read &middot; <a href="/blog">&larr; All posts</a></div>
     <h1>WebBrain MCP: Give Claude Code, OpenCode, and Codex access to your real browser session</h1>
     <p class="lede">We built the WebBrain MCP server so that any MCP-capable coding agent — Claude Code, OpenCode, Codex, Cursor — can delegate browser tasks to the user's real, already-authenticated browser session. Instead of spinning up a headless browser that starts logged out of everything, the agent hands a goal to WebBrain running in the user's own Chrome or Firefox, and the extension carries it out in the tab the user is already looking at. This post explains how it works, how it differs from other browser MCP approaches, and how to wire it up to your agent of choice.</p>
-<figure>
-  <img src="/assets/mcp-diagram.png" alt="Claude Code, OpenCode, Codex — each connected via stdio to the WebBrain MCP server, which connects over WebSocket to the WebBrain browser extension, which controls the user's authenticated browser tabs.">
-  <figcaption>The WebBrain MCP server sits between your coding agent and your browser. The extension runs in your real session — already logged in, cookies present, MFA passed.</figcaption>
-</figure>
+<pre><code>┌──────────┐  stdio  ┌─────────────────┐  ws://127.0.0.1:17374  ┌──────────────┐
+│ Claude   │ ──────▶ │  webbrain-mcp   │ ────────────────────▶ │  Extension   │
+│ Code     │  (MCP)  │     server      │    (loopback-only)     │  (authenticated)│
+│ OpenCode │         └─────────────────┘                        │  browser      │
+│ Codex    │                                                  └──────────────┘
+└──────────┘                                                         │
+                                                                     ▼
+                                                            ┌────────────────┐
+                                                            │  Your tabs     │
+                                                            │  (signed in,   │
+                                                            │   MFA passed)  │
+                                                            └────────────────┘</code></pre>
 <h2 id="why-an-mcp-server-for-browser-automation">Why an MCP server for browser automation?</h2>
 <p>A headless browser automation tool starts fresh every time. No cookies. No signed-in sessions. No MFA tokens. The first useful page hits you with a login wall, and you either hardcode credentials into a script or manually replay cookies after every restart.</p>
 <p>WebBrain is different by design. It runs as a <strong>browser extension</strong> — Chrome (MV3) or Firefox (MV2) — with an embedded agent loop living inside the user's own browser profile. You are already signed in to GitHub, your banking portal, your Stripe dashboard, your internal admin tools. The extension can reach them with the user's full permissions, exactly as if a human were clicking.</p>
@@ -595,12 +603,9 @@
 <h2 id="configuration-variables">Configuration variables</h2>
 <p>All environment-driven, set these before launching the MCP server if you need non-default behavior:</p>
 <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead><tbody><tr><td><code>WEBBRAIN_BRIDGE_PORT</code></td><td><code>17374</code></td><td>Port the extension connects to.</td></tr><tr><td><code>WEBBRAIN_BRIDGE_PATH</code></td><td><code>/extension</code></td><td>Path segment; must match the URL in Settings.</td></tr><tr><td><code>WEBBRAIN_COMMAND_TIMEOUT_MS</code></td><td><code>30000</code></td><td>Per-command reply timeout.</td></tr><tr><td><code>WEBBRAIN_RUN_TIMEOUT_MS</code></td><td><code>300000</code></td><td>Default ceiling for <code>webbrain_run</code> polling.</td></tr><tr><td><code>WEBBRAIN_POLL_INTERVAL_MS</code></td><td><code>1000</code></td><td>Status poll interval.</td></tr></tbody></table></div>
-<h2 id="when-to-use-this-vs-a-headless-mcp-server">When to use this vs. a headless MCP server</h2>
+<h2 id="when-to-use-webbrain-mcp">When to use WebBrain MCP</h2>
 <p>Choose WebBrain MCP when:</p>
 <ul><li>You need to interact with <strong>sites you're already authenticated to</strong> (banking, SaaS dashboards, admin panels, email)</li><li><strong>MFA</strong> is involved and you can't programmatically log in</li><li>You want <strong>explicit safety modes</strong> (read-only first, then gated interactive mode)</li><li>You want <strong>local-first execution</strong> with your own LLMs — no API calls leave your machine</li><li>You need the extension to handle <strong>cross-origin iframes</strong> (Stripe checkout widgets, embedded forms)</li></ul>
-<p>Choose a headless browser MCP server when:</p>
-<ul><li>You're building <strong>automated web workflows in code</strong> (scraping, testing, scheduled form submissions)</li><li>You can <strong>handle authentication programmatically</strong> (known credentials, no MFA)</li><li>You need <strong>tight integration with a Python agent framework</strong> (LangChain, AutoGPT, etc.)</li><li>You're comfortable with the login-wall workaround and managing session state yourself</li></ul>
-<p>They are not mutually exclusive. A headless browser MCP server handles programmatic scraping fine. WebBrain MCP handles authenticated, interactive tasks that need your real browser session.</p>
 <h2 id="security-model">Security model</h2>
 <p>The extension runs with <code>&lt;all_urls&gt;</code> host permissions. The full threat model is in <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/security-model.md" target="_blank" rel="noopener"><code>docs/security-model.md</code></a>. Key points:</p>
 <ul><li><strong>Ask mode is read-only</strong> — only semantic read tools (<code>get_accessibility_tree</code>, <code>read_page</code>, <code>extract_data</code>, etc.) are available. No clicks, no typing, no navigation.</li><li><strong>Act mode requires per-action approval</strong> — every consequential tool (click, type, navigate, execute_js, network, download) goes through a deterministic <code>(capability, host)</code> permission gate. You choose Allow/Always/Deny per origin.</li><li><strong>Plan-before-Act</strong> — an optional structured planner runs before any browser tools execute, and the side panel renders an editable review card for approval.</li><li><strong>Loop detection</strong> — three independent detectors (general repeat, coordinate click, navigation) stop the agent if it's stuck repeating actions.</li><li><strong>Prompt injection defense</strong> — page-derived content is wrapped in <code>&lt;untrusted_page_content&gt;</code> markers so the model treats it as data, not instructions.</li></ul>
