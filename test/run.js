@@ -63406,6 +63406,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     const source = fs.readFileSync(path.join(ROOT, panel), 'utf8');
     assert.match(source, /sendToBackground\('save_latest_workflow', \{ tabId, name \}\)/);
     assert.match(source, /sendToBackground\('list_saved_workflows'\)/);
+    assert.match(source, /sendToBackground\('rename_saved_workflow'/);
     assert.match(source, /sendToBackground\('delete_saved_workflow'/);
     assert.match(source, /sendToBackground\('get_saved_workflow', \{ id: workflowId \}\)/);
     assert.match(source, /sendToBackground\('export_saved_workflow'/);
@@ -63418,6 +63419,11 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /inputs\.forEach\(\(input\) => \{ input\.value = ''; \}\)/);
     assert.match(source, /name_required:\s*'sp\.workflows\.reason\.name_required'/);
     assert.match(source, /http_start_url_required:\s*'sp\.workflows\.reason\.http_start_url'/);
+    assert.match(source, /className = 'workflow-manager'/);
+    assert.match(source, /data-workflow-action/);
+    assert.match(source, /button\.dataset\.deleteArmed !== 'true'/);
+    assert.match(source, /bindSavedWorkflowManager/);
+    assert.doesNotMatch(source, /sp\.workflows\.title_html'\)}<pre class="scratchpad-dump"/);
     assert.doesNotMatch(source, /retryPayload[^\n]+workflowParameters/);
   }
   for (const background of ['src/chrome/src/background.js', 'src/firefox/src/background.js']) {
@@ -63425,6 +63431,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'save_latest_workflow':/);
     assert.match(source, /compileLatestSuccessfulWorkflow\(workflowTrace/);
     assert.match(source, /case 'list_saved_workflows':/);
+    assert.match(source, /case 'rename_saved_workflow':/);
     assert.match(source, /case 'delete_saved_workflow':/);
     assert.match(source, /case 'export_saved_workflow':/);
     assert.match(source, /case 'import_saved_workflow':/);
@@ -64069,6 +64076,15 @@ test('saved workflow store normalizes writes and resolves runtime parameters wit
     { text: 'new@example.com' },
   );
   assert.doesNotMatch(JSON.stringify(memory), /person@example\.com|new@example\.com|ref_5/);
+  const renamed = await store.rename(compiled.id, '  Updated email flow  ');
+  assert.equal(renamed.changed, true);
+  assert.equal(renamed.workflow.name, 'Updated email flow');
+  assert.equal(renamed.workflow.id, compiled.id);
+  assert.equal(renamed.workflow.createdAt, compiled.createdAt);
+  assert.deepEqual(renamed.workflow.steps, compiled.steps);
+  assert.deepEqual(renamed.workflow.parameters, compiled.parameters);
+  assert.equal((await store.rename(compiled.id, '   ')).reason, 'name_required');
+  assert.equal((await store.rename('workflow_missing', 'Missing')).reason, 'not_found');
   assert.equal((await store.delete(compiled.id)).changed, true);
   assert.equal((await store.list()).length, 0);
 });

@@ -1924,6 +1924,14 @@ async function handleMessage(msg, sender) {
       return { ok: saved.changed, workflow: saved.workflow, warnings: compiled.warnings, reason: saved.reason || '' };
     }
 
+    case 'rename_saved_workflow': {
+      const result = await withSavedWorkflowStoreLock(() => savedWorkflowStore.rename(
+        String(msg.id || ''),
+        msg.name,
+      ));
+      return { ok: result.changed, ...result };
+    }
+
     case 'delete_saved_workflow': {
       const result = await withSavedWorkflowStoreLock(() => savedWorkflowStore.delete(String(msg.id || '')));
       return { ok: result.changed, ...result };

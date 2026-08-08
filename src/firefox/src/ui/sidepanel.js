@@ -3222,6 +3222,171 @@ function savedWorkflowFailureMessage(res) {
     : t('sp.workflows.error', { msg: res?.reason || res?.error || 'unknown error' });
 }
 
+const boundSavedWorkflowManagers = new WeakSet();
+
+function setSavedWorkflowButtonLabel(button, label, workflowName = '') {
+  button.textContent = label;
+  button.title = label;
+  if (workflowName) button.setAttribute('aria-label', `${label}: ${workflowName}`);
+}
+
+function savedWorkflowManagerActionButton(action, label, workflowName = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.setAttribute('data-workflow-action', action);
+  setSavedWorkflowButtonLabel(button, label, workflowName);
+  return button;
+}
+
+function renderSavedWorkflowManager(manager, workflows, tabId) {
+  manager.replaceChildren();
+  manager.className = 'workflow-manager';
+  manager.dataset.tabId = String(tabId);
+
+  for (const workflow of workflows) {
+    const card = document.createElement('section');
+    card.className = 'workflow-card';
+    card.dataset.workflowId = workflow.id;
+
+    const title = document.createElement('div');
+    title.className = 'workflow-card-title';
+    title.textContent = workflow.name;
+
+    const meta = document.createElement('div');
+    meta.className = 'workflow-card-meta';
+    meta.textContent = t('sp.workflows.meta', {
+      id: workflow.id,
+      steps: workflow.steps?.length || 0,
+      parameters: workflow.parameters?.length || 0,
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'workflow-card-actions';
+    actions.append(
+      savedWorkflowManagerActionButton('run', t('sp.scheduled.run_now'), workflow.name),
+      savedWorkflowManagerActionButton('rename', t('sp.workflows.rename'), workflow.name),
+      savedWorkflowManagerActionButton('export', t('st.memory.export'), workflow.name),
+      savedWorkflowManagerActionButton('delete', t('sp.scheduled.delete'), workflow.name),
+    );
+
+    const renameForm = document.createElement('form');
+    renameForm.className = 'workflow-rename-form hidden';
+    const renameInput = document.createElement('input');
+    renameInput.type = 'text';
+    renameInput.required = true;
+    renameInput.maxLength = 80;
+    renameInput.value = workflow.name;
+    renameInput.setAttribute('aria-label', t('sp.workflows.rename'));
+    const renameSubmit = document.createElement('button');
+    renameSubmit.type = 'submit';
+    renameSubmit.textContent = t('st.providers.save');
+    const renameCancel = savedWorkflowManagerActionButton('cancel-rename', t('sp.schedule_form.cancel'), workflow.name);
+    renameForm.append(renameInput, renameSubmit, renameCancel);
+
+    card.append(title, meta, actions, renameForm);
+    manager.appendChild(card);
+  }
+  bindSavedWorkflowManager(manager);
+}
+
+async function refreshSavedWorkflowManager(manager, tabId) {
+  const res = await sendToBackground('list_saved_workflows');
+  if (currentTabId !== tabId || !manager.isConnected) return;
+  if (!res?.ok) throw new Error(res?.error || 'unknown error');
+  const workflows = Array.isArray(res.workflows) ? res.workflows : [];
+  if (!workflows.length) {
+    manager.replaceChildren();
+    const empty = document.createElement('div');
+    empty.className = 'workflow-manager-empty';
+    empty.textContent = t('sp.workflows.empty');
+    manager.appendChild(empty);
+    return;
+  }
+  renderSavedWorkflowManager(manager, workflows, tabId);
+}
+
+function bindSavedWorkflowManager(manager) {
+  if (!manager || boundSavedWorkflowManagers.has(manager)) return;
+  boundSavedWorkflowManagers.add(manager);
+  manager.addEventListener('click', async (event) => {
+    const button = event.target?.closest?.('button[data-workflow-action]');
+    if (!button || !manager.contains(button)) return;
+    const card = button.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    if (!card || !workflowId || !Number.isFinite(tabId)) return;
+    const action = button.dataset.workflowAction;
+    const form = card.querySelector('.workflow-rename-form');
+    const workflowName = card.querySelector('.workflow-card-title')?.textContent || workflowId;
+    if (action === 'rename' || action === 'cancel-rename') {
+      form?.classList.toggle('hidden', action !== 'rename');
+      if (action === 'rename') {
+        const input = form?.querySelector('input');
+        input?.focus();
+        input?.select();
+      }
+      return;
+    }
+    if (action === 'delete' && button.dataset.deleteArmed !== 'true') {
+      button.dataset.deleteArmed = 'true';
+      button.classList.add('confirm-delete');
+      setSavedWorkflowButtonLabel(button, t('sp.workflows.delete_confirm'), workflowName);
+      setTimeout(() => {
+        if (!button.isConnected || button.disabled) return;
+        button.dataset.deleteArmed = 'false';
+        button.classList.remove('confirm-delete');
+        setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+      }, 4000);
+      return;
+    }
+    button.disabled = true;
+    try {
+      if (action === 'run') await prepareSavedWorkflowRun(workflowId, tabId);
+      else if (action === 'export') await exportSavedWorkflow(workflowId, tabId);
+      else if (action === 'delete' && await deleteSavedWorkflow(workflowId, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        if (action === 'delete') {
+          button.dataset.deleteArmed = 'false';
+          button.classList.remove('confirm-delete');
+          setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+        }
+      }
+    }
+  });
+  manager.addEventListener('submit', async (event) => {
+    const form = event.target?.closest?.('form.workflow-rename-form');
+    if (!form || !manager.contains(form)) return;
+    event.preventDefault();
+    const card = form.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    const input = form.querySelector('input');
+    const submit = form.querySelector('button[type="submit"]');
+    if (!workflowId || !Number.isFinite(tabId) || !input || !submit) return;
+    input.value = input.value.trim();
+    if (!input.value) {
+      input.reportValidity();
+      return;
+    }
+    submit.disabled = true;
+    try {
+      if (await renameSavedWorkflow(workflowId, input.value, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
 async function showSavedWorkflows(tabId = currentTabId) {
   try {
     const res = await sendToBackground('list_saved_workflows');
@@ -3232,14 +3397,11 @@ async function showSavedWorkflows(tabId = currentTabId) {
       addPersistentSlashMessage(t('sp.workflows.empty'));
       return;
     }
-    const body = workflows.map((workflow) => t('sp.workflows.item', {
-      id: workflow.id,
-      name: workflow.name,
-      steps: workflow.steps?.length || 0,
-      parameters: workflow.parameters?.length || 0,
-    })).join('\n');
-    const msgEl = addPersistentSlashMessage(systemHtml(`${t('sp.workflows.title_html')}<pre class="scratchpad-dump">${escapeHtml(body)}</pre>`));
-    addScratchpadCopyButton(msgEl);
+    const msgEl = addPersistentSlashMessage(systemHtml(t('sp.workflows.title_html')));
+    const manager = document.createElement('div');
+    manager.className = 'workflow-manager';
+    msgEl.querySelector('.message-text')?.appendChild(manager);
+    renderSavedWorkflowManager(manager, workflows, tabId);
   } catch (error) {
     if (currentTabId === tabId) addPersistentSlashMessage(t('sp.workflows.error', { msg: error.message }));
   }
@@ -3266,14 +3428,35 @@ async function saveLatestWorkflow(name, tabId = currentTabId) {
 async function deleteSavedWorkflow(id, tabId = currentTabId) {
   try {
     const res = await sendToBackground('delete_saved_workflow', { id: String(id || '').trim() });
-    if (currentTabId !== tabId) return;
+    if (currentTabId !== tabId) return false;
     if (!res?.ok) {
       showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
-      return;
+      return false;
     }
     showComposerToast(t('sp.workflows.deleted', { name: res.workflow?.name || id }));
+    return true;
   } catch (error) {
     if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
+  }
+}
+
+async function renameSavedWorkflow(id, name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('rename_saved_workflow', {
+      id: String(id || '').trim(),
+      name: String(name || '').trim(),
+    });
+    if (currentTabId !== tabId) return false;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return false;
+    }
+    showComposerToast(t('sp.workflows.saved', { name: res.workflow?.name || name }));
+    return true;
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
   }
 }
 
@@ -5525,6 +5708,7 @@ function rebindRestoredMessageControls() {
   rebindClarifyCards();
   rebindPlanReviewCards();
   rebindScheduleComposers();
+  document.querySelectorAll('.workflow-manager').forEach(bindSavedWorkflowManager);
   document.querySelectorAll('form.workflow-parameter-form').forEach(bindSavedWorkflowParameterForm);
   rebindSubscribeButtons();
   rebindCostAllowanceButtons();

@@ -1553,6 +1553,102 @@ body {
   border-color: var(--accent);
 }
 
+.workflow-manager {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.workflow-manager-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workflow-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+
+.workflow-card-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.workflow-card-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.workflow-card-actions,
+.workflow-rename-form {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.workflow-card-actions button,
+.workflow-rename-form button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.workflow-card-actions button:hover,
+.workflow-rename-form button:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.workflow-card-actions button[data-workflow-action="delete"]:hover {
+  color: var(--error-soft);
+  border-color: var(--error);
+}
+
+.workflow-card-actions button.confirm-delete {
+  color: var(--error-soft);
+  border-color: var(--error);
+}
+
+.workflow-card-actions button:disabled,
+.workflow-rename-form button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.workflow-rename-form.hidden {
+  display: none;
+}
+
+.workflow-rename-form input {
+  flex: 1 1 150px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 5px 7px;
+}
+
+.workflow-rename-form input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .schedule-composer {
   margin-top: 8px;
   display: flex;

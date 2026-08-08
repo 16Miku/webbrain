@@ -899,6 +899,22 @@ export function createSavedWorkflowStore(storageArea, options = {}) {
       else store.workflows.unshift(workflow);
       return { changed: true, workflow, store: await write(store) };
     },
+    async rename(id, name) {
+      const normalizedName = normalizeSavedWorkflowName(name);
+      if (!normalizedName) {
+        return { changed: false, reason: 'name_required', workflow: null, store: await read() };
+      }
+      const store = await read();
+      const index = store.workflows.findIndex((item) => item.id === id);
+      if (index < 0) return { changed: false, reason: 'not_found', workflow: null, store };
+      const workflow = {
+        ...store.workflows[index],
+        name: normalizedName,
+        updatedAt: now(),
+      };
+      store.workflows[index] = workflow;
+      return { changed: true, workflow, store: await write(store) };
+    },
     async delete(id) {
       const store = await read();
       const index = store.workflows.findIndex((item) => item.id === id);

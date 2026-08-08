@@ -24,7 +24,7 @@ for its available flags.
 | `/memory` | Show saved user memory |
 | `/memory --add <text>` | Save a user preference to memory |
 | `/memory --forget <id>` | Forget a saved memory by ID |
-| `/workflow` | List saved workflows and their IDs |
+| `/workflow` | Open the saved-workflow manager with Run, Rename, Export, and guarded Delete actions |
 | `/workflow --save <name>` | Compile the latest successful traced run into a reusable, value-free workflow |
 | `/workflow --run <id>` | Run a saved workflow in Act mode, collecting any runtime parameters locally |
 | `/workflow --delete <id>` | Delete a saved workflow |

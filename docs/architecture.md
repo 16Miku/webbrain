@@ -533,7 +533,9 @@ skipped and reported to the user as save warnings.
 
 Each compiled step contains semantic target metadata (role, accessible name,
 label, field identity, link, or placeholder), an expected postcondition, and
-the origin/path family observed before that action. `/workflow --run <id>`
+the origin/path family observed before that action. `/workflow` renders a
+local manager for running, renaming, exporting, and deleting these artifacts;
+renaming changes only the stored display name. `/workflow --run <id>`
 collects parameters in an ephemeral side-panel form. The replay executor then:
 
 1. checks the current origin/path family before every step;
