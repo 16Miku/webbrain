@@ -7181,13 +7181,19 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
         return '';
       }
-      const stagedAttachment = await stageScreenshotAttachment(tabId, res.dataUrl, {
-        fullPage: true,
-        pageUrl,
-        captureBounds: res.captureBounds,
-        redactionSnapshotReady: res.redactionSnapshotReady === true,
-        redactionSnapshot: res.redactionSnapshot,
-      });
+      // An enabled privacy pass that could not prepare this capture makes it
+      // undeliverable: _applyAttachments rejects a full-page screenshot with no
+      // capture-time snapshot. Keep the preview and save button, but do not
+      // stage a chip the user would have to remove before sending anything.
+      const stagedAttachment = res.redactionUnavailable === true
+        ? null
+        : await stageScreenshotAttachment(tabId, res.dataUrl, {
+          fullPage: true,
+          pageUrl,
+          captureBounds: res.captureBounds,
+          redactionSnapshotReady: res.redactionSnapshotReady === true,
+          redactionSnapshot: res.redactionSnapshot,
+        });
       if (currentTabId !== tabId) return '';
       addScreenshotResultMessage(res.dataUrl, {
         fullPage: true,

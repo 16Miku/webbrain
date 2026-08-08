@@ -33443,6 +33443,18 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
     assert.equal(result.ok, true);
     assert.equal(result.dataUrl, 'data:image/png;base64,Zmlyc3QtdGlsZQ==');
     assert.match(result.warning, /canvas too large[\s\S]*first captured tile/i);
+    assert.equal(result.redactionUnavailable, undefined, 'a capture with redaction off should stay attachable');
+
+    // With redaction enabled and no capture-time geometry, _applyAttachments
+    // would reject every send, so the capture must not be advertised as staged.
+    agent.screenshotRedaction = true;
+    const unscannable = await agent.captureFullPageScreenshotForUser(42);
+    assert.equal(unscannable.ok, true, 'the local screenshot and save action should survive a failed privacy scan');
+    assert.equal(unscannable.dataUrl, 'data:image/png;base64,Zmlyc3QtdGlsZQ==', 'the local preview pixels should be untouched');
+    assert.equal(unscannable.redactionUnavailable, true, 'a failed privacy scan must be reported to the caller');
+    assert.equal(unscannable.redactionSnapshotReady, undefined, 'a failed privacy scan must not claim capture-time geometry');
+    assert.match(unscannable.warning, /canvas too large/i, 'the compositor warning should survive');
+    assert.match(unscannable.warning, /cannot be attached to a message/i, 'the user should be told why the capture is not attachable');
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;

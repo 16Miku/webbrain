@@ -1111,10 +1111,20 @@ export class Agent extends LoopDetector {
         return { ok: false, error: 'Background full-page screenshot remained blank after retries' };
       }
       const captureBounds = typeof capture === 'object' ? capture?.captureBounds || null : null;
+      // Redaction is on but the capture-time scan could not produce geometry, so
+      // _applyAttachments would reject every send of this screenshot. Report it
+      // so the caller keeps the local preview/save result without staging an
+      // attachment the user could never deliver.
+      const redactionUnavailable = this.screenshotRedaction === true
+        && !(redactionSnapshotResult.ok === true && redactionSnapshotResult.snapshot);
+      const redactionWarning = redactionUnavailable
+        ? 'Screenshot redaction could not scan this page, so this capture cannot be attached to a message. Save it locally, or turn off screenshot redaction in Settings and capture again.'
+        : '';
       return {
         ok: true,
         dataUrl: captured.dataUrl,
-        warning,
+        warning: [warning, redactionWarning].filter(Boolean).join(' ') || null,
+        ...(redactionUnavailable ? { redactionUnavailable: true } : {}),
         ...(redactionSnapshotResult.ok === true && redactionSnapshotResult.snapshot
           ? { redactionSnapshotReady: true, redactionSnapshot: redactionSnapshotResult.snapshot }
           : {}),
