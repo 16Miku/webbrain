@@ -643,6 +643,8 @@ export default {
   'sp.plan.approved': 'Plan approuvé — exécution…',
   'sp.plan.cancelled': 'Plan annulé.',
   'sp.plan.expired': 'Ce plan n\'est plus en attente de révision — l\'exécution a été annulée.',
+  'sp.plan.timed_out': 'Le délai d’approbation a expiré',
+  'sp.plan.timed_out_hint': 'Rien n’a été exécuté. Réessayez pour examiner un nouveau plan.',
   'sp.plan.awaiting_review': 'Approuvez ou annulez le plan ci-dessus avant d\'envoyer un autre message.',
   'sp.plan.intent_unavailable': 'Le planificateur n’a pas pu produire une sortie structurée valide après une tentative de réparation. Ce tour continue en mode lecture seule.',
   'sp.slash.busy_only_oob': 'Les messages sont mis en file d\'attente pendant que WebBrain est occupé. Seuls /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces et /verbose peuvent s\'exécuter immédiatement comme commandes slash.',

@@ -652,6 +652,8 @@ export default {
   'sp.plan.approved': 'Rancangan diluluskan — berjalan…',
   'sp.plan.cancelled': 'Rancangan dibatalkan.',
   'sp.plan.expired': 'Rancangan ini tidak lagi menunggu semakan — pelaksanaan dibatalkan.',
+  'sp.plan.timed_out': 'Kelulusan tamat masa',
+  'sp.plan.timed_out_hint': 'Tiada apa-apa dijalankan. Cuba lagi untuk menyemak rancangan baharu.',
   'sp.plan.awaiting_review': 'Luluskan atau batalkan rancangan di atas sebelum menghantar mesej lain.',
   'sp.plan.intent_unavailable': 'Perancang tidak dapat mengembalikan output berstruktur yang sah selepas satu percubaan pembaikan. Giliran ini diteruskan dalam mod baca sahaja.',
   'sp.slash.busy_only_oob': 'Mesej dimasukkan ke giliran semasa WebBrain sibuk. Hanya /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose boleh berjalan serta-merta sebagai arahan slash.',

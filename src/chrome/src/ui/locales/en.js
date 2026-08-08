@@ -299,6 +299,8 @@ export default {
   'sp.plan.approved': 'Plan approved — running…',
   'sp.plan.cancelled': 'Plan cancelled.',
   'sp.plan.expired': 'This plan is no longer awaiting review — the run was cancelled.',
+  'sp.plan.timed_out': 'Approval timed out',
+  'sp.plan.timed_out_hint': 'Nothing ran. Retry to review a fresh plan.',
   'sp.plan.awaiting_review': 'Approve or cancel the plan above before sending another message.',
   'sp.plan.intent_unavailable': 'The planner could not return valid structured output after one repair. Continuing this turn in read-only mode.',
 

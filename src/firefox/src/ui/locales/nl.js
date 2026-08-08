@@ -288,6 +288,8 @@ export default {
   'sp.plan.approved': 'Plan goedgekeurd — uitvoeren…',
   'sp.plan.cancelled': 'Plan geannuleerd.',
   'sp.plan.expired': 'Dit plan wacht niet meer op beoordeling — de uitvoering is geannuleerd.',
+  'sp.plan.timed_out': 'De goedkeuring is verlopen',
+  'sp.plan.timed_out_hint': 'Er is niets uitgevoerd. Probeer opnieuw om een nieuw plan te beoordelen.',
   'sp.plan.awaiting_review': 'Keur het plan hierboven goed of annuleer het voordat u een volgend bericht stuurt.',
   'sp.plan.intent_unavailable': 'De planner kon na één reparatie geen geldige gestructureerde uitvoer retourneren. Deze beurt wordt voortgezet in alleen-lezen modus.',
   'sp.perm.question': 'WebBrain wil {verb} {host}. Toestaan?',

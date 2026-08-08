@@ -61289,6 +61289,75 @@ test('sidepanel: restored plan review cards rebind approve and cancel actions', 
   }
 });
 
+test('sidepanel: timed-out plans stay visible, inert, and retryable', () => {
+  for (const file of [
+    'src/chrome/src/ui/sidepanel.js',
+    'src/firefox/src/ui/sidepanel.js',
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const expireStart = source.indexOf('function expirePlanReviewCards(');
+    const expireEnd = source.indexOf('\nfunction invalidatePlanReviewCards(', expireStart);
+    assert.notEqual(expireStart, -1, `${file} should expose the timeout-state renderer`);
+    assert.notEqual(expireEnd, -1, `${file} should delimit the timeout-state renderer`);
+    const expireSource = source.slice(expireStart, expireEnd);
+
+    assert.match(
+      source,
+      /case 'plan_resolved':\s*if \(data\?\.decision === 'timeout'\) \{[\s\S]*?expirePlanReviewCards\([\s\S]*?retryPayload:/,
+      `${file} should distinguish a timeout from an intentional cancellation`,
+    );
+    assert.match(expireSource, /card\.classList\.add\('plan-reviewed', 'plan-review-expired'\)/, `${file} should keep and mark the expired plan`);
+    assert.match(expireSource, /querySelectorAll\('button, textarea'\)[\s\S]*?el\.disabled = true/, `${file} should disable the old plan controls`);
+    assert.match(
+      expireSource,
+      /querySelectorAll\('button, textarea'\)\.forEach\(el => \{\s*if \(el\.closest\('\.plan-review-timeout-footer'\)\) return;/,
+      `${file} should leave Retry usable when a card is expired more than once`,
+    );
+    assert.match(
+      expireSource,
+      /\} else if \(retryBtn\) \{[\s\S]*?retryBtn\.disabled = false;[\s\S]*?bindErrorRetryButton\(retryBtn\);/,
+      `${file} should re-enable a Retry button restored from persisted HTML`,
+    );
+    assert.match(
+      expireSource,
+      /className = 'plan-review-timeout-history-note'[\s\S]*?textEl\.replaceChildren\(historyNote\)/,
+      `${file} should keep the timed-out turn in exported history`,
+    );
+    // plan_resolved arrives before the terminal cancellation is ever rendered,
+    // so a live timeout reaches this branch with empty text. Gating the marker
+    // on that text would drop the turn from history on every real timeout.
+    assert.match(
+      expireSource,
+      /if \(textEl && !textEl\.querySelector\('\.plan-review-timeout-history-note'\)\) \{[\s\S]*?\} else \{\s*(?:\/\/[^\n]*\n\s*)*textEl\.appendChild\(historyNote\);/,
+      `${file} should mark the history of a live timeout that never rendered terminal text`,
+    );
+    assert.match(
+      source,
+      /decision === 'timeout'\) \{\s*expirePlanReviewCards\(\{[\s\S]*?\n  \}\n(?:\s*\/\/[^\n]*\n)*\s*invalidatePlanReviewCards\(\{ tabId: numericTabId \}\);/,
+      `${file} should still sweep unrelated stale plan cards when restoring a timeout`,
+    );
+    assert.match(expireSource, /setAttribute\('inert', ''\)/, `${file} should make the structured plan non-interactive`);
+    assert.match(expireSource, /className = 'plan-review-timeout-footer'/, `${file} should append timeout guidance below the plan`);
+    assert.match(expireSource, /className = 'plan-review-retry'[\s\S]*?configureRetryButton\(retryBtn, retryPayload\)/, `${file} should preserve the original request in a real Retry button`);
+    assert.match(source, /querySelector\('\.plan-review-expired'\)\s*&& isPlanReviewTimeoutTerminal\(data\?\.finalContent\)/, `${file} should suppress the redundant terminal cancellation text`);
+    assert.match(source, /assistantEl\.querySelector\('\.plan-review-expired'\)[\s\S]*?isPlanReviewTimeoutTerminal\(res\.content\)/, `${file} should suppress the same text in the direct response path`);
+    assert.match(source, /function rebindPlanReviewRetryButtons\([\s\S]*?\.plan-review-retry/, `${file} should rebind Retry after history restoration`);
+
+    const cssFile = file.replace(/src\/ui\/sidepanel\.js$/, 'styles/sidepanel.css');
+    const css = fs.readFileSync(path.join(ROOT, cssFile), 'utf8');
+    assert.match(css, /\.plan-review-expired > :not\(\.plan-review-timeout-footer\)[\s\S]*?opacity:\s*0\.5;[\s\S]*?pointer-events:\s*none;/, `${cssFile} should visibly dim and deactivate the expired plan`);
+    assert.match(css, /\.plan-review-timeout-footer[\s\S]*?border-top:/, `${cssFile} should separate timeout recovery from stale plan content`);
+    assert.match(css, /\.plan-review-retry[\s\S]*?background:\s*var\(--accent\)/, `${cssFile} should make Retry the only emphasized action`);
+    assert.match(css, /\.plan-review-timeout-history-note \{\s*display:\s*none;/, `${cssFile} should keep the history marker out of the rendered card`);
+
+    const localeFile = file.replace(/src\/ui\/sidepanel\.js$/, 'src/ui/locales/en.js');
+    const locale = fs.readFileSync(path.join(ROOT, localeFile), 'utf8');
+    assert.match(locale, /'sp\.plan\.timed_out': 'Approval timed out'/, `${localeFile} should name the timeout plainly`);
+    assert.match(locale, /'sp\.plan\.timed_out_hint': 'Nothing ran\. Retry to review a fresh plan\.'/,
+      `${localeFile} should explain both safety and recovery`);
+  }
+});
+
 test('planner gate: background exposes pending plan state for restored sidepanels', () => {
   for (const [label, agentRel, bgRel] of [
     ['chrome', 'src/chrome/src/agent/agent.js', 'src/chrome/src/background.js'],

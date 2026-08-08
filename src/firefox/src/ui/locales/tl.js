@@ -643,6 +643,8 @@ export default {
   'sp.plan.approved': 'Naaprubahan ang plano — tumatakbo…',
   'sp.plan.cancelled': 'Kinansela ang plano.',
   'sp.plan.expired': 'Ang planong ito ay hindi na naghihintay ng pagsusuri — ang pagtakbo ay kinansela.',
+  'sp.plan.timed_out': 'Nag-time out ang pag-apruba',
+  'sp.plan.timed_out_hint': 'Walang pinatakbo. Subukang muli para suriin ang bagong plano.',
   'sp.plan.awaiting_review': 'Aprubahan o kanselahin ang plano sa itaas bago magpadala ng isa pang mensahe.',
   'sp.plan.intent_unavailable': 'Hindi nakapagbalik ang planner ng wastong nakaayos na output matapos ang isang pag-aayos. Magpapatuloy ang turn na ito sa read-only mode.',
   'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',
