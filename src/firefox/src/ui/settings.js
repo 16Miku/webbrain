@@ -52,7 +52,7 @@ import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '27.1.0';
+const EXT_VERSION = '27.1.1';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
