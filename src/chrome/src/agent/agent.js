@@ -1057,13 +1057,20 @@ export class Agent extends LoopDetector {
   async _captureFullPageWithBlankRetry(tabId, capturePolicy, { captureRedactionSnapshot = false } = {}) {
     const probe = await this._captureViewportProbe(tabId);
     const captureOnce = async () => {
-      const redactionSnapshotPromise = captureRedactionSnapshot
-        ? this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'page' })
-        : Promise.resolve({ ok: false });
-      const capture = await this._withIndicatorsHidden(tabId, () =>
-        cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
-      );
-      const redactionSnapshotResult = await redactionSnapshotPromise;
+      const { capture, redactionSnapshotResult } = await this._withIndicatorsHidden(tabId, async () => {
+        const completedCapture = await cdpClient.captureFullPageScreenshot(tabId, capturePolicy);
+        // Full-page capture performs a discovery scroll and may load more DOM
+        // before retaining its tiles. Snapshot privacy geometry only after
+        // that work so lazy-loaded sensitive content cannot appear in the
+        // staged pixels without a corresponding redaction region.
+        const completedRedactionSnapshot = captureRedactionSnapshot
+          ? await this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'page' })
+          : { ok: false };
+        return {
+          capture: completedCapture,
+          redactionSnapshotResult: completedRedactionSnapshot,
+        };
+      });
       const imageData = typeof capture === 'string' ? capture : capture?.data;
       if (!imageData) return null;
       return {

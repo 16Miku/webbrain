@@ -33385,10 +33385,12 @@ test('user full-page screenshot retries return privacy geometry from the success
   const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
   let captureCalls = 0;
   let redactionSnapshotCalls = 0;
+  const captureEvents = [];
   try {
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.captureFullPageScreenshot = async () => {
       captureCalls += 1;
+      captureEvents.push(`capture:${captureCalls}`);
       return { data: captureCalls === 1 ? 'Ymxhbms=' : 'cmVjb3ZlcmVk' };
     };
     AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
@@ -33406,6 +33408,7 @@ test('user full-page screenshot retries return privacy geometry from the success
     agent._analyzeScreenshotBlankness = async () => ({ blank: captureCalls === 1 });
     agent.captureScreenshotRedactionSnapshotForUser = async () => {
       redactionSnapshotCalls += 1;
+      captureEvents.push(`redaction:${redactionSnapshotCalls}`);
       return {
         ok: true,
         snapshot: {
@@ -33422,6 +33425,11 @@ test('user full-page screenshot retries return privacy geometry from the success
     assert.equal(result.dataUrl, 'data:image/png;base64,cmVjb3ZlcmVk');
     assert.equal(captureCalls, 2);
     assert.equal(redactionSnapshotCalls, 2);
+    assert.deepEqual(
+      captureEvents,
+      ['capture:1', 'redaction:1', 'capture:2', 'redaction:2'],
+      'each privacy snapshot must follow full-page discovery and tile capture for the same attempt',
+    );
     assert.equal(result.redactionSnapshot.regions[0].rect.x, 2, 'the returned geometry must belong to the retry that supplied the returned pixels');
   } finally {
     AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
