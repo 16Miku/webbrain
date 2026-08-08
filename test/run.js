@@ -19561,7 +19561,10 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.ok(fullScreenIdx >= 0 && recordIdx >= 0 && fullScreenIdx < recordIdx, 'chrome: full-screen route must run before tab recording');
   const fullScreenBody = panel.slice(fullScreenIdx, recordIdx);
   const helperStart = panel.indexOf('async function startFullScreenRecording');
-  const helperBody = panel.slice(helperStart, panel.indexOf('async function sendMessage', helperStart));
+  assert.notEqual(helperStart, -1, 'chrome: startFullScreenRecording helper should exist');
+  const helperEnd = panel.indexOf('async function sendMessage', helperStart);
+  assert.notEqual(helperEnd, -1, 'chrome: sendMessage should follow the full-screen recording helper');
+  const helperBody = panel.slice(helperStart, helperEnd);
   assert.match(fullScreenBody, /startFullScreenRecording\(tabId/, 'chrome: parser should route /record --full-screen through helper');
   assert.match(helperBody, /prepare_recording_host/, 'chrome: full-screen route should prepare offscreen before recording');
   assert.match(fullScreenBody, /showBanner:\s*!optionValues\.has\('--hide-recording-indicator'\)/, 'chrome: full-screen route should hide the banner only when explicitly requested');
@@ -23969,9 +23972,25 @@ test('sidepanel scopes allow-api override to the tab conversation and confirms i
     const allowIdx = panel.indexOf("if (command.value === '/allow-api')");
     assert.notEqual(allowIdx, -1, `${label}: /allow-api parser missing`);
     const allowBody = panel.slice(allowIdx, panel.indexOf("if (command.value === '/dangerously-skip-permissions')", allowIdx));
-    assert.match(allowBody, /const wasAlreadyAllowed = isApiMutationsAllowedForTab\(tabId\);[\s\S]*?setApiMutationsAllowedForTab\(tabId, true\);/, `${label}: /allow-api should enable only the initiating tab conversation`);
-    assert.match(allowBody, /if \(!wasAlreadyAllowed\) \{[\s\S]*?addPersistentSlashMessage\(systemHtml\(t\('sp\.api\.enabled_html'\)\)\);[\s\S]*?\}/, `${label}: /allow-api should add one transcript confirmation bubble`);
+    assert.match(allowBody, /grantApiMutationsForTab\(tabId\);/, `${label}: /allow-api should enable only the initiating tab conversation`);
     assert.doesNotMatch(allowBody, /apiMutationsAllowed = true;/, `${label}: /allow-api should not enable a global mutation override`);
+
+    const grantIdx = panel.indexOf('function grantApiMutationsForTab(tabId) {');
+    assert.notEqual(grantIdx, -1, `${label}: grantApiMutationsForTab missing`);
+    const grantEnd = panel.indexOf('\n}', grantIdx);
+    assert.notEqual(grantEnd, -1, `${label}: grantApiMutationsForTab is unterminated`);
+    const grantBody = panel.slice(grantIdx, grantEnd);
+    assert.match(grantBody, /const wasAlreadyAllowed = isApiMutationsAllowedForTab\(tabId\);[\s\S]*?setApiMutationsAllowedForTab\(tabId, true\);/, `${label}: a grant should enable only the initiating tab conversation`);
+    assert.match(grantBody, /if \(!wasAlreadyAllowed\) \{[\s\S]*?addPersistentSlashMessage\(systemHtml\(t\('sp\.api\.enabled_html'\)\)\);[\s\S]*?\}/, `${label}: a grant should add one transcript confirmation bubble`);
+
+    // The transcript bubble is the only place a grant is reported, so no other
+    // call site may enable mutations without going through the helper.
+    const directGrants = [...panel.matchAll(/setApiMutationsAllowedForTab\([^)]*,\s*true\)/g)];
+    assert.equal(directGrants.length, 1, `${label}: only grantApiMutationsForTab may enable API mutations`);
+    assert.ok(
+      directGrants[0].index > grantIdx && directGrants[0].index < grantEnd,
+      `${label}: the sole direct grant should live inside grantApiMutationsForTab`,
+    );
   }
 });
 
@@ -24368,8 +24387,8 @@ test('sidepanel keeps retry metadata long enough for returned error updates', ()
     );
     assert.match(
       source,
-      /if \(payload\.apiMutationsAllowed\) \{[\s\S]*?setApiMutationsAllowedForTab\(currentTabId, true\);[\s\S]*?\}[\s\S]*?await sendMessage\(\{/,
-      `${label}: restored retries that replay API mutation permission should resync the visible per-tab API state`,
+      /if \(payload\.apiMutationsAllowed\) \{[\s\S]*?grantApiMutationsForTab\(currentTabId\);[\s\S]*?\}[\s\S]*?await sendMessage\(\{/,
+      `${label}: restored retries that replay API mutation permission should resync the visible per-tab API state and report the grant`,
     );
     assert.match(
       source,

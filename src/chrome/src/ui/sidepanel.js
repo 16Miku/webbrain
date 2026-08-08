@@ -5739,7 +5739,7 @@ function bindErrorRetryButton(btn) {
     }
     setMode(payload.mode);
     if (payload.apiMutationsAllowed) {
-      setApiMutationsAllowedForTab(currentTabId, true);
+      grantApiMutationsForTab(currentTabId);
     }
     inputEl.value = payload.text;
     autoResizeInput();
@@ -6738,14 +6738,27 @@ function handleInput() {
 // --- Message Sending ---
 
 // Per-conversation flag for API mutation override (set via /allow-api).
-// Reset on clearConversation. Visible to the user in the chat as a system
-// message and as a sticky badge near the input area.
+// Reset on clearConversation. A grant is reported only by the system message in
+// the transcript, so every grant goes through grantApiMutationsForTab().
 let alwaysAllowApiMutations = false;
 let apiMutationsAllowed = false;
 const apiMutationsAllowedByTab = new Map();
 
 function isApiMutationsAllowedForTab(tabId) {
   return tabId != null && apiMutationsAllowedByTab.get(tabId) === true;
+}
+
+// Grants API mutations for a tab and announces the grant. Setting the per-tab
+// flag directly re-enables POST/PUT/PATCH/DELETE for the whole conversation
+// with nothing on screen. Note the bubble goes to the transcript currently
+// rendered, which is not tabId when a slash command runs for a background tab.
+function grantApiMutationsForTab(tabId) {
+  const wasAlreadyAllowed = isApiMutationsAllowedForTab(tabId);
+  setApiMutationsAllowedForTab(tabId, true);
+  if (!wasAlreadyAllowed) {
+    addPersistentSlashMessage(systemHtml(t('sp.api.enabled_html')));
+  }
+  return !wasAlreadyAllowed;
 }
 
 function setApiMutationsAllowedForTab(tabId, allowed) {
@@ -7157,11 +7170,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/allow-api') {
-    const wasAlreadyAllowed = isApiMutationsAllowedForTab(tabId);
-    setApiMutationsAllowedForTab(tabId, true);
-    if (!wasAlreadyAllowed) {
-      addPersistentSlashMessage(systemHtml(t('sp.api.enabled_html')));
-    }
+    grantApiMutationsForTab(tabId);
     return payload;
   }
 
