@@ -901,5 +901,12 @@ export default {
   'st.skills.cws.package_cleared': 'קובץ ZIP ל פרסום נבחר הוסר מהאחסון המקומי.',
   'st.skills.cws.package_zip_only': 'בחר חבילת פרסום בפורמט .zip.',
   'st.skills.cws.package_too_large': 'קובץ ZIP חייב להיות בין 1 bait ל-100 MB.',
+  'sp.attach.state.included': 'נכלל',
+  'sp.attach.state.not_sent': 'לא נשלח',
+  'sp.attach.state.unknown': 'המסירה לא אושרה',
+  'sp.attach.state.sending': 'נשלח',
+  'sp.screenshot.staged_next_message': 'מצורף להודעה הבאה',
+  'sp.screenshot.alt': 'צילום מסך',
+  'sp.screenshot.full_page_alt': 'צילום מסך של העמוד המלא',
   'sp.run_progress_replay_gap': 'לא ניתן היה להציג מחדש חלק מהתקדמות ההרצה הקודמת',
 };

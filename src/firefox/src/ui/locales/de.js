@@ -914,5 +914,12 @@ export default {
   'tr.event.args': 'Argumente',
   'tr.event.result': 'Ergebnis',
   'tr.event.step': 'Schritt {step}',
+  'sp.attach.state.included': 'Enthalten',
+  'sp.attach.state.not_sent': 'Nicht gesendet',
+  'sp.attach.state.unknown': 'Zustellung nicht bestätigt',
+  'sp.attach.state.sending': 'Wird gesendet',
+  'sp.screenshot.staged_next_message': 'An nächste Nachricht angehängt',
+  'sp.screenshot.alt': 'Screenshot',
+  'sp.screenshot.full_page_alt': 'Ganzseiten-Screenshot',
   'sp.run_progress_replay_gap': 'Ein Teil des früheren Ausführungsverlaufs konnte nicht erneut angezeigt werden',
 };

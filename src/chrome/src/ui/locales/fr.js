@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': "ZIP de publication sélectionné supprimé du stockage local.",
   'st.skills.cws.package_zip_only': "Choisissez un package de publication au format .zip.",
   'st.skills.cws.package_too_large': "Le fichier ZIP doit faire entre 1 octet et 100 Mo.",
+  'sp.attach.state.included': 'Inclus',
+  'sp.attach.state.not_sent': 'Non envoyé',
+  'sp.attach.state.unknown': 'Livraison non confirmée',
+  'sp.attach.state.sending': 'Envoi en cours',
+  'sp.screenshot.staged_next_message': 'Joint au prochain message',
+  'sp.screenshot.alt': 'Capture d’écran',
+  'sp.screenshot.full_page_alt': 'Capture de la page entière',
   'sp.run_progress_replay_gap': 'Une partie de la progression précédente de l’exécution n’a pas pu être réaffichée',
 };

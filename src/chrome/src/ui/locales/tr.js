@@ -947,5 +947,12 @@ export default {
   'st.skills.cws.package_cleared': 'Seçili sürüm ZIP\'i yerel depodan kaldırıldı.',
   'st.skills.cws.package_zip_only': '.zip biçiminde bir sürüm paketi seçin.',
   'st.skills.cws.package_too_large': 'ZIP 1 bayt ile 100 MB arasında olmalıdır.',
+  'sp.attach.state.included': 'Dahil edildi',
+  'sp.attach.state.not_sent': 'Gönderilmedi',
+  'sp.attach.state.unknown': 'Teslimat onaylanmadı',
+  'sp.attach.state.sending': 'Gönderiliyor',
+  'sp.screenshot.staged_next_message': 'Sonraki mesaja eklendi',
+  'sp.screenshot.alt': 'Ekran görüntüsü',
+  'sp.screenshot.full_page_alt': 'Tam sayfa ekran görüntüsü',
   'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
 };

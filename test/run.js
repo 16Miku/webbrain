@@ -1203,7 +1203,7 @@ test('redaction collectors filter offscreen fields and classify PII before the r
 
 test('remaining model-facing screenshot fallbacks apply redaction', () => {
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
-  const chromeStart = chromeSource.indexOf("if (name === 'screenshot')");
+  const chromeStart = chromeSource.indexOf("if (name === 'screenshot'");
   const chromeEnd = chromeSource.indexOf("if (name === 'done')", chromeStart);
   const chromeBody = chromeSource.slice(chromeStart, chromeEnd);
   const fallbackIndex = chromeBody.indexOf('chrome.tabs.captureVisibleTab');
@@ -4667,7 +4667,7 @@ test('trace export: renders the full tool chain from trace events, in order', ()
   assert.match(markdown, /## Turn 1 — Find the cheapest Sony WH-1000XM5/);
   assert.match(markdown, /\*\*Planner:\*\*\n```json\n\{"summary"/);   // planner labelled + fenced, model's ```json language preserved
   assert.ok(!/```\n```/.test(markdown), 'planner content must not be double-fenced');
-  assert.match(markdown, /Screenshots, notes and vision sub-calls are recorded but not rendered here/);   // honest footer
+  assert.match(markdown, /Screenshot pixels and vision descriptions are omitted here/);   // honest privacy footer
   // order preserved, retries kept distinct (no aggregation)
   assert.ok(markdown.indexOf('fetch_url') < markdown.indexOf('research_url'), 'order preserved');
   assert.equal((markdown.match(/research_url/g) || []).length, 2, 'each retry emitted, not aggregated');
@@ -4678,7 +4678,52 @@ test('trace export: renders the full tool chain from trace events, in order', ()
   assert.ok(!markdown.includes('role heading '.repeat(60)), 'huge result body must not be dumped');
   assert.match(markdown, /⚠️ error \(loop\): stopped by user/);
   assert.match(markdown, /Cheapest option: CHF 203/);
-  assert.ok(!markdown.includes('viewport'), 'screenshot events omitted');
+  assert.match(markdown, /Visual capture: viewport/);
+});
+
+test('trace export: proves visual delivery without exporting pixels or OCR text', () => {
+  const runs = [{
+    run: {
+      runId: 'visual-proof',
+      userMessage: 'What does this ad say?',
+      model: 'vision-test',
+      status: 'done',
+      attachments: [{
+        kind: 'image',
+        name: 'example-screenshot.png',
+        mimeType: 'image/png',
+        size: 2048,
+        source: 'slash_screenshot',
+      }],
+    },
+    events: [
+      {
+        runId: 'visual-proof', seq: 1, kind: 'screenshot',
+        data: { caption: 'inspect_viewport capture', screenshot_base64: 'PRIVATE_PIXELS' },
+      },
+      {
+        runId: 'visual-proof', seq: 2, kind: 'vision_sub_call',
+        data: {
+          context: 'inspect_viewport',
+          model: 'vision-sidecar',
+          latencyMs: 42,
+          description: 'PRIVATE OCR DESCRIPTION',
+        },
+      },
+      {
+        runId: 'visual-proof', seq: 3, kind: 'llm_request',
+        data: { messageCount: 4, toolsCount: 12, imageBlockCount: 1, documentBlockCount: 0 },
+      },
+    ],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /User attachments: image "example-screenshot\.png" \(slash screenshot, 2\.0kb\)/, `${label}: attachment metadata missing`);
+    assert.match(markdown, /Visual capture: inspect_viewport capture/, `${label}: capture status missing`);
+    assert.match(markdown, /Vision sub-call \(inspect_viewport · vision-sidecar · 42 ms\): succeeded/, `${label}: vision outcome missing`);
+    assert.match(markdown, /Model request: 4 messages · 12 tools · 1 image block · 0 document blocks/, `${label}: model media counts missing`);
+    assert.doesNotMatch(markdown, /PRIVATE_PIXELS|PRIVATE OCR DESCRIPTION/, `${label}: private visual content leaked`);
+  }
 });
 
 test('trace export: preserves structured pageGate before truncated article text and shows NYTimes fallback', () => {
@@ -4844,7 +4889,7 @@ test('trace export: notes appear before the footer', () => {
   const { markdown } = tracesToMarkdown(TRACE_RUNS, { notes: ['2 of 3 turn(s) could not load their event log.'] });
   assert.match(markdown, /_Note: 2 of 3 turn\(s\) could not load their event log\._/);
   assert.ok(
-    markdown.indexOf('_Note:') < markdown.indexOf('Screenshots, notes and vision sub-calls'),
+    markdown.indexOf('_Note:') < markdown.indexOf('Screenshot pixels and vision descriptions'),
     'notes should come before the screenshot footer',
   );
 });
@@ -6313,7 +6358,7 @@ test('new_tab stays in the background and explicitly preserves run ownership', (
   for (const browserName of ['chrome', 'firefox']) {
     const agentSource = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
     const start = agentSource.indexOf("if (name === 'new_tab')");
-    const end = agentSource.indexOf("if (name === 'screenshot')", start);
+    const end = agentSource.indexOf("if (name === 'screenshot'", start);
     const body = agentSource.slice(start, end);
     assert.match(body, /const createProps = \{ url: args\.url, active: false \}/, `${browserName}: helper tab must not steal focus`);
     assert.match(body, /retargeted: false/, `${browserName}: result must expose the run boundary`);
@@ -8645,7 +8690,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
 test('chrome screenshot tool saves pre-budget data URL when save:true', () => {
   // Structural: save path must prefer saveDataUrl (full CSS) over budgeted dataUrl.
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
-  const start = source.indexOf("if (name === 'screenshot')");
+  const start = source.indexOf("if (name === 'screenshot'");
   const end = source.indexOf("if (name === 'done')", start);
   assert.ok(start >= 0 && end > start, 'screenshot tool block not found');
   const body = source.slice(start, end);
@@ -14396,6 +14441,11 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       assert.equal(names.includes('full_page_screenshot'), false, `[${label}] ${modeLabel} tools must not expose full_page_screenshot`);
       assert.equal(names.includes('record_tab'), false, `[${label}] ${modeLabel} tools must not expose record_tab`);
       assert.equal(names.includes('stop_recording'), false, `[${label}] ${modeLabel} tools must not expose stop_recording`);
+      assert.equal(names.includes('inspect_viewport'), true, `[${label}] ${modeLabel} tools must expose read-only visual inspection`);
+      const inspectTool = tools.find(tool => tool.function?.name === 'inspect_viewport');
+      assert.deepEqual(inspectTool?.function?.parameters?.properties, {}, `[${label}] ${modeLabel} visual inspection must not expose save or coordinate arguments`);
+      assert.match(inspectTool?.function?.description || '', /may be retained in an enabled diagnostic trace/i, `[${label}] ${modeLabel} visual inspection must disclose trace retention`);
+      assert.doesNotMatch(inspectTool?.function?.description || '', /never downloaded or saved/i, `[${label}] ${modeLabel} visual inspection must not promise that trace pixels are never stored`);
     }
 
     for (const [promptLabel, prompt] of prompts) {
@@ -14405,6 +14455,8 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       assert.doesNotMatch(prompt, /\brecord_tab\b/i, `[${label}] ${promptLabel} prompt must not mention record_tab`);
       assert.doesNotMatch(prompt, /\bstop_recording\b/i, `[${label}] ${promptLabel} prompt must not mention stop_recording`);
       assert.doesNotMatch(prompt, /\b(?:take|taking) (?:a |fresh )?screenshot\b/i, `[${label}] ${promptLabel} prompt must not tell the model to take a screenshot`);
+      assert.match(prompt, /inspect_viewport/, `[${label}] ${promptLabel} prompt must teach autonomous visual inspection`);
+      assert.match(prompt, /(?:(?:never ask|do not ask)[^\n]*\/screenshot|\/screenshot[^\n]*never require)/i, `[${label}] ${promptLabel} prompt must not offload agent vision to the user`);
       assert.match(prompt, /\/screenshot\b/, `[${label}] ${promptLabel} prompt should direct chat-image requests to the /screenshot slash command`);
       if (promptLabel !== 'ask') {
         assert.match(prompt, /(?:auto-screenshot|injected visual context|verification screenshot)/i, `[${label}] ${promptLabel} prompt should preserve automatic visual verification guidance`);
@@ -14419,6 +14471,86 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       }
     }
   }
+});
+
+test('inspect_viewport is read-only, vision-visible, and shares the screenshot budget', async () => {
+  const providerManager = {
+    getActive: () => ({ name: 'vision-test', supportsVision: true }),
+    getVisionProvider: async () => null,
+  };
+
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (_tabId, method) => (
+      method === 'Page.captureScreenshot' ? { data: 'AA==' } : {}
+    );
+    const agent = new AgentCh(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._compressJpegToByteCeiling = async dataUrl => dataUrl;
+
+    const first = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(first.success, true);
+    assert.equal(first.method, 'image_attach');
+    assert.match(first._attachImage, /^data:image\/jpeg;base64,/);
+    assert.equal(agent.autoScreenshotCount.get(41), 1);
+
+    const second = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(second.success, false);
+    assert.match(second.error, /maxScreenshotsPerTurn/);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+
+  const previousBrowser = globalThis.browser;
+  try {
+    globalThis.browser = {
+      ...(previousBrowser || {}),
+      tabs: {
+        ...(previousBrowser?.tabs || {}),
+        get: async tabId => ({ id: tabId, active: false, url: 'https://example.test/' }),
+        captureTab: async () => 'data:image/png;base64,AA==',
+      },
+    };
+    const agent = new AgentFx(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+
+    const first = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(first.success, true);
+    assert.equal(first.method, 'image_attach');
+    assert.equal(first._attachImage, 'data:image/png;base64,AA==');
+    assert.equal(agent.autoScreenshotCount.get(42), 1);
+
+    const second = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(second.success, false);
+    assert.match(second.error, /maxScreenshotsPerTurn/);
+  } finally {
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('LLM trace media counts distinguish actual image and document blocks', () => {
+  const messages = [
+    { role: 'user', content: 'plain' },
+    { role: 'user', content: [
+      { type: 'text', text: 'visual context' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,PRIVATE' } },
+      { type: 'document', source: { type: 'base64', data: 'PRIVATE' } },
+    ] },
+  ];
+  assert.deepEqual(AgentCh._traceMediaCounts(messages), { imageBlockCount: 1, documentBlockCount: 1 });
+  assert.deepEqual(AgentFx._traceMediaCounts(messages), { imageBlockCount: 1, documentBlockCount: 1 });
 });
 
 test('agent runtime warnings preserve injected auto-screenshot recovery guidance', () => {
@@ -23642,7 +23774,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
       ? panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')", screenshotIdx)
       : panel.indexOf("if (command.value === '/export' && action === 'traces')", screenshotIdx);
     const screenshotBody = panel.slice(screenshotIdx, screenshotEnd);
-    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?captureVisibleTab[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url \}\);/, `${label}: /screenshot should not render a captured image into a different tab and should retain its URL for naming`);
+    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?captureVisibleTab[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, dataUrl, \{ pageUrl: tab\.url \}\);[\s\S]*?addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should not render or stage a captured image into a different tab and should retain its URL for naming`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?screenshot-save-btn[\s\S]*?sp\.screenshot\.save_as/, `${label}: screenshot messages should render a visible Save As action`);
     assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindScreenshotSaveButtons\(\);/, `${label}: restored screenshot messages should regain their Save As behavior`);
@@ -23655,7 +23787,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     if (label === 'chrome') {
       assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
       const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
-      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ fullPage: true, warning: res\.warning, pageUrl \}\);/, `${label}: /screenshot --full-page should render only into the initiating tab with URL-aware Save As`);
+      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage and render only in the initiating tab with URL-aware Save As`);
       assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
       assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
       assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
@@ -23810,7 +23942,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(staleReturnIdx < sendIdx, true, `${label}: stale-tab residual guard must run before chat dispatch`);
     assert.match(
       sendBody,
-      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
+      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
       `${label}: stale-tab residual sends should not mutate or render chat UI in the currently visible tab`,
     );
     assert.doesNotMatch(
@@ -24927,7 +25059,7 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       panel,
-      /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
+      /if \(!sourceGrounding\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId\);/,
       `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
     );
     assert.ok(
@@ -25916,7 +26048,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
+      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
       `${label}: a submitted turn should enter reading-first mode and reveal its question before streaming`,
     );
     assert.match(
@@ -60534,6 +60666,37 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
   }
 });
 
+test('run UI journal: attachment delivery state survives terminal acknowledgement and remount', () => {
+  for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
+    const persisted = new Map();
+    const journal = new Journal({
+      onChange: (tabId, snapshot) => persisted.set(tabId, structuredClone(snapshot)),
+    });
+    journal.begin(51, `${label}-attachment`, { attachmentCount: 2 });
+    assert.equal(journal.get(51).attachmentDeliveryState, 'sending', `${label}: attachment runs should begin in sending state`);
+    journal.finish(51, `${label}-attachment`, 'completed', 'done');
+    journal.setAttachmentDeliveryState(51, `${label}-attachment`, 'included');
+    assert.equal(journal.get(51).attachmentDeliveryState, 'included', `${label}: terminal delivery state should be durable`);
+    assert.equal(
+      journal.get(51).events.at(-1).data.attachmentDeliveryState,
+      'included',
+      `${label}: the terminal replay event should carry the same delivery state`,
+    );
+    journal.acknowledge(51, `${label}-attachment`, journal.get(51).seq);
+    assert.equal(journal.get(51).events.length, 0, `${label}: terminal replay may be acknowledged`);
+    assert.equal(journal.get(51).attachmentDeliveryState, 'included', `${label}: acknowledgement must retain attachment proof`);
+
+    const remounted = new Journal();
+    remounted.restore(51, persisted.get(51));
+    assert.equal(remounted.get(51).attachmentDeliveryState, 'included', `${label}: a reopened panel should recover the terminal state`);
+
+    const rejected = new Journal();
+    rejected.begin(52, `${label}-rejected`, { attachmentCount: 1 });
+    rejected.record(52, `${label}-rejected`, 'attachment_rejected', { error: 'unsupported' });
+    assert.equal(rejected.get(52).attachmentDeliveryState, 'not-sent', `${label}: structured rejection should be durable as not sent`);
+  }
+});
+
 test('run UI journal: resumed requests preserve sequence and replay boundaries', () => {
   for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
     const journal = new Journal();
@@ -61851,6 +62014,7 @@ test('per-tab run UI protocol is wired into both backgrounds and side panels', (
     assert.match(background, /case 'agent_run_state':[\s\S]*?const runUiSnapshot = await getRunUiSnapshot\(tabId\)[\s\S]*?const requestedRunUi = runUiSnapshotForRequest\(runUiSnapshot, requestedRequestId\)[\s\S]*?runUi: requestedRunUi,/, `${label}: remount state should include only the requested UI journal snapshot`);
     assert.match(background, /case 'agent_run_ack':[\s\S]*?runUiJournal\.acknowledge/, `${label}: background should accept ordered replay acknowledgements`);
     assert.match(background, /status: snapshot\.status \|\| 'completed'/, `${label}: run_complete should carry explicit terminal status`);
+    assert.match(background, /runUiJournal\.setAttachmentDeliveryState[\s\S]*attachmentDeliveryState,/, `${label}: background should durably settle attachment delivery before broadcasting completion`);
     assert.match(panel, /const processingTabs = new Set\(\);/, `${label}: processing state should be tab scoped`);
     assert.match(panel, /const localRunRequestIds = new Map\(\);/, `${label}: local request ownership should be tab scoped`);
     assert.match(panel, /function ensureCurrentRunAssistant\(msg\)/, `${label}: rendering should bind updates to their request bubble`);
@@ -61863,6 +62027,7 @@ test('per-tab run UI protocol is wired into both backgrounds and side panels', (
     assert.match(panel, /sendToBackground\('agent_run_ack'/, `${label}: the correct mounted tab should acknowledge replay`);
     assert.match(panel, /function invalidatePlanReviewCards\(/, `${label}: plan copies should be invalidated by tab and run identity`);
     assert.match(panel, /const pendingPlanMatchesRun =/, `${label}: restored plan cards should require an exact live journal match`);
+    assert.match(panel, /reconcileRunMessageAttachmentState\([\s\S]*?runUi\.attachmentDeliveryState/, `${label}: restored runs should reconcile attachment delivery independently of replay acknowledgement`);
     assert.match(panel, /card\.dataset\.runRequestId/, `${label}: plan cards should store their request identity`);
     assert.match(panel, /else if \(event === 'running'\) \{[\s\S]*?setTabProcessing\(runTabId, true\);[\s\S]*?setTabAbortRequested\(runTabId, false\);/, `${label}: scheduled runs should participate in tab-scoped stop state`);
     assert.match(panel, /const switchGeneration = \+\+tabSwitchGeneration;[\s\S]*?if \(switchGeneration !== tabSwitchGeneration\) return;/, `${label}: overlapping tab switches should cancel stale async transitions`);
@@ -62219,6 +62384,68 @@ test('attachments: uploaded images survive screenshot pruning with an untrusted 
   }
 });
 
+test('attachments: slash screenshots redact only the model-facing copy', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const rawDataUrl = 'data:image/png;base64,RAW_LOCAL_SCREENSHOT';
+    const budgetDataUrl = 'data:image/jpeg;base64,BUDGET_COPY';
+    const redactedDataUrl = 'data:image/jpeg;base64,REDACTED_MODEL_COPY';
+    const captureBounds = { x: 0, y: 0, width: 1200, height: 3600 };
+    const redactionCalls = [];
+    agent.screenshotRedaction = true;
+    agent._shrinkImageForBudget = async () => ({ dataUrl: budgetDataUrl, width: 800, height: 2400 });
+    agent._redactScreenshotDataUrl = async (tabId, dataUrl, options) => {
+      redactionCalls.push({ tabId, dataUrl, options });
+      return redactedDataUrl;
+    };
+    const screenshot = {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      source: 'slash_screenshot',
+      fullPage: true,
+      captureBounds,
+    };
+    const enriched = { role: 'user', content: 'inspect this capture' };
+
+    const result = await agent._applyAttachments(
+      enriched,
+      [screenshot],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+
+    assert.equal(result.ok, true, `${label}: slash screenshot should be accepted`);
+    assert.equal(screenshot.dataUrl, rawDataUrl, `${label}: local preview/save pixels must remain untouched`);
+    const imageBlock = enriched.content.find(block => block?.type === 'image_url');
+    assert.equal(imageBlock.image_url.url, redactedDataUrl, `${label}: the model must receive the redacted copy`);
+    assert.deepEqual(redactionCalls, [{
+      tabId: 8123,
+      dataUrl: budgetDataUrl,
+      options: {
+        coordinateSpace: 'page',
+        capturedCssBounds: captureBounds,
+        imageWidth: 800,
+        imageHeight: 2400,
+      },
+    }], `${label}: full-page screenshots should redact in page coordinates with immutable capture bounds`);
+
+    const uploaded = { role: 'user', content: 'inspect this upload' };
+    await agent._applyAttachments(
+      uploaded,
+      [{ kind: 'image', name: 'photo.png', dataUrl: rawDataUrl, source: 'user_upload' }],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+    assert.equal(redactionCalls.length, 1, `${label}: ordinary user image uploads must not be treated as browser screenshots`);
+    assert.equal(
+      uploaded.content.find(block => block?.type === 'image_url').image_url.url,
+      budgetDataUrl,
+      `${label}: ordinary image uploads should keep their budgeted model copy`,
+    );
+  }
+});
+
 test('attachments: uploaded documents carry an untrusted content boundary', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -62433,6 +62660,27 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
   }
 });
 
+test('attachments: slash screenshots stage for the next turn and sent bubbles retain metadata-only evidence', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const store = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/chat-history-store.js'), 'utf8');
+    const history = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.js'), 'utf8');
+
+    assert.match(panel, /stageScreenshotAttachment\(tabId, dataUrl, \{ pageUrl: tab\.url \}\)[\s\S]*addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must stage the captured image before rendering its result card`);
+    assert.match(panel, /source: 'slash_screenshot'[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must join the tab-scoped pending attachment list`);
+    assert.match(panel, /userEl = addMessage\('user', text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the actual send attachment set`);
+    assert.match(panel, /function attachmentStateLabel[\s\S]*t\('sp\.attach\.state\.included'\)[\s\S]*t\('sp\.attach\.state\.not_sent'\)[\s\S]*t\('sp\.attach\.state\.unknown'\)[\s\S]*t\('sp\.attach\.state\.sending'\)/, `${label}: attachment bubble must localize delivery labels`);
+    assert.match(panel, /function setMessageAttachmentState[\s\S]*item\.dataset\.deliveryState = state/, `${label}: attachment bubble delivery state must update after send outcome`);
+    assert.match(panel, /sp\.screenshot\.staged_next_message[\s\S]*sp\.screenshot\.full_page_alt/, `${label}: screenshot result status and alt text must be localized`);
+    assert.match(panel, /function reconcileRunMessageAttachmentState[\s\S]*persistMessageAttachmentState/, `${label}: attachment delivery reconciliation must support durable persistence`);
+    assert.match(panel, /reconcileRunMessageAttachmentState\([\s\S]*?runUi\.attachmentDeliveryState/, `${label}: restored terminal runs must repair attachment delivery state from the journal`);
+    assert.match(panel, /const attachments = role === 'user' \? messageAttachmentMetadata\(msgEl\) : \[\][\s\S]*\.\.\.\(attachments\.length \? \{ attachments \} : \{\}\)/, `${label}: history extraction must retain attachment descriptors`);
+    assert.match(store, /function normalizeAttachment[\s\S]*kind:[\s\S]*name:[\s\S]*mimeType:[\s\S]*size:[\s\S]*source:[\s\S]*deliveryState:/, `${label}: history store must normalize safe attachment metadata`);
+    assert.doesNotMatch(store, /dataUrl|textContent|base64/, `${label}: history store must not persist attachment bytes or contents`);
+    assert.match(history, /Attachments:[\s\S]*deliveryState[\s\S]*attachment\.name/, `${label}: Markdown history export must show attachment evidence`);
+  }
+});
+
 test('attachments: notice blocks outside user messages do not exempt images from pruning', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -62500,7 +62748,22 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     );
     assert.match(
       source,
-      /u\?\.type === 'attachment_rejected'\)\)[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
+      /function consumePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?const consumed = new Set\(attachments\);[\s\S]*?pending\.filter\(attachment => !consumed\.has\(attachment\)\)/,
+      `${label} should remove only the retried attachment objects from pending composer state`,
+    );
+    assert.match(
+      source,
+      /if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);/,
+      `${label} should transfer restored attachment ownership out of the composer before a retry`,
+    );
+    assert.match(
+      source,
+      /const accepted = await sendMessage\(\{[\s\S]*?__retry:[\s\S]*?if \(accepted\) \{[\s\S]*?releaseRetryAttachmentPayload\(btn\.dataset\.retryId\);[\s\S]*?btn\.disabled = true;/,
+      `${label} should retire an accepted retry payload so it cannot be submitted twice`,
+    );
+    assert.match(
+      source,
+      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
       `${label} should restore rejected attachments even after a tab switch and only overwrite an empty current-tab draft`,
     );
     assert.match(

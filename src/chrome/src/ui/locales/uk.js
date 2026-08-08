@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': 'Вибраний ZIP-файл публікації видалено з локального сховища.',
   'st.skills.cws.package_zip_only': 'Виберіть пакет публікації у форматі .zip.',
   'st.skills.cws.package_too_large': 'ZIP-файл повинен бути від 1 байта до 100 МБ.',
+  'sp.attach.state.included': 'Додано',
+  'sp.attach.state.not_sent': 'Не надіслано',
+  'sp.attach.state.unknown': 'Доставку не підтверджено',
+  'sp.attach.state.sending': 'Надсилання',
+  'sp.screenshot.staged_next_message': 'Прикріплено до наступного повідомлення',
+  'sp.screenshot.alt': 'Знімок екрана',
+  'sp.screenshot.full_page_alt': 'Знімок усієї сторінки',
   'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
 };

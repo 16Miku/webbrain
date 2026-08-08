@@ -921,5 +921,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Расчётная стоимость чтения из кэша ($ / 1 млн токенов)",
   'st.provider.field.cache_write_cost_per_million': "Расчётная стоимость записи в кэш на 5 минут ($ / 1 млн токенов)",
   'st.provider.field.cache_write_1h_cost_per_million': "Расчётная стоимость записи в кэш на 1 час ($ / 1 млн токенов)",
+  'sp.attach.state.included': 'Включено',
+  'sp.attach.state.not_sent': 'Не отправлено',
+  'sp.attach.state.unknown': 'Доставка не подтверждена',
+  'sp.attach.state.sending': 'Отправка',
+  'sp.screenshot.staged_next_message': 'Прикреплено к следующему сообщению',
+  'sp.screenshot.alt': 'Снимок экрана',
+  'sp.screenshot.full_page_alt': 'Снимок всей страницы',
   'sp.run_progress_replay_gap': 'Не удалось повторно показать часть предыдущего хода выполнения',
 };

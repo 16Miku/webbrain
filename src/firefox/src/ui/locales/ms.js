@@ -921,5 +921,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Anggaran kos bacaan cache ($ / 1 juta token)",
   'st.provider.field.cache_write_cost_per_million': "Anggaran kos tulis cache 5 minit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Anggaran kos tulis cache 1 jam ($ / 1 juta token)",
+  'sp.attach.state.included': 'Disertakan',
+  'sp.attach.state.not_sent': 'Tidak dihantar',
+  'sp.attach.state.unknown': 'Penghantaran belum disahkan',
+  'sp.attach.state.sending': 'Sedang menghantar',
+  'sp.screenshot.staged_next_message': 'Dilampirkan pada mesej seterusnya',
+  'sp.screenshot.alt': 'Tangkapan skrin',
+  'sp.screenshot.full_page_alt': 'Tangkapan skrin halaman penuh',
   'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
 };

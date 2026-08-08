@@ -921,5 +921,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "キャッシュ読み取りの推定費用（$ / 100万トークン）",
   'st.provider.field.cache_write_cost_per_million': "5分キャッシュ書き込みの推定費用（$ / 100万トークン）",
   'st.provider.field.cache_write_1h_cost_per_million': "1時間キャッシュ書き込みの推定費用（$ / 100万トークン）",
+  'sp.attach.state.included': '含まれています',
+  'sp.attach.state.not_sent': '未送信',
+  'sp.attach.state.unknown': '配信未確認',
+  'sp.attach.state.sending': '送信中',
+  'sp.screenshot.staged_next_message': '次のメッセージに添付',
+  'sp.screenshot.alt': 'スクリーンショット',
+  'sp.screenshot.full_page_alt': 'ページ全体のスクリーンショット',
   'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
 };

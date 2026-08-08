@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': '已从本地存储中移除选中的发布 ZIP。',
   'st.skills.cws.package_zip_only': '请选择 .zip 格式的发布包。',
   'st.skills.cws.package_too_large': 'ZIP 文件大小必须在 1 字节到 100 MB 之间。',
+  'sp.attach.state.included': '已包含',
+  'sp.attach.state.not_sent': '未发送',
+  'sp.attach.state.unknown': '未确认送达',
+  'sp.attach.state.sending': '正在发送',
+  'sp.screenshot.staged_next_message': '已附加到下一条消息',
+  'sp.screenshot.alt': '屏幕截图',
+  'sp.screenshot.full_page_alt': '整页截图',
   'sp.run_progress_replay_gap': '部分较早的运行进度无法重新显示',
 };

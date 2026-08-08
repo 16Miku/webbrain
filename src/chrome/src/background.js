@@ -1650,6 +1650,20 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
+  const attachmentDeliveryState = attachmentCount
+    ? (snapshot.attachmentDeliveryState === 'not-sent'
+      ? 'not-sent'
+      : submittedTurnDurable ? 'included' : 'unknown')
+    : '';
+  if (attachmentDeliveryState) {
+    snapshot = runUiJournal.setAttachmentDeliveryState(
+      tabId,
+      snapshot.requestId,
+      attachmentDeliveryState,
+    ) || snapshot;
+    await flushRunUiSnapshot(tabId, snapshot.requestId);
+  }
   chrome.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1663,6 +1677,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       finalContent: snapshot.finalContent || '',
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
+      attachmentDeliveryState,
     },
   }).catch(() => {});
 }
@@ -2286,6 +2301,7 @@ async function handleMessage(msg, sender) {
         mode,
         kind: 'chat',
         foreground: msg.foreground === true,
+        attachmentCount: Array.isArray(msg.attachments) ? msg.attachments.length : 0,
       });
       const releaseRunKeepalive = acquireRunKeepalive();
 

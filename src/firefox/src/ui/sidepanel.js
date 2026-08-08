@@ -1702,14 +1702,16 @@ function extractChatHistoryMessages(root = messagesEl) {
     const textEl = clone.querySelector('.message-text') || clone.querySelector('.message-content') || clone;
     const role = roleFromMessageElement(msgEl);
     const format = role === 'assistant' || role === 'error' ? 'markdown' : 'text';
+    const attachments = role === 'user' ? messageAttachmentMetadata(msgEl) : [];
     return {
       role,
       text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
       format,
       index,
       createdAt: Date.now(),
+      ...(attachments.length ? { attachments } : {}),
     };
-  }).filter((message) => message.text);
+  }).filter((message) => message.text || message.attachments?.length);
 }
 
 function chatHistoryHtmlHasUserMessage(html) {
@@ -4191,6 +4193,12 @@ async function applyActiveRunState(numericTabId, state) {
       });
       runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
     }
+    reconcileRunMessageAttachmentState(
+      numericTabId,
+      runAssistantEl,
+      runUi.attachmentDeliveryState,
+      { persist: true },
+    );
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -4236,6 +4244,7 @@ async function applyActiveRunState(numericTabId, state) {
           status: runUi.status,
           finalContent: runUi.finalContent,
           submittedTurnDurable: state?.submittedTurnDurable === true,
+          attachmentDeliveryState: runUi.attachmentDeliveryState || '',
         },
       });
     }
@@ -5499,7 +5508,7 @@ function bindErrorRetryButton(btn) {
     inputEl.value = payload.text;
     autoResizeInput();
     hideSlashCommandAutocomplete();
-    await sendMessage({
+    const accepted = await sendMessage({
       __retry: {
         mode: payload.mode,
         apiMutationsAllowed: payload.apiMutationsAllowed,
@@ -5509,6 +5518,10 @@ function bindErrorRetryButton(btn) {
         attachments: payload.attachments,
       },
     });
+    if (accepted) {
+      releaseRetryAttachmentPayload(btn.dataset.retryId);
+      btn.disabled = true;
+    }
   });
 }
 
@@ -5533,8 +5546,7 @@ function activeRetryPayloadForRequest(tabId, requestId = '') {
 }
 
 function retryPayloadForRunAssistant(assistantEl) {
-  let userEl = assistantEl?.previousElementSibling || null;
-  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
+  const userEl = userMessageForRunAssistant(assistantEl);
   const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
   if (!String(text || '').trim()) return null;
   const sourceGrounding = assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
@@ -5555,6 +5567,12 @@ function retryPayloadForRunAssistant(assistantEl) {
     attachments: [],
     attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
   };
+}
+
+function userMessageForRunAssistant(assistantEl) {
+  let userEl = assistantEl?.previousElementSibling || null;
+  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
+  return userEl;
 }
 
 function plannerRequestFailureUpdate(updates = []) {
@@ -6593,7 +6611,12 @@ function screenshotDownloadFilename(pageUrl = '', fullPage = false) {
   return `${prefix}-${fullPage ? 'full-page-' : ''}screenshot.png`;
 }
 
-function renderScreenshotResult(dataUrl, { fullPage = false, warning = '', pageUrl = '' } = {}) {
+function renderScreenshotResult(dataUrl, {
+  fullPage = false,
+  warning = '',
+  pageUrl = '',
+  stagedAttachment = null,
+} = {}) {
   const warningHtml = warning
     ? `<div class="screenshot-warning"><strong>⚠️ ${escapeHtml(warning)}</strong></div>`
     : '';
@@ -6602,10 +6625,16 @@ function renderScreenshotResult(dataUrl, { fullPage = false, warning = '', pageU
     : 'screenshot-result-image';
   const filename = screenshotDownloadFilename(pageUrl, fullPage);
   const saveLabel = t('sp.screenshot.save_as');
+  const stagedLabel = t('sp.screenshot.staged_next_message');
+  const imageAlt = t(fullPage ? 'sp.screenshot.full_page_alt' : 'sp.screenshot.alt');
+  const stagedHtml = stagedAttachment
+    ? `<div class="screenshot-attachment-note" role="status" aria-label="${escapeHtml(stagedLabel)}">📎 ${escapeHtml(stagedLabel)} · ${escapeHtml(stagedAttachment.name)}</div>`
+    : '';
   return `
     <div class="screenshot-result">
       ${warningHtml}
-      <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(fullPage ? 'Full-page screenshot' : 'Screenshot')}"/>
+      <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(imageAlt)}"/>
+      ${stagedHtml}
       <div class="screenshot-result-actions">
         <button type="button" class="screenshot-save-btn" data-filename="${escapeHtml(filename)}" aria-label="${escapeHtml(saveLabel)}">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -6938,7 +6967,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       if (currentTabId !== tabId || !tab?.active) return '';
       const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
       if (currentTabId !== tabId) return '';
-      addScreenshotResultMessage(dataUrl, { pageUrl: tab.url });
+      const stagedAttachment = stageScreenshotAttachment(tabId, dataUrl, { pageUrl: tab.url });
+      addScreenshotResultMessage(dataUrl, { pageUrl: tab.url, stagedAttachment });
     } catch (e) {
       if (currentTabId !== tabId) return '';
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
@@ -7402,12 +7432,16 @@ async function sendMessage(extraChatParams = {}) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    if (!retryOptions && !sourceGrounding) {
-      clearPendingAttachmentsForTab(tabId);
+    if (!sourceGrounding) {
+      if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
+      else clearPendingAttachmentsForTab(tabId);
       renderAttachmentPreviews();
     }
     resetChatNavigation();
-    userEl = addMessage('user', text);
+    userEl = addMessage('user', text, {
+      attachments: attachmentsForSend,
+      attachmentState: attachmentsForSend.length ? 'sending' : '',
+    });
     showActivity(t('sp.activity.thinking'));
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
@@ -7417,6 +7451,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
+    userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
     if (beginReadingFirstTurn(userEl, assistantEl)) {
@@ -7488,8 +7523,11 @@ async function sendMessage(extraChatParams = {}) {
     // assistant answer). We optimistically cleared the chips on send, so
     // re-add them here — otherwise "switch providers and try again" is
     // impossible without re-picking every file.
-    if (attachmentsForSend.length
-        && res?.updates?.some(u => u?.type === 'attachment_rejected')) {
+    const attachmentsRejected = attachmentsForSend.length
+      && res?.updates?.some(u => u?.type === 'attachment_rejected');
+    if (attachmentsRejected) {
+      setMessageAttachmentState(userEl, 'not-sent');
+      await persistMessageAttachmentState(tabId, userEl);
       restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       // Restore the prompt only if the user hasn't started typing a new one
       // while the rejected turn was in flight.
@@ -7499,6 +7537,9 @@ async function sendMessage(extraChatParams = {}) {
         autoResizeInput();
         updateSlashCommandAutocomplete();
       }
+    } else if (attachmentsForSend.length) {
+      setMessageAttachmentState(userEl, 'included');
+      await persistMessageAttachmentState(tabId, userEl);
     }
 
     if (renderToCurrentTab && currentTabId === tabId && isTabAbortRequested(tabId)) {
@@ -7567,11 +7608,19 @@ async function sendMessage(extraChatParams = {}) {
         }
         syncSendButtonState();
       }
-    } else if (renderToCurrentTab
-        && currentTabId === tabId
-        && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
-      renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+    } else {
+      if (attachmentsForSend.length) {
+        const deliveryUnknown = isBackgroundConnectionError(e);
+        setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
+        await persistMessageAttachmentState(tabId, userEl);
+        if (!deliveryUnknown) restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
+      if (renderToCurrentTab
+          && currentTabId === tabId
+          && !isTabAbortRequested(tabId)
+          && !clearedConversationRunRequestIds.has(requestId)) {
+        renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+      }
     }
   } finally {
     if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
@@ -7888,6 +7937,12 @@ function handleAgentUpdateMessage(msg) {
 
     case 'run_complete':
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
+      reconcileRunMessageAttachmentState(
+        eventTabId,
+        eventAssistantEl || currentAssistantEl,
+        data?.attachmentDeliveryState,
+        { persist: true },
+      );
       invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
       if (currentAssistantEl && data?.finalContent) {
         const textEl = currentAssistantEl.querySelector('.message-text');
@@ -9328,6 +9383,117 @@ function addErrorRetryButton(msgEl, retryPayload) {
   }
 }
 
+const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);
+
+function attachmentDataUrlBytes(dataUrl) {
+  const encoded = String(dataUrl || '').split(',', 2)[1] || '';
+  if (!encoded) return 0;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((encoded.length * 3) / 4) - padding);
+}
+
+function attachmentMetadata(att, deliveryState = 'included') {
+  const state = MESSAGE_ATTACHMENT_STATES.has(deliveryState) ? deliveryState : 'included';
+  return {
+    kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+    name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240) || 'attachment',
+    mimeType: String(att?.mimeType || '').slice(0, 120),
+    size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
+    source: att?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+    deliveryState: state,
+  };
+}
+
+function attachmentStateLabel(state) {
+  if (state === 'included') return { symbol: '✓', label: t('sp.attach.state.included') };
+  if (state === 'not-sent') return { symbol: '!', label: t('sp.attach.state.not_sent') };
+  if (state === 'unknown') return { symbol: '?', label: t('sp.attach.state.unknown') };
+  return { symbol: '…', label: t('sp.attach.state.sending') };
+}
+
+function renderMessageAttachments(msgEl, attachments, state = 'included') {
+  if (!msgEl || !Array.isArray(attachments) || !attachments.length) return;
+  const list = document.createElement('div');
+  list.className = 'message-attachments';
+  for (const attachment of attachments) {
+    const meta = attachmentMetadata(attachment, state);
+    const item = document.createElement('div');
+    item.className = `message-attachment message-attachment-${meta.deliveryState}`;
+    item.dataset.kind = meta.kind;
+    item.dataset.name = meta.name;
+    item.dataset.mimeType = meta.mimeType;
+    item.dataset.size = String(meta.size);
+    item.dataset.source = meta.source;
+    item.dataset.deliveryState = meta.deliveryState;
+
+    const icon = document.createElement('span');
+    icon.className = 'message-attachment-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = meta.kind === 'image' ? '▧' : meta.kind === 'text' ? '≡' : '▤';
+
+    const name = document.createElement('span');
+    name.className = 'message-attachment-name';
+    name.textContent = meta.name;
+
+    const stateEl = document.createElement('span');
+    stateEl.className = 'message-attachment-state';
+    stateEl.setAttribute('aria-hidden', 'true');
+    const stateInfo = attachmentStateLabel(meta.deliveryState);
+    stateEl.textContent = stateInfo.symbol;
+    item.title = `${meta.name} — ${stateInfo.label}`;
+    item.setAttribute('aria-label', `${meta.name}: ${stateInfo.label}`);
+    item.append(icon, name, stateEl);
+    list.appendChild(item);
+  }
+  msgEl.querySelector('.message-content')?.appendChild(list);
+}
+
+function setMessageAttachmentState(msgEl, state) {
+  if (!msgEl || !MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  let changed = false;
+  msgEl.querySelectorAll('.message-attachment').forEach((item) => {
+    if (item.dataset.deliveryState !== state) changed = true;
+    for (const known of MESSAGE_ATTACHMENT_STATES) item.classList.remove(`message-attachment-${known}`);
+    item.classList.add(`message-attachment-${state}`);
+    item.dataset.deliveryState = state;
+    const info = attachmentStateLabel(state);
+    const name = item.dataset.name || 'attachment';
+    item.querySelector('.message-attachment-state')?.replaceChildren(info.symbol);
+    item.title = `${name} — ${info.label}`;
+    item.setAttribute('aria-label', `${name}: ${info.label}`);
+  });
+  return changed;
+}
+
+async function persistMessageAttachmentState(tabId, msgEl) {
+  if (!msgEl?.isConnected || !sameTabId(renderedTabId, tabId)) return;
+  const html = messagesEl.innerHTML;
+  tabChats.set(Number(tabId), html);
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden: true }).catch(() => {});
+  if (document.visibilityState !== 'hidden') scheduleHistoryPersist(tabId);
+}
+
+function reconcileRunMessageAttachmentState(tabId, assistantEl, state, { persist = false } = {}) {
+  if (!MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  const userEl = userMessageForRunAssistant(assistantEl);
+  const changed = setMessageAttachmentState(userEl, state);
+  if (changed && persist) void persistMessageAttachmentState(tabId, userEl);
+  return changed;
+}
+
+function messageAttachmentMetadata(msgEl) {
+  return Array.from(msgEl?.querySelectorAll?.('.message-attachment') || []).map((item) => attachmentMetadata({
+    kind: item.dataset.kind,
+    name: item.dataset.name,
+    mimeType: item.dataset.mimeType,
+    size: Number(item.dataset.size),
+    source: item.dataset.source,
+  }, item.dataset.deliveryState));
+}
+
 function addMessage(role, content, options = {}) {
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
@@ -9365,6 +9531,9 @@ function addMessage(role, content, options = {}) {
 
   contentEl.appendChild(textEl);
   msgEl.appendChild(contentEl);
+  if (role === 'user' && Array.isArray(options.attachments) && options.attachments.length) {
+    renderMessageAttachments(msgEl, options.attachments, options.attachmentState || 'included');
+  }
   if (options.beforeCurrentAssistant && currentAssistantEl?.parentNode === messagesEl) {
     messagesEl.insertBefore(msgEl, currentAssistantEl);
   } else {
@@ -10727,6 +10896,52 @@ function restorePendingAttachmentsForTab(tabId, attachments) {
   }
 }
 
+function consumePendingAttachmentsForTab(tabId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return;
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  if (!pending.length) return;
+  const consumed = new Set(attachments);
+  const remaining = pending.filter(attachment => !consumed.has(attachment));
+  if (remaining.length) pendingAttachmentsByTab.set(numericTabId, remaining);
+  else pendingAttachmentsByTab.delete(numericTabId);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+}
+
+function stageScreenshotAttachment(tabId, dataUrl, { fullPage = false, pageUrl = '', captureBounds = null } = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
+  const size = attachmentDataUrlBytes(dataUrl);
+  const name = screenshotDownloadFilename(pageUrl, fullPage);
+  if (size > MAX_ATTACHMENT_BYTES) {
+    if (normalizeAttachmentTabId() === numericTabId) {
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max: '16MB' })));
+    }
+    return null;
+  }
+  const attachment = {
+    kind: 'image',
+    name,
+    dataUrl,
+    mimeType: String(dataUrl).startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
+    size,
+    source: 'slash_screenshot',
+    capturedAt: Date.now(),
+    fullPage: !!fullPage,
+    ...(fullPage && captureBounds ? { captureBounds } : {}),
+  };
+  getPendingAttachmentsForTab(numericTabId).push(attachment);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+  return attachment;
+}
+
 function renderAttachmentPreviews() {
   if (!attachmentPreviewList) return;
   const previewTabId = normalizeAttachmentTabId();
@@ -10819,11 +11034,20 @@ async function handleAttachedFiles(fileList, tabId = currentTabId) {
             textContent,
             dataUrl,
             mimeType: file.type || '',
+            size: file.size,
+            source: 'user_upload',
           });
         } else {
           const dataUrl = await readFileAsDataUrl(file);
           if (generation !== getAttachmentGeneration(numericTabId)) continue;
-          getPendingAttachmentsForTab(numericTabId).push({ kind: isImage ? 'image' : 'document', name: file.name, dataUrl });
+          getPendingAttachmentsForTab(numericTabId).push({
+            kind: isImage ? 'image' : 'document',
+            name: file.name,
+            dataUrl,
+            mimeType: file.type || (isPdf ? 'application/pdf' : ''),
+            size: file.size,
+            source: 'user_upload',
+          });
         }
       } catch {
         if (generation === getAttachmentGeneration(numericTabId) && normalizeAttachmentTabId() === numericTabId) {

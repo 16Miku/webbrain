@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': 'Na-remove ang napiling release ZIP mula sa local storage.',
   'st.skills.cws.package_zip_only': 'Pumili ng .zip release package.',
   'st.skills.cws.package_too_large': 'Ang ZIP ay dapat nasa pagitan ng 1 byte hanggang 100 MB.',
+  'sp.attach.state.included': 'Kasama',
+  'sp.attach.state.not_sent': 'Hindi naipadala',
+  'sp.attach.state.unknown': 'Hindi nakumpirma ang paghahatid',
+  'sp.attach.state.sending': 'Ipinapadala',
+  'sp.screenshot.staged_next_message': 'Naka-attach sa susunod na mensahe',
+  'sp.screenshot.alt': 'Screenshot',
+  'sp.screenshot.full_page_alt': 'Screenshot ng buong pahina',
   'sp.run_progress_replay_gap': 'Hindi maipakita muli ang ilang naunang progreso ng run',
 };

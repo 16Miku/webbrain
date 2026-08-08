@@ -946,5 +946,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Custo estimado de leitura de cache ($/1 milhão de tokens)",
   'st.provider.field.cache_write_cost_per_million': "Custo estimado de gravação em cache de 5 minutos ($/1 milhão de tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Custo estimado de gravação de cache em 1 hora ($/1 milhão de tokens)",
+  'sp.attach.state.included': 'Incluído',
+  'sp.attach.state.not_sent': 'Não enviado',
+  'sp.attach.state.unknown': 'Entrega não confirmada',
+  'sp.attach.state.sending': 'Enviando',
+  'sp.screenshot.staged_next_message': 'Anexado à próxima mensagem',
+  'sp.screenshot.alt': 'Captura de tela',
+  'sp.screenshot.full_page_alt': 'Captura de página inteira',
   'sp.run_progress_replay_gap': 'Não foi possível reexibir parte do progresso anterior da execução',
 };

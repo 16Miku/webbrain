@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': '선택된 릴리스 ZIP이 로컬 스토리지에서 제거되었습니다.',
   'st.skills.cws.package_zip_only': '.zip 릴리스 패키지를 선택하세요.',
   'st.skills.cws.package_too_large': 'ZIP은 1바이트에서 100MB 사이여야 합니다.',
+  'sp.attach.state.included': '포함됨',
+  'sp.attach.state.not_sent': '전송되지 않음',
+  'sp.attach.state.unknown': '전달 확인 안 됨',
+  'sp.attach.state.sending': '전송 중',
+  'sp.screenshot.staged_next_message': '다음 메시지에 첨부됨',
+  'sp.screenshot.alt': '스크린샷',
+  'sp.screenshot.full_page_alt': '전체 페이지 스크린샷',
   'sp.run_progress_replay_gap': '이전 실행 진행 상황 일부를 다시 표시할 수 없습니다',
 };

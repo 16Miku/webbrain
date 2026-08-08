@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': 'تمت إزالة ملف ZIP للإصدار من التخزين المحلي.',
   'st.skills.cws.package_zip_only': 'اختر ملف إصدار بصيغة .zip.',
   'st.skills.cws.package_too_large': 'يجب أن يكون حجم الملف بين 1 بايت و100 ميجابايت.',
+  'sp.attach.state.included': 'تم تضمينه',
+  'sp.attach.state.not_sent': 'لم يُرسل',
+  'sp.attach.state.unknown': 'لم يتم تأكيد التسليم',
+  'sp.attach.state.sending': 'جارٍ الإرسال',
+  'sp.screenshot.staged_next_message': 'مرفق بالرسالة التالية',
+  'sp.screenshot.alt': 'لقطة شاشة',
+  'sp.screenshot.full_page_alt': 'لقطة شاشة للصفحة كاملة',
   'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
 };

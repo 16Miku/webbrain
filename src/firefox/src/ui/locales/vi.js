@@ -941,5 +941,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Chi phí đọc bộ nhớ đệm ước tính ($ / 1 triệu token)",
   'st.provider.field.cache_write_cost_per_million': "Ước tính chi phí ghi vào bộ nhớ đệm trong 5 phút ($ / 1 triệu token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Chi phí ghi bộ nhớ đệm trong 1 giờ ước tính ($ / 1 triệu token)",
+  'sp.attach.state.included': 'Đã bao gồm',
+  'sp.attach.state.not_sent': 'Chưa gửi',
+  'sp.attach.state.unknown': 'Chưa xác nhận gửi',
+  'sp.attach.state.sending': 'Đang gửi',
+  'sp.screenshot.staged_next_message': 'Đã đính kèm vào tin nhắn tiếp theo',
+  'sp.screenshot.alt': 'Ảnh chụp màn hình',
+  'sp.screenshot.full_page_alt': 'Ảnh chụp toàn trang',
   'sp.run_progress_replay_gap': 'Không thể hiển thị lại một phần tiến trình chạy trước đó',
 };

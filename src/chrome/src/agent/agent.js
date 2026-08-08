@@ -139,6 +139,7 @@ const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'get_shadow_dom',
   'shadow_dom_query',
   'get_frames',
+  'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
 ]);
@@ -147,6 +148,7 @@ const COMPLETION_DOCUMENT_URL_TOOLS = new Set([
   'read_page',
   'read_page_source',
   'get_interactive_elements',
+  'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
 ]);
@@ -1092,7 +1094,13 @@ export class Agent extends LoopDetector {
       if (captured?.blankFrameRetry?.finalBlank) {
         return { ok: false, error: 'Background full-page screenshot remained blank after retries' };
       }
-      return { ok: true, dataUrl: captured.dataUrl, warning };
+      const captureBounds = typeof capture === 'object' ? capture?.captureBounds || null : null;
+      return {
+        ok: true,
+        dataUrl: captured.dataUrl,
+        warning,
+        ...(captureBounds ? { captureBounds } : {}),
+      };
     } catch (e) {
       return { ok: false, error: e?.message || String(e) };
     }
@@ -3205,7 +3213,7 @@ export class Agent extends LoopDetector {
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
-  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
   static NAV_PRONE_TOOLS = new Set(['click', 'click_ax', 'set_checked', 'navigate', 'go_back', 'go_forward', 'execute_js', 'iframe_click', 'execute_webmcp_tool']);
   static RECOMMENDED_ACTION_FAST_PATH_IDS = new Set(['download-media', 'tweet-webbrain', 'post-webbrain-linkedin']);
   static RECOMMENDED_ACTION_FIRST_TOOLS = Object.freeze({
@@ -3276,6 +3284,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       s = s.slice(cut);
     }
     return s.trim();
+  }
+
+  static _traceMediaCounts(messages) {
+    let imageBlockCount = 0;
+    let documentBlockCount = 0;
+    for (const message of Array.isArray(messages) ? messages : []) {
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      for (const block of blocks) {
+        if (block?.type === 'image_url') imageBlockCount += 1;
+        if (block?.type === 'document') documentBlockCount += 1;
+      }
+    }
+    return { imageBlockCount, documentBlockCount };
   }
 
   /**
@@ -5627,7 +5648,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ],
         });
         const _runIdForShot = this.currentRunId.get(tabId);
-        if (_runIdForShot) {
+        if (_runIdForShot && fnName !== 'inspect_viewport') {
           trace.recordScreenshot(_runIdForShot, null, attachedImage, `screenshot-tool:${fnName}`);
         }
       }
@@ -8072,6 +8093,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabUrl,
         tabTitle,
         mode,
+        attachments: Array.isArray(runOptions?.traceAttachments) ? runOptions.traceAttachments : [],
         conversationId: this.conversationIds.get(tabId) || null,
         force: runOptions?.cloudRun === true,
       });
@@ -8938,6 +8960,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider?.model,
             messageCount: plannerMessages.length,
             toolsCount: 0,
+            ...Agent._traceMediaCounts(plannerMessages),
             phase: 'intent',
           });
         } catch {}
@@ -9085,6 +9108,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider?.model,
             messageCount: plannerMessages.length,
             toolsCount: 0,
+            ...Agent._traceMediaCounts(plannerMessages),
             phase: 'planner',
           });
         } catch {}
@@ -9526,6 +9550,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           model: provider?.model,
           messageCount: prunedMessages.length,
           toolsCount: Array.isArray(tools) ? tools.length : 0,
+          ...Agent._traceMediaCounts(prunedMessages),
           phase,
         });
       } catch {}
@@ -16585,8 +16610,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
-    if (name === 'screenshot') {
+    if (name === 'screenshot' || name === 'inspect_viewport') {
       try {
+        const isViewportInspection = name === 'inspect_viewport';
+        if (isViewportInspection && !this._canTakeAutoScreenshot(tabId)) {
+          return {
+            success: false,
+            error: 'Visual inspection skipped: maxScreenshotsPerTurn was reached for this turn. Continue with page-reading tools or answer from the visual evidence already collected.',
+          };
+        }
         // Capture the image. The dataUrl is handed back through the special
         // `_attachImage` field so the batch loop can push it as an image_url
         // block on a follow-up user message (see _executeToolBatch) — exactly
@@ -16609,13 +16641,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // false so the model never trusts raw image pixels as CSS pixels.
         let coordDownscaled = false;
         let blankFrameRetry = null;
-        const wantSave = !!(args && args.save);
+        const wantSave = !isViewportInspection && !!(args && args.save);
         try {
           await cdpClient.attach(tabId);
           await cdpClient.sendCommand(tabId, 'Page.enable');
           probe = await this._captureViewportProbe(tabId);
           await this._preparePageForCapture(tabId);
-          coordAligned = !!(args && args.coord_aligned);
+          coordAligned = !isViewportInspection && !!(args && args.coord_aligned);
           const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
           const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
 
@@ -16788,7 +16820,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'Screenshot failed: no image data was captured.',
           };
         }
-
         // Save first from the pre-budget capture (full CSS when available),
         // matching full_page_screenshot: Downloads keep full resolution;
         // only the model-facing copy is budget-resized / redacted.
@@ -16821,6 +16852,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this.screenshotRedaction) {
           dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
         }
+        if (isViewportInspection) {
+          this._recordAutoScreenshot(tabId);
+          const inspectionRunId = this.currentRunId.get(tabId);
+          if (inspectionRunId) {
+            await trace.recordScreenshot(inspectionRunId, null, dataUrl, 'inspect_viewport capture');
+          }
+        }
 
         // Pick the presentation path based on what the active providers can
         // actually do with an image. Order matters: a dedicated vision model
@@ -16831,7 +16869,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (visionProvider) {
           // Describe via the sidecar vision model. Return text only; no image
           // attachment needed — the main provider never needs to see pixels.
-          const desc = await this._describeScreenshot(tabId, dataUrl, 'screenshot_tool');
+          const desc = await this._describeScreenshot(
+            tabId,
+            dataUrl,
+            isViewportInspection ? 'inspect_viewport' : 'screenshot_tool',
+          );
           if (desc) {
             return {
               success: true,
@@ -16884,7 +16926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'This model cannot see images: it has no vision capability and no dedicated vision model is configured. In provider settings, enable "Model supports vision" for the active provider or set a vision model. For now, use get_accessibility_tree, get_interactive_elements, or read_page to inspect the page.',
         };
       } catch (e) {
-        return { success: false, error: `Screenshot failed: ${e.message}` };
+        return { success: false, error: `${name === 'inspect_viewport' ? 'Visual inspection' : 'Screenshot'} failed: ${e.message}` };
       }
     }
 
@@ -21933,7 +21975,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // untouched so the UI/history still has the user-picked full image
         // (issue #311 maxImageDimension).
         const shrunk = await this._shrinkImageForBudget(att.dataUrl, 0, 0, this._budgetForCapture());
-        blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: shrunk.dataUrl }) });
+        // A slash-command screenshot keeps its original pixels for the local
+        // preview/save path, but the copy crossing the model boundary must
+        // honor the same on-device redaction setting as agent-owned captures.
+        // Ordinary user-uploaded images are not browser screenshots and stay
+        // byte-faithful apart from the existing vision-budget resize.
+        let modelDataUrl = shrunk.dataUrl;
+        if (att.source === 'slash_screenshot' && this.screenshotRedaction) {
+          modelDataUrl = await this._redactScreenshotDataUrl(options.tabId, modelDataUrl, {
+            coordinateSpace: att.fullPage ? 'page' : 'viewport',
+            ...(att.fullPage && att.captureBounds ? { capturedCssBounds: att.captureBounds } : {}),
+            imageWidth: shrunk.width,
+            imageHeight: shrunk.height,
+          });
+        }
+        blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: modelDataUrl }) });
       } else if (att.kind === 'document') {
         if (!provider?.supportsDocuments) {
           return {
@@ -22123,6 +22179,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._pinTextAttachmentMetadata(tabId, sourceBoundAttachments, { canUseScratchpadTool });
     }
+    runOptions = {
+      ...runOptions,
+      traceAttachments: (sourceBoundAttachments || []).map(att => ({
+        kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+        name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
+        mimeType: String(att?.mimeType || '').slice(0, 120),
+        size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
+        source: att?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+      })),
+    };
 
     // Everything that can throw — trace start, planner gate, run setup, and the
     // agent loop — runs inside this try so the finally always ends the trace
@@ -22387,6 +22453,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider.model,
             messageCount: prunedMessages.length,
             toolsCount: (chatOpts.tools || []).length,
+            ...Agent._traceMediaCounts(prunedMessages),
           });
           if (shouldOrderInteractiveAskTrace) queueAskStreamingTraceWrite(writeRequestTrace);
           else writeRequestTrace();

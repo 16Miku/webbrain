@@ -950,5 +950,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Estimated cache read cost ($ / 1M tokens)",
   'st.provider.field.cache_write_cost_per_million': "Estimated 5-minute cache write cost ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Estimated 1-hour cache write cost ($ / 1M tokens)",
+  'sp.attach.state.included': 'Included',
+  'sp.attach.state.not_sent': 'Not sent',
+  'sp.attach.state.unknown': 'Delivery not confirmed',
+  'sp.attach.state.sending': 'Sending',
+  'sp.screenshot.staged_next_message': 'Attached to next message',
+  'sp.screenshot.alt': 'Screenshot',
+  'sp.screenshot.full_page_alt': 'Full-page screenshot',
   'sp.run_progress_replay_gap': 'Some earlier run progress could not be replayed',
 };

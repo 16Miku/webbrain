@@ -948,5 +948,12 @@ export default {
   'st.skills.cws.package_cleared': 'ZIP pelepasan yang dipilih dibuang daripada storan tempatan.',
   'st.skills.cws.package_zip_only': 'Pilih pakej pelepasan berformat .zip.',
   'st.skills.cws.package_too_large': 'ZIP mesti antara 1 bait hingga 100 MB.',
+  'sp.attach.state.included': 'Disertakan',
+  'sp.attach.state.not_sent': 'Tidak dihantar',
+  'sp.attach.state.unknown': 'Penghantaran belum disahkan',
+  'sp.attach.state.sending': 'Sedang menghantar',
+  'sp.screenshot.staged_next_message': 'Dilampirkan pada mesej seterusnya',
+  'sp.screenshot.alt': 'Tangkapan skrin',
+  'sp.screenshot.full_page_alt': 'Tangkapan skrin halaman penuh',
   'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
 };

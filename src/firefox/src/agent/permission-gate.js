@@ -108,6 +108,7 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   // wrap, so only the page-derived text fields get wrapped here.
   'screenshot',
   'full_page_screenshot',
+  'inspect_viewport',
   // done: in Act mode the result carries page-derived verification fields
   // (pageTitle, pageUrl, pageState with dialog titles / live-region text) that
   // are persisted as the final tool message and re-read on the next user turn.

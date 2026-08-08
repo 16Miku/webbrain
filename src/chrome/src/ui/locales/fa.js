@@ -946,5 +946,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "تخمینی هزینه خواندن حافظه پنهان ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_cost_per_million': "تخمینی هزینه نوشتن 5 دقیقه ای کش ($ / 1 میلیون توکن)",
   'st.provider.field.cache_write_1h_cost_per_million': "تخمینی هزینه نوشتن حافظه پنهان 1 ساعته ($ / 1 میلیون توکن)",
+  'sp.attach.state.included': 'گنجانده شد',
+  'sp.attach.state.not_sent': 'ارسال نشد',
+  'sp.attach.state.unknown': 'تحویل تأیید نشد',
+  'sp.attach.state.sending': 'در حال ارسال',
+  'sp.screenshot.staged_next_message': 'پیوست به پیام بعدی',
+  'sp.screenshot.alt': 'نماگرفت',
+  'sp.screenshot.full_page_alt': 'نماگرفت تمام‌صفحه',
   'sp.run_progress_replay_gap': 'بخشی از پیشرفت پیشین اجرا قابل بازپخش نبود',
 };

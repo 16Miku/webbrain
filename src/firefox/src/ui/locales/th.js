@@ -921,5 +921,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "ค่าอ่านแคชโดยประมาณ ($ / 1 ล้านโทเค็น)",
   'st.provider.field.cache_write_cost_per_million': "ค่าการเขียนแคช 5 นาทีโดยประมาณ ($ / 1 ล้านโทเค็น)",
   'st.provider.field.cache_write_1h_cost_per_million': "ค่าการเขียนแคช 1 ชั่วโมงโดยประมาณ ($ / 1 ล้านโทเค็น)",
+  'sp.attach.state.included': 'รวมแล้ว',
+  'sp.attach.state.not_sent': 'ยังไม่ได้ส่ง',
+  'sp.attach.state.unknown': 'ยังไม่ยืนยันการส่ง',
+  'sp.attach.state.sending': 'กำลังส่ง',
+  'sp.screenshot.staged_next_message': 'แนบไปกับข้อความถัดไป',
+  'sp.screenshot.alt': 'ภาพหน้าจอ',
+  'sp.screenshot.full_page_alt': 'ภาพหน้าจอแบบเต็มหน้า',
   'sp.run_progress_replay_gap': 'ไม่สามารถแสดงความคืบหน้าก่อนหน้านี้บางส่วนของการทำงานซ้ำได้',
 };

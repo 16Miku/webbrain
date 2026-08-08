@@ -921,5 +921,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "Орієнтовна вартість читання з кешу ($ / 1 млн токенів)",
   'st.provider.field.cache_write_cost_per_million': "Орієнтовна вартість запису в кеш на 5 хвилин ($ / 1 млн токенів)",
   'st.provider.field.cache_write_1h_cost_per_million': "Орієнтовна вартість запису в кеш на 1 годину ($ / 1 млн токенів)",
+  'sp.attach.state.included': 'Додано',
+  'sp.attach.state.not_sent': 'Не надіслано',
+  'sp.attach.state.unknown': 'Доставку не підтверджено',
+  'sp.attach.state.sending': 'Надсилання',
+  'sp.screenshot.staged_next_message': 'Прикріплено до наступного повідомлення',
+  'sp.screenshot.alt': 'Знімок екрана',
+  'sp.screenshot.full_page_alt': 'Знімок усієї сторінки',
   'sp.run_progress_replay_gap': 'Не вдалося повторно показати частину попереднього перебігу виконання',
 };

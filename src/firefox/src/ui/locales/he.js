@@ -874,5 +874,12 @@ export default {
   'st.provider.field.cache_read_cost_per_million': "עלות משוערת לקריאה מהמטמון ($ / מיליון אסימונים)",
   'st.provider.field.cache_write_cost_per_million': "עלות משוערת לכתיבה למטמון ל-5 דקות ($ / מיליון אסימונים)",
   'st.provider.field.cache_write_1h_cost_per_million': "עלות משוערת לכתיבה למטמון לשעה ($ / מיליון אסימונים)",
+  'sp.attach.state.included': 'נכלל',
+  'sp.attach.state.not_sent': 'לא נשלח',
+  'sp.attach.state.unknown': 'המסירה לא אושרה',
+  'sp.attach.state.sending': 'נשלח',
+  'sp.screenshot.staged_next_message': 'מצורף להודעה הבאה',
+  'sp.screenshot.alt': 'צילום מסך',
+  'sp.screenshot.full_page_alt': 'צילום מסך של העמוד המלא',
   'sp.run_progress_replay_gap': 'לא ניתן היה להציג מחדש חלק מהתקדמות ההרצה הקודמת',
 };
