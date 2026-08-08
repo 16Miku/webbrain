@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "5분 캐시 쓰기 예상 비용($ / 100만 토큰)",
   'st.provider.field.cache_write_1h_cost_per_million': "1시간 캐시 쓰기 예상 비용($ / 100만 토큰)",
   'sp.run_progress_replay_gap': '이전 실행 진행 상황 일부를 다시 표시할 수 없습니다',
+  "sp.workflows.healing.question": "워크플로 “{name}”에서 {step}단계 대상을 찾지 못했습니다. 시도할 대상을 선택하세요. 검증에 성공한 경우에만 저장됩니다.",
+  "sp.workflows.healing.previous": "저장된 대상: {target}",
+  "sp.workflows.healing.use": "{target} 시도 후 저장",
+  "sp.workflows.healing.keep": "저장된 대상 유지",
+  "sp.workflows.healing.saved": "“{name}”에서 로케이터 {count}개를 업데이트했습니다.",
+  "sp.workflows.healing.not_saved": "워크플로가 변경되었거나 검증 결과가 불확실하여 “{name}”에서 승인한 로케이터를 저장하지 않았습니다.",
 };

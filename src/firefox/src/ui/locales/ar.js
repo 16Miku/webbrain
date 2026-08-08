@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة 5 دقائق ($ / مليون رمز)",
   'st.provider.field.cache_write_1h_cost_per_million': "تكلفة كتابة ذاكرة التخزين المؤقت لمدة ساعة واحدة ($ / مليون رمز)",
   'sp.run_progress_replay_gap': 'تعذّر إعادة عرض بعض تقدّم التشغيل السابق',
+  "sp.workflows.healing.question": "تعذّر على سير العمل «{name}» مطابقة الخطوة {step}. اختر بديلاً لتجربته؛ ولن يُحفظ إلا بعد تحقق ناجح.",
+  "sp.workflows.healing.previous": "الهدف المحفوظ: {target}",
+  "sp.workflows.healing.use": "جرّب واحفظ {target}",
+  "sp.workflows.healing.keep": "الاحتفاظ بالهدف المحفوظ",
+  "sp.workflows.healing.saved": "تم تحديث {count} محددات في «{name}».",
+  "sp.workflows.healing.not_saved": "لم يُحفظ المحدد الموافق عليه لـ «{name}» لأن سير العمل تغيّر أو لأن التحقق لم يكن حاسماً.",
 };

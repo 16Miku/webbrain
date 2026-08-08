@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': '.zip リリースパッケージを選択してください。',
   'st.skills.cws.package_too_large': 'ZIP は 1 バイトから 100 MB の間でなければなりません。',
   'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
+  "sp.workflows.healing.question": "ワークフロー「{name}」はステップ {step} の対象を特定できませんでした。試す代替対象を選んでください。検証に成功した場合のみ保存されます。",
+  "sp.workflows.healing.previous": "保存済みの対象: {target}",
+  "sp.workflows.healing.use": "{target} を試して保存",
+  "sp.workflows.healing.keep": "保存済みの対象を維持",
+  "sp.workflows.healing.saved": "「{name}」のロケーターを {count} 件更新しました。",
+  "sp.workflows.healing.not_saved": "ワークフローが変更されたか検証結果が不確実だったため、「{name}」で承認されたロケーターは保存されませんでした。",
 };

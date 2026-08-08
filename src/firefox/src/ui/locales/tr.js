@@ -921,4 +921,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Tahmini 5 dakikalık önbellek yazma maliyeti ($ / 1M token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Tahmini 1 saatlik önbellek yazma maliyeti ($ / 1M token)",
   'sp.run_progress_replay_gap': 'Önceki çalışma ilerlemesinin bir kısmı yeniden gösterilemedi',
+  "sp.workflows.healing.question": "“{name}” iş akışı {step}. adımı eşleştiremedi. Denemek için bir yedek hedef seçin; yalnızca başarılı doğrulamadan sonra kaydedilir.",
+  "sp.workflows.healing.previous": "Kayıtlı hedef: {target}",
+  "sp.workflows.healing.use": "{target} hedefini dene ve kaydet",
+  "sp.workflows.healing.keep": "Kayıtlı hedefi koru",
+  "sp.workflows.healing.saved": "“{name}” içinde {count} bulucu güncellendi.",
+  "sp.workflows.healing.not_saved": "İş akışı değiştiği veya doğrulama kesin olmadığı için “{name}” için onaylanan bulucu kaydedilmedi.",
 };

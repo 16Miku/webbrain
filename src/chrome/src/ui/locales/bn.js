@@ -947,4 +947,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "আনুমানিক 5-মিনিট ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
   'st.provider.field.cache_write_1h_cost_per_million': "আনুমানিক 1-ঘন্টা ক্যাশে লেখার খরচ ($ / 1M টোকেন)",
   'sp.run_progress_replay_gap': 'আগের কিছু রান অগ্রগতি পুনরায় দেখানো যায়নি',
+  "sp.workflows.healing.question": "“{name}” ওয়ার্কফ্লো ধাপ {step} মেলাতে পারেনি। চেষ্টা করার জন্য একটি বিকল্প বেছে নিন; সফল যাচাইয়ের পরেই এটি সংরক্ষিত হবে।",
+  "sp.workflows.healing.previous": "সংরক্ষিত লক্ষ্য: {target}",
+  "sp.workflows.healing.use": "{target} চেষ্টা করে সংরক্ষণ করুন",
+  "sp.workflows.healing.keep": "সংরক্ষিত লক্ষ্যটি রাখুন",
+  "sp.workflows.healing.saved": "“{name}”-এ {count}টি লোকেটর আপডেট করা হয়েছে।",
+  "sp.workflows.healing.not_saved": "ওয়ার্কফ্লো পরিবর্তিত হওয়ায় বা যাচাই অনিশ্চিত থাকায় “{name}”-এর অনুমোদিত লোকেটর সংরক্ষিত হয়নি।",
 };

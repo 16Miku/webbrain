@@ -947,4 +947,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "अनुमानित 5-मिनट कैश लिखने की लागत ($ / 1M टोकन)",
   'st.provider.field.cache_write_1h_cost_per_million': "अनुमानित 1-घंटे कैश लिखने की लागत ($ / 1M टोकन)",
   'sp.run_progress_replay_gap': 'पहले की कुछ रन प्रगति दोबारा नहीं दिखाई जा सकी',
+  "sp.workflows.healing.question": "वर्कफ़्लो “{name}” चरण {step} से मेल नहीं खा सका। आज़माने के लिए कोई विकल्प चुनें; सफल सत्यापन के बाद ही वह सहेजा जाएगा।",
+  "sp.workflows.healing.previous": "सहेजा गया लक्ष्य: {target}",
+  "sp.workflows.healing.use": "{target} को आज़माएँ और सहेजें",
+  "sp.workflows.healing.keep": "सहेजा गया लक्ष्य रखें",
+  "sp.workflows.healing.saved": "“{name}” में {count} लोकेटर अपडेट किए गए।",
+  "sp.workflows.healing.not_saved": "“{name}” के लिए स्वीकृत लोकेटर सहेजा नहीं गया क्योंकि वर्कफ़्लो बदल गया था या सत्यापन निर्णायक नहीं था।",
 };

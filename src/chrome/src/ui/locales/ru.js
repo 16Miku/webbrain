@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Выберите пакет публикации в формате .zip.',
   'st.skills.cws.package_too_large': 'ZIP-файл должен быть от 1 байта до 100 МБ.',
   'sp.run_progress_replay_gap': 'Не удалось повторно показать часть предыдущего хода выполнения',
+  "sp.workflows.healing.question": "Сценарий «{name}» не смог сопоставить шаг {step}. Выберите замену для проверки; она сохранится только после успешной верификации.",
+  "sp.workflows.healing.previous": "Сохранённая цель: {target}",
+  "sp.workflows.healing.use": "Проверить и сохранить {target}",
+  "sp.workflows.healing.keep": "Оставить сохранённую цель",
+  "sp.workflows.healing.saved": "Обновлено локаторов в «{name}»: {count}.",
+  "sp.workflows.healing.not_saved": "Одобренный локатор для «{name}» не сохранён: сценарий изменился или результат проверки оказался неоднозначным.",
 };

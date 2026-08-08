@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Perkiraan biaya tulis cache 5 menit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Perkiraan biaya tulis cache 1 jam ($ / 1 juta token)",
   'sp.run_progress_replay_gap': 'Sebagian kemajuan proses sebelumnya tidak dapat ditampilkan ulang',
+  "sp.workflows.healing.question": "Alur kerja “{name}” tidak dapat mencocokkan langkah {step}. Pilih pengganti untuk dicoba; pengganti hanya disimpan setelah verifikasi berhasil.",
+  "sp.workflows.healing.previous": "Target tersimpan: {target}",
+  "sp.workflows.healing.use": "Coba dan simpan {target}",
+  "sp.workflows.healing.keep": "Pertahankan target tersimpan",
+  "sp.workflows.healing.saved": "Memperbarui {count} locator di “{name}”.",
+  "sp.workflows.healing.not_saved": "Locator yang disetujui untuk “{name}” tidak disimpan karena alur kerja berubah atau verifikasi tidak meyakinkan.",
 };

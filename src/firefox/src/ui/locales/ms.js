@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Anggaran kos tulis cache 5 minit ($ / 1 juta token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Anggaran kos tulis cache 1 jam ($ / 1 juta token)",
   'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
+  "sp.workflows.healing.question": "Aliran kerja “{name}” tidak dapat memadankan langkah {step}. Pilih pengganti untuk dicuba; ia hanya disimpan selepas pengesahan berjaya.",
+  "sp.workflows.healing.previous": "Sasaran tersimpan: {target}",
+  "sp.workflows.healing.use": "Cuba dan simpan {target}",
+  "sp.workflows.healing.keep": "Kekalkan sasaran tersimpan",
+  "sp.workflows.healing.saved": "Mengemas kini {count} pencari dalam “{name}”.",
+  "sp.workflows.healing.not_saved": "Pencari yang diluluskan untuk “{name}” tidak disimpan kerana aliran kerja berubah atau pengesahan tidak muktamad.",
 };

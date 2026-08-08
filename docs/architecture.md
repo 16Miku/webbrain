@@ -546,6 +546,15 @@ collects parameters in an ephemeral side-panel form. The replay executor then:
 5. either continues deterministically, delegates a known-safe mismatch to the
    normal Agent, or stops when a state-changing action has an unknown outcome.
 
+When strict target matching fails, replay may present up to five independently
+replayable semantic targets for explicit user selection. A selected target is
+used for that step only, then persisted as a locator repair only when the
+existing postcondition succeeds without inconclusive, stale, ambiguous, or
+wrong-target evidence. Repairs are applied atomically against the workflow's
+previous `updatedAt` value, so a concurrent edit wins instead of being
+overwritten. Duplicate semantic candidates and unattended clarification
+answers never authorize healing.
+
 Replay does not set `currentRunId`, because ordinary tool tracing would retain
 runtime values. It creates a separate run containing sanitized notes and
 redacted UI tool events. Runtime parameter values are also omitted from the

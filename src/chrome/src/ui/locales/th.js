@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'เลือกแพ็คเกจการเผยแพร่รูปแบบ .zip',
   'st.skills.cws.package_too_large': 'ZIP ต้องมีขนาดระหว่าง 1 ไบต์ถึง 100 MB',
   'sp.run_progress_replay_gap': 'ไม่สามารถแสดงความคืบหน้าก่อนหน้านี้บางส่วนของการทำงานซ้ำได้',
+  "sp.workflows.healing.question": "เวิร์กโฟลว์ “{name}” จับคู่ขั้นตอนที่ {step} ไม่ได้ เลือกเป้าหมายทดแทนเพื่อทดลอง ระบบจะบันทึกเมื่อยืนยันผลสำเร็จแล้วเท่านั้น",
+  "sp.workflows.healing.previous": "เป้าหมายที่บันทึกไว้: {target}",
+  "sp.workflows.healing.use": "ลองและบันทึก {target}",
+  "sp.workflows.healing.keep": "ใช้เป้าหมายที่บันทึกไว้ต่อไป",
+  "sp.workflows.healing.saved": "อัปเดตตัวระบุตำแหน่ง {count} รายการใน “{name}” แล้ว",
+  "sp.workflows.healing.not_saved": "ไม่ได้บันทึกตัวระบุตำแหน่งที่อนุมัติสำหรับ “{name}” เพราะเวิร์กโฟลว์เปลี่ยนแปลงหรือผลการยืนยันไม่ชัดเจน",
 };

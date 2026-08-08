@@ -942,4 +942,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Ước tính chi phí ghi vào bộ nhớ đệm trong 5 phút ($ / 1 triệu token)",
   'st.provider.field.cache_write_1h_cost_per_million': "Chi phí ghi bộ nhớ đệm trong 1 giờ ước tính ($ / 1 triệu token)",
   'sp.run_progress_replay_gap': 'Không thể hiển thị lại một phần tiến trình chạy trước đó',
+  "sp.workflows.healing.question": "Quy trình “{name}” không thể khớp bước {step}. Hãy chọn một mục tiêu thay thế để thử; mục tiêu chỉ được lưu sau khi xác minh thành công.",
+  "sp.workflows.healing.previous": "Mục tiêu đã lưu: {target}",
+  "sp.workflows.healing.use": "Thử và lưu {target}",
+  "sp.workflows.healing.keep": "Giữ mục tiêu đã lưu",
+  "sp.workflows.healing.saved": "Đã cập nhật {count} bộ định vị trong “{name}”.",
+  "sp.workflows.healing.not_saved": "Bộ định vị đã phê duyệt cho “{name}” không được lưu vì quy trình đã thay đổi hoặc kết quả xác minh chưa rõ ràng.",
 };

@@ -949,4 +949,10 @@ export default {
   'st.skills.cws.package_zip_only': 'Pilih pakej pelepasan berformat .zip.',
   'st.skills.cws.package_too_large': 'ZIP mesti antara 1 bait hingga 100 MB.',
   'sp.run_progress_replay_gap': 'Sebahagian kemajuan larian terdahulu tidak dapat dipaparkan semula',
+  "sp.workflows.healing.question": "Aliran kerja “{name}” tidak dapat memadankan langkah {step}. Pilih pengganti untuk dicuba; ia hanya disimpan selepas pengesahan berjaya.",
+  "sp.workflows.healing.previous": "Sasaran tersimpan: {target}",
+  "sp.workflows.healing.use": "Cuba dan simpan {target}",
+  "sp.workflows.healing.keep": "Kekalkan sasaran tersimpan",
+  "sp.workflows.healing.saved": "Mengemas kini {count} pencari dalam “{name}”.",
+  "sp.workflows.healing.not_saved": "Pencari yang diluluskan untuk “{name}” tidak disimpan kerana aliran kerja berubah atau pengesahan tidak muktamad.",
 };

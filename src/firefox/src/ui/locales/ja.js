@@ -922,4 +922,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "5分キャッシュ書き込みの推定費用（$ / 100万トークン）",
   'st.provider.field.cache_write_1h_cost_per_million': "1時間キャッシュ書き込みの推定費用（$ / 100万トークン）",
   'sp.run_progress_replay_gap': '以前の実行進捗の一部を再表示できませんでした',
+  "sp.workflows.healing.question": "ワークフロー「{name}」はステップ {step} の対象を特定できませんでした。試す代替対象を選んでください。検証に成功した場合のみ保存されます。",
+  "sp.workflows.healing.previous": "保存済みの対象: {target}",
+  "sp.workflows.healing.use": "{target} を試して保存",
+  "sp.workflows.healing.keep": "保存済みの対象を維持",
+  "sp.workflows.healing.saved": "「{name}」のロケーターを {count} 件更新しました。",
+  "sp.workflows.healing.not_saved": "ワークフローが変更されたか検証結果が不確実だったため、「{name}」で承認されたロケーターは保存されませんでした。",
 };

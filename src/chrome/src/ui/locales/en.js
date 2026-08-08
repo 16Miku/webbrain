@@ -951,4 +951,10 @@ export default {
   'st.provider.field.cache_write_cost_per_million': "Estimated 5-minute cache write cost ($ / 1M tokens)",
   'st.provider.field.cache_write_1h_cost_per_million': "Estimated 1-hour cache write cost ($ / 1M tokens)",
   'sp.run_progress_replay_gap': 'Some earlier run progress could not be replayed',
+  "sp.workflows.healing.question": "Workflow “{name}” could not match step {step}. Choose a replacement to try; it will be saved only after successful verification.",
+  "sp.workflows.healing.previous": "Saved target: {target}",
+  "sp.workflows.healing.use": "Try and save {target}",
+  "sp.workflows.healing.keep": "Keep the saved target",
+  "sp.workflows.healing.saved": "Updated {count} locator(s) in “{name}”.",
+  "sp.workflows.healing.not_saved": "The approved locator for “{name}” was not saved because the workflow changed or verification was inconclusive.",
 };
