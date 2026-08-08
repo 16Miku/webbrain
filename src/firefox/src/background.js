@@ -39,6 +39,7 @@ import {
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
+import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
 import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
@@ -1221,6 +1222,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
   tabChatHandoff.clear(tabId).catch(() => {});
+  clearStagedScreenshots(browser.storage.local, tabId).catch(() => {});
   scheduler.cancelForTab(tabId).catch(() => {});
   withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => {});
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
@@ -1786,6 +1788,20 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
+  const attachmentDeliveryState = attachmentCount
+    ? (snapshot.attachmentDeliveryState === 'not-sent'
+      ? 'not-sent'
+      : submittedTurnDurable ? 'included' : 'unknown')
+    : '';
+  if (attachmentDeliveryState) {
+    snapshot = runUiJournal.setAttachmentDeliveryState(
+      tabId,
+      snapshot.requestId,
+      attachmentDeliveryState,
+    ) || snapshot;
+    await flushRunUiSnapshot(tabId, snapshot.requestId);
+  }
   browser.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1799,6 +1815,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       finalContent: snapshot.finalContent || '',
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
+      attachmentDeliveryState,
     },
   }).catch(() => {});
 }
@@ -1833,6 +1850,7 @@ async function handleMessage(msg, sender) {
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
+    'capture_screenshot_redaction_snapshot',
   ].includes(msg.action);
   if (!lightweightAction) {
     if (providerManager.providers.size === 0) {
@@ -2124,6 +2142,9 @@ async function handleMessage(msg, sender) {
         mode,
         kind: 'chat',
         foreground: msg.foreground === true,
+        attachmentCount: isWorkflowRun
+          ? 0
+          : Array.isArray(msg.attachments) ? msg.attachments.length : 0,
       });
       const releaseRunKeepalive = acquireRunKeepalive();
 
@@ -2837,6 +2858,17 @@ async function handleMessage(msg, sender) {
       return { ok: false, error: 'Tab recording is not supported in Firefox. This feature requires Chrome\'s tabCapture and OffscreenDocument APIs.' };
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
+
+    case 'capture_viewport_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'capture_screenshot_redaction_snapshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: msg.coordinateSpace,
+      });
+    }
 
     case 'get_page_info': {
       const tabId = msg.tabId || sender.tab?.id;

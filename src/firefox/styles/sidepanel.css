@@ -1261,6 +1261,49 @@ body {
   white-space: pre-wrap;
 }
 
+.message-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.message-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.message-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-icon,
+.message-attachment-state {
+  flex-shrink: 0;
+}
+
+.message-attachment-state {
+  margin-left: auto;
+  font-weight: 700;
+}
+
+.message-attachment-not-sent,
+.message-attachment-unknown {
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(90, 20, 20, 0.24);
+}
+
 .message.assistant .message-content {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -1278,6 +1321,14 @@ body {
   flex-direction: column;
   gap: 7px;
   min-width: 0;
+}
+
+.screenshot-attachment-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .screenshot-result-image {

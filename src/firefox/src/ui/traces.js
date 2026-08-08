@@ -285,6 +285,10 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
   const stepBadge = ev.data?.step != null ? `<span class="step">${escapeHtml(t('tr.event.step', { step: ev.data.step }))}</span>` : '';
   switch (ev.kind) {
     case 'llm_request': {
+      const media = [
+        Number.isFinite(ev.data?.imageBlockCount) ? `${ev.data.imageBlockCount} img` : '',
+        Number.isFinite(ev.data?.documentBlockCount) ? `${ev.data.documentBlockCount} doc` : '',
+      ].filter(Boolean).join(' · ');
       return `
         <div class="event llm_request">
           <div class="event-head"><span class="kind">${escapeHtml(t('tr.event.llm_request'))}</span>${stepBadge}<span class="latency">${ts}</span></div>
@@ -292,7 +296,7 @@ function renderEvent(ev, shotCache, compact, objectUrls = new Set()) {
             m: ev.data?.messageCount || 0,
             t: ev.data?.toolsCount || 0,
             model: ev.data?.model || '',
-          }))}</span>
+          }))}${media ? ` · ${escapeHtml(media)}` : ''}</span>
         </div>`;
     }
     case 'llm_response': {

@@ -8,10 +8,9 @@
  * enriched, and wrapped — see the closed PR #348 review).
  *
  * This renders the TOOL CHAIN: user/assistant/planner prose, streaming lifecycle
- * metadata, tool calls (name, args, result), and errors — in order. Screenshot /
- * note / vision_sub_call events are recorded but deliberately not rendered; the
- * file says so in its footer, so it never claims to be a complete record. The
- * complete record is the Traces-page JSON.
+ * metadata, privacy-safe visual-delivery evidence, tool calls (name, args,
+ * result), and errors — in order. Screenshot pixels and vision descriptions
+ * remain omitted; the complete record is available in the Traces page.
  *
  * Pure and browser-neutral → unit-tested in test/run.js without a DOM or IndexedDB.
  *
@@ -21,7 +20,7 @@
 
 const ARGS_LIMIT = 300;
 const RESULT_LIMIT = 600;
-const FOOTER = '_Screenshots, notes and vision sub-calls are recorded but not rendered here — see the Traces page for the complete record._';
+const FOOTER = '_Screenshot pixels and vision descriptions are omitted here — see the Traces page for the complete record._';
 
 function oneLine(t) { return String(t ?? '').replace(/\s+/g, ' ').trim(); }
 function humanSize(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)}kb` : `${n}b`; }
@@ -99,6 +98,15 @@ function renderStreaming(data) {
   return `- 🌊 Ask stream ${oneLine(d.status || 'event')}${details.length ? ` · ${details.join(' · ')}` : ''}${message ? `: ${message}` : ''}\n`;
 }
 
+function renderAttachmentMetadata(attachments) {
+  const items = (Array.isArray(attachments) ? attachments : []).map((attachment) => {
+    const source = attachment?.source === 'slash_screenshot' ? 'slash screenshot' : 'user upload';
+    const size = Number(attachment?.size) > 0 ? `, ${humanSize(Number(attachment.size))}` : '';
+    return `${oneLine(attachment?.kind || 'file')} "${oneLine(attachment?.name || 'attachment')}" (${source}${size})`;
+  });
+  return items.join('; ');
+}
+
 function exportedRunStatus(run, events = []) {
   const status = oneLine(run?.status || '');
   const sawLoopError = events.some(ev => ev?.kind === 'error' && ev?.data?.phase === 'loop');
@@ -134,12 +142,20 @@ export function tracesToMarkdown(runsWithEvents, {
     ].filter(Boolean).join(' · ');
     md += `## Turn ${turnCount}${user ? ` — ${user}` : ''}\n`;
     if (meta) md += `_${meta}_\n`;
+    const attachmentMetadata = renderAttachmentMetadata(run.attachments);
+    if (attachmentMetadata) md += `- 📎 User attachments: ${attachmentMetadata}\n`;
     md += '\n';
 
     let lastAssistantContent = '';
     for (const ev of events) {
       const d = (ev && ev.data) || {};
-      if (ev.kind === 'llm_response') {
+      if (ev.kind === 'llm_request') {
+        const media = [
+          Number.isFinite(d.imageBlockCount) ? `${d.imageBlockCount} image block${d.imageBlockCount === 1 ? '' : 's'}` : '',
+          Number.isFinite(d.documentBlockCount) ? `${d.documentBlockCount} document block${d.documentBlockCount === 1 ? '' : 's'}` : '',
+        ].filter(Boolean).join(' · ');
+        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}\n`;
+      } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
         if (!content) continue;
         // Plan-before-Act runs record the planner call with phase:'planner'; keep
@@ -158,8 +174,16 @@ export function tracesToMarkdown(runsWithEvents, {
         md += renderStreaming(d);
       } else if (ev.kind === 'error') {
         md += `- ⚠️ error${d.phase ? ` (${d.phase})` : ''}: ${oneLine(d.message || '')}\n`;
+      } else if (ev.kind === 'screenshot') {
+        md += `- 📷 Visual capture: ${oneLine(d.caption || 'viewport screenshot')}\n`;
+      } else if (ev.kind === 'vision_sub_call') {
+        const outcome = d.error ? `failed: ${oneLine(d.error)}` : 'succeeded';
+        const details = [oneLine(d.context), oneLine(d.model), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
+          .filter(Boolean).join(' · ');
+        md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}\n`;
+      } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
+        md += `- ℹ️ ${oneLine(d.note)}\n`;
       }
-      // screenshot / note / vision_sub_call intentionally omitted — see FOOTER.
     }
     const finalContent = String(run.finalContent || '').trim();
     if (finalContent && oneLine(finalContent) !== oneLine(lastAssistantContent)) {

@@ -41,6 +41,7 @@ import {
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
+import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import {
   prepareRecordingHost,
   startTabRecording,
@@ -1688,6 +1689,20 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
+  const attachmentDeliveryState = attachmentCount
+    ? (snapshot.attachmentDeliveryState === 'not-sent'
+      ? 'not-sent'
+      : submittedTurnDurable ? 'included' : 'unknown')
+    : '';
+  if (attachmentDeliveryState) {
+    snapshot = runUiJournal.setAttachmentDeliveryState(
+      tabId,
+      snapshot.requestId,
+      attachmentDeliveryState,
+    ) || snapshot;
+    await flushRunUiSnapshot(tabId, snapshot.requestId);
+  }
   chrome.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1701,6 +1716,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       finalContent: snapshot.finalContent || '',
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
+      attachmentDeliveryState,
     },
   }).catch(() => {});
 }
@@ -1783,6 +1799,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
   tabChatHandoff.clear(tabId).catch(() => {});
+  clearStagedScreenshots(chrome.storage.local, tabId).catch(() => {});
   savePanelTabs();
   scheduler.cancelForTab(tabId).catch(() => {});
   agent.clearDevCssPatchesForTab(tabId).catch(() => {});
@@ -2039,6 +2056,7 @@ async function handleMessage(msg, sender) {
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
+    'capture_screenshot_redaction_snapshot',
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -2415,6 +2433,9 @@ async function handleMessage(msg, sender) {
         mode,
         kind: 'chat',
         foreground: msg.foreground === true,
+        attachmentCount: isWorkflowRun
+          ? 0
+          : Array.isArray(msg.attachments) ? msg.attachments.length : 0,
       });
       const releaseRunKeepalive = acquireRunKeepalive();
 
@@ -3166,6 +3187,16 @@ async function handleMessage(msg, sender) {
     case 'capture_full_page_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureFullPageScreenshotForUser(tabId);
+    }
+    case 'capture_viewport_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'capture_screenshot_redaction_snapshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: msg.coordinateSpace,
+      });
     }
 
     // --- Page Info (quick, no agent loop) ---

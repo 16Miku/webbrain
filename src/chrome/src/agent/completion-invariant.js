@@ -60,6 +60,7 @@ const OBSERVATION_TOOLS = new Set([
   'get_shadow_dom',
   'shadow_dom_query',
   'get_frames',
+  'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
   'list_downloads',
@@ -339,7 +340,7 @@ export function isCompletionObservationTool(name, args = {}, result) {
   if (name === 'wait_for_element' && (result.found !== true || result.timedOut === true)) {
     return false;
   }
-  if (name === 'screenshot' || name === 'full_page_screenshot') {
+  if (name === 'inspect_viewport' || name === 'screenshot' || name === 'full_page_screenshot') {
     if (result.method === 'save_only') return false;
     if (result.method === 'vision_describe') return !!result.description;
     if (result.method === 'image_attach') return !!result._attachImage;

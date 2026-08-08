@@ -238,11 +238,13 @@ export function mapRegionsToImage(regions, opts = {}) {
  *   url?:string,
  *   elements?:Array,
  *   viewport?:{width:number,height:number},
- *   childFrames?:Array<{url?:string,rect:{x:number,y:number,w:number,h:number}}>
+ *   childFrames?:Array<{url?:string,rendered?:boolean,rect:{x:number,y:number,w:number,h:number}}>
+ *   inspectionFailed?:boolean,
  * }>} frames
  * @param {object} [opts]
  * @param {number} [opts.maxRegions=400]
- * @returns {Array<{kind:string,rect:{x:number,y:number,w:number,h:number}}>} Regions in top-frame capture coordinates.
+ * @param {boolean} [opts.requireCompleteFrameCoverage=false]
+ * @returns {Array<{kind:string,rect:{x:number,y:number,w:number,h:number}}>|null} Regions in top-frame capture coordinates.
  */
 export function mergeRedactionFrameRegions(frames, opts = {}) {
   if (!Array.isArray(frames) || frames.length === 0) return [];
@@ -253,6 +255,7 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
   const byId = new Map(usable.map((frame) => [frame.frameId, frame]));
   const root = byId.get(0) || usable.find((frame) => frame.parentFrameId == null || frame.parentFrameId < 0);
   if (!root) return [];
+  if (opts.requireCompleteFrameCoverage === true && root.inspectionFailed === true) return null;
   const captureWidth = Number(root.viewport?.width);
   const captureHeight = Number(root.viewport?.height);
 
@@ -274,6 +277,7 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
     const frame = queue.shift();
     const transform = transforms.get(frame.frameId);
     if (!transform) continue;
+    if (opts.requireCompleteFrameCoverage === true && frame.inspectionFailed === true) return null;
     const viewport = frame.viewport || {};
     const localRegions = selectRedactionRegions(frame.elements || [], {
       viewport,
@@ -304,38 +308,76 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
     const assignments = [];
     const unmatchedChildren = [];
 
+    const descriptorContributesPixels = (descriptor) => {
+      const rect = descriptor?.rect;
+      if (descriptor?.rendered === false || !rect || !(rect.w > 0 && rect.h > 0)) return false;
+      const mappedRect = {
+        x: transform.x + rect.x * transform.scaleX,
+        y: transform.y + rect.y * transform.scaleY,
+        w: rect.w * transform.scaleX,
+        h: rect.h * transform.scaleY,
+      };
+      return !(Number.isFinite(captureWidth) && Number.isFinite(captureHeight))
+        || rectIntersects(mappedRect, 0, 0, captureWidth, captureHeight);
+    };
+
+    // Navigation frames arrive in creation order and descriptors in DOM order,
+    // and the two disagree once elements are reordered after creation. A URL is
+    // therefore only an identity when exactly one candidate carries it: binding
+    // a frame to the wrong same-URL sibling maps its sensitive regions onto the
+    // other frame's rectangle and leaves the real pixels in the clear.
     for (const child of children) {
       const childUrl = urlKey(child.url);
-      let descriptorIndex = -1;
-      for (const index of unused) {
-        if (urlKey(descriptors[index]?.url) === childUrl) {
-          descriptorIndex = index;
-          break;
-        }
+      const matches = [...unused].filter(index => urlKey(descriptors[index]?.url) === childUrl);
+      if (!matches.length) {
+        unmatchedChildren.push(child);
+        continue;
       }
-      if (descriptorIndex < 0) unmatchedChildren.push(child);
-      else {
-        unused.delete(descriptorIndex);
-        assignments.push([child, descriptorIndex]);
-      }
+      if (matches.length > 1
+          && opts.requireCompleteFrameCoverage === true
+          && matches.some(index => descriptorContributesPixels(descriptors[index]))) return null;
+      unused.delete(matches[0]);
+      assignments.push([child, matches[0]]);
     }
-    // Redirected/about:blank frames may not match the element's current src.
-    // Pair only the remaining siblings by creation/DOM order after exact URL
-    // matches are claimed, so an earlier unmatched frame cannot steal a later
-    // sibling's exact descriptor.
+    // Redirected/about:blank frames may not match the element's current src, so
+    // the remaining siblings pair by creation/DOM order once exact URL matches
+    // are claimed. Order is a guess rather than an identity, so strict coverage
+    // accepts it only when one child and one descriptor are left and the
+    // pairing is forced.
+    if (opts.requireCompleteFrameCoverage === true
+        && (unmatchedChildren.length > 1 || unused.size > 1)
+        && [...unused].some(index => descriptorContributesPixels(descriptors[index]))) return null;
     for (const child of unmatchedChildren) {
       const descriptorIndex = unused.values().next().value ?? -1;
-      if (descriptorIndex < 0) break;
+      if (descriptorIndex < 0) {
+        // A navigation child frame with no DOM descriptor left to pair with
+        // (an <object>/<embed> sub-document the collector does not enumerate,
+        // or a frame added after the DOM pass). Its pixels are in the capture
+        // but there is no rect to map its regions through, so the snapshot
+        // cannot be proven complete — fail closed instead of dropping it.
+        if (opts.requireCompleteFrameCoverage === true) return null;
+        break;
+      }
       unused.delete(descriptorIndex);
       assignments.push([child, descriptorIndex]);
     }
 
+    if (opts.requireCompleteFrameCoverage === true) {
+      for (const descriptorIndex of unused) {
+        if (descriptorContributesPixels(descriptors[descriptorIndex])) return null;
+      }
+    }
+
     for (const [child, descriptorIndex] of assignments) {
       const descriptor = descriptors[descriptorIndex];
+      if (!descriptorContributesPixels(descriptor)) continue;
       const rect = descriptor?.rect;
       const childWidth = Number(child.viewport?.width);
       const childHeight = Number(child.viewport?.height);
-      if (!rect || !(rect.w > 0 && rect.h > 0) || !(childWidth > 0 && childHeight > 0)) continue;
+      if (child.inspectionFailed === true || !(childWidth > 0 && childHeight > 0)) {
+        if (opts.requireCompleteFrameCoverage === true) return null;
+        continue;
+      }
 
       transforms.set(child.frameId, {
         x: transform.x + rect.x * transform.scaleX,
