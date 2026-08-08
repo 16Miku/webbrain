@@ -144,7 +144,7 @@ Type `/help` in the panel for full signatures and flags. The most useful ones:
 | `/ask` · `/act` · `/dev` · `/plan`                                                     | Switch mode before sending                                                  |
 | `/schedule [prompt]`                                                                   | Create a scheduled task                                                     |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met                       |
-| `/workflow --save <name>`                                                              | Compile the last successful run into a reusable workflow                    |
+| `/workflow` · `/workflow --save <name>`                                                | Manage saved workflows or compile the last successful run                   |
 | `/memory --add <text>`                                                                 | Save a user preference                                                      |
 | `/screenshot [--full-page]`                                                            | Capture the tab, or the full scrollable page                                |
 | `/record [--transcribe]`                                                               | Record the current tab, optionally saving a transcript                      |

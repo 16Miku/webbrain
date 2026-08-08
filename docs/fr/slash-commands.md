@@ -24,7 +24,7 @@ d'une espace ouvre l'autocomplétion de ses options disponibles.
 | `/memory` | Afficher la mémoire utilisateur enregistrée |
 | `/memory --add <texte>` | Enregistrer une préférence utilisateur |
 | `/memory --forget <id>` | Oublier une entrée de mémoire par identifiant |
-| `/workflow` | Lister les workflows enregistrés et leurs IDs |
+| `/workflow` | Ouvrir le gestionnaire des workflows avec les actions Exécuter, Renommer, Exporter et Supprimer avec confirmation |
 | `/workflow --save <nom>` | Compiler la dernière exécution tracée réussie en un workflow réutilisable et sans valeurs |
 | `/workflow --run <id>` | Exécuter un workflow enregistré en mode Act, en collectant localement les paramètres d'exécution |
 | `/workflow --delete <id>` | Supprimer un workflow enregistré |
