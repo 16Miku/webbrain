@@ -7811,7 +7811,8 @@ async function sendMessage(extraChatParams = {}) {
         updateSlashCommandAutocomplete();
       }
     } else if (attachmentsForSend.length) {
-      setMessageAttachmentState(userEl, 'included');
+      const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
+      setMessageAttachmentState(userEl, deliveryState);
       await persistMessageAttachmentState(tabId, userEl);
     }
 

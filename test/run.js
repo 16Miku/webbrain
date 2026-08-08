@@ -62674,6 +62674,7 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
     assert.match(panel, /sp\.screenshot\.staged_next_message[\s\S]*sp\.screenshot\.full_page_alt/, `${label}: screenshot result status and alt text must be localized`);
     assert.match(panel, /function reconcileRunMessageAttachmentState[\s\S]*persistMessageAttachmentState/, `${label}: attachment delivery reconciliation must support durable persistence`);
     assert.match(panel, /reconcileRunMessageAttachmentState\([\s\S]*?runUi\.attachmentDeliveryState/, `${label}: restored terminal runs must repair attachment delivery state from the journal`);
+    assert.match(panel, /const deliveryState = res\?\.submittedTurnDurable === true \? 'included' : 'unknown';[\s\S]*?setMessageAttachmentState\(userEl, deliveryState\)/, `${label}: completed sends must not claim attachment inclusion without durable-turn proof`);
     assert.match(panel, /const attachments = role === 'user' \? messageAttachmentMetadata\(msgEl\) : \[\][\s\S]*\.\.\.\(attachments\.length \? \{ attachments \} : \{\}\)/, `${label}: history extraction must retain attachment descriptors`);
     assert.match(store, /function normalizeAttachment[\s\S]*kind:[\s\S]*name:[\s\S]*mimeType:[\s\S]*size:[\s\S]*source:[\s\S]*deliveryState:/, `${label}: history store must normalize safe attachment metadata`);
     assert.doesNotMatch(store, /dataUrl|textContent|base64/, `${label}: history store must not persist attachment bytes or contents`);
