@@ -558,6 +558,7 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
+    this._runStartGuard = null;
     // Ordinary runs capture and act in their original tab without activating
     // it. Managed cloud runs and the explicit /foreground compatibility
     // override retain the old Page.bringToFront behavior for their lifetime.
@@ -894,6 +895,38 @@ export class Agent extends LoopDetector {
 
   setConversationScopeChangeListener(listener) {
     this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
+  }
+
+  setRunStartGuard(guard) {
+    this._runStartGuard = typeof guard === 'function' ? guard : null;
+  }
+
+  _runEntryKind(defaultKind, runOptions = {}) {
+    if (runOptions?.cloudRun === true) return 'cloud';
+    if (runOptions?.scheduledRun === true) return 'scheduled';
+    return defaultKind;
+  }
+
+  async assertRunStartAllowed(tabId, defaultKind = 'interactive', runOptions = {}) {
+    await this._runStartGuard?.(tabId, {
+      kind: this._runEntryKind(defaultKind, runOptions),
+      runOptions,
+    });
+  }
+
+  async _claimRunEntry(tabId, defaultKind, runOptions = {}) {
+    if (this._runningTabs.has(tabId)) {
+      throw new Error('An agent run is already in progress for this tab.');
+    }
+    // Claim synchronously before awaiting the external guard so teacher-mode
+    // startup cannot race a run whose persisted teacher-state check is pending.
+    this._runningTabs.add(tabId);
+    try {
+      await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
   }
 
   isRunning(tabId) {
@@ -15576,44 +15609,68 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  async _endSavedWorkflowTraceRun(runId, status, finalContent) {
+    await trace.endRun(runId, { status, finalContent });
+  }
+
   async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
-    if (this._runningTabs.has(tabId)) throw new Error('An agent run is already in progress for this tab.');
     if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
       throw new Error('Saved workflow is missing or invalid.');
     }
-    await this._hydrate(tabId);
-    // Deterministic workflow replay is an independent task even when it never
-    // falls back to processMessage. Clear stale selected-text grounding before
-    // any replay action so a successful replay cannot poison the next turn.
-    this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
-    // Align pre-run cleanup with processMessage so a prior Act turn cannot
-    // leak click-AX CDP fallbacks, plan guards, or active-skill state into
-    // deterministic replay (or the reverse on the next turn).
-    this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
-    this._clearRunLoopState(tabId);
-    this._resetRichTextToolbarAudit(tabId);
-    this._clickAxCdpFallbacks?.delete(tabId);
-    this.abortFlags.delete(tabId);
-    this._prepareClarificationAuthorizationForRun(tabId);
-    this.permissions.beginTurn(tabId);
-    this.conversationModes.set(tabId, 'act');
-    const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
-    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
-    const startUrl = await this._currentUrl(tabId);
-    const conversationId = await this.ensureConversationId(tabId, 'act');
-    const traceRunId = await trace.startRun({
-      conversationId,
-      userMessage: `Run saved workflow: ${workflow.name}`,
-      tabUrl: startUrl,
-      mode: 'act',
-      model: this.providerManager?.getActive?.()?.model || '',
-      providerId: this.providerManager?.activeProviderId || '',
-      runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
-        tabId,
+    await this._claimRunEntry(tabId, 'workflow', runOptions);
+    let completionRunToken = '';
+    let previousForegroundCapture = false;
+    let capturePolicyConfigured = false;
+    let startUrl = '';
+    let traceRunId = null;
+    try {
+      await this._hydrate(tabId);
+      // Deterministic workflow replay is an independent task even when it never
+      // falls back to processMessage. Clear stale selected-text grounding before
+      // any replay action so a successful replay cannot poison the next turn.
+      this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
+      // Align pre-run cleanup with processMessage so a prior Act turn cannot
+      // leak click-AX CDP fallbacks, plan guards, or active-skill state into
+      // deterministic replay (or the reverse on the next turn).
+      this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      this._clearRunLoopState(tabId);
+      this._resetRichTextToolbarAudit(tabId);
+      this._clickAxCdpFallbacks?.delete(tabId);
+      this.abortFlags.delete(tabId);
+      this._prepareClarificationAuthorizationForRun(tabId);
+      this.permissions.beginTurn(tabId);
+      this.conversationModes.set(tabId, 'act');
+      completionRunToken = this._beginCompletionInvariant(tabId);
+      previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
+      capturePolicyConfigured = true;
+      startUrl = await this._currentUrl(tabId);
+      const conversationId = await this.ensureConversationId(tabId, 'act');
+      traceRunId = await trace.startRun({
+        conversationId,
+        userMessage: `Run saved workflow: ${workflow.name}`,
+        tabUrl: startUrl,
         mode: 'act',
-      }),
-    });
+        model: this.providerManager?.getActive?.()?.model || '',
+        providerId: this.providerManager?.activeProviderId || '',
+        runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
+          tabId,
+          mode: 'act',
+        }),
+      });
+    } catch (error) {
+      try {
+        if (capturePolicyConfigured) {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        }
+      } finally {
+        try {
+          if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
+        } finally {
+          this._runningTabs.delete(tabId);
+        }
+      }
+      throw error;
+    }
     let traceStatus = 'workflow_stopped';
     let finalContent = '';
     let matchedSteps = 0;
@@ -15859,16 +15916,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         healings: verifiedHealings,
       };
     } finally {
-      await trace.endRun(traceRunId, { status: traceStatus, finalContent });
-      this.currentCostState.delete(tabId);
-      this._planExecutionGuards.delete(tabId);
-      this._resetActiveSkillsForRun(tabId);
-      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
-      this._runningTabs.delete(tabId);
-      this._clearRunLoopState(tabId);
-      if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
-      this._clickAxCdpFallbacks?.delete(tabId);
-      this._clearCompletionInvariant(tabId, completionRunToken);
+      try {
+        try {
+          await this._endSavedWorkflowTraceRun(traceRunId, traceStatus, finalContent);
+        } finally {
+          this.currentCostState.delete(tabId);
+          this._planExecutionGuards.delete(tabId);
+          this._resetActiveSkillsForRun(tabId);
+          this._clearRunLoopState(tabId);
+          if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
+          this._clickAxCdpFallbacks?.delete(tabId);
+        }
+      } finally {
+        try {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        } finally {
+          try {
+            this._clearCompletionInvariant(tabId, completionRunToken);
+          } finally {
+            this._runningTabs.delete(tabId);
+          }
+        }
+      }
     }
   }
 
@@ -21948,10 +22017,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -21972,7 +22038,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
@@ -22874,10 +22939,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Process a message with streaming output.
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -22898,7 +22960,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);

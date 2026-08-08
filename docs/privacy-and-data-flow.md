@@ -135,6 +135,15 @@ postconditions, and parameter descriptors. It does not contain typed field
 values, raw historical `ref_id` values, action CSS selectors, coordinates, URL query strings, or URL
 fragments.
 
+`/teach --start <name>` records a user demonstration in temporary,
+tab-scoped session storage. The page capture code never reads field values:
+it sends only the field's semantic identity, and the compiler immediately
+represents that action as a runtime parameter. Click/field target labels and
+sanitized URL origin/path families are retained because replay needs them to
+find the same controls. `/teach --end` removes the temporary session whether
+compilation succeeds or fails; a successful compilation writes the same
+`webbrain-workflow/1` format described above.
+
 `/workflow --run <id>` collects declared values in a temporary side-panel form
 and sends them directly to the background replay executor. The values are not
 written to the workflow, chat text, retry payload, user memory, replay trace,

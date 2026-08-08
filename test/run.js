@@ -292,6 +292,12 @@ const SavedWorkflowsCh = await import(
 const SavedWorkflowsFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/workflows.js').replace(/\\/g, '/')
 );
+const TeacherModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
+const TeacherModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
 
 // config-transfer.js is the pure schema/allowlist boundary used by the
 // /export --config and /import slash-command handlers.
@@ -63468,6 +63474,400 @@ test('saved workflow exact-run compiler never substitutes a newer trace', async 
   }
 });
 
+test('teacher mode compiles user demonstrations without retaining entered values', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const result = module.compileWorkflowFromDemonstration({
+      name: 'Submit account form',
+      startUrl: 'https://example.com/form?session=start-secret#private',
+      webbrainVersion: '26.2.2',
+      skippedActionCount: 2,
+      actionLimitReached: true,
+      actions: [
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form?session=field-secret',
+          value: 'person@example.com',
+          target: { role: 'textbox', label: 'Email', fieldName: 'email', type: 'email' },
+        },
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form',
+          value: 'correct horse battery staple',
+          submit: true,
+          target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+        },
+        {
+          kind: 'checked',
+          pageUrl: 'https://example.com/settings',
+          checked: true,
+          target: { role: 'checkbox', name: 'Remember this device' },
+        },
+        {
+          kind: 'click',
+          pageUrl: 'https://example.com/settings',
+          target: { role: 'button', name: 'Continue', selector: '#unsafe-selector' },
+        },
+        {
+          kind: 'navigate',
+          pageUrl: 'https://example.com/settings',
+          url: 'https://example.com/complete?token=navigation-secret#done',
+        },
+      ],
+    }, { now: 1700 });
+
+    assert.equal(result.reason, '');
+    assert.deepEqual(result.workflow.start, { origin: 'https://example.com', pathFamily: '/form' });
+    assert.deepEqual(result.workflow.steps.map((step) => step.tool), [
+      'type_ax', 'set_field', 'set_checked', 'click_ax', 'navigate',
+    ]);
+    assert.deepEqual(result.workflow.steps[0].args, {
+      text: { [module.WORKFLOW_PARAM_REF_KEY]: 'email' },
+      clear: true,
+    });
+    assert.equal(result.workflow.steps[1].args.submit, true);
+    assert.equal(result.workflow.parameters[0].sensitive, false);
+    assert.equal(result.workflow.parameters[1].sensitive, true);
+    assert.equal(result.workflow.steps[2].expected.value, true);
+    assert.equal(result.workflow.steps[4].args.url, 'https://example.com/complete');
+    assert.deepEqual(result.workflow.stats, {
+      sourceToolCount: 7,
+      compiledStepCount: 5,
+      skippedToolCount: 2,
+    });
+    assert.equal(result.warnings.length, 2);
+    assert.doesNotMatch(
+      JSON.stringify(result.workflow),
+      /person@example\.com|correct horse|start-secret|field-secret|navigation-secret|unsafe-selector|selector/,
+    );
+  }
+});
+
+test('teacher session store persists only normalized value-free actions', async () => {
+  for (const module of [TeacherModeCh, TeacherModeFx]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    let now = 2000;
+    const store = module.createTeacherSessionStore(storage, { now: () => now++ });
+    const started = await store.start(42, {
+      name: 'Login flow',
+      url: 'https://example.com/login?token=start-secret',
+      webbrainVersion: '26.2.2',
+    });
+    assert.equal(started.changed, true);
+    assert.equal((await store.start(42, { name: 'Other', url: 'https://example.com/' })).reason, 'already_active');
+
+    const passwordField = {
+      kind: 'field',
+      pageUrl: 'https://example.com/login?token=field-secret',
+      value: 'do-not-store-me',
+      target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+    };
+    const recorded = await store.record(42, passwordField);
+    assert.equal(recorded.changed, true);
+    assert.equal(recorded.session.actions.length, 1);
+    assert.doesNotMatch(JSON.stringify(memory), /do-not-store-me|start-secret|field-secret/);
+
+    const restored = module.createTeacherSessionStore(storage, { now: () => now++ });
+    assert.equal((await restored.get(42)).actions.length, 1);
+    const submitted = await restored.record(42, { ...passwordField, submit: true });
+    assert.equal(submitted.session.actions.length, 1, 'confirmed submit must upgrade the field action in place');
+    assert.equal(submitted.session.actions[0].submit, true);
+    await restored.navigation(42, 'https://example.com/account?token=submit-secret');
+    assert.equal(
+      (await restored.get(42)).actions.length,
+      1,
+      'submit-driven navigation must not add a duplicate navigate step',
+    );
+    assert.equal((await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button' },
+    })).reason, 'unsafe_target');
+    const afterUnsafeTarget = await restored.get(42);
+    assert.equal(afterUnsafeTarget.actions.length, 1);
+    assert.equal(afterUnsafeTarget.skippedActionCount, 1);
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button', name: 'Continue' },
+    });
+    await restored.navigation(42, 'https://example.com/account?token=click-secret');
+    assert.equal((await restored.get(42)).actions.length, 2, 'click-driven navigation must not add a duplicate step');
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/account',
+      target: { role: 'button', name: 'Open settings' },
+    });
+    await restored.navigation(42, 'https://example.com/settings?token=typed-secret', { force: true });
+    const navigated = await restored.get(42);
+    assert.equal(navigated.actions.length, 4, 'typed navigation must remain replayable after a recent click');
+    assert.deepEqual(navigated.actions.at(-1), {
+      kind: 'navigate',
+      scope: { origin: 'https://example.com', pathFamily: '/account' },
+      url: 'https://example.com/settings',
+    });
+    assert.doesNotMatch(JSON.stringify(memory), /submit-secret|click-secret|typed-secret/);
+
+    await restored.start(43, {
+      name: 'Submit ordering',
+      url: 'https://example.com/form',
+      webbrainVersion: '26.2.2',
+    });
+    const orderedField = {
+      kind: 'field',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'textbox', label: 'Search', fieldName: 'q', type: 'search' },
+    };
+    await restored.record(43, orderedField);
+    await restored.navigation(43, 'https://example.com/results');
+    const lateSubmit = await restored.record(43, { ...orderedField, submit: true });
+    assert.equal(lateSubmit.session.actions.length, 1, 'late submit confirmation must remove an observed navigation');
+    assert.equal(lateSubmit.session.actions[0].submit, true);
+    assert.deepEqual(lateSubmit.session.currentScope, {
+      origin: 'https://example.com',
+      pathFamily: '/results',
+    });
+    await restored.clear(43);
+    assert.equal((await restored.clear(42)).changed, true);
+    assert.equal(await restored.get(42), null);
+  }
+});
+
+test('teacher mode rejects every automated run entry and drops agent-owned capture', async () => {
+  for (const [browser, TeacherMode, AgentClass] of [
+    ['chrome', TeacherModeCh, AgentCh],
+    ['firefox', TeacherModeFx, AgentFx],
+  ]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    const tabId = 2699;
+    const agent = new AgentClass({});
+    const store = TeacherMode.createTeacherSessionStore(storage, { now: () => 5000 });
+    const interlock = TeacherMode.createTeacherRunInterlock(store, {
+      automationOwnsTab: (ownedTabId) => agent.isRunning(ownedTabId),
+    });
+    const guardedKinds = [];
+    let automatedDispatches = 0;
+    agent.setRunStartGuard(async (guardedTabId, context) => {
+      guardedKinds.push(context.kind);
+      await interlock.guardRunStart(guardedTabId);
+    });
+    agent._processMessageInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._processMessageStreamInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._executeToolBatch = async () => { automatedDispatches += 1; return { action: 'continue' }; };
+
+    const started = await interlock.start(tabId, {
+      name: 'Teacher/run exclusion',
+      url: 'https://example.com/form',
+      webbrainVersion: 'test',
+    });
+    assert.equal(started.changed, true, `${browser}: teacher mode did not start`);
+
+    const workflow = {
+      id: 'workflow_teacher_exclusion',
+      name: 'Blocked workflow',
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Continue' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const runAttempts = [
+      () => agent.processMessage(tabId, 'interactive run', () => {}, 'act'),
+      () => agent.processMessage(tabId, 'scheduled run', () => {}, 'act', [], { scheduledRun: true }),
+      () => agent.processMessage(tabId, 'cloud run', () => {}, 'act', [], { cloudRun: true }),
+      () => agent.replaySavedWorkflow(tabId, workflow),
+      () => agent.processMessageStream(tabId, 'streaming run', () => {}, 'act'),
+    ];
+    for (const startAttempt of runAttempts) {
+      await assert.rejects(startAttempt(), (error) => {
+        assert.equal(error.code, TeacherMode.TEACHER_RUN_CONFLICT_CODE);
+        return true;
+      });
+      assert.equal(agent.isRunning(tabId), false, `${browser}: rejected run kept the tab claimed`);
+    }
+    assert.deepEqual(guardedKinds, ['interactive', 'scheduled', 'cloud', 'workflow', 'interactive']);
+    assert.equal(automatedDispatches, 0, `${browser}: a rejected run dispatched an automated action`);
+
+    // Defense in depth: even if a trusted content event or navigation arrives
+    // after an automation path has claimed the tab, none of it may be retained.
+    agent._runningTabs.add(tabId);
+    const click = await interlock.record(tabId, {
+      kind: 'click',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'button', name: 'Continue' },
+    });
+    const type = await interlock.record(tabId, {
+      kind: 'field',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'textbox', name: 'Email', fieldName: 'email', type: 'email' },
+    });
+    const navigation = await interlock.navigation(tabId, 'https://example.com/next', { force: true });
+    agent._runningTabs.delete(tabId);
+    assert.deepEqual([click.reason, type.reason, navigation.reason], [
+      'agent_running', 'agent_running', 'agent_running',
+    ]);
+    assert.equal((await store.get(tabId)).actions.length, 0, `${browser}: agent-owned actions entered teacher history`);
+  }
+});
+
+test('teacher capture marks Enter as submit only after an uncancelled form submission', async () => {
+  const runCapture = async (build, submitState) => {
+    const listeners = new Map();
+    const actions = [];
+    const form = {};
+    class FakeElement {
+      constructor() {
+        this.tagName = 'INPUT';
+        this.form = form;
+        this.labels = [];
+      }
+      getAttribute(name) {
+        return { name: 'query', type: 'search', 'aria-label': 'Search' }[name] || '';
+      }
+      matches(selector) {
+        if (selector === 'input' || selector === 'button,input') return true;
+        if (selector.includes('textarea') || selector.includes('select') || selector.includes('contenteditable')) return false;
+        return false;
+      }
+      closest(selector) {
+        if (selector === 'form') return form;
+        if (selector === 'label') return null;
+        return this;
+      }
+    }
+    const field = new FakeElement();
+    const document = {
+      activeElement: field,
+      documentElement: { appendChild() {} },
+      addEventListener(type, listener) {
+        const registered = listeners.get(type) || [];
+        registered.push(listener);
+        listeners.set(type, registered);
+      },
+      createElement() {
+        return { style: {}, setAttribute() {}, remove() {} };
+      },
+      getElementById() { return null; },
+    };
+    const window = {
+      __wb_ax_role: () => 'textbox',
+      __wb_ax_name: () => 'Search',
+    };
+    window.top = window;
+    const chrome = {
+      runtime: {
+        lastError: null,
+        onMessage: { addListener() {} },
+        sendMessage(message, callback) {
+          if (message.action === 'get_teacher_mode') callback?.({ session: { active: true, name: 'Search flow' } });
+          if (message.action === 'record_teacher_action') actions.push(message.teacherAction);
+          return Promise.resolve();
+        },
+      },
+    };
+    const source = fs.readFileSync(
+      path.join(ROOT, `src/${build}/src/content/teacher-capture.js`),
+      'utf8',
+    );
+    vm.runInNewContext(source, {
+      chrome,
+      document,
+      window,
+      Element: FakeElement,
+      location: { href: 'https://example.com/search' },
+      URL,
+      queueMicrotask,
+    });
+
+    listeners.get('keydown')[0]({
+      isTrusted: true,
+      key: 'Enter',
+      repeat: false,
+      composedPath: () => [field],
+    });
+    assert.equal(actions.length, 1, `${build}: Enter must first record an ordinary field action`);
+    assert.equal(actions[0].submit, undefined, `${build}: keydown alone must not imply submission`);
+
+    if (submitState) {
+      listeners.get('submit')[0]({
+        isTrusted: true,
+        target: form,
+        defaultPrevented: submitState === 'cancelled',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return actions;
+  };
+
+  for (const build of ['chrome', 'firefox']) {
+    assert.equal((await runCapture(build, null)).length, 1, `${build}: autocomplete Enter gained submit semantics`);
+    assert.equal((await runCapture(build, 'cancelled')).length, 1, `${build}: cancelled submit was recorded`);
+    const confirmed = await runCapture(build, 'confirmed');
+    assert.equal(confirmed.length, 2, `${build}: confirmed form submission was not correlated`);
+    assert.equal(confirmed[1].submit, true);
+  }
+});
+
+test('teacher slash commands and value-free page capture are wired in both browsers', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const panelPath = `src/${build}/src/ui/sidepanel.js`;
+    const runtime = loadSlashCommandRuntime(panelPath);
+    assert.equal(runtime.parseSlashInvocation('/teach').action, 'status');
+    const start = runtime.parseSlashInvocation('/teach --start Checkout flow');
+    assert.equal(start.action, 'start');
+    assert.equal(start.payload, 'Checkout flow');
+    assert.equal(runtime.slashInvocationIsOutOfBand(start), true);
+    const end = runtime.parseSlashInvocation('/teach --end');
+    assert.equal(end.action, 'end');
+    assert.equal(runtime.slashInvocationIsOutOfBand(end), true);
+    assert.equal(runtime.parseSlashInvocation('/teach --end extra').error, 'invalid-usage');
+
+    const panel = fs.readFileSync(path.join(ROOT, panelPath), 'utf8');
+    assert.match(panel, /sendToBackground\('start_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('end_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('get_teacher_mode'/);
+
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(background, /case 'record_teacher_action':/);
+    assert.match(background, /case 'start_teacher_mode':/);
+    assert.match(background, /case 'end_teacher_mode':/);
+    assert.match(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\)/);
+    assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
+    assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
+    assert.match(background, /scheduler\.isRunning\(tabId\)/);
+    assert.match(background, /compileWorkflowFromDemonstration/);
+
+    const scheduler = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/scheduler.js`), 'utf8');
+    assert.match(scheduler, /assertRunStartAllowed\?\.\(resolvedTabId, 'scheduled'/);
+
+    const capturePath = `src/${build}/src/content/teacher-capture.js`;
+    const capture = fs.readFileSync(path.join(ROOT, capturePath), 'utf8');
+    assert.match(capture, /event\.isTrusted/);
+    assert.match(capture, /action: 'record_teacher_action'/);
+    assert.match(capture, /action === 'flush_teacher_capture'/);
+    assert.match(capture, /document\.addEventListener\('submit'/);
+    assert.match(capture, /event\.defaultPrevented/);
+    assert.match(capture, /sendAction\(\{ \.\.\.pending\.action, submit: true \}\)/);
+    assert.match(capture, /name: field \? '' : clean\(window\.__wb_ax_name/);
+    assert.doesNotMatch(capture, /\.value\b/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${build}/manifest.json`), 'utf8'));
+    assert.ok(manifest.content_scripts.some((entry) => entry.js?.includes('src/content/teacher-capture.js')));
+  }
+  const cloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRuns, /startingTabs\.add\(tabId\)[\s\S]*?assertRunStartAllowed\?\.\(tabId, 'cloud'/);
+});
+
 test('saved workflow slash commands are out-of-band and wired in both browsers', () => {
   for (const panel of ['src/chrome/src/ui/sidepanel.js', 'src/firefox/src/ui/sidepanel.js']) {
     const runtime = loadSlashCommandRuntime(panel);
@@ -63949,6 +64349,117 @@ test('saved workflow clarify telemetry redacts form field values', () => {
 });
 
 for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  test(`${browser} saved workflow releases its run claim when initialization fails`, async () => {
+    const workflow = {
+      id: 'workflow_init_failure',
+      name: 'Initialization failure',
+      start: { origin: 'https://example.com', pathFamily: '/form' },
+      steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.com/next' } }],
+    };
+    for (const stage of ['current_url', 'conversation']) {
+      const tabId = stage === 'current_url' ? 26990 : 26991;
+      const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      agent._currentUrl = async () => {
+        if (stage === 'current_url') throw new Error('current URL initialization failed');
+        return 'https://example.com/form';
+      };
+      agent.ensureConversationId = async () => {
+        throw new Error('conversation initialization failed');
+      };
+
+      await assert.rejects(
+        agent.replaySavedWorkflow(tabId, workflow, {}, () => {}, { cloudRun: true }),
+        /initialization failed/,
+      );
+      assert.equal(agent.isRunning(tabId), false, `${browser}: ${stage} failure leaked the run claim`);
+      assert.equal(
+        agent.completionInvariants.has(tabId),
+        false,
+        `${browser}: ${stage} failure leaked completion state`,
+      );
+      if (browser === 'chrome') {
+        assert.equal(
+          agent._foregroundCaptureTabs.has(tabId),
+          false,
+          `${browser}: ${stage} failure leaked capture policy`,
+        );
+      }
+    }
+  });
+
+  test(`${browser} saved workflow retains its run claim until cleanup finishes`, async () => {
+    const tabId = browser === 'chrome' ? 26992 : 26993;
+    const workflow = {
+      id: 'workflow_cleanup_claim',
+      name: 'Cleanup claim',
+      start: { origin: 'https://example.com', pathFamily: '/form' },
+      steps: [{
+        id: 'step_1',
+        tool: 'navigate',
+        args: { url: 'https://example.com/next' },
+        scope: { origin: 'https://example.com', pathFamily: '/form' },
+        expected: { kind: 'url_changed' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    let currentUrl = 'https://example.com/form';
+    let cleanupStartedResolve;
+    let releaseCleanupResolve;
+    const cleanupStarted = new Promise((resolve) => { cleanupStartedResolve = resolve; });
+    const releaseCleanup = new Promise((resolve) => { releaseCleanupResolve = resolve; });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_cleanup_claim';
+    agent._currentUrl = async () => currentUrl;
+    agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+      const tool = calls[0].function.name;
+      currentUrl = 'https://example.com/next';
+      onUpdate('tool_result', { name: tool, result: { success: true } });
+      return { action: 'continue' };
+    };
+    agent._endSavedWorkflowTraceRun = async () => {
+      cleanupStartedResolve();
+      await releaseCleanup;
+    };
+
+    const replay = agent.replaySavedWorkflow(tabId, workflow);
+    let result;
+    await cleanupStarted;
+    try {
+      assert.equal(agent.isRunning(tabId), true, `${browser}: cleanup released the run claim early`);
+      await assert.rejects(
+        agent.replaySavedWorkflow(tabId, workflow),
+        /already in progress/,
+        `${browser}: a second run started while cleanup was pending`,
+      );
+    } finally {
+      releaseCleanupResolve();
+      result = await replay;
+    }
+    assert.equal(result.status, 'completed');
+    assert.equal(agent.isRunning(tabId), false, `${browser}: completed cleanup retained the run claim`);
+
+    currentUrl = 'https://example.com/form';
+    agent._endSavedWorkflowTraceRun = async () => {
+      throw new Error('trace cleanup failed');
+    };
+    await assert.rejects(
+      agent.replaySavedWorkflow(tabId, workflow, {}, () => {}, { cloudRun: true }),
+      /trace cleanup failed/,
+    );
+    assert.equal(agent.isRunning(tabId), false, `${browser}: failed cleanup leaked the run claim`);
+    assert.equal(agent.completionInvariants.has(tabId), false, `${browser}: failed cleanup leaked completion state`);
+    if (browser === 'chrome') {
+      assert.equal(
+        agent._foregroundCaptureTabs.has(tabId),
+        false,
+        `${browser}: failed cleanup leaked capture policy`,
+      );
+    }
+  });
+
   test(`${browser} saved workflow replay resolves fresh targets without exposing runtime parameters`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,

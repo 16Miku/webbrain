@@ -507,6 +507,17 @@ const SLASH_COMMANDS = [
       { value: '--file', descriptionKey: 'sp.slash.import_config_file', disallowPayload: true, requires: '--import' },
     ],
   },
+  {
+    value: '/teach',
+    usage: '/teach [--start <name> | --end]',
+    descriptionKey: 'sp.slash.teach',
+    action: 'status',
+    outOfBand: true,
+    options: [
+      { value: '--start', valueLabel: '<name>', descriptionKey: 'sp.slash.teach', action: 'start', takesRemainder: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+      { value: '--end', descriptionKey: 'sp.slash.teach', action: 'end', disallowPayload: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+    ],
+  },
   { value: '/allow-api', usage: '/allow-api [prompt]', descriptionKey: 'sp.slash.allow_api', action: 'enable', acceptsPayload: true },
   { value: '/foreground', usage: '/foreground [prompt]', descriptionKey: 'sp.slash.foreground', action: 'enable', acceptsPayload: true },
   { value: '/dangerously-skip-permissions', usage: '/dangerously-skip-permissions [prompt]', descriptionKey: 'sp.slash.dangerously_skip_permissions', action: 'disable', acceptsPayload: true, outOfBand: true },
@@ -3385,6 +3396,60 @@ function bindSavedWorkflowManager(manager) {
       if (submit.isConnected) submit.disabled = false;
     }
   });
+}
+
+function teacherModeFailureMessage(res) {
+  if (res?.reason === 'already_active') return t('sp.teach.already_active');
+  if (res?.reason === 'no_active_session') return t('sp.teach.inactive');
+  if (res?.reason === 'agent_running') return t('sp.teach.agent_running');
+  if (res?.reason === 'capture_unavailable') return t('sp.teach.capture_unavailable');
+  return savedWorkflowFailureMessage(res);
+}
+
+async function showTeacherModeStatus(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) throw new Error(res?.error || res?.reason || 'unknown error');
+    addPersistentSlashMessage(res.session?.active
+      ? t('sp.teach.status', { name: res.session.name, count: res.session.actionCount || 0 })
+      : t('sp.teach.inactive'));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function startTeacherMode(name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('start_teacher_mode', { tabId, name });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    addPersistentSlashMessage(t('sp.teach.started', { name: res.session?.name || name }));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function endTeacherMode(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('end_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const message = t('sp.teach.saved', {
+      name: res.workflow?.name || '',
+      count: res.workflow?.steps?.length || 0,
+    });
+    const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+    addPersistentSlashMessage(warnings.length ? `${message} ${warnings.join(' ')}` : message);
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
 }
 
 async function showSavedWorkflows(tabId = currentTabId) {
@@ -6817,6 +6882,21 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 
   if (command.value === '/memory' && action === 'forget') {
     await forgetUserMemory(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'status') {
+    await showTeacherModeStatus(tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'start') {
+    await startTeacherMode(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'end') {
+    await endTeacherMode(tabId);
     return '';
   }
 

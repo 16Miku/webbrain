@@ -585,6 +585,10 @@ export class ScheduledJobManager {
     this.restoreAlarms().catch((e) => console.warn('[WebBrain] restore scheduled alarms failed:', e));
   }
 
+  isRunning(tabId) {
+    return this._runningTabs.has(tabId);
+  }
+
   async _getJobs() {
     const stored = await this.api.storage.local.get(SCHEDULED_JOBS_KEY);
     const jobs = stored?.[SCHEDULED_JOBS_KEY];
@@ -1523,20 +1527,49 @@ export class ScheduledJobManager {
     }
 
     let tabId;
+    let reservedTabId = null;
+    const releaseReservation = () => {
+      if (reservedTabId == null) return;
+      this._runningTabs.delete(reservedTabId);
+      reservedTabId = null;
+    };
+    const reserveTab = async (candidateTabId) => {
+      if (candidateTabId == null) return;
+      const numericTabId = Number(candidateTabId);
+      const resolvedTabId = Number.isFinite(numericTabId) ? numericTabId : candidateTabId;
+      if (this._runningTabs.has(resolvedTabId) || this.agent.isRunning(resolvedTabId)) {
+        throw new Error('An agent run is already in progress for this tab.');
+      }
+      this._runningTabs.add(resolvedTabId);
+      reservedTabId = resolvedTabId;
+      try {
+        await this.agent.assertRunStartAllowed?.(resolvedTabId, 'scheduled', { scheduledRun: true });
+      } catch (error) {
+        releaseReservation();
+        throw error;
+      }
+    };
     try {
+      const candidateTabId = job.kind === 'resume' || job.target?.type === 'current_tab'
+        ? (job.tabId || job.target?.tabId)
+        : job.target?.tabId;
+      await reserveTab(candidateTabId);
       tabId = await this._resolveTab(job);
+      if (reservedTabId !== tabId) {
+        releaseReservation();
+        await reserveTab(tabId);
+      }
       await this._validateConversation(job, tabId);
       await this._validateTaskTarget(job, tabId);
     } catch (e) {
-      await this._markFailed(job, e.message);
+      releaseReservation();
+      if (isActiveRunError(e) || e?.code === 'teacher_mode_active') {
+        await this._requeue(job, 'The target tab already has an active WebBrain run.');
+      } else {
+        await this._markFailed(job, e.message);
+      }
       return;
     }
-
-    if (this._runningTabs.has(tabId) || this.agent.isRunning(tabId)) {
-      await this._requeue(job, 'The target tab already has an active WebBrain run.');
-      return;
-    }
-    this._runningTabs.add(tabId);
 
     const running = await this._updateJobIf(job.id, (prev) => (
       ['pending', 'queued'].includes(prev.status)
