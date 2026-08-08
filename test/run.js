@@ -62544,6 +62544,53 @@ test('attachments: staged screenshots fail closed when capture-time redaction da
   }
 });
 
+test('attachments: capture-time redaction snapshots fail closed instead of truncating regions', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const snapshot = {
+      coordinateSpace: 'viewport',
+      viewport: { width: 800, height: 600 },
+      regions: Array.from({ length: 400 }, (_, index) => ({
+        kind: 'input',
+        rect: { x: index, y: 10, w: 20, h: 10 },
+      })),
+    };
+
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot(snapshot, 'viewport')?.regions.length,
+      400,
+      `${label}: a complete snapshot at the documented cap should remain usable`,
+    );
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot({
+        ...snapshot,
+        regions: [...snapshot.regions, { kind: 'password', rect: { x: 500, y: 10, w: 20, h: 10 } }],
+      }, 'viewport'),
+      null,
+      `${label}: overflow must invalidate the snapshot rather than silently exposing a later region`,
+    );
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot({
+        ...snapshot,
+        regions: [...snapshot.regions.slice(0, 399), { kind: 'password', rect: { x: 1, y: 2, w: 0, h: 10 } }],
+      }, 'viewport'),
+      null,
+      `${label}: malformed geometry must invalidate the whole privacy snapshot`,
+    );
+  }
+  for (const [label, file] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(
+      source,
+      /mergeRedactionFrameRegions\(frameSnapshots, \{[\s\S]*?maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS \+ 1/,
+      `${label}: the collector must request an overflow sentinel so normalization can fail closed`,
+    );
+  }
+});
+
 test('attachments: staged screenshot restore metadata never substitutes compacted image pixels', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],

@@ -97,6 +97,7 @@ import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -5787,20 +5788,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const width = Number(snapshot.viewport?.width);
     const height = Number(snapshot.viewport?.height);
     if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) return null;
-    const regions = Array.isArray(snapshot.regions)
-      ? snapshot.regions.slice(0, 400).map((region) => {
-        const x = Number(region?.rect?.x);
-        const y = Number(region?.rect?.y);
-        const w = Number(region?.rect?.w);
-        const h = Number(region?.rect?.h);
-        if (![x, y, w, h].every(Number.isFinite) || !(w > 0 && h > 0)) return null;
-        return {
-          kind: String(region?.kind || 'input').slice(0, 20),
-          rect: { x, y, w, h },
-        };
-      }).filter(Boolean)
-      : null;
-    if (!regions) return null;
+    if (!Array.isArray(snapshot.regions)
+        || snapshot.regions.length > STAGED_SCREENSHOT_REDACTION_MAX_REGIONS) return null;
+    const regions = snapshot.regions.map((region) => {
+      const x = Number(region?.rect?.x);
+      const y = Number(region?.rect?.y);
+      const w = Number(region?.rect?.w);
+      const h = Number(region?.rect?.h);
+      if (![x, y, w, h].every(Number.isFinite) || !(w > 0 && h > 0)) return null;
+      return {
+        kind: String(region?.kind || 'input').slice(0, 20),
+        rect: { x, y, w, h },
+      };
+    });
+    if (regions.some(region => !region)) return null;
     return {
       coordinateSpace: expectedSpace,
       viewport: { width, height },
@@ -5836,7 +5837,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._normalizeScreenshotRedactionSnapshot({
       coordinateSpace,
       viewport: topFrame.viewport,
-      regions: mergeRedactionFrameRegions(frameSnapshots),
+      // Ask for one sentinel beyond the stored cap so overflow is detected
+      // and the staged screenshot fails closed instead of silently leaving
+      // later-frame sensitive regions visible.
+      regions: mergeRedactionFrameRegions(frameSnapshots, {
+        maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS + 1,
+      }),
     }, coordinateSpace);
   }
 
