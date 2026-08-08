@@ -63172,6 +63172,15 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
     assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
     assert.match(source, /const pendingStoredAttachments = storedAttachments\.filter\(attachment => attachment\.deliveryState === 'pending'\)[\s\S]*?Records without a pending result card may belong to a send[\s\S]*?const restoredIds/, `${label}: remount cleanup must preserve records that may be owned by an active request`);
     assert.match(source, /async function reconcilePersistedStagedScreenshots[\s\S]*?attachment\.deliveryState === 'sending'[\s\S]*?attachment\.requestId[\s\S]*?deliveryState === 'included'[\s\S]*?removePersistedStagedAttachments[\s\S]*?\} else \{[\s\S]*?restorePendingAttachmentsForTab/, `${label}: only a confirmed inclusion may delete the durable pixels; rejected and unconfirmed deliveries return the exact screenshot to the composer`);
+    assert.match(source, /const deliveryState = res\?\.submittedTurnDurable === true \? 'included' : 'unknown';[\s\S]*?if \(deliveryState === 'included'\) \{[\s\S]*?removePersistedStagedAttachments\(tabId, attachmentsForSend\);[\s\S]*?\} else \{[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);/, `${label}: a completed send whose turn was never confirmed durable must keep the screenshot recoverable`);
+    assert.match(source, /const deliveryUnknown = isBackgroundConnectionError\(e\);[\s\S]*?setMessageAttachmentState\(userEl, deliveryUnknown \? 'unknown' : 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);/, `${label}: a lost background connection must return the screenshot to the composer rather than delete it`);
+    assert.doesNotMatch(source, /if \(deliveryUnknown\) await removePersistedStagedAttachments/, `${label}: an unknown delivery must never delete the durable pixels`);
+    // Every deletion of the durable pixels must be gated on a confirmed
+    // inclusion, so an unconfirmed turn can always be recovered.
+    for (const call of source.matchAll(/await removePersistedStagedAttachments\(/g)) {
+      const preceding = source.slice(Math.max(0, call.index - 400), call.index);
+      assert.match(preceding, /deliveryState === 'included'/, `${label}: durable pixels may only be deleted under a confirmed inclusion`);
+    }
   }
 });
 

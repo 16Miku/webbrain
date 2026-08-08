@@ -7868,8 +7868,17 @@ async function sendMessage(extraChatParams = {}) {
         updateSlashCommandAutocomplete();
       }
     } else if (attachmentsForSend.length) {
-      await removePersistedStagedAttachments(tabId, attachmentsForSend);
       const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
+      // Only a confirmed inclusion may delete the durable pixels. An
+      // unconfirmed turn most likely never reached history, and this record is
+      // the only copy left, so hand it back to the composer exactly as
+      // reconcilePersistedStagedScreenshots does on the reconnect path. The
+      // message card keeps its "delivery not confirmed" marker either way.
+      if (deliveryState === 'included') {
+        await removePersistedStagedAttachments(tabId, attachmentsForSend);
+      } else {
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
       setMessageAttachmentState(userEl, deliveryState);
       await persistMessageAttachmentState(tabId, userEl);
     }
@@ -7946,8 +7955,10 @@ async function sendMessage(extraChatParams = {}) {
         const deliveryUnknown = isBackgroundConnectionError(e);
         setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
         await persistMessageAttachmentState(tabId, userEl);
-        if (deliveryUnknown) await removePersistedStagedAttachments(tabId, attachmentsForSend);
-        else await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+        // Neither outcome is a confirmed inclusion, so the durable pixels stay
+        // recoverable. A torn-down service worker is precisely when this record
+        // is the only copy the user has left.
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       }
       if (renderToCurrentTab
           && currentTabId === tabId
