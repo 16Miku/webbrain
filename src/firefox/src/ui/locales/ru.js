@@ -936,4 +936,5 @@ export default {
   "sp.workflows.healing.keep": "Оставить сохранённую цель",
   "sp.workflows.healing.saved": "Обновлено локаторов в «{name}»: {count}.",
   "sp.workflows.healing.not_saved": "Одобренный локатор для «{name}» не сохранён: сценарий изменился или результат проверки оказался неоднозначным.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

@@ -936,4 +936,5 @@ export default {
   "sp.workflows.healing.keep": "Panatilihin ang naka-save na target",
   "sp.workflows.healing.saved": "Na-update ang {count} locator sa “{name}”.",
   "sp.workflows.healing.not_saved": "Hindi na-save ang inaprubahang locator para sa “{name}” dahil nagbago ang workflow o hindi tiyak ang beripikasyon.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

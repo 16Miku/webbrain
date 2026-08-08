@@ -962,4 +962,5 @@ export default {
   "sp.workflows.healing.keep": "Kayıtlı hedefi koru",
   "sp.workflows.healing.saved": "“{name}” içinde {count} bulucu güncellendi.",
   "sp.workflows.healing.not_saved": "İş akışı değiştiği veya doğrulama kesin olmadığı için “{name}” için onaylanan bulucu kaydedilmedi.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

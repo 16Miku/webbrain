@@ -103,7 +103,9 @@ const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const PLAN_REVIEW_CONFIDENCE_DEFAULT = 0.75;
 const COST_ALLOWANCE_SESSION_KEY = 'costAllowanceSessionUsd';
 const COST_ALLOWANCE_TOTAL_KEY = 'costAllowanceTotalUsd';
-const CLOUD_COST_SPENT_KEY = 'cloudCostSpentUsd';
+// Do not inherit the legacy cloudCostSpentUsd bucket: it also contains
+// historical WebBrain Cloud estimates, which are exempt from user spend caps.
+const CLOUD_COST_SPENT_KEY = 'meteredProviderCostSpentUsd';
 const COST_EPSILON = 1e-9;
 const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
@@ -392,7 +394,7 @@ export class Agent extends LoopDetector {
     this.screenshotClickScale = new Map();
     this.costAllowanceSessionUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
     this.costAllowanceTotalUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
-    this.cloudCostSpentUsd = 0;
+    this.meteredProviderCostSpentUsd = 0;
     this._costUpdateQueue = Promise.resolve();
 
     // Strict secret-handling mode. When true, the system prompt and `done`
@@ -543,7 +545,7 @@ export class Agent extends LoopDetector {
           this.costAllowanceTotalUsd = this._normalizeCostLimit(changes[COST_ALLOWANCE_TOTAL_KEY].newValue);
         }
         if (changes[CLOUD_COST_SPENT_KEY]) {
-          this.cloudCostSpentUsd = this._normalizeCostSpent(changes[CLOUD_COST_SPENT_KEY].newValue);
+          this.meteredProviderCostSpentUsd = this._normalizeCostSpent(changes[CLOUD_COST_SPENT_KEY].newValue);
         }
       });
     } catch { /* storage API unavailable in this context */ }
@@ -1225,13 +1227,13 @@ export class Agent extends LoopDetector {
 
   _isCostMeteredProvider(provider) {
     const config = provider?.config || {};
-    if (config.category === 'local') return false;
+    // WebBrain Cloud is billed and allowance-controlled by the managed
+    // service, not by the user's per-provider API account. Its upstream token
+    // cost must not consume the extension's user-configured spend allowance.
+    if (config.providerName === 'webbrain-cloud') return false;
     if (this._isLocalBaseUrl(config.baseUrl)) return false;
     if (config.type === 'anthropic_oauth') return false;
-    const isMeteredCategory = config.category === 'cloud' || config.category === 'router';
-    if (isMeteredCategory) return true;
-    if (config.providerName === 'openrouter') return true;
-    return !!(config.apiKey && /^https?:\/\//i.test(config.baseUrl || ''));
+    return config.category === 'cloud' || config.category === 'router';
   }
 
   _usageTokenCounts(usage) {
@@ -1375,12 +1377,12 @@ export class Agent extends LoopDetector {
       ]);
       this.costAllowanceSessionUsd = this._normalizeCostLimit(stored[COST_ALLOWANCE_SESSION_KEY]);
       this.costAllowanceTotalUsd = this._normalizeCostLimit(stored[COST_ALLOWANCE_TOTAL_KEY]);
-      this.cloudCostSpentUsd = this._normalizeCostSpent(stored[CLOUD_COST_SPENT_KEY]);
+      this.meteredProviderCostSpentUsd = this._normalizeCostSpent(stored[CLOUD_COST_SPENT_KEY]);
     } catch { /* keep in-memory defaults */ }
     return {
       sessionLimitUsd: this.costAllowanceSessionUsd,
       totalLimitUsd: this.costAllowanceTotalUsd,
-      totalSpentUsd: this.cloudCostSpentUsd,
+      totalSpentUsd: this.meteredProviderCostSpentUsd,
     };
   }
 
@@ -1414,7 +1416,7 @@ export class Agent extends LoopDetector {
       const state = await this._getCostAllowanceState();
       const nextTotal = state.totalSpentUsd + costUsd;
       if (costState) costState.spentUsd = this._normalizeCostSpent(costState.spentUsd) + costUsd;
-      this.cloudCostSpentUsd = nextTotal;
+      this.meteredProviderCostSpentUsd = nextTotal;
       try { await chrome.storage.local.set({ [CLOUD_COST_SPENT_KEY]: nextTotal }); } catch {}
       return this._checkCostAllowanceState({ ...state, totalSpentUsd: nextTotal }, costState);
     });

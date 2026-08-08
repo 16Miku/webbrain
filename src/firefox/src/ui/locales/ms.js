@@ -936,4 +936,5 @@ export default {
   "sp.workflows.healing.keep": "Kekalkan sasaran tersimpan",
   "sp.workflows.healing.saved": "Mengemas kini {count} pencari dalam “{name}”.",
   "sp.workflows.healing.not_saved": "Pencari yang diluluskan untuk “{name}” tidak disimpan kerana aliran kerja berubah atau pengesahan tidak muktamad.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

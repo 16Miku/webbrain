@@ -956,4 +956,5 @@ export default {
   "sp.workflows.healing.keep": "সংরক্ষিত লক্ষ্যটি রাখুন",
   "sp.workflows.healing.saved": "“{name}”-এ {count}টি লোকেটর আপডেট করা হয়েছে।",
   "sp.workflows.healing.not_saved": "ওয়ার্কফ্লো পরিবর্তিত হওয়ায় বা যাচাই অনিশ্চিত থাকায় “{name}”-এর অনুমোদিত লোকেটর সংরক্ষিত হয়নি।",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

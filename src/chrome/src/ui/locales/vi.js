@@ -961,4 +961,5 @@ export default {
   "sp.workflows.healing.keep": "Giữ mục tiêu đã lưu",
   "sp.workflows.healing.saved": "Đã cập nhật {count} bộ định vị trong “{name}”.",
   "sp.workflows.healing.not_saved": "Bộ định vị đã phê duyệt cho “{name}” không được lưu vì quy trình đã thay đổi hoặc kết quả xác minh chưa rõ ràng.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };
