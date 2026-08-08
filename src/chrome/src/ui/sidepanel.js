@@ -5876,6 +5876,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 }
 
 function rebindRestoredMessageControls() {
+  restoreStagedScreenshotAttachments();
   rebindCopyButtons();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
@@ -6787,11 +6788,15 @@ function renderScreenshotResult(dataUrl, {
   const saveLabel = t('sp.screenshot.save_as');
   const stagedLabel = t('sp.screenshot.staged_next_message');
   const imageAlt = t(fullPage ? 'sp.screenshot.full_page_alt' : 'sp.screenshot.alt');
+  const stagedMetadata = stagedAttachment ? encodeStagedScreenshotMetadata(stagedAttachment) : '';
+  const stagedAttributes = stagedAttachment && stagedMetadata
+    ? ` data-screenshot-attachment-id="${escapeHtml(stagedAttachment.stagedAttachmentId)}" data-staged-screenshot="${escapeHtml(stagedMetadata)}"`
+    : '';
   const stagedHtml = stagedAttachment
     ? `<div class="screenshot-attachment-note" role="status" aria-label="${escapeHtml(stagedLabel)}">📎 ${escapeHtml(stagedLabel)} · ${escapeHtml(stagedAttachment.name)}</div>`
     : '';
   return `
-    <div class="screenshot-result">
+    <div class="screenshot-result"${stagedAttributes}>
       ${warningHtml}
       <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(imageAlt)}"/>
       ${stagedHtml}
@@ -11338,6 +11343,131 @@ function normalizeAttachmentTabId(tabId = renderedTabId ?? currentTabId) {
   return Number.isFinite(numericTabId) ? numericTabId : null;
 }
 
+function newStagedScreenshotAttachmentId() {
+  try {
+    const id = globalThis.crypto?.randomUUID?.();
+    if (id) return `screenshot-${id}`;
+  } catch {}
+  return `screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function encodeStagedScreenshotMetadata(attachment) {
+  try {
+    return encodeURIComponent(JSON.stringify({
+      version: 1,
+      stagedAttachmentId: String(attachment?.stagedAttachmentId || ''),
+      name: String(attachment?.name || '').slice(0, 240),
+      mimeType: String(attachment?.mimeType || '').slice(0, 120),
+      size: Number(attachment?.size) || 0,
+      capturedAt: Number(attachment?.capturedAt) || 0,
+      fullPage: attachment?.fullPage === true,
+      redactionSnapshotReady: attachment?.redactionSnapshotReady === true,
+      ...(attachment?.redactionSnapshot ? { redactionSnapshot: attachment.redactionSnapshot } : {}),
+      ...(attachment?.captureBounds ? { captureBounds: attachment.captureBounds } : {}),
+    }));
+  } catch {
+    return '';
+  }
+}
+
+function decodeStagedScreenshotMetadata(value, dataUrl) {
+  try {
+    const metadata = JSON.parse(decodeURIComponent(String(value || '')));
+    const stagedAttachmentId = String(metadata?.stagedAttachmentId || '');
+    const size = Number(metadata?.size);
+    const actualSize = attachmentDataUrlBytes(dataUrl);
+    if (metadata?.version !== 1
+        || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
+        || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
+        || actualSize !== size
+        || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
+      return null;
+    }
+    return {
+      kind: 'image',
+      name: String(metadata.name || 'webbrain-screenshot.png').slice(0, 240),
+      dataUrl,
+      mimeType: String(metadata.mimeType || '').startsWith('image/jpeg') ? 'image/jpeg' : 'image/png',
+      size,
+      source: 'slash_screenshot',
+      stagedAttachmentId,
+      capturedAt: Number(metadata.capturedAt) || Date.now(),
+      fullPage: metadata.fullPage === true,
+      redactionSnapshotReady: metadata.redactionSnapshotReady === true,
+      ...(metadata.redactionSnapshot ? { redactionSnapshot: metadata.redactionSnapshot } : {}),
+      ...(metadata.fullPage === true && metadata.captureBounds ? { captureBounds: metadata.captureBounds } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function findStagedScreenshotResult(stagedAttachmentId, root = document) {
+  const id = String(stagedAttachmentId || '');
+  if (!id) return null;
+  return Array.from(root.querySelectorAll?.('.screenshot-result[data-screenshot-attachment-id]') || [])
+    .find(result => result.dataset.screenshotAttachmentId === id) || null;
+}
+
+function setScreenshotAttachmentStaged(tabId, attachment, staged) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+  const result = findStagedScreenshotResult(attachment?.stagedAttachmentId, messagesEl);
+  if (!result) return;
+  const note = result.querySelector('.screenshot-attachment-note');
+  if (!staged) {
+    delete result.dataset.stagedScreenshot;
+    note?.remove();
+    return;
+  }
+  const metadata = encodeStagedScreenshotMetadata(attachment);
+  if (!metadata) return;
+  result.dataset.stagedScreenshot = metadata;
+  if (!note) {
+    const restoredNote = document.createElement('div');
+    const label = t('sp.screenshot.staged_next_message');
+    restoredNote.className = 'screenshot-attachment-note';
+    restoredNote.setAttribute('role', 'status');
+    restoredNote.setAttribute('aria-label', label);
+    restoredNote.textContent = `📎 ${label} · ${attachment.name}`;
+    result.querySelector('.screenshot-result-actions')?.before(restoredNote);
+  }
+}
+
+function restoreStagedScreenshotAttachments(root = messagesEl, tabId = renderedTabId ?? currentTabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId);
+  let changed = false;
+  for (const result of root.querySelectorAll?.('.screenshot-result') || []) {
+    const persistedMetadata = result.dataset.stagedScreenshot;
+    const note = result.querySelector('.screenshot-attachment-note');
+    if (!persistedMetadata) {
+      if (note) {
+        note.remove();
+        changed = true;
+      }
+      continue;
+    }
+    const dataUrl = result.querySelector('.screenshot-result-image')?.getAttribute('src') || '';
+    const attachment = decodeStagedScreenshotMetadata(persistedMetadata, dataUrl);
+    if (!attachment) {
+      delete result.dataset.stagedScreenshot;
+      note?.remove();
+      changed = true;
+      continue;
+    }
+    if (!pending.some(candidate => candidate?.stagedAttachmentId === attachment.stagedAttachmentId)) {
+      pending.push(attachment);
+    }
+  }
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+  if (changed) schedulePersist();
+}
+
 function getPendingAttachmentsForTab(tabId = renderedTabId ?? currentTabId, { create = true } = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return [];
@@ -11378,6 +11508,8 @@ function updateAttachmentReadCount(tabId, delta) {
 function clearPendingAttachmentsForTab(tabId) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  pending.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
   pendingAttachmentsByTab.delete(numericTabId);
   bumpAttachmentGeneration(numericTabId);
   if (normalizeAttachmentTabId() === numericTabId) {
@@ -11392,6 +11524,7 @@ function restorePendingAttachmentsForTab(tabId, attachments) {
   if (numericTabId == null) return;
   const pending = getPendingAttachmentsForTab(numericTabId);
   pending.unshift(...attachments.filter(att => !pending.includes(att)));
+  attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, true));
   if (normalizeAttachmentTabId() === numericTabId) {
     renderAttachmentPreviews();
     syncSendButtonState();
@@ -11406,6 +11539,7 @@ function consumePendingAttachmentsForTab(tabId, attachments) {
   if (!pending.length) return;
   const consumed = new Set(attachments);
   const remaining = pending.filter(attachment => !consumed.has(attachment));
+  attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
   if (remaining.length) pendingAttachmentsByTab.set(numericTabId, remaining);
   else pendingAttachmentsByTab.delete(numericTabId);
   if (normalizeAttachmentTabId() === numericTabId) {
@@ -11438,6 +11572,7 @@ function stageScreenshotAttachment(tabId, dataUrl, {
     mimeType: String(dataUrl).startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
     size,
     source: 'slash_screenshot',
+    stagedAttachmentId: newStagedScreenshotAttachmentId(),
     capturedAt: Date.now(),
     fullPage: !!fullPage,
     redactionSnapshotReady: redactionSnapshotReady === true,
@@ -11471,6 +11606,7 @@ function renderAttachmentPreviews() {
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       const attachments = getPendingAttachmentsForTab(previewTabId, { create: false });
+      setScreenshotAttachmentStaged(previewTabId, attachments[i], false);
       attachments.splice(i, 1);
       if (attachments.length === 0 && previewTabId != null) pendingAttachmentsByTab.delete(previewTabId);
       renderAttachmentPreviews();

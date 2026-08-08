@@ -1053,17 +1053,22 @@ export class Agent extends LoopDetector {
     }
   }
 
-  async _captureFullPageWithBlankRetry(tabId, capturePolicy) {
+  async _captureFullPageWithBlankRetry(tabId, capturePolicy, { captureRedactionSnapshot = false } = {}) {
     const probe = await this._captureViewportProbe(tabId);
     const captureOnce = async () => {
+      const redactionSnapshotPromise = captureRedactionSnapshot
+        ? this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'page' })
+        : Promise.resolve({ ok: false });
       const capture = await this._withIndicatorsHidden(tabId, () =>
         cdpClient.captureFullPageScreenshot(tabId, capturePolicy)
       );
+      const redactionSnapshotResult = await redactionSnapshotPromise;
       const imageData = typeof capture === 'string' ? capture : capture?.data;
       if (!imageData) return null;
       return {
         dataUrl: `data:image/png;base64,${imageData}`,
         capture,
+        redactionSnapshotResult,
       };
     };
     return this._retryBlankScreenshotCapture(
@@ -1085,11 +1090,10 @@ export class Agent extends LoopDetector {
       const capturePolicy = await this._getFullPageCapturePolicy(tabId);
       await cdpClient.attach(tabId);
       await this._preparePageForCapture(tabId);
-      const redactionSnapshotPromise = this.captureScreenshotRedactionSnapshotForUser(tabId, {
-        coordinateSpace: 'page',
+      const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy, {
+        captureRedactionSnapshot: true,
       });
-      const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
-      const redactionSnapshotResult = await redactionSnapshotPromise;
+      const redactionSnapshotResult = captured?.redactionSnapshotResult || { ok: false };
       const capture = captured?.capture;
       const warning = typeof capture === 'object' ? capture?.warning || null : null;
       if (!captured?.dataUrl) {

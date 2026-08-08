@@ -33174,6 +33174,7 @@ test('Chrome full-page screenshot paths reject blank background captures after r
   const originalCapture = cdpClientCh.captureFullPageScreenshot;
   const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
   let captureCalls = 0;
+  let redactionSnapshotCalls = 0;
   try {
     globalThis.chrome = {
       ...(originalChrome || {}),
@@ -33199,6 +33200,10 @@ test('Chrome full-page screenshot paths reject blank background captures after r
     });
     agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent.captureScreenshotRedactionSnapshotForUser = async () => {
+      redactionSnapshotCalls += 1;
+      return { ok: false };
+    };
     agent._captureViewportProbe = async () => ({
       readyState: 'complete',
       documentTextChars: 200,
@@ -33229,12 +33234,64 @@ test('Chrome full-page screenshot paths reject blank background captures after r
       error: 'Full page screenshot failed: Background full-page screenshot remained blank after retries',
     });
     assert.equal(captureCalls, 4, 'each full-page path should retry once before rejecting the blank frame');
+    assert.equal(redactionSnapshotCalls, 2, 'each user-facing capture attempt should collect fresh privacy geometry while the agent tool avoids unused staging metadata');
   } finally {
     AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('user full-page screenshot retries return privacy geometry from the successful capture attempt', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
+  let captureCalls = 0;
+  let redactionSnapshotCalls = 0;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      return { data: captureCalls === 1 ? 'Ymxhbms=' : 'cmVjb3ZlcmVk' };
+    };
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
+
+    const agent = new AgentCh({});
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      documentTextChars: 200,
+      visibleTextChars: 100,
+      domNodes: 50,
+      scrollHeight: 1200,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({ blank: captureCalls === 1 });
+    agent.captureScreenshotRedactionSnapshotForUser = async () => {
+      redactionSnapshotCalls += 1;
+      return {
+        ok: true,
+        snapshot: {
+          coordinateSpace: 'page',
+          viewport: { width: 800, height: 1200 },
+          regions: [{ kind: 'password', rect: { x: redactionSnapshotCalls, y: 20, w: 100, h: 30 } }],
+        },
+      };
+    };
+
+    const result = await agent.captureFullPageScreenshotForUser(42);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.dataUrl, 'data:image/png;base64,cmVjb3ZlcmVk');
+    assert.equal(captureCalls, 2);
+    assert.equal(redactionSnapshotCalls, 2);
+    assert.equal(result.redactionSnapshot.regions[0].rect.x, 2, 'the returned geometry must belong to the retry that supplied the returned pixels');
+  } finally {
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
   }
 });
 
@@ -62487,6 +62544,59 @@ test('attachments: staged screenshots fail closed when capture-time redaction da
   }
 });
 
+test('attachments: staged screenshot restore metadata never substitutes compacted image pixels', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const start = source.indexOf('function encodeStagedScreenshotMetadata(attachment)');
+    const end = source.indexOf('function findStagedScreenshotResult(', start);
+    assert.ok(start >= 0 && end > start, `${label}: staged screenshot metadata codec missing`);
+    const runtime = Function(
+      'MAX_ATTACHMENT_BYTES',
+      'attachmentDataUrlBytes',
+      `${source.slice(start, end)}\nreturn { encodeStagedScreenshotMetadata, decodeStagedScreenshotMetadata };`,
+    )(16 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
+    const rawDataUrl = 'data:image/png;base64,RAW_CAPTURE';
+    const redactionSnapshot = {
+      coordinateSpace: 'viewport',
+      viewport: { width: 800, height: 600 },
+      regions: [{ kind: 'password', rect: { x: 10, y: 20, w: 100, h: 30 } }],
+    };
+    const encoded = runtime.encodeStagedScreenshotMetadata({
+      stagedAttachmentId: 'screenshot-12345678',
+      name: 'page-screenshot.png',
+      mimeType: 'image/png',
+      size: 11,
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      redactionSnapshot,
+    });
+
+    assert.doesNotMatch(encoded, /RAW_CAPTURE|data:image/i, `${label}: the restore envelope must not duplicate screenshot pixels`);
+    assert.deepEqual(runtime.decodeStagedScreenshotMetadata(encoded, rawDataUrl), {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      mimeType: 'image/png',
+      size: 11,
+      source: 'slash_screenshot',
+      stagedAttachmentId: 'screenshot-12345678',
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      redactionSnapshot,
+    }, `${label}: an exact persisted screenshot should restore with its capture-time privacy geometry`);
+    assert.equal(
+      runtime.decodeStagedScreenshotMetadata(encoded, 'data:image/png;base64,COMPACTED_PIXEL'),
+      null,
+      `${label}: a quota-compacted image must not be mistaken for the staged screenshot`,
+    );
+  }
+});
+
 test('attachments: uploaded documents carry an untrusted content boundary', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -62709,6 +62819,9 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
 
     assert.match(panel, /sendToBackground\('capture_screenshot_redaction_snapshot',[\s\S]*captureVisibleTab[\s\S]*stageScreenshotAttachment\(tabId, dataUrl, \{[\s\S]*redactionSnapshotReady:[\s\S]*redactionSnapshot:[\s\S]*addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must bind capture-time privacy geometry before rendering its result card`);
     assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*redactionSnapshot[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy geometry in the tab-scoped pending attachment list`);
+    assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
+    assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
+    assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);
     assert.match(panel, /userEl = addMessage\('user', text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the actual send attachment set`);
     assert.match(panel, /function attachmentStateLabel[\s\S]*t\('sp\.attach\.state\.included'\)[\s\S]*t\('sp\.attach\.state\.not_sent'\)[\s\S]*t\('sp\.attach\.state\.unknown'\)[\s\S]*t\('sp\.attach\.state\.sending'\)/, `${label}: attachment bubble must localize delivery labels`);
     assert.match(panel, /function setMessageAttachmentState[\s\S]*item\.dataset\.deliveryState = state/, `${label}: attachment bubble delivery state must update after send outcome`);
