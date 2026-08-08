@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': '結果',
 
   'sp.api.enabled_html': '🔓 この会話で <strong>API による変更が有効</strong> になりました。エージェントは UI より API のほうが確実だと判断したとき、fetch_url と execute_js で POST/PUT/PATCH/DELETE を使えるようになります。UI 優先という基本方針は変わりません。このフラグは会話をリセットするとクリアされます。',
-  'sp.api.badge_html': '<span>🔓 API による変更を許可</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>権限の確認がオフです。</strong> WebBrain は確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。設定 → 権限 → 重要な操作の前に確認する から再有効にしてください。',
 
   'tool.read_page': 'ページを読み取り中',

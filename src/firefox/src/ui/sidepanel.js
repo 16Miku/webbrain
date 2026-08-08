@@ -6600,7 +6600,6 @@ function setApiMutationsAllowedForTab(tabId, allowed) {
 
 function syncApiMutationsAllowedForCurrentTab() {
   apiMutationsAllowed = alwaysAllowApiMutations || isApiMutationsAllowedForTab(currentTabId);
-  updateApiBadge();
 }
 
 function isOutOfBandSlashDraft(value) {
@@ -7265,22 +7264,6 @@ function reportTrailingRunCaptureError(directive, error, tabId) {
     ? tSystemHtml('sp.record.error', { error: message })
     : tSystemHtml('sp.screenshot.error', { msg: message });
   addPersistentSlashMessage(systemHtml(html));
-}
-
-function updateApiBadge() {
-  let badge = document.getElementById('api-badge');
-  if (apiMutationsAllowed) {
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = 'api-badge';
-      badge.className = 'api-badge';
-      badge.innerHTML = t('sp.api.badge_html');
-      const inputArea = document.getElementById('input-area');
-      inputArea?.parentNode?.insertBefore(badge, inputArea);
-    }
-  } else if (badge) {
-    badge.remove();
-  }
 }
 
 async function sendMessage(extraChatParams = {}) {

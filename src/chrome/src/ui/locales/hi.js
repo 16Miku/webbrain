@@ -327,7 +327,6 @@ export default {
   'sp.step.result_label': "नतीजा",
 
   'sp.api.enabled_html': "🔓 <strong>एपीआई म्यूटेशन सक्षम</strong> इस बातचीत के लिए. जब एजेंट किसी चरण के लिए एपीआई को यूआई से अधिक विश्वसनीय मानता है तो वह अब Fetch_url औरexecute_js के माध्यम से POST/PUT/PATCH/DELETE का उपयोग कर सकता है। यूआई-प्रथम डिफ़ॉल्ट रहता है। जब आप वार्तालाप को रीसेट करते हैं तो यह ध्वज साफ़ हो जाता है।",
-  'sp.api.badge_html': "<span>🔓 एपीआई म्यूटेशन की अनुमति</span>",
   'sp.permissions.disabled_html': "⚠️ <strong>अनुमति संकेत बंद हैं.</strong> WebBrain पहले पूछे बिना क्लिक करेगा, टाइप करेगा, नेविगेट करेगा, जावास्क्रिप्ट चलाएगा, अपलोड करेगा, डाउनलोड करेगा, रिकॉर्ड करेगा और भविष्य के काम को शेड्यूल करेगा। सेटिंग्स → अनुमतियाँ → परिणामी कार्रवाई से पहले पूछें से इसे पुनः सक्षम करें।",
   "sp.help.shortcuts_html": "<strong>कीबोर्ड शॉर्टकट</strong><br><code>Ctrl/Cmd+/</code> - इनपुट पर फोकस करें<br><code>Ctrl/Cmd+Shift+A</code> - आस्क मोड पर स्विच करें<br><code>Ctrl/Cmd+Shift+X</code> - एक्ट मोड पर स्विच करें<br><code>Ctrl/Cmd+Shift+D</code> - डेव मोड पर स्विच करें<br><code>Escape</code> - सक्रिय रन बंद करें<br><code>Escape</code> दो बार - सक्रिय रिकॉर्डिंग बंद करें",
   "sp.slash.record_transcribe": "रुकने के बाद व्हिस्पर प्रतिलेख को रिकॉर्ड करें और सहेजें",

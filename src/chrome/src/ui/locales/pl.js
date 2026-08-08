@@ -236,7 +236,6 @@ export default {
   'sp.step.input_label': 'Wejście',
   'sp.step.result_label': 'Wynik',
   'sp.api.enabled_html': '🔓 <strong>Modyfikacje API włączone</strong> dla tej rozmowy. Agent może teraz używać POST/PUT/PATCH/DELETE przez fetch_url i execute_js, gdy uzna API za bardziej niezawodne niż interfejs dla danego kroku. Domyślnie nadal preferowany jest interfejs. Ta flaga jest czyszczona po zresetowaniu rozmowy.',
-  'sp.api.badge_html': '<span>🔓 Modyfikacje API dozwolone</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Pytania o uprawnienia są WYŁĄCZONE.</strong> WebBrain będzie klikać, pisać, nawigować, uruchamiać JavaScript, przesyłać, pobierać, nagrywać i planować przyszłe działania bez pytania. Włącz ponownie w Ustawienia → Uprawnienia → Pytaj przed istotnymi działaniami.',
   "sp.help.shortcuts_html": "<strong>Skróty klawiszowe</strong><br><code>Ctrl/Cmd+/</code> — Ustaw fokus na polu wprowadzania<br><code>Ctrl/Cmd+Shift+A</code> — Przełącz na tryb Pytaj<br><code>Ctrl/Cmd+Shift+X</code> — Przełącz na tryb Działaj<br><code>Ctrl/Cmd+Shift+D</code> — Przełącz na tryb Dev<br><code>Ctrl/Cmd+M</code> — Togol wprowadzanie głosowe",
   "sp.slash.record_transcribe": "Nagraj i zapisz transkrypcję Whisper po zatrzymaniu",

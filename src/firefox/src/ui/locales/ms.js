@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'Keputusan',
 
   'sp.api.enabled_html': '🔓 <strong>Pengubahan API diaktifkan</strong> untuk perbualan ini. Ejen kini boleh menggunakan POST/PUT/PATCH/DELETE melalui fetch_url dan execute_js apabila ia menilai API lebih boleh dipercayai berbanding UI untuk sesuatu langkah. UI tetap menjadi pilihan utama secara lalai. Bendera ini akan dikosongkan apabila anda menetapkan semula perbualan.',
-  'sp.api.badge_html': '<span>🔓 Pengubahan API dibenarkan</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Gesaan kebenaran DIMATIKAN.</strong> WebBrain akan mengklik, menaip, menavigasi, menjalankan JavaScript, memuat naik, memuat turun, merakam, dan menjadualkan kerja masa hadapan tanpa bertanya terlebih dahulu. Aktifkan semula ini dari Tetapan → Kebenaran → Tanya sebelum tindakan penting.',
 
   'tool.read_page': 'Membaca halaman',

@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'النتيجة',
 
   'sp.api.enabled_html': '🔓 <strong>تفعيل تعديلات واجهة API</strong> لهذه المحادثة. يمكن للوكيل الآن استخدام POST/PUT/PATCH/DELETE عبر fetch_url و execute_js عندما يرى أن API أكثر موثوقية من الواجهة. يظل التفاعل عبر الواجهة هو الافتراضي. تُمسح هذه العلامة عند تصفير المحادثة.',
-  'sp.api.badge_html': '<span>🔓 تعديلات API مسموح بها</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>مطالبات الأذونات مُعطّلة.</strong> سيُنقر WebBrain ويكتب ويتنقّل ويُشغّل JavaScript ويرفع ويُنزّل ويُسجّل ويجدول أعمالًا مستقبلية دون أن يسأل أولًا. أعد تفعيل هذا من الإعدادات ← الأذونات ← السؤال قبل الإجراءات المهمة.',
 
   'tool.read_page': 'قراءة الصفحة',

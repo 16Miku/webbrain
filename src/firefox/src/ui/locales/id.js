@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'Hasil',
 
   'sp.api.enabled_html': '🔓 <strong>Perubahan melalui API diaktifkan</strong> untuk percakapan ini. Agen kini dapat menggunakan POST/PUT/PATCH/DELETE melalui fetch_url dan execute_js bila menilai API lebih andal daripada UI untuk suatu langkah. UI tetap menjadi pilihan utama secara bawaan. Flag ini akan terhapus saat Anda mereset percakapan.',
-  'sp.api.badge_html': '<span>🔓 Perubahan API diizinkan</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Pertanyaan izin dimatikan.</strong> WebBrain akan mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang tanpa bertanya terlebih dahulu. Aktifkan kembali dari Pengaturan → Izin → Tanya sebelum tindakan penting.',
 
   'tool.read_page': 'Membaca halaman',

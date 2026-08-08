@@ -171,7 +171,6 @@ export default {
   'sp.step.result_label': 'Resulta',
 
   'sp.api.enabled_html': '🔓 <strong>Naka-enable ang mga pagbabago sa API</strong> para sa pag-uusap na ito. Maaari nang gamitin ng ahente ang POST/PUT/PATCH/DELETE sa pamamagitan ng fetch_url at execute_js kapag sa tingin niyang mas maaasahan ang API kaysa UI para sa isang hakbang. UI-first pa rin ang default. Maaaclear ang flag na ito kapag ni-reset mo ang pag-uusap.',
-  'sp.api.badge_html': '<span>🔓 Pinahihintulutan ang mga pagbabago sa API</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Naka-off ang mga prompt ng pahintulot.</strong> Mag-cli-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-aupload, mag-dadownload, magre-record, at mag-iskedyul ng mga gawaing hinaharap ang WebBrain nang hindi nagtatanong. I-enable muli mula sa Mga Setting → Mga Pahintulot → Magtanong bago ang mahahalagang aksyon.',
 
   'tool.read_page': 'Binabasa ang pahina',

@@ -312,7 +312,6 @@ export default {
   'sp.step.input_label': 'Eingabe',
   'sp.step.result_label': 'Ergebnis',
   'sp.api.enabled_html': '🔓 <strong>API-Mutationen aktiviert</strong> für dieses Gespräch. Der Agent kann nun POST/PUT/PATCH/DELETE über fetch_url und execute_js verwenden, wenn er API für zuverlässiger als die Benutzeroberfläche hält. Die Oberfläche bleibt standardmäßig bevorzugt. Dieses Flag wird beim Zurücksetzen des Gesprächs gelöscht.',
-  'sp.api.badge_html': '<span>🔓 API-Mutationen erlaubt</span>',
   'sp.permissions.disabled_html': '⚠️ <strong>Berechtigungsabfragen sind DEAKTIVIERT.</strong> WebBrain wird klicken, tippen, navigieren, JavaScript ausführen, hochladen, herunterladen, aufnehmen und zukünftige Aufgaben planen, ohne vorher zu fragen. Schalten Sie diese Option in Einstellungen → Berechtigungen → Vor bedeutsamen Aktionen fragen wieder ein.',
   'sp.perm.question': 'WebBrain möchte {verb} {host}. Erlauben?',
   'sp.perm.reason': 'Berechtigungsprüfung — WebBrain führt nur bedeutsame Aktionen auf Websites aus, denen Sie zustimmen.',

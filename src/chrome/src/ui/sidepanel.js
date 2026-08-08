@@ -6760,7 +6760,6 @@ function setApiMutationsAllowedForTab(tabId, allowed) {
 
 function syncApiMutationsAllowedForCurrentTab() {
   apiMutationsAllowed = alwaysAllowApiMutations || isApiMutationsAllowedForTab(currentTabId);
-  updateApiBadge();
 }
 
 function isOutOfBandSlashDraft(value) {
@@ -7538,22 +7537,6 @@ async function startFullScreenRecording(tabId = currentTabId, recordOptions = {}
   } catch (e) {
     if (currentTabId !== tabId) return;
     addPersistentSlashMessage(systemHtml(tSystemHtml('sp.record.error', { error: e?.message || 'unknown' })));
-  }
-}
-
-function updateApiBadge() {
-  let badge = document.getElementById('api-badge');
-  if (apiMutationsAllowed) {
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = 'api-badge';
-      badge.className = 'api-badge';
-      badge.innerHTML = t('sp.api.badge_html');
-      const inputArea = document.getElementById('input-area');
-      inputArea?.parentNode?.insertBefore(badge, inputArea);
-    }
-  } else if (badge) {
-    badge.remove();
   }
 }
 
