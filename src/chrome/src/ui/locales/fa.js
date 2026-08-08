@@ -953,4 +953,5 @@ export default {
   "sp.workflows.healing.keep": "حفظ هدف ذخیره‌شده",
   "sp.workflows.healing.saved": "{count} مکان‌یاب در «{name}» به‌روزرسانی شد.",
   "sp.workflows.healing.not_saved": "مکان‌یاب تأییدشدهٔ «{name}» ذخیره نشد، زیرا گردش‌کار تغییر کرده بود یا نتیجهٔ تأیید قطعی نبود.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

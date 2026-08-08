@@ -915,4 +915,5 @@ export default {
   "sp.workflows.healing.keep": "Zachowaj zapisany cel",
   "sp.workflows.healing.saved": "Zaktualizowano {count} lokalizatorów w „{name}”.",
   "sp.workflows.healing.not_saved": "Zatwierdzony lokalizator dla „{name}” nie został zapisany, ponieważ przepływ się zmienił lub weryfikacja nie była jednoznaczna.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

@@ -955,4 +955,5 @@ export default {
   "sp.workflows.healing.keep": "保留原目标",
   "sp.workflows.healing.saved": "已更新“{name}”中的 {count} 个定位器。",
   "sp.workflows.healing.not_saved": "“{name}”中已批准的定位器未保存，因为工作流已发生变化或验证结果不确定。",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

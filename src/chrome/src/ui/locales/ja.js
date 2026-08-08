@@ -955,4 +955,5 @@ export default {
   "sp.workflows.healing.keep": "保存済みの対象を維持",
   "sp.workflows.healing.saved": "「{name}」のロケーターを {count} 件更新しました。",
   "sp.workflows.healing.not_saved": "ワークフローが変更されたか検証結果が不確実だったため、「{name}」で承認されたロケーターは保存されませんでした。",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

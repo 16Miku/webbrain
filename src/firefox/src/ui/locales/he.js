@@ -881,4 +881,5 @@ export default {
   "sp.workflows.healing.keep": "להשאיר את היעד השמור",
   "sp.workflows.healing.saved": "עודכנו {count} מאתרים ב־„{name}”.",
   "sp.workflows.healing.not_saved": "המאתר שאושר עבור „{name}” לא נשמר משום שתהליך העבודה השתנה או שהאימות לא היה חד־משמעי.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

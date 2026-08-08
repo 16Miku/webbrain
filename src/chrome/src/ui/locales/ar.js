@@ -955,4 +955,5 @@ export default {
   "sp.workflows.healing.keep": "الاحتفاظ بالهدف المحفوظ",
   "sp.workflows.healing.saved": "تم تحديث {count} محددات في «{name}».",
   "sp.workflows.healing.not_saved": "لم يُحفظ المحدد الموافق عليه لـ «{name}» لأن سير العمل تغيّر أو لأن التحقق لم يكن حاسماً.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

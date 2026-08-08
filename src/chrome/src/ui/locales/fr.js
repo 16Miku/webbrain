@@ -955,4 +955,5 @@ export default {
   "sp.workflows.healing.keep": "Conserver la cible enregistrée",
   "sp.workflows.healing.saved": "{count} localisateur(s) mis à jour dans « {name} ».",
   "sp.workflows.healing.not_saved": "Le localisateur approuvé pour « {name} » n’a pas été enregistré, car le workflow a changé ou la vérification était incertaine.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

@@ -928,4 +928,5 @@ export default {
   "sp.workflows.healing.keep": "Pertahankan target tersimpan",
   "sp.workflows.healing.saved": "Memperbarui {count} locator di “{name}”.",
   "sp.workflows.healing.not_saved": "Locator yang disetujui untuk “{name}” tidak disimpan karena alur kerja berubah atau verifikasi tidak meyakinkan.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

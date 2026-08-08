@@ -948,4 +948,5 @@ export default {
   "sp.workflows.healing.keep": "Manter o alvo salvo",
   "sp.workflows.healing.saved": "Foram atualizados {count} localizadores em “{name}”.",
   "sp.workflows.healing.not_saved": "O localizador aprovado para “{name}” não foi salvo porque o fluxo mudou ou a verificação foi inconclusiva.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

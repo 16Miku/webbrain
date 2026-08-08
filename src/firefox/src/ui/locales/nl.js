@@ -901,4 +901,5 @@ export default {
   "sp.workflows.healing.keep": "Opgeslagen doel behouden",
   "sp.workflows.healing.saved": "{count} locator(s) in ‘{name}’ bijgewerkt.",
   "sp.workflows.healing.not_saved": "De goedgekeurde locator voor ‘{name}’ is niet opgeslagen omdat de workflow was gewijzigd of de verificatie niet overtuigend was.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

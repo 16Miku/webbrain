@@ -5230,6 +5230,7 @@ test('config transfer exports and restores Settings values including provider ke
     wb_permissions: [{ capability: 'click', host: 'example.com' }],
     wb_user_memory_v1: { version: 1, records: [{ id: 'mem_1', text: 'Prefer concise answers', kind: 'preference' }] },
     cloudCostSpentUsd: 8.5,
+    meteredProviderCostSpentUsd: 2.5,
     profileSyncToken: 'device-session-secret',
     webbrainDeviceGuid: 'device-guid',
   };
@@ -5249,6 +5250,7 @@ test('config transfer exports and restores Settings values including provider ke
   assert.equal(chromeExport.settings.wb_user_memory_v1.records.length, 1);
   assert.equal(chromeExport.settings.providers.webbrain_cloud.deviceGuid, undefined, 'device identity must not be portable');
   assert.equal(chromeExport.settings.cloudCostSpentUsd, undefined, 'spend counters are runtime state, not config');
+  assert.equal(chromeExport.settings.meteredProviderCostSpentUsd, undefined, 'metered spend counters are runtime state, not config');
   assert.equal(chromeExport.settings.profileSyncToken, undefined, 'Cloud Sync sessions must not be exported');
   assert.equal(chromeExport.settings.webbrainDeviceGuid, undefined, 'device GUID must not be exported');
   assert.match(chromeExport.warning, /plaintext provider API keys/i);
@@ -40325,6 +40327,76 @@ test('Agent cost metering treats bracketed local IPv6 URLs as local', () => {
   }
 });
 
+test('Agent cost metering is limited to cloud and router categories and excludes WebBrain Cloud', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const cases = [
+      {
+        config: { category: 'cloud', providerName: 'webbrain-cloud', baseUrl: 'https://api.webbrain.one/v1' },
+        expected: false,
+        label: 'WebBrain Cloud',
+      },
+      {
+        config: { category: 'cloud', providerName: 'openai', baseUrl: 'https://api.openai.com/v1' },
+        expected: true,
+        label: 'cloud provider',
+      },
+      {
+        config: { category: 'router', providerName: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+        expected: true,
+        label: 'router provider',
+      },
+      {
+        config: { category: 'local', providerName: 'llamacpp', baseUrl: 'https://remote-local-model.example/v1' },
+        expected: false,
+        label: 'local category',
+      },
+      {
+        config: { providerName: 'custom', baseUrl: 'https://custom.example/v1', apiKey: 'key' },
+        expected: false,
+        label: 'uncategorized remote endpoint',
+      },
+    ];
+    for (const { config, expected, label } of cases) {
+      assert.equal(
+        agent._isCostMeteredProvider({ config }),
+        expected,
+        `${AgentClass.name} should ${expected ? '' : 'not '}meter ${label}`
+      );
+    }
+  }
+});
+
+test('cost accounting starts a fresh aggregate after the WebBrain Cloud exemption', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const settingsSource = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    assert.match(
+      agentSource,
+      /const CLOUD_COST_SPENT_KEY = 'meteredProviderCostSpentUsd';/,
+      `${label}: cost accounting should use the metered-only aggregate`,
+    );
+    assert.doesNotMatch(
+      agentSource,
+      /const CLOUD_COST_SPENT_KEY = 'cloudCostSpentUsd';/,
+      `${label}: legacy spend that included WebBrain Cloud must not be inherited`,
+    );
+    assert.match(
+      settingsSource,
+      /meteredProviderCostSpentUsd/,
+      `${label}: Settings should display and reset the metered-only aggregate`,
+    );
+    assert.doesNotMatch(
+      settingsSource,
+      /cloudCostSpentUsd/,
+      `${label}: Settings should not display the legacy mixed aggregate`,
+    );
+  }
+});
+
 test('Agent cost metering treats only real IPv4 literals as local', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
@@ -40345,7 +40417,7 @@ test('Agent cost metering treats only real IPv4 literals as local', () => {
     ]) {
       assert.equal(agent._isLocalBaseUrl(url), false, `${AgentClass.name} should treat ${url} as remote`);
       assert.equal(
-        agent._isCostMeteredProvider({ config: { type: 'openai', baseUrl: url, apiKey: 'paid-key' } }),
+        agent._isCostMeteredProvider({ config: { type: 'openai', category: 'cloud', baseUrl: url, apiKey: 'paid-key' } }),
         true,
         `${AgentClass.name} should meter ${url}`
       );
@@ -40376,7 +40448,7 @@ test('Agent cost metering still treats public IPv6 URLs as remote', () => {
     const agent = new AgentClass({});
     assert.equal(agent._isLocalBaseUrl('https://[2606:4700:4700::1111]/v1'), false);
     assert.equal(
-      agent._isCostMeteredProvider({ config: { type: 'openai', baseUrl: 'https://[2606:4700:4700::1111]/v1', apiKey: 'paid-key' } }),
+      agent._isCostMeteredProvider({ config: { type: 'openai', category: 'router', baseUrl: 'https://[2606:4700:4700::1111]/v1', apiKey: 'paid-key' } }),
       true
     );
   }
