@@ -47,7 +47,13 @@ import {
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
-import { TAB_CHAT_PERSIST_BUDGET } from './tab-chat-persistence.js';
+import {
+  clearStagedScreenshots,
+  loadStagedScreenshots,
+  removeStagedScreenshot,
+  replaceStagedScreenshots,
+  saveStagedScreenshot,
+} from './staged-screenshot-store.js';
 
 // Hydrate the theme from browser.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -6980,11 +6986,12 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         redactionSnapshotPromise,
       ]);
       if (currentTabId !== tabId) return '';
-      const stagedAttachment = stageScreenshotAttachment(tabId, dataUrl, {
+      const stagedAttachment = await stageScreenshotAttachment(tabId, dataUrl, {
         pageUrl: tab.url,
         redactionSnapshotReady: redactionSnapshotResult?.ok === true,
         redactionSnapshot: redactionSnapshotResult?.snapshot,
       });
+      if (currentTabId !== tabId) return '';
       addScreenshotResultMessage(dataUrl, { pageUrl: tab.url, stagedAttachment });
     } catch (e) {
       if (currentTabId !== tabId) return '';
@@ -7453,7 +7460,7 @@ async function sendMessage(extraChatParams = {}) {
     hideRecommendedActions();
     if (!sourceGrounding && !isWorkflowRun) {
       if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
-      else clearPendingAttachmentsForTab(tabId);
+      else clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots: true });
       renderAttachmentPreviews();
     }
     resetChatNavigation();
@@ -7557,6 +7564,7 @@ async function sendMessage(extraChatParams = {}) {
         updateSlashCommandAutocomplete();
       }
     } else if (attachmentsForSend.length) {
+      removePersistedStagedAttachments(tabId, attachmentsForSend);
       const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
       setMessageAttachmentState(userEl, deliveryState);
       await persistMessageAttachmentState(tabId, userEl);
@@ -7612,6 +7620,7 @@ async function sendMessage(extraChatParams = {}) {
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
     } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
@@ -7633,7 +7642,8 @@ async function sendMessage(extraChatParams = {}) {
         const deliveryUnknown = isBackgroundConnectionError(e);
         setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
         await persistMessageAttachmentState(tabId, userEl);
-        if (!deliveryUnknown) restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+        if (deliveryUnknown) removePersistedStagedAttachments(tabId, attachmentsForSend);
+        else restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       }
       if (renderToCurrentTab
           && currentTabId === tabId
@@ -10845,8 +10855,6 @@ const attachBtn = document.getElementById('btn-attach');
 const fileAttachInput = document.getElementById('file-attach-input');
 const attachmentPreviewList = document.getElementById('attachment-preview-list');
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024; // matches PDF_PASSTHROUGH_MAX_BYTES (pdf-tools.js)
-const MAX_STAGED_SCREENSHOT_BYTES = 4 * 1024 * 1024;
-const STAGED_SCREENSHOT_PERSIST_HEADROOM = 256 * 1024;
 // Text files are injected VERBATIM into the prompt as a text block (no
 // server-side processing like PDFs), so the 16MB binary cap would blow any
 // context window — cap them far lower.
@@ -10893,7 +10901,7 @@ function decodeStagedScreenshotMetadata(value, dataUrl) {
     const actualSize = attachmentDataUrlBytes(dataUrl);
     if (metadata?.version !== 1
         || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
-        || !(Number.isFinite(size) && size > 0 && size <= MAX_STAGED_SCREENSHOT_BYTES)
+        || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
         || actualSize !== size
         || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
       return null;
@@ -10949,38 +10957,77 @@ function setScreenshotAttachmentStaged(tabId, attachment, staged) {
   }
 }
 
-function restoreStagedScreenshotAttachments(root = messagesEl, tabId = currentTabId) {
+async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = renderedTabId ?? currentTabId) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return;
-  const pending = getPendingAttachmentsForTab(numericTabId);
-  let changed = false;
-  for (const result of root.querySelectorAll?.('.screenshot-result') || []) {
-    const persistedMetadata = result.dataset.stagedScreenshot;
-    const note = result.querySelector('.screenshot-attachment-note');
-    if (!persistedMetadata) {
-      if (note) {
-        note.remove();
-        changed = true;
+  updateAttachmentReadCount(numericTabId, 1);
+  try {
+    const results = Array.from(root.querySelectorAll?.('.screenshot-result') || []);
+    const storedAttachments = await loadStagedScreenshots(browser.storage.local, numericTabId);
+    if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+    const storedById = new Map(storedAttachments.map(attachment => [attachment.stagedAttachmentId, attachment]));
+    const restored = [];
+    let changed = false;
+    for (const result of results) {
+      const persistedMetadata = result.dataset.stagedScreenshot;
+      const note = result.querySelector('.screenshot-attachment-note');
+      if (!persistedMetadata) {
+        if (note) {
+          note.remove();
+          changed = true;
+        }
+        continue;
       }
-      continue;
+      const stagedAttachmentId = String(result.dataset.screenshotAttachmentId || '');
+      const stored = storedById.get(stagedAttachmentId);
+      const attachment = decodeStagedScreenshotMetadata(persistedMetadata, stored?.dataUrl || '');
+      if (!attachment || attachment.stagedAttachmentId !== stagedAttachmentId) {
+        delete result.dataset.stagedScreenshot;
+        note?.remove();
+        changed = true;
+        continue;
+      }
+      restored.push({ result, attachment });
     }
-    const dataUrl = result.querySelector('.screenshot-result-image')?.getAttribute('src') || '';
-    const attachment = decodeStagedScreenshotMetadata(persistedMetadata, dataUrl);
-    if (!attachment) {
-      delete result.dataset.stagedScreenshot;
-      note?.remove();
-      changed = true;
-      continue;
+
+    await replaceStagedScreenshots(
+      browser.storage.local,
+      numericTabId,
+      restored.map(item => item.attachment),
+    );
+    if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+    const restoredIds = new Set(restored.map(item => item.attachment.stagedAttachmentId));
+    const pending = getPendingAttachmentsForTab(numericTabId).filter(attachment => (
+      attachment?.source !== 'slash_screenshot'
+      || restoredIds.has(attachment.stagedAttachmentId)
+    ));
+    for (const { result, attachment } of restored) {
+      const image = result.querySelector('.screenshot-result-image');
+      if (image?.getAttribute('src') !== attachment.dataUrl) image?.setAttribute('src', attachment.dataUrl);
+      if (!pending.some(candidate => candidate?.stagedAttachmentId === attachment.stagedAttachmentId)) {
+        pending.push(attachment);
+      }
     }
-    if (!pending.some(candidate => candidate?.stagedAttachmentId === attachment.stagedAttachmentId)) {
-      pending.push(attachment);
+    if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+    else pendingAttachmentsByTab.delete(numericTabId);
+    if (normalizeAttachmentTabId() === numericTabId) renderAttachmentPreviews();
+    if (changed) schedulePersist();
+  } catch {
+    if (sameTabId(renderedTabId ?? currentTabId, numericTabId)) {
+      for (const result of root.querySelectorAll?.('.screenshot-result[data-staged-screenshot]') || []) {
+        delete result.dataset.stagedScreenshot;
+        result.querySelector('.screenshot-attachment-note')?.remove();
+      }
+      const pending = getPendingAttachmentsForTab(numericTabId, { create: false })
+        .filter(attachment => attachment?.source !== 'slash_screenshot');
+      if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+      else pendingAttachmentsByTab.delete(numericTabId);
+      renderAttachmentPreviews();
+      schedulePersist();
     }
+  } finally {
+    updateAttachmentReadCount(numericTabId, -1);
   }
-  if (normalizeAttachmentTabId() === numericTabId) {
-    renderAttachmentPreviews();
-    syncSendButtonState();
-  }
-  if (changed) schedulePersist();
 }
 
 function getPendingAttachmentsForTab(tabId = currentTabId, { create = true } = {}) {
@@ -11020,11 +11067,14 @@ function updateAttachmentReadCount(tabId, delta) {
   if (normalizeAttachmentTabId() === numericTabId) syncSendButtonState();
 }
 
-function clearPendingAttachmentsForTab(tabId) {
+function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = false } = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return;
   const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
   pending.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
+  if (!preserveStoredScreenshots) {
+    clearStagedScreenshots(browser.storage.local, numericTabId).catch(() => {});
+  }
   pendingAttachmentsByTab.delete(numericTabId);
   bumpAttachmentGeneration(numericTabId);
   if (normalizeAttachmentTabId() === numericTabId) {
@@ -11046,6 +11096,23 @@ function restorePendingAttachmentsForTab(tabId, attachments) {
   }
 }
 
+function removePersistedStagedAttachments(tabId, attachments) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !Array.isArray(attachments)) return;
+  const ids = new Set(attachments
+    .filter(attachment => attachment?.source === 'slash_screenshot')
+    .map(attachment => String(attachment?.stagedAttachmentId || ''))
+    .filter(Boolean));
+  if (!ids.size) return;
+  loadStagedScreenshots(browser.storage.local, numericTabId)
+    .then(stored => replaceStagedScreenshots(
+      browser.storage.local,
+      numericTabId,
+      stored.filter(attachment => !ids.has(attachment.stagedAttachmentId)),
+    ))
+    .catch(() => {});
+}
+
 function consumePendingAttachmentsForTab(tabId, attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return;
   const numericTabId = normalizeAttachmentTabId(tabId);
@@ -11063,7 +11130,7 @@ function consumePendingAttachmentsForTab(tabId, attachments) {
   }
 }
 
-function stageScreenshotAttachment(tabId, dataUrl, {
+async function stageScreenshotAttachment(tabId, dataUrl, {
   fullPage = false,
   pageUrl = '',
   captureBounds = null,
@@ -11074,21 +11141,9 @@ function stageScreenshotAttachment(tabId, dataUrl, {
   if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
   const size = attachmentDataUrlBytes(dataUrl);
   const name = screenshotDownloadFilename(pageUrl, fullPage);
-  const currentChatLength = String(messagesEl?.innerHTML || '').length;
-  const availablePersistChars = Math.max(
-    0,
-    TAB_CHAT_PERSIST_BUDGET - currentChatLength - STAGED_SCREENSHOT_PERSIST_HEADROOM,
-  );
-  const currentStageLimit = Math.min(
-    MAX_STAGED_SCREENSHOT_BYTES,
-    Math.floor(availablePersistChars * 3 / 4),
-  );
-  if (size > currentStageLimit) {
+  if (size > MAX_ATTACHMENT_BYTES) {
     if (normalizeAttachmentTabId() === numericTabId) {
-      const max = currentStageLimit >= 1024 * 1024
-        ? `${Math.floor((currentStageLimit * 10) / (1024 * 1024)) / 10}MB`
-        : `${Math.floor(currentStageLimit / 1024)}KB`;
-      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max })));
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max: '16MB' })));
     }
     return null;
   }
@@ -11106,13 +11161,18 @@ function stageScreenshotAttachment(tabId, dataUrl, {
     ...(redactionSnapshot ? { redactionSnapshot } : {}),
     ...(fullPage && captureBounds ? { captureBounds } : {}),
   };
-  const prospectiveResultLength = renderScreenshotResult(dataUrl, {
-    fullPage,
-    pageUrl,
-    stagedAttachment: attachment,
-  }).length;
-  if (currentChatLength + prospectiveResultLength + STAGED_SCREENSHOT_PERSIST_HEADROOM
-      > TAB_CHAT_PERSIST_BUDGET) return null;
+  let persisted = false;
+  try {
+    persisted = await saveStagedScreenshot(browser.storage.local, numericTabId, attachment);
+  } catch {}
+  if (!persisted) {
+    if (normalizeAttachmentTabId() === numericTabId) showComposerToast(t('sp.persistence.unavailable'));
+    return null;
+  }
+  if (normalizeAttachmentTabId() !== numericTabId) {
+    await removeStagedScreenshot(browser.storage.local, numericTabId, attachment.stagedAttachmentId).catch(() => {});
+    return null;
+  }
   getPendingAttachmentsForTab(numericTabId).push(attachment);
   if (normalizeAttachmentTabId() === numericTabId) {
     renderAttachmentPreviews();
@@ -11140,6 +11200,11 @@ function renderAttachmentPreviews() {
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       const attachments = getPendingAttachmentsForTab(previewTabId, { create: false });
+      removeStagedScreenshot(
+        browser.storage.local,
+        previewTabId,
+        attachments[i]?.stagedAttachmentId,
+      ).catch(() => {});
       setScreenshotAttachmentStaged(previewTabId, attachments[i], false);
       attachments.splice(i, 1);
       if (attachments.length === 0 && previewTabId != null) pendingAttachmentsByTab.delete(previewTabId);

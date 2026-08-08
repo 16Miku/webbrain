@@ -39,6 +39,7 @@ import {
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
+import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import {
   prepareRecordingHost,
   startTabRecording,
@@ -1760,6 +1761,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
   tabChatHandoff.clear(tabId).catch(() => {});
+  clearStagedScreenshots(chrome.storage.local, tabId).catch(() => {});
   savePanelTabs();
   scheduler.cancelForTab(tabId).catch(() => {});
   agent.clearDevCssPatchesForTab(tabId).catch(() => {});

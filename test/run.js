@@ -25117,7 +25117,7 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       panel,
-      /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId\);/,
+      /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\);/,
       `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
     );
     assert.match(
@@ -62664,10 +62664,10 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
     const end = source.indexOf('function findStagedScreenshotResult(', start);
     assert.ok(start >= 0 && end > start, `${label}: staged screenshot metadata codec missing`);
     const runtime = Function(
-      'MAX_STAGED_SCREENSHOT_BYTES',
+      'MAX_ATTACHMENT_BYTES',
       'attachmentDataUrlBytes',
       `${source.slice(start, end)}\nreturn { encodeStagedScreenshotMetadata, decodeStagedScreenshotMetadata };`,
-    )(4 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
+    )(16 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
     const rawDataUrl = 'data:image/png;base64,RAW_CAPTURE';
     const redactionSnapshot = {
       coordinateSpace: 'viewport',
@@ -62705,10 +62705,64 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
       `${label}: a quota-compacted image must not be mistaken for the staged screenshot`,
     );
 
-    assert.match(source, /MAX_STAGED_SCREENSHOT_BYTES = 4 \* 1024 \* 1024/, `${label}: staged screenshot bytes should leave room in the session budget`);
-    assert.match(source, /TAB_CHAT_PERSIST_BUDGET - currentChatLength - STAGED_SCREENSHOT_PERSIST_HEADROOM/, `${label}: staging should account for the current persisted chat`);
-    assert.match(source, /currentChatLength \+ prospectiveResultLength \+ STAGED_SCREENSHOT_PERSIST_HEADROOM[\s\S]*?> TAB_CHAT_PERSIST_BUDGET/, `${label}: the exact staged result should remain below the persistence compaction threshold`);
+    assert.match(source, /async function stageScreenshotAttachment[\s\S]*?await saveStagedScreenshot\([\s\S]*?if \(!persisted\)[\s\S]*?return null;[\s\S]*?getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)/, `${label}: the UI must confirm a durable pixel write before claiming the screenshot is staged`);
+    assert.match(source, /loadStagedScreenshots\([\s\S]*?decodeStagedScreenshotMetadata\(persistedMetadata, stored\?\.dataUrl \|\| ''\)[\s\S]*?setAttribute\('src', attachment\.dataUrl\)/, `${label}: reload restore should recover exact pixels outside compacted session chat HTML`);
+    assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
   }
+});
+
+test('attachments: staged screenshot store verifies exact pixels and cleans up', async () => {
+  const sources = [];
+  for (const build of ['chrome', 'firefox']) {
+    const modulePath = path.join(ROOT, `src/${build}/src/ui/staged-screenshot-store.js`);
+    sources.push(fs.readFileSync(modulePath, 'utf8'));
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(
+      background,
+      new RegExp(`clearStagedScreenshots\\(${build === 'chrome' ? 'chrome' : 'browser'}\\.storage\\.local, tabId\\)`),
+      `${build}: closing a tab should remove its durable staged pixels`,
+    );
+    const store = await import(pathToFileURL(modulePath).href);
+    const values = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(values[key]) }; },
+      async set(update) { Object.assign(values, structuredClone(update)); },
+      async remove(key) { delete values[key]; },
+    };
+    const attachment = {
+      stagedAttachmentId: 'screenshot-12345678',
+      name: 'page-screenshot.png',
+      dataUrl: 'data:image/png;base64,RAW_CAPTURE',
+      mimeType: 'image/png',
+      size: 11,
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      redactionSnapshot: {
+        coordinateSpace: 'viewport',
+        viewport: { width: 800, height: 600 },
+        regions: [],
+      },
+    };
+
+    assert.equal(await store.saveStagedScreenshot(storage, 55, attachment), true, `${build}: exact readback should confirm staging`);
+    assert.equal((await store.loadStagedScreenshots(storage, 55))[0].dataUrl, attachment.dataUrl, `${build}: stored pixels should round-trip exactly`);
+    await store.removeStagedScreenshot(storage, 55, attachment.stagedAttachmentId);
+    assert.deepEqual(await store.loadStagedScreenshots(storage, 55), [], `${build}: sent or removed screenshots should be deleted`);
+
+    const corruptingStorage = {
+      ...storage,
+      async set(update) {
+        const copy = structuredClone(update);
+        const key = Object.keys(copy)[0];
+        copy[key][0].dataUrl = 'data:image/png;base64,DIFFERENT_PIXELS';
+        values[key] = copy[key];
+      },
+    };
+    assert.equal(await store.saveStagedScreenshot(corruptingStorage, 56, attachment), false, `${build}: staging must fail when exact pixels cannot be read back`);
+    await store.clearStagedScreenshots(storage, 56);
+  }
+  assert.equal(sources[0], sources[1], 'Chrome and Firefox staged screenshot stores should stay byte-identical');
 });
 
 test('attachments: uploaded documents carry an untrusted content boundary', async () => {
@@ -64062,7 +64116,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /inputs\.forEach\(\(input\) => \{ input\.value = ''; \}\)/);
     assert.match(source, /const isWorkflowRun = !!chatExtraParams\.workflowId;/);
     assert.match(source, /const attachmentsForSend = sourceGrounding \|\| isWorkflowRun\s*\? \[\]/);
-    assert.match(source, /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/);
+    assert.match(source, /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\);/);
     assert.match(source, /name_required:\s*'sp\.workflows\.reason\.name_required'/);
     assert.match(source, /http_start_url_required:\s*'sp\.workflows\.reason\.http_start_url'/);
     assert.match(source, /className = 'workflow-manager'/);

@@ -37,6 +37,7 @@ import {
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
+import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
 import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
@@ -1185,6 +1186,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
   tabChatHandoff.clear(tabId).catch(() => {});
+  clearStagedScreenshots(browser.storage.local, tabId).catch(() => {});
   scheduler.cancelForTab(tabId).catch(() => {});
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
 });
