@@ -695,6 +695,7 @@ export function createCloudRunController({
 } = {}) {
   const api = chromeApi;
   const runs = new Map();
+  const startingTabs = new Set();
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
@@ -770,7 +771,6 @@ export function createCloudRunController({
     if (requestedTabId != null && requestedTabId !== '') {
       const tab = await api.tabs.get(Number(requestedTabId));
       if (!isUsableCloudTab(tab)) throw new Error(`Tab ${requestedTabId} is not a controllable webpage.`);
-      await activateTab(tab);
       return tab.id;
     }
 
@@ -780,10 +780,7 @@ export function createCloudRunController({
 
     const allTabs = await api.tabs.query({});
     const fallback = allTabs.find(isUsableCloudTab);
-    if (fallback) {
-      await activateTab(fallback);
-      return fallback.id;
-    }
+    if (fallback) return fallback.id;
 
     const created = await api.tabs.create({ url: 'about:blank', active: true });
     if (created?.id == null) throw new Error('Could not create a browser tab for the cloud run.');
@@ -1030,7 +1027,9 @@ export function createCloudRunController({
       ? `Run saved workflow: ${workflow.name}`
       : String(msg.task || msg.text || '').trim();
     if (!task) throw new Error('cloud_run requires `task`.');
-    if (agent.isRunning(tabId)) throw new Error(`Tab ${tabId} already has an active WebBrain run.`);
+    if (startingTabs.has(tabId) || agent.isRunning(tabId)) {
+      throw new Error(`Tab ${tabId} already has an active WebBrain run.`);
+    }
 
     const apiMutationsAllowed = msg.apiMutationsAllowed === true || msg.api_mutations_allowed === true;
     if (apiMutationsAllowed && mode !== 'act') {
@@ -1049,6 +1048,15 @@ export function createCloudRunController({
     // first run to finish would then clear the second run's redaction state.
     if (runs.has(runId)) {
       throw cloudRunError(`Cloud run ${runId} already exists.`, 409);
+    }
+    startingTabs.add(tabId);
+    try {
+      await agent.assertRunStartAllowed?.(tabId, 'cloud', { cloudRun: true });
+      const targetTab = await api.tabs.get(tabId);
+      await activateTab(targetTab);
+    } catch (error) {
+      startingTabs.delete(tabId);
+      throw error;
     }
     const createdAt = isoNow();
     const run = {
@@ -1076,7 +1084,13 @@ export function createCloudRunController({
       completedAt: null,
     };
     runs.set(run.runId, run);
-    await persist();
+    try {
+      await persist();
+    } catch (error) {
+      runs.delete(run.runId);
+      startingTabs.delete(tabId);
+      throw error;
+    }
 
     (async () => {
       let recordingId = null;
@@ -1191,6 +1205,7 @@ export function createCloudRunController({
         );
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
+        startingTabs.delete(tabId);
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
         // /allow-api setting. Revoke only permission this run added; preserve a
         // pre-existing per-conversation or global user grant.
@@ -1365,6 +1380,7 @@ export function createCloudRunController({
 
   return {
     runs,
+    isRunning: (tabId) => startingTabs.has(tabId),
     startRun,
     startWorkflowRun,
     compileWorkflow,

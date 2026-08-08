@@ -63606,6 +63606,90 @@ test('teacher session store persists only normalized value-free actions', async 
   }
 });
 
+test('teacher mode rejects every automated run entry and drops agent-owned capture', async () => {
+  for (const [browser, TeacherMode, AgentClass] of [
+    ['chrome', TeacherModeCh, AgentCh],
+    ['firefox', TeacherModeFx, AgentFx],
+  ]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    const tabId = 2699;
+    const agent = new AgentClass({});
+    const store = TeacherMode.createTeacherSessionStore(storage, { now: () => 5000 });
+    const interlock = TeacherMode.createTeacherRunInterlock(store, {
+      automationOwnsTab: (ownedTabId) => agent.isRunning(ownedTabId),
+    });
+    const guardedKinds = [];
+    let automatedDispatches = 0;
+    agent.setRunStartGuard(async (guardedTabId, context) => {
+      guardedKinds.push(context.kind);
+      await interlock.guardRunStart(guardedTabId);
+    });
+    agent._processMessageInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._processMessageStreamInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._executeToolBatch = async () => { automatedDispatches += 1; return { action: 'continue' }; };
+
+    const started = await interlock.start(tabId, {
+      name: 'Teacher/run exclusion',
+      url: 'https://example.com/form',
+      webbrainVersion: 'test',
+    });
+    assert.equal(started.changed, true, `${browser}: teacher mode did not start`);
+
+    const workflow = {
+      id: 'workflow_teacher_exclusion',
+      name: 'Blocked workflow',
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Continue' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const runAttempts = [
+      () => agent.processMessage(tabId, 'interactive run', () => {}, 'act'),
+      () => agent.processMessage(tabId, 'scheduled run', () => {}, 'act', [], { scheduledRun: true }),
+      () => agent.processMessage(tabId, 'cloud run', () => {}, 'act', [], { cloudRun: true }),
+      () => agent.replaySavedWorkflow(tabId, workflow),
+      () => agent.processMessageStream(tabId, 'streaming run', () => {}, 'act'),
+    ];
+    for (const startAttempt of runAttempts) {
+      await assert.rejects(startAttempt(), (error) => {
+        assert.equal(error.code, TeacherMode.TEACHER_RUN_CONFLICT_CODE);
+        return true;
+      });
+      assert.equal(agent.isRunning(tabId), false, `${browser}: rejected run kept the tab claimed`);
+    }
+    assert.deepEqual(guardedKinds, ['interactive', 'scheduled', 'cloud', 'workflow', 'interactive']);
+    assert.equal(automatedDispatches, 0, `${browser}: a rejected run dispatched an automated action`);
+
+    // Defense in depth: even if a trusted content event or navigation arrives
+    // after an automation path has claimed the tab, none of it may be retained.
+    agent._runningTabs.add(tabId);
+    const click = await interlock.record(tabId, {
+      kind: 'click',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'button', name: 'Continue' },
+    });
+    const type = await interlock.record(tabId, {
+      kind: 'field',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'textbox', name: 'Email', fieldName: 'email', type: 'email' },
+    });
+    const navigation = await interlock.navigation(tabId, 'https://example.com/next', { force: true });
+    agent._runningTabs.delete(tabId);
+    assert.deepEqual([click.reason, type.reason, navigation.reason], [
+      'agent_running', 'agent_running', 'agent_running',
+    ]);
+    assert.equal((await store.get(tabId)).actions.length, 0, `${browser}: agent-owned actions entered teacher history`);
+  }
+});
+
 test('teacher slash commands and value-free page capture are wired in both browsers', () => {
   for (const build of ['chrome', 'firefox']) {
     const panelPath = `src/${build}/src/ui/sidepanel.js`;
@@ -63629,7 +63713,14 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(background, /case 'record_teacher_action':/);
     assert.match(background, /case 'start_teacher_mode':/);
     assert.match(background, /case 'end_teacher_mode':/);
+    assert.match(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\)/);
+    assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
+    assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
+    assert.match(background, /scheduler\.isRunning\(tabId\)/);
     assert.match(background, /compileWorkflowFromDemonstration/);
+
+    const scheduler = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/scheduler.js`), 'utf8');
+    assert.match(scheduler, /assertRunStartAllowed\?\.\(resolvedTabId, 'scheduled'/);
 
     const capturePath = `src/${build}/src/content/teacher-capture.js`;
     const capture = fs.readFileSync(path.join(ROOT, capturePath), 'utf8');
@@ -63642,6 +63733,8 @@ test('teacher slash commands and value-free page capture are wired in both brows
     const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${build}/manifest.json`), 'utf8'));
     assert.ok(manifest.content_scripts.some((entry) => entry.js?.includes('src/content/teacher-capture.js')));
   }
+  const cloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRuns, /startingTabs\.add\(tabId\)[\s\S]*?assertRunStartAllowed\?\.\(tabId, 'cloud'/);
 });
 
 test('saved workflow slash commands are out-of-band and wired in both browsers', () => {

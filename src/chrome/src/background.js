@@ -20,7 +20,7 @@ import {
   exportPortableWorkflowDefinition,
   importPortableWorkflowDefinition,
 } from './agent/workflows.js';
-import { createTeacherSessionStore } from './agent/teacher-mode.js';
+import { createTeacherRunInterlock, createTeacherSessionStore } from './agent/teacher-mode.js';
 import * as workflowTrace from './trace/recorder.js';
 import {
   startClaudeOAuth,
@@ -112,6 +112,13 @@ agent.setConversationScopeChangeListener((tabId, state) => {
 const userMemoryStore = createUserMemoryStore(chrome.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(chrome.storage.local);
 const teacherSessionStore = createTeacherSessionStore(chrome.storage.session);
+const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
+  automationOwnsTab: (tabId) => agent.isRunning(tabId)
+    || detachedRunStarts.has(tabId)
+    || scheduler.isRunning(tabId)
+    || cloudRunController.isRunning(tabId),
+});
+agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
 const profileSync = new ProfileSyncManager(chrome.storage.local);
 installDownloadDirectoryRouting(chrome);
 
@@ -375,7 +382,6 @@ let userMemoryExtractionTimer = null;
 let userMemoryExtractionQueueLock = Promise.resolve();
 let userMemoryStoreLock = Promise.resolve();
 let savedWorkflowStoreLock = Promise.resolve();
-let teacherSessionStoreLock = Promise.resolve();
 const userMemoryTurnContextByTab = new Map();
 
 function userMemoryTurnContextKey(tabId) {
@@ -561,9 +567,7 @@ async function withSavedWorkflowStoreLock(task) {
 }
 
 async function withTeacherSessionStoreLock(task) {
-  const run = teacherSessionStoreLock.then(task, task);
-  teacherSessionStoreLock = run.catch(() => {});
-  return run;
+  return teacherRunInterlock.withLock(task);
 }
 
 function publicTeacherSession(session) {
@@ -1814,7 +1818,7 @@ function recordNav(tabId, type, url) {
 }
 
 function recordTeacherNavigation(tabId, url, options) {
-  withTeacherSessionStoreLock(() => teacherSessionStore.navigation(tabId, url, options)).catch(() => {});
+  teacherRunInterlock.navigation(tabId, url, options).catch(() => {});
 }
 
 const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
@@ -2237,11 +2241,11 @@ async function handleMessage(msg, sender) {
         return { ok: false, reason: 'agent_running' };
       }
       const tab = await chrome.tabs.get(tabId).catch(() => null);
-      const result = await withTeacherSessionStoreLock(() => teacherSessionStore.start(tabId, {
+      const result = await teacherRunInterlock.start(tabId, {
         name: msg.name,
         url: tab?.url,
         webbrainVersion: chrome.runtime.getManifest().version,
-      }));
+      });
       if (result.changed && !await notifyTeacherState(tabId, result.session)) {
         await withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId));
         return { ok: false, reason: 'capture_unavailable', session: { active: false } };
@@ -2254,9 +2258,7 @@ async function handleMessage(msg, sender) {
       if (!tabId || (sender.frameId != null && sender.frameId !== 0)) {
         return { ok: false, reason: 'tab_required' };
       }
-      const result = await withTeacherSessionStoreLock(() => (
-        teacherSessionStore.record(tabId, msg.teacherAction)
-      ));
+      const result = await teacherRunInterlock.record(tabId, msg.teacherAction);
       return {
         ok: result.changed || ['duplicate', 'unsafe_target'].includes(result.reason),
         reason: result.reason,

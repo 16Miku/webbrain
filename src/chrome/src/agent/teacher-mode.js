@@ -6,6 +6,59 @@ import {
 
 export const TEACHER_SESSION_PREFIX = 'teacherSession:';
 export const TEACHER_ACTION_LIMIT = 100;
+export const TEACHER_RUN_CONFLICT_CODE = 'teacher_mode_active';
+
+function teacherRunConflictError() {
+  const error = new Error('Teacher mode is active for this tab. End teacher mode before starting an automated run.');
+  error.code = TEACHER_RUN_CONFLICT_CODE;
+  return error;
+}
+
+export function createTeacherRunInterlock(store, options = {}) {
+  const automationOwnsTab = typeof options.automationOwnsTab === 'function'
+    ? options.automationOwnsTab
+    : () => false;
+  let lock = Promise.resolve();
+
+  const withLock = async (task) => {
+    const run = lock.then(task, task);
+    lock = run.catch(() => {});
+    return run;
+  };
+
+  const blockedResult = async (tabId) => ({
+    changed: false,
+    reason: 'agent_running',
+    session: await store.get(tabId),
+  });
+
+  return {
+    withLock,
+    async guardRunStart(tabId) {
+      return withLock(async () => {
+        if (await store.get(tabId)) throw teacherRunConflictError();
+      });
+    },
+    async start(tabId, input = {}) {
+      return withLock(async () => {
+        if (automationOwnsTab(tabId)) return blockedResult(tabId);
+        return store.start(tabId, input);
+      });
+    },
+    async record(tabId, action) {
+      return withLock(async () => {
+        if (automationOwnsTab(tabId)) return blockedResult(tabId);
+        return store.record(tabId, action);
+      });
+    },
+    async navigation(tabId, url, navigationOptions = {}) {
+      return withLock(async () => {
+        if (automationOwnsTab(tabId)) return blockedResult(tabId);
+        return store.navigation(tabId, url, navigationOptions);
+      });
+    },
+  };
+}
 
 function sessionKey(tabId) {
   const id = Number(tabId);

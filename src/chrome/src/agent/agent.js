@@ -558,6 +558,7 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
+    this._runStartGuard = null;
     // Ordinary runs capture and act in their original tab without activating
     // it. Managed cloud runs and the explicit /foreground compatibility
     // override retain the old Page.bringToFront behavior for their lifetime.
@@ -894,6 +895,38 @@ export class Agent extends LoopDetector {
 
   setConversationScopeChangeListener(listener) {
     this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
+  }
+
+  setRunStartGuard(guard) {
+    this._runStartGuard = typeof guard === 'function' ? guard : null;
+  }
+
+  _runEntryKind(defaultKind, runOptions = {}) {
+    if (runOptions?.cloudRun === true) return 'cloud';
+    if (runOptions?.scheduledRun === true) return 'scheduled';
+    return defaultKind;
+  }
+
+  async assertRunStartAllowed(tabId, defaultKind = 'interactive', runOptions = {}) {
+    await this._runStartGuard?.(tabId, {
+      kind: this._runEntryKind(defaultKind, runOptions),
+      runOptions,
+    });
+  }
+
+  async _claimRunEntry(tabId, defaultKind, runOptions = {}) {
+    if (this._runningTabs.has(tabId)) {
+      throw new Error('An agent run is already in progress for this tab.');
+    }
+    // Claim synchronously before awaiting the external guard so teacher-mode
+    // startup cannot race a run whose persisted teacher-state check is pending.
+    this._runningTabs.add(tabId);
+    try {
+      await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
   }
 
   isRunning(tabId) {
@@ -15577,11 +15610,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
-    if (this._runningTabs.has(tabId)) throw new Error('An agent run is already in progress for this tab.');
     if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
       throw new Error('Saved workflow is missing or invalid.');
     }
-    await this._hydrate(tabId);
+    await this._claimRunEntry(tabId, 'workflow', runOptions);
+    try {
+      await this._hydrate(tabId);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
     // Deterministic workflow replay is an independent task even when it never
     // falls back to processMessage. Clear stale selected-text grounding before
     // any replay action so a successful replay cannot poison the next turn.
@@ -15598,7 +15636,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.permissions.beginTurn(tabId);
     this.conversationModes.set(tabId, 'act');
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
     const startUrl = await this._currentUrl(tabId);
     const conversationId = await this.ensureConversationId(tabId, 'act');
@@ -21948,10 +21985,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -21972,7 +22006,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
@@ -22874,10 +22907,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Process a message with streaming output.
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -22898,7 +22928,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
