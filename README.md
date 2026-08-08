@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb"><img src="https://img.shields.io/badge/Chrome-Install-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Install WebBrain from the Chrome Web Store"></a>
-  <a href="https://addons.mozilla.org/en-US/firefox/addon/webbrain/"><img src="https://img.shields.io/badge/Firefox-Install-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Install WebBrain from Firefox Browser Add-ons"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/webbrain/"><img src="https://img.shields.io/badge/Firefox-Install-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Install WebBrain from Firefox Browser Add-ons"></a>
   <a href="https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo"><img src="https://img.shields.io/badge/Edge-Install-0A84FF?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Install WebBrain from Microsoft Edge Add-ons"></a>
 </p>
 
@@ -35,7 +35,7 @@ needs no setup at all.
 ## Install
 
 Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb),
-[Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/webbrain/), or
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/webbrain/), or
 [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo).
 
 <details>
@@ -144,7 +144,8 @@ Type `/help` in the panel for full signatures and flags. The most useful ones:
 | `/ask` · `/act` · `/dev` · `/plan`                                                     | Switch mode before sending                                                  |
 | `/schedule [prompt]`                                                                   | Create a scheduled task                                                     |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page and act when a condition is met                       |
-| `/workflow --save <name>`                                                              | Compile the last successful run into a reusable workflow                    |
+| `/workflow` · `/workflow --save <name>`                                                | Manage saved workflows or compile the last successful run                   |
+| `/teach --start <name>` · `/teach --end`                                               | Learn a reusable workflow from your demonstrated actions                    |
 | `/memory --add <text>`                                                                 | Save a user preference                                                      |
 | `/screenshot [--full-page]`                                                            | Capture the tab, or the full scrollable page                                |
 | `/record [--transcribe]`                                                               | Record the current tab, optionally saving a transcript                      |

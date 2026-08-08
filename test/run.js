@@ -292,6 +292,12 @@ const SavedWorkflowsCh = await import(
 const SavedWorkflowsFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/workflows.js').replace(/\\/g, '/')
 );
+const TeacherModeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
+const TeacherModeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/teacher-mode.js').replace(/\\/g, '/')
+);
 
 // config-transfer.js is the pure schema/allowlist boundary used by the
 // /export --config and /import slash-command handlers.
@@ -5230,6 +5236,7 @@ test('config transfer exports and restores Settings values including provider ke
     wb_permissions: [{ capability: 'click', host: 'example.com' }],
     wb_user_memory_v1: { version: 1, records: [{ id: 'mem_1', text: 'Prefer concise answers', kind: 'preference' }] },
     cloudCostSpentUsd: 8.5,
+    meteredProviderCostSpentUsd: 2.5,
     profileSyncToken: 'device-session-secret',
     webbrainDeviceGuid: 'device-guid',
   };
@@ -5249,6 +5256,7 @@ test('config transfer exports and restores Settings values including provider ke
   assert.equal(chromeExport.settings.wb_user_memory_v1.records.length, 1);
   assert.equal(chromeExport.settings.providers.webbrain_cloud.deviceGuid, undefined, 'device identity must not be portable');
   assert.equal(chromeExport.settings.cloudCostSpentUsd, undefined, 'spend counters are runtime state, not config');
+  assert.equal(chromeExport.settings.meteredProviderCostSpentUsd, undefined, 'metered spend counters are runtime state, not config');
   assert.equal(chromeExport.settings.profileSyncToken, undefined, 'Cloud Sync sessions must not be exported');
   assert.equal(chromeExport.settings.webbrainDeviceGuid, undefined, 'device GUID must not be exported');
   assert.match(chromeExport.warning, /plaintext provider API keys/i);
@@ -25989,8 +25997,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      3,
-      `${label}: submit, permission, and clarify prompts should override reading-first scroll suppression`,
+      4,
+      `${label}: workflow healing, submit, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -40385,6 +40393,114 @@ test('Agent cost metering treats bracketed local IPv6 URLs as local', () => {
   }
 });
 
+test('Agent cost metering is limited to cloud and router categories and excludes WebBrain Cloud', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const cases = [
+      {
+        config: { category: 'cloud', providerName: 'webbrain-cloud', baseUrl: 'https://api.webbrain.one/v1' },
+        expected: false,
+        label: 'WebBrain Cloud',
+      },
+      {
+        config: { category: 'cloud', providerName: 'openai', baseUrl: 'https://api.openai.com/v1' },
+        expected: true,
+        label: 'cloud provider',
+      },
+      {
+        config: { category: 'router', providerName: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+        expected: true,
+        label: 'router provider',
+      },
+      {
+        config: { category: 'local', providerName: 'llamacpp', baseUrl: 'https://remote-local-model.example/v1' },
+        expected: false,
+        label: 'local category',
+      },
+      {
+        config: { providerName: 'custom', baseUrl: 'https://custom.example/v1', apiKey: 'key' },
+        expected: false,
+        label: 'uncategorized remote endpoint',
+      },
+    ];
+    for (const { config, expected, label } of cases) {
+      assert.equal(
+        agent._isCostMeteredProvider({ config }),
+        expected,
+        `${AgentClass.name} should ${expected ? '' : 'not '}meter ${label}`
+      );
+    }
+  }
+});
+
+test('dedicated vision providers are cost-metered when remote and exempt when local', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, apiName, ManagerClass, AgentClass] of [
+      ['chrome', 'chrome', ProviderManagerCh, AgentCh],
+      ['firefox', 'browser', ProviderManagerFx, AgentFx],
+    ]) {
+      let baseUrl = 'https://api.openai.com/v1';
+      globalThis[apiName] = {
+        storage: {
+          local: {
+            get: async () => ({
+              visionModel: { baseUrl, apiKey: 'paid-key', model: 'gpt-5.6-terra' },
+            }),
+          },
+        },
+      };
+
+      const manager = new ManagerClass();
+      const agent = new AgentClass(manager);
+      const remoteVision = await manager.getVisionProvider();
+      assert.equal(remoteVision.config.category, 'cloud', `${label}: dedicated vision should be classified as cloud`);
+      assert.equal(agent._isCostMeteredProvider(remoteVision), true, `${label}: remote dedicated vision should be metered`);
+
+      baseUrl = 'http://localhost:1234/v1';
+      const localVision = await manager.getVisionProvider();
+      assert.equal(localVision.config.category, 'cloud', `${label}: dedicated vision should retain its provider category`);
+      assert.equal(agent._isCostMeteredProvider(localVision), false, `${label}: local dedicated vision should remain exempt`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('cost accounting starts a fresh aggregate after the WebBrain Cloud exemption', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const settingsSource = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    assert.match(
+      agentSource,
+      /const CLOUD_COST_SPENT_KEY = 'meteredProviderCostSpentUsd';/,
+      `${label}: cost accounting should use the metered-only aggregate`,
+    );
+    assert.doesNotMatch(
+      agentSource,
+      /const CLOUD_COST_SPENT_KEY = 'cloudCostSpentUsd';/,
+      `${label}: legacy spend that included WebBrain Cloud must not be inherited`,
+    );
+    assert.match(
+      settingsSource,
+      /meteredProviderCostSpentUsd/,
+      `${label}: Settings should display and reset the metered-only aggregate`,
+    );
+    assert.doesNotMatch(
+      settingsSource,
+      /cloudCostSpentUsd/,
+      `${label}: Settings should not display the legacy mixed aggregate`,
+    );
+  }
+});
+
 test('Agent cost metering treats only real IPv4 literals as local', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
@@ -40405,7 +40521,7 @@ test('Agent cost metering treats only real IPv4 literals as local', () => {
     ]) {
       assert.equal(agent._isLocalBaseUrl(url), false, `${AgentClass.name} should treat ${url} as remote`);
       assert.equal(
-        agent._isCostMeteredProvider({ config: { type: 'openai', baseUrl: url, apiKey: 'paid-key' } }),
+        agent._isCostMeteredProvider({ config: { type: 'openai', category: 'cloud', baseUrl: url, apiKey: 'paid-key' } }),
         true,
         `${AgentClass.name} should meter ${url}`
       );
@@ -40436,7 +40552,7 @@ test('Agent cost metering still treats public IPv6 URLs as remote', () => {
     const agent = new AgentClass({});
     assert.equal(agent._isLocalBaseUrl('https://[2606:4700:4700::1111]/v1'), false);
     assert.equal(
-      agent._isCostMeteredProvider({ config: { type: 'openai', baseUrl: 'https://[2606:4700:4700::1111]/v1', apiKey: 'paid-key' } }),
+      agent._isCostMeteredProvider({ config: { type: 'openai', category: 'router', baseUrl: 'https://[2606:4700:4700::1111]/v1', apiKey: 'paid-key' } }),
       true
     );
   }
@@ -63528,6 +63644,400 @@ test('saved workflow exact-run compiler never substitutes a newer trace', async 
   }
 });
 
+test('teacher mode compiles user demonstrations without retaining entered values', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const result = module.compileWorkflowFromDemonstration({
+      name: 'Submit account form',
+      startUrl: 'https://example.com/form?session=start-secret#private',
+      webbrainVersion: '26.2.2',
+      skippedActionCount: 2,
+      actionLimitReached: true,
+      actions: [
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form?session=field-secret',
+          value: 'person@example.com',
+          target: { role: 'textbox', label: 'Email', fieldName: 'email', type: 'email' },
+        },
+        {
+          kind: 'field',
+          pageUrl: 'https://example.com/form',
+          value: 'correct horse battery staple',
+          submit: true,
+          target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+        },
+        {
+          kind: 'checked',
+          pageUrl: 'https://example.com/settings',
+          checked: true,
+          target: { role: 'checkbox', name: 'Remember this device' },
+        },
+        {
+          kind: 'click',
+          pageUrl: 'https://example.com/settings',
+          target: { role: 'button', name: 'Continue', selector: '#unsafe-selector' },
+        },
+        {
+          kind: 'navigate',
+          pageUrl: 'https://example.com/settings',
+          url: 'https://example.com/complete?token=navigation-secret#done',
+        },
+      ],
+    }, { now: 1700 });
+
+    assert.equal(result.reason, '');
+    assert.deepEqual(result.workflow.start, { origin: 'https://example.com', pathFamily: '/form' });
+    assert.deepEqual(result.workflow.steps.map((step) => step.tool), [
+      'type_ax', 'set_field', 'set_checked', 'click_ax', 'navigate',
+    ]);
+    assert.deepEqual(result.workflow.steps[0].args, {
+      text: { [module.WORKFLOW_PARAM_REF_KEY]: 'email' },
+      clear: true,
+    });
+    assert.equal(result.workflow.steps[1].args.submit, true);
+    assert.equal(result.workflow.parameters[0].sensitive, false);
+    assert.equal(result.workflow.parameters[1].sensitive, true);
+    assert.equal(result.workflow.steps[2].expected.value, true);
+    assert.equal(result.workflow.steps[4].args.url, 'https://example.com/complete');
+    assert.deepEqual(result.workflow.stats, {
+      sourceToolCount: 7,
+      compiledStepCount: 5,
+      skippedToolCount: 2,
+    });
+    assert.equal(result.warnings.length, 2);
+    assert.doesNotMatch(
+      JSON.stringify(result.workflow),
+      /person@example\.com|correct horse|start-secret|field-secret|navigation-secret|unsafe-selector|selector/,
+    );
+  }
+});
+
+test('teacher session store persists only normalized value-free actions', async () => {
+  for (const module of [TeacherModeCh, TeacherModeFx]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    let now = 2000;
+    const store = module.createTeacherSessionStore(storage, { now: () => now++ });
+    const started = await store.start(42, {
+      name: 'Login flow',
+      url: 'https://example.com/login?token=start-secret',
+      webbrainVersion: '26.2.2',
+    });
+    assert.equal(started.changed, true);
+    assert.equal((await store.start(42, { name: 'Other', url: 'https://example.com/' })).reason, 'already_active');
+
+    const passwordField = {
+      kind: 'field',
+      pageUrl: 'https://example.com/login?token=field-secret',
+      value: 'do-not-store-me',
+      target: { role: 'textbox', label: 'Password', fieldName: 'password', type: 'password' },
+    };
+    const recorded = await store.record(42, passwordField);
+    assert.equal(recorded.changed, true);
+    assert.equal(recorded.session.actions.length, 1);
+    assert.doesNotMatch(JSON.stringify(memory), /do-not-store-me|start-secret|field-secret/);
+
+    const restored = module.createTeacherSessionStore(storage, { now: () => now++ });
+    assert.equal((await restored.get(42)).actions.length, 1);
+    const submitted = await restored.record(42, { ...passwordField, submit: true });
+    assert.equal(submitted.session.actions.length, 1, 'confirmed submit must upgrade the field action in place');
+    assert.equal(submitted.session.actions[0].submit, true);
+    await restored.navigation(42, 'https://example.com/account?token=submit-secret');
+    assert.equal(
+      (await restored.get(42)).actions.length,
+      1,
+      'submit-driven navigation must not add a duplicate navigate step',
+    );
+    assert.equal((await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button' },
+    })).reason, 'unsafe_target');
+    const afterUnsafeTarget = await restored.get(42);
+    assert.equal(afterUnsafeTarget.actions.length, 1);
+    assert.equal(afterUnsafeTarget.skippedActionCount, 1);
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/login',
+      target: { role: 'button', name: 'Continue' },
+    });
+    await restored.navigation(42, 'https://example.com/account?token=click-secret');
+    assert.equal((await restored.get(42)).actions.length, 2, 'click-driven navigation must not add a duplicate step');
+    await restored.record(42, {
+      kind: 'click',
+      pageUrl: 'https://example.com/account',
+      target: { role: 'button', name: 'Open settings' },
+    });
+    await restored.navigation(42, 'https://example.com/settings?token=typed-secret', { force: true });
+    const navigated = await restored.get(42);
+    assert.equal(navigated.actions.length, 4, 'typed navigation must remain replayable after a recent click');
+    assert.deepEqual(navigated.actions.at(-1), {
+      kind: 'navigate',
+      scope: { origin: 'https://example.com', pathFamily: '/account' },
+      url: 'https://example.com/settings',
+    });
+    assert.doesNotMatch(JSON.stringify(memory), /submit-secret|click-secret|typed-secret/);
+
+    await restored.start(43, {
+      name: 'Submit ordering',
+      url: 'https://example.com/form',
+      webbrainVersion: '26.2.2',
+    });
+    const orderedField = {
+      kind: 'field',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'textbox', label: 'Search', fieldName: 'q', type: 'search' },
+    };
+    await restored.record(43, orderedField);
+    await restored.navigation(43, 'https://example.com/results');
+    const lateSubmit = await restored.record(43, { ...orderedField, submit: true });
+    assert.equal(lateSubmit.session.actions.length, 1, 'late submit confirmation must remove an observed navigation');
+    assert.equal(lateSubmit.session.actions[0].submit, true);
+    assert.deepEqual(lateSubmit.session.currentScope, {
+      origin: 'https://example.com',
+      pathFamily: '/results',
+    });
+    await restored.clear(43);
+    assert.equal((await restored.clear(42)).changed, true);
+    assert.equal(await restored.get(42), null);
+  }
+});
+
+test('teacher mode rejects every automated run entry and drops agent-owned capture', async () => {
+  for (const [browser, TeacherMode, AgentClass] of [
+    ['chrome', TeacherModeCh, AgentCh],
+    ['firefox', TeacherModeFx, AgentFx],
+  ]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+      async remove(key) { delete memory[key]; },
+    };
+    const tabId = 2699;
+    const agent = new AgentClass({});
+    const store = TeacherMode.createTeacherSessionStore(storage, { now: () => 5000 });
+    const interlock = TeacherMode.createTeacherRunInterlock(store, {
+      automationOwnsTab: (ownedTabId) => agent.isRunning(ownedTabId),
+    });
+    const guardedKinds = [];
+    let automatedDispatches = 0;
+    agent.setRunStartGuard(async (guardedTabId, context) => {
+      guardedKinds.push(context.kind);
+      await interlock.guardRunStart(guardedTabId);
+    });
+    agent._processMessageInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._processMessageStreamInner = async () => { automatedDispatches += 1; return 'unexpected'; };
+    agent._executeToolBatch = async () => { automatedDispatches += 1; return { action: 'continue' }; };
+
+    const started = await interlock.start(tabId, {
+      name: 'Teacher/run exclusion',
+      url: 'https://example.com/form',
+      webbrainVersion: 'test',
+    });
+    assert.equal(started.changed, true, `${browser}: teacher mode did not start`);
+
+    const workflow = {
+      id: 'workflow_teacher_exclusion',
+      name: 'Blocked workflow',
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Continue' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const runAttempts = [
+      () => agent.processMessage(tabId, 'interactive run', () => {}, 'act'),
+      () => agent.processMessage(tabId, 'scheduled run', () => {}, 'act', [], { scheduledRun: true }),
+      () => agent.processMessage(tabId, 'cloud run', () => {}, 'act', [], { cloudRun: true }),
+      () => agent.replaySavedWorkflow(tabId, workflow),
+      () => agent.processMessageStream(tabId, 'streaming run', () => {}, 'act'),
+    ];
+    for (const startAttempt of runAttempts) {
+      await assert.rejects(startAttempt(), (error) => {
+        assert.equal(error.code, TeacherMode.TEACHER_RUN_CONFLICT_CODE);
+        return true;
+      });
+      assert.equal(agent.isRunning(tabId), false, `${browser}: rejected run kept the tab claimed`);
+    }
+    assert.deepEqual(guardedKinds, ['interactive', 'scheduled', 'cloud', 'workflow', 'interactive']);
+    assert.equal(automatedDispatches, 0, `${browser}: a rejected run dispatched an automated action`);
+
+    // Defense in depth: even if a trusted content event or navigation arrives
+    // after an automation path has claimed the tab, none of it may be retained.
+    agent._runningTabs.add(tabId);
+    const click = await interlock.record(tabId, {
+      kind: 'click',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'button', name: 'Continue' },
+    });
+    const type = await interlock.record(tabId, {
+      kind: 'field',
+      pageUrl: 'https://example.com/form',
+      target: { role: 'textbox', name: 'Email', fieldName: 'email', type: 'email' },
+    });
+    const navigation = await interlock.navigation(tabId, 'https://example.com/next', { force: true });
+    agent._runningTabs.delete(tabId);
+    assert.deepEqual([click.reason, type.reason, navigation.reason], [
+      'agent_running', 'agent_running', 'agent_running',
+    ]);
+    assert.equal((await store.get(tabId)).actions.length, 0, `${browser}: agent-owned actions entered teacher history`);
+  }
+});
+
+test('teacher capture marks Enter as submit only after an uncancelled form submission', async () => {
+  const runCapture = async (build, submitState) => {
+    const listeners = new Map();
+    const actions = [];
+    const form = {};
+    class FakeElement {
+      constructor() {
+        this.tagName = 'INPUT';
+        this.form = form;
+        this.labels = [];
+      }
+      getAttribute(name) {
+        return { name: 'query', type: 'search', 'aria-label': 'Search' }[name] || '';
+      }
+      matches(selector) {
+        if (selector === 'input' || selector === 'button,input') return true;
+        if (selector.includes('textarea') || selector.includes('select') || selector.includes('contenteditable')) return false;
+        return false;
+      }
+      closest(selector) {
+        if (selector === 'form') return form;
+        if (selector === 'label') return null;
+        return this;
+      }
+    }
+    const field = new FakeElement();
+    const document = {
+      activeElement: field,
+      documentElement: { appendChild() {} },
+      addEventListener(type, listener) {
+        const registered = listeners.get(type) || [];
+        registered.push(listener);
+        listeners.set(type, registered);
+      },
+      createElement() {
+        return { style: {}, setAttribute() {}, remove() {} };
+      },
+      getElementById() { return null; },
+    };
+    const window = {
+      __wb_ax_role: () => 'textbox',
+      __wb_ax_name: () => 'Search',
+    };
+    window.top = window;
+    const chrome = {
+      runtime: {
+        lastError: null,
+        onMessage: { addListener() {} },
+        sendMessage(message, callback) {
+          if (message.action === 'get_teacher_mode') callback?.({ session: { active: true, name: 'Search flow' } });
+          if (message.action === 'record_teacher_action') actions.push(message.teacherAction);
+          return Promise.resolve();
+        },
+      },
+    };
+    const source = fs.readFileSync(
+      path.join(ROOT, `src/${build}/src/content/teacher-capture.js`),
+      'utf8',
+    );
+    vm.runInNewContext(source, {
+      chrome,
+      document,
+      window,
+      Element: FakeElement,
+      location: { href: 'https://example.com/search' },
+      URL,
+      queueMicrotask,
+    });
+
+    listeners.get('keydown')[0]({
+      isTrusted: true,
+      key: 'Enter',
+      repeat: false,
+      composedPath: () => [field],
+    });
+    assert.equal(actions.length, 1, `${build}: Enter must first record an ordinary field action`);
+    assert.equal(actions[0].submit, undefined, `${build}: keydown alone must not imply submission`);
+
+    if (submitState) {
+      listeners.get('submit')[0]({
+        isTrusted: true,
+        target: form,
+        defaultPrevented: submitState === 'cancelled',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return actions;
+  };
+
+  for (const build of ['chrome', 'firefox']) {
+    assert.equal((await runCapture(build, null)).length, 1, `${build}: autocomplete Enter gained submit semantics`);
+    assert.equal((await runCapture(build, 'cancelled')).length, 1, `${build}: cancelled submit was recorded`);
+    const confirmed = await runCapture(build, 'confirmed');
+    assert.equal(confirmed.length, 2, `${build}: confirmed form submission was not correlated`);
+    assert.equal(confirmed[1].submit, true);
+  }
+});
+
+test('teacher slash commands and value-free page capture are wired in both browsers', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const panelPath = `src/${build}/src/ui/sidepanel.js`;
+    const runtime = loadSlashCommandRuntime(panelPath);
+    assert.equal(runtime.parseSlashInvocation('/teach').action, 'status');
+    const start = runtime.parseSlashInvocation('/teach --start Checkout flow');
+    assert.equal(start.action, 'start');
+    assert.equal(start.payload, 'Checkout flow');
+    assert.equal(runtime.slashInvocationIsOutOfBand(start), true);
+    const end = runtime.parseSlashInvocation('/teach --end');
+    assert.equal(end.action, 'end');
+    assert.equal(runtime.slashInvocationIsOutOfBand(end), true);
+    assert.equal(runtime.parseSlashInvocation('/teach --end extra').error, 'invalid-usage');
+
+    const panel = fs.readFileSync(path.join(ROOT, panelPath), 'utf8');
+    assert.match(panel, /sendToBackground\('start_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('end_teacher_mode'/);
+    assert.match(panel, /sendToBackground\('get_teacher_mode'/);
+
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(background, /case 'record_teacher_action':/);
+    assert.match(background, /case 'start_teacher_mode':/);
+    assert.match(background, /case 'end_teacher_mode':/);
+    assert.match(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\)/);
+    assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
+    assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
+    assert.match(background, /scheduler\.isRunning\(tabId\)/);
+    assert.match(background, /compileWorkflowFromDemonstration/);
+
+    const scheduler = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/scheduler.js`), 'utf8');
+    assert.match(scheduler, /assertRunStartAllowed\?\.\(resolvedTabId, 'scheduled'/);
+
+    const capturePath = `src/${build}/src/content/teacher-capture.js`;
+    const capture = fs.readFileSync(path.join(ROOT, capturePath), 'utf8');
+    assert.match(capture, /event\.isTrusted/);
+    assert.match(capture, /action: 'record_teacher_action'/);
+    assert.match(capture, /action === 'flush_teacher_capture'/);
+    assert.match(capture, /document\.addEventListener\('submit'/);
+    assert.match(capture, /event\.defaultPrevented/);
+    assert.match(capture, /sendAction\(\{ \.\.\.pending\.action, submit: true \}\)/);
+    assert.match(capture, /name: field \? '' : clean\(window\.__wb_ax_name/);
+    assert.doesNotMatch(capture, /\.value\b/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, `src/${build}/manifest.json`), 'utf8'));
+    assert.ok(manifest.content_scripts.some((entry) => entry.js?.includes('src/content/teacher-capture.js')));
+  }
+  const cloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
+  assert.match(cloudRuns, /startingTabs\.add\(tabId\)[\s\S]*?assertRunStartAllowed\?\.\(tabId, 'cloud'/);
+});
+
 test('saved workflow slash commands are out-of-band and wired in both browsers', () => {
   for (const panel of ['src/chrome/src/ui/sidepanel.js', 'src/firefox/src/ui/sidepanel.js']) {
     const runtime = loadSlashCommandRuntime(panel);
@@ -63554,6 +64064,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     const source = fs.readFileSync(path.join(ROOT, panel), 'utf8');
     assert.match(source, /sendToBackground\('save_latest_workflow', \{ tabId, name \}\)/);
     assert.match(source, /sendToBackground\('list_saved_workflows'\)/);
+    assert.match(source, /sendToBackground\('rename_saved_workflow'/);
     assert.match(source, /sendToBackground\('delete_saved_workflow'/);
     assert.match(source, /sendToBackground\('get_saved_workflow', \{ id: workflowId \}\)/);
     assert.match(source, /sendToBackground\('export_saved_workflow'/);
@@ -63566,6 +64077,11 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /inputs\.forEach\(\(input\) => \{ input\.value = ''; \}\)/);
     assert.match(source, /name_required:\s*'sp\.workflows\.reason\.name_required'/);
     assert.match(source, /http_start_url_required:\s*'sp\.workflows\.reason\.http_start_url'/);
+    assert.match(source, /className = 'workflow-manager'/);
+    assert.match(source, /data-workflow-action/);
+    assert.match(source, /button\.dataset\.deleteArmed !== 'true'/);
+    assert.match(source, /bindSavedWorkflowManager/);
+    assert.doesNotMatch(source, /sp\.workflows\.title_html'\)}<pre class="scratchpad-dump"/);
     assert.doesNotMatch(source, /retryPayload[^\n]+workflowParameters/);
   }
   for (const background of ['src/chrome/src/background.js', 'src/firefox/src/background.js']) {
@@ -63573,6 +64089,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'save_latest_workflow':/);
     assert.match(source, /compileLatestSuccessfulWorkflow\(workflowTrace/);
     assert.match(source, /case 'list_saved_workflows':/);
+    assert.match(source, /case 'rename_saved_workflow':/);
     assert.match(source, /case 'delete_saved_workflow':/);
     assert.match(source, /case 'export_saved_workflow':/);
     assert.match(source, /case 'import_saved_workflow':/);
@@ -63853,6 +64370,100 @@ test('saved workflow target matching fails closed on ambiguity', () => {
   assert.equal(matched.candidate.refId, 'ref_3');
 });
 
+test('saved workflow healing candidates remain strong, user-reviewable, and unambiguous', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const candidates = module.findWorkflowHealingCandidates(
+      { role: 'button', name: 'Submit order' },
+      [
+        { refId: 'ref_1', role: 'button', name: 'Place order', id: 'checkout-primary', selector: '#raw' },
+        { refId: 'ref_2', role: 'button', name: 'Cancel order' },
+        { refId: 'ref_3', role: 'link', name: 'Place order' },
+        { refId: 'ref_4', role: 'button', name: 'Duplicate' },
+        { refId: 'ref_5', role: 'button', name: 'Duplicate' },
+      ],
+    );
+    assert.deepEqual(candidates.map((candidate) => candidate.refId).sort(), ['ref_1', 'ref_2']);
+    assert.deepEqual(candidates.find((candidate) => candidate.refId === 'ref_1').target, {
+      role: 'button',
+      name: 'Place order',
+      id: 'checkout-primary',
+    });
+    assert.doesNotMatch(JSON.stringify(candidates), /selector|#raw|ref_3|ref_4|ref_5/);
+    const links = module.findWorkflowHealingCandidates(
+      { role: 'link', name: 'Old docs', href: 'https://example.com/docs/old' },
+      [
+        { refId: 'ref_6', role: 'link', name: 'New docs', href: 'https://example.com/docs/new' },
+        { refId: 'ref_7', role: 'link', name: 'New docs', href: 'https://evil.example/docs/new' },
+        { refId: 'ref_8', role: 'link', name: 'New docs' },
+      ],
+    );
+    assert.deepEqual(links.map((candidate) => candidate.refId), ['ref_6']);
+  }
+});
+
+test('approved workflow target healings apply atomically without storing live refs', () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const workflow = module.normalizeSavedWorkflow({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_heal',
+      name: 'Checkout',
+      createdAt: 1000,
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    }, { now: 1000 });
+    const healed = module.applyWorkflowTargetHealings(workflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Submit order' },
+      target: { role: 'button', name: 'Place order', id: 'checkout-primary', refId: 'ref_9' },
+    }], { now: 2000 });
+    assert.equal(healed.changed, true);
+    assert.equal(healed.healedStepCount, 1);
+    assert.deepEqual(healed.workflow.steps[0].target, {
+      role: 'button', name: 'Place order', id: 'checkout-primary',
+    });
+    assert.equal(healed.workflow.updatedAt, 2000);
+    assert.doesNotMatch(JSON.stringify(healed.workflow), /ref_9/);
+
+    const stale = module.applyWorkflowTargetHealings(workflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Something else' },
+      target: { role: 'button', name: 'Place order' },
+    }], { now: 2000 });
+    assert.equal(stale.changed, false);
+    assert.equal(stale.reason, 'stale_target');
+
+    const fieldWorkflow = module.normalizeSavedWorkflow({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_sensitive_heal',
+      name: 'Fill credential',
+      start: { origin: 'https://example.com', pathFamily: '/account' },
+      parameters: [{ id: 'account', label: 'Account', required: true, sensitive: false, type: 'text' }],
+      steps: [{
+        id: 'step_1',
+        tool: 'type_ax',
+        args: { text: { [module.WORKFLOW_PARAM_REF_KEY]: 'account' }, clear: true },
+        target: { role: 'textbox', name: 'Account' },
+        expected: { kind: 'tool_verified' },
+      }],
+    }, { now: 1000 });
+    const sensitive = module.applyWorkflowTargetHealings(fieldWorkflow, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'textbox', name: 'Account' },
+      target: { role: 'textbox', name: 'Password', type: 'password' },
+    }], { now: 2000 });
+    assert.equal(sensitive.changed, true);
+    assert.equal(sensitive.workflow.parameters[0].sensitive, true);
+  }
+});
+
 test('saved workflow telemetry redacts runtime parameters and validates postconditions', () => {
   const template = { text: { [SavedWorkflowsCh.WORKFLOW_PARAM_REF_KEY]: 'password' }, clear: true };
   const redactedArgs = SavedWorkflowsCh.redactWorkflowArgsForTelemetry(template, {
@@ -63908,6 +64519,117 @@ test('saved workflow clarify telemetry redacts form field values', () => {
 });
 
 for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  test(`${browser} saved workflow releases its run claim when initialization fails`, async () => {
+    const workflow = {
+      id: 'workflow_init_failure',
+      name: 'Initialization failure',
+      start: { origin: 'https://example.com', pathFamily: '/form' },
+      steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.com/next' } }],
+    };
+    for (const stage of ['current_url', 'conversation']) {
+      const tabId = stage === 'current_url' ? 26990 : 26991;
+      const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+      agent._hydrate = async () => {};
+      agent._persist = () => {};
+      agent._currentUrl = async () => {
+        if (stage === 'current_url') throw new Error('current URL initialization failed');
+        return 'https://example.com/form';
+      };
+      agent.ensureConversationId = async () => {
+        throw new Error('conversation initialization failed');
+      };
+
+      await assert.rejects(
+        agent.replaySavedWorkflow(tabId, workflow, {}, () => {}, { cloudRun: true }),
+        /initialization failed/,
+      );
+      assert.equal(agent.isRunning(tabId), false, `${browser}: ${stage} failure leaked the run claim`);
+      assert.equal(
+        agent.completionInvariants.has(tabId),
+        false,
+        `${browser}: ${stage} failure leaked completion state`,
+      );
+      if (browser === 'chrome') {
+        assert.equal(
+          agent._foregroundCaptureTabs.has(tabId),
+          false,
+          `${browser}: ${stage} failure leaked capture policy`,
+        );
+      }
+    }
+  });
+
+  test(`${browser} saved workflow retains its run claim until cleanup finishes`, async () => {
+    const tabId = browser === 'chrome' ? 26992 : 26993;
+    const workflow = {
+      id: 'workflow_cleanup_claim',
+      name: 'Cleanup claim',
+      start: { origin: 'https://example.com', pathFamily: '/form' },
+      steps: [{
+        id: 'step_1',
+        tool: 'navigate',
+        args: { url: 'https://example.com/next' },
+        scope: { origin: 'https://example.com', pathFamily: '/form' },
+        expected: { kind: 'url_changed' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    let currentUrl = 'https://example.com/form';
+    let cleanupStartedResolve;
+    let releaseCleanupResolve;
+    const cleanupStarted = new Promise((resolve) => { cleanupStartedResolve = resolve; });
+    const releaseCleanup = new Promise((resolve) => { releaseCleanupResolve = resolve; });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_cleanup_claim';
+    agent._currentUrl = async () => currentUrl;
+    agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+      const tool = calls[0].function.name;
+      currentUrl = 'https://example.com/next';
+      onUpdate('tool_result', { name: tool, result: { success: true } });
+      return { action: 'continue' };
+    };
+    agent._endSavedWorkflowTraceRun = async () => {
+      cleanupStartedResolve();
+      await releaseCleanup;
+    };
+
+    const replay = agent.replaySavedWorkflow(tabId, workflow);
+    let result;
+    await cleanupStarted;
+    try {
+      assert.equal(agent.isRunning(tabId), true, `${browser}: cleanup released the run claim early`);
+      await assert.rejects(
+        agent.replaySavedWorkflow(tabId, workflow),
+        /already in progress/,
+        `${browser}: a second run started while cleanup was pending`,
+      );
+    } finally {
+      releaseCleanupResolve();
+      result = await replay;
+    }
+    assert.equal(result.status, 'completed');
+    assert.equal(agent.isRunning(tabId), false, `${browser}: completed cleanup retained the run claim`);
+
+    currentUrl = 'https://example.com/form';
+    agent._endSavedWorkflowTraceRun = async () => {
+      throw new Error('trace cleanup failed');
+    };
+    await assert.rejects(
+      agent.replaySavedWorkflow(tabId, workflow, {}, () => {}, { cloudRun: true }),
+      /trace cleanup failed/,
+    );
+    assert.equal(agent.isRunning(tabId), false, `${browser}: failed cleanup leaked the run claim`);
+    assert.equal(agent.completionInvariants.has(tabId), false, `${browser}: failed cleanup leaked completion state`);
+    if (browser === 'chrome') {
+      assert.equal(
+        agent._foregroundCaptureTabs.has(tabId),
+        false,
+        `${browser}: failed cleanup leaked capture policy`,
+      );
+    }
+  });
+
   test(`${browser} saved workflow replay resolves fresh targets without exposing runtime parameters`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
@@ -63978,6 +64700,167 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     assert.equal(agent.isRunning(77), false);
     assert.equal(agent.selectionGroundingScopes.has(77), false, `${browser}: completed replay kept stale selection scope`);
     assert.ok(persistCalls >= 1, `${browser}: completed replay did not persist selection-scope removal`);
+  });
+
+  test(`${browser} saved workflow heals only an explicitly approved and verified target`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    let executedArgs = null;
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({
+      pageContent: 'button "Place order" [ref_9] id="checkout-primary"',
+    });
+    agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+      executedArgs = JSON.parse(calls[0].function.arguments);
+      onUpdate('tool_result', {
+        name: 'click_ax',
+        result: { success: true, dispatched: true },
+      });
+      return { action: 'continue' };
+    };
+
+    const replayPromise = agent.replaySavedWorkflow(
+      84, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    assert.equal(prompt.workflowHealing.previousTarget.name, 'Submit order');
+    assert.equal(prompt.workflowHealing.candidates[0].target.name, 'Place order');
+    assert.equal(agent.submitClarifyResponse(84, prompt.clarifyId, 'candidate_0', 'option'), true);
+    const result = await replayPromise;
+
+    assert.equal(result.status, 'completed');
+    assert.equal(executedArgs.ref_id, 'ref_9');
+    assert.deepEqual(result.healings, [{
+      stepId: 'step_1',
+      previousTarget: { role: 'button', name: 'Submit order' },
+      target: { role: 'button', name: 'Place order', id: 'checkout-primary' },
+    }]);
+    assert.doesNotMatch(JSON.stringify(result.healings), /ref_9/);
+  });
+
+  test(`${browser} saved workflow does not persist an approved target after inconclusive verification`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing_inconclusive',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1',
+        tool: 'click_ax',
+        args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({ pageContent: 'button "Place order" [ref_9]' });
+    agent._executeToolBatch = async (_tabId, _calls, _messages, onUpdate) => {
+      onUpdate('tool_result', {
+        name: 'click_ax',
+        result: { success: true, dispatched: true, inconclusive: true },
+      });
+      return { action: 'continue' };
+    };
+    const replayPromise = agent.replaySavedWorkflow(
+      85, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    agent.submitClarifyResponse(85, prompt.clarifyId, 'candidate_0', 'option');
+    const result = await replayPromise;
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.healings, []);
+  });
+
+  test(`${browser} saved workflow revalidates an approved target before dispatch`, async () => {
+    const workflow = {
+      schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_healing_stale_page',
+      name: 'Checkout',
+      updatedAt: 1000,
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1', tool: 'click_ax', args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    let treeReads = 0;
+    let dispatched = false;
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_test';
+    agent._currentUrl = async () => 'https://example.com/checkout';
+    agent.executeTool = async () => ({
+      pageContent: ++treeReads === 1
+        ? 'button "Place order" [ref_9]'
+        : 'button "Cancel" [ref_10]',
+    });
+    agent._executeToolBatch = async () => {
+      dispatched = true;
+      throw new Error('stale approved target must not dispatch');
+    };
+    const replayPromise = agent.replaySavedWorkflow(
+      86, workflow, {}, (type, data) => updates.push({ type, data }),
+    );
+    while (!updates.some((update) => update.type === 'clarify')) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const prompt = updates.find((update) => update.type === 'clarify').data;
+    agent.submitClarifyResponse(86, prompt.clarifyId, 'candidate_0', 'option');
+    const result = await replayPromise;
+    assert.equal(result.status, 'fallback');
+    assert.equal(dispatched, false);
+    assert.deepEqual(result.healings, []);
+  });
+
+  test(`${browser} saved workflow rejects unattended locator-healing approval`, async () => {
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    const updates = [];
+    const choicePromise = agent._promptWorkflowTargetHealing(
+      87,
+      { id: 'workflow_heal_prompt', name: 'Checkout' },
+      { id: 'step_1', tool: 'click_ax', target: { role: 'button', name: 'Submit order' } },
+      0,
+      [{ refId: 'ref_9', target: { role: 'button', name: 'Place order' }, score: 2 }],
+      (type, data) => updates.push({ type, data }),
+    );
+    const prompt = updates[0].data;
+    assert.equal(agent.submitClarifyResponse(87, prompt.clarifyId, 'candidate_0', 'auto'), true);
+    assert.equal(await choicePromise, null);
   });
 
   test(`${browser} saved workflow replay fails closed before a semantic target miss`, async () => {
@@ -64217,8 +65100,88 @@ test('saved workflow store normalizes writes and resolves runtime parameters wit
     { text: 'new@example.com' },
   );
   assert.doesNotMatch(JSON.stringify(memory), /person@example\.com|new@example\.com|ref_5/);
+  const renamed = await store.rename(compiled.id, '  Updated email flow  ');
+  assert.equal(renamed.changed, true);
+  assert.equal(renamed.workflow.name, 'Updated email flow');
+  assert.equal(renamed.workflow.id, compiled.id);
+  assert.equal(renamed.workflow.createdAt, compiled.createdAt);
+  assert.deepEqual(renamed.workflow.steps, compiled.steps);
+  assert.deepEqual(renamed.workflow.parameters, compiled.parameters);
+  assert.equal((await store.rename(compiled.id, '   ')).reason, 'name_required');
+  assert.equal((await store.rename('workflow_missing', 'Missing')).reason, 'not_found');
   assert.equal((await store.delete(compiled.id)).changed, true);
   assert.equal((await store.list()).length, 0);
+});
+
+test('saved workflow store rejects healing after a concurrent workflow update', async () => {
+  for (const module of [SavedWorkflowsCh, SavedWorkflowsFx]) {
+    const memory = {};
+    const storage = {
+      async get(key) { return { [key]: structuredClone(memory[key]) }; },
+      async set(values) { Object.assign(memory, structuredClone(values)); },
+    };
+    let now = 5000;
+    const store = module.createSavedWorkflowStore(storage, { now: () => now++ });
+    const put = await store.put({
+      schema: module.SAVED_WORKFLOW_SCHEMA,
+      id: 'workflow_atomic_heal',
+      name: 'Checkout',
+      start: { origin: 'https://example.com', pathFamily: '/checkout' },
+      parameters: [],
+      steps: [{
+        id: 'step_1', tool: 'click_ax', args: {},
+        target: { role: 'button', name: 'Submit order' },
+        expected: { kind: 'tool_success' },
+      }],
+    });
+    const healed = await store.healTargets('workflow_atomic_heal', {
+      expectedUpdatedAt: put.workflow.updatedAt,
+      healings: [{
+        stepId: 'step_1',
+        previousTarget: { role: 'button', name: 'Submit order' },
+        target: { role: 'button', name: 'Place order', refId: 'ref_9' },
+      }],
+    });
+    assert.equal(healed.changed, true);
+    assert.equal(healed.healedStepCount, 1);
+    assert.equal((await store.get('workflow_atomic_heal')).steps[0].target.name, 'Place order');
+    assert.doesNotMatch(JSON.stringify(memory), /ref_9/);
+
+    const staleTimestamp = healed.workflow.updatedAt;
+    await store.put({ ...healed.workflow, name: 'Checkout renamed' });
+    const rejected = await store.healTargets('workflow_atomic_heal', {
+      expectedUpdatedAt: staleTimestamp,
+      healings: [{
+        stepId: 'step_1',
+        previousTarget: { role: 'button', name: 'Place order' },
+        target: { role: 'button', name: 'Confirm order' },
+      }],
+    });
+    assert.equal(rejected.changed, false);
+    assert.equal(rejected.reason, 'workflow_changed');
+    assert.equal((await store.get('workflow_atomic_heal')).name, 'Checkout renamed');
+  }
+});
+
+test('workflow healing approval and persistence wiring is mirrored across browsers', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
+    assert.match(agent, /workflowHealing:[\s\S]*?previousTarget:[\s\S]*?candidates:/);
+    assert.match(agent, /\['timeout', 'auto'\]\.includes\(response\?\.source\)/,
+      `${build}: unattended clarification could authorize workflow healing`);
+    assert.match(agent, /rawResult\?\.success === true[\s\S]*?rawResult\?\.inconclusive !== true/,
+      `${build}: healing did not require a conclusive successful result`);
+    assert.match(agent, /const refreshedTreeResult = await this\.executeTool[\s\S]*?findWorkflowTarget\([\s\S]*?approved\.target/,
+      `${build}: approved target was not re-resolved before dispatch`);
+    assert.match(background, /savedWorkflowStore\.healTargets\([\s\S]*?expectedUpdatedAt: workflow\.updatedAt/,
+      `${build}: verified healing was not persisted with optimistic concurrency`);
+    assert.match(panel, /if \(data\.workflowHealing\)[\s\S]*?button\.textContent = t\('sp\.workflows\.healing\.use'/,
+      `${build}: structured healing card missing`);
+    assert.match(panel, /submitClarify\([\s\S]*?candidate\.id, 'option'/,
+      `${build}: candidate selection must return a stable value`);
+  }
 });
 
 test('saved workflow store rejects a new workflow after the 100-workflow limit', async () => {

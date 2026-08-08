@@ -135,6 +135,15 @@ postconditions, and parameter descriptors. It does not contain typed field
 values, raw historical `ref_id` values, action CSS selectors, coordinates, URL query strings, or URL
 fragments.
 
+`/teach --start <name>` records a user demonstration in temporary,
+tab-scoped session storage. The page capture code never reads field values:
+it sends only the field's semantic identity, and the compiler immediately
+represents that action as a runtime parameter. Click/field target labels and
+sanitized URL origin/path families are retained because replay needs them to
+find the same controls. `/teach --end` removes the temporary session whether
+compilation succeeds or fails; a successful compilation writes the same
+`webbrain-workflow/1` format described above.
+
 `/workflow --run <id>` collects declared values in a temporary side-panel form
 and sends them directly to the background replay executor. The values are not
 written to the workflow, chat text, retry payload, user memory, replay trace,
@@ -146,6 +155,13 @@ delete or redact that source trace.
 Replay traces contain workflow/step IDs, semantic match status and score,
 postcondition status, fallback status, and estimated model calls saved. They do
 not contain runtime parameter values or freshly resolved element references.
+If a saved locator stops matching, WebBrain may show sanitized semantic target
+descriptions for the user to choose from. It never selects or persists a
+replacement automatically: the user must explicitly choose it, the attempted
+action must pass its saved postcondition, and the workflow must still be the
+same version. The temporary live `ref_id` is never written to storage. A field
+repair can upgrade its runtime parameter to sensitive (for example, when the
+new target is a password field), but it can never downgrade that protection.
 If deterministic replay cannot safely continue, a fallback Agent receives only
 saved metadata and must ask the user again for any still-needed value.
 

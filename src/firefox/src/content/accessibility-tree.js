@@ -1133,5 +1133,6 @@
   window.__wb_ax_lookup = lookup;
   window.__wb_ax_ref = getOrMintRef;
   window.__wb_ax_name = getAccessibleName;
+  window.__wb_ax_role = getRole;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

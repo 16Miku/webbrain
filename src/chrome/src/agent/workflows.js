@@ -391,6 +391,135 @@ export function compileWorkflowFromTrace(run, events, options = {}) {
     : { workflow: null, warnings, reason: 'normalization_failed' };
 }
 
+/** Normalize one value-free user-demonstrated action before session storage. */
+export function normalizeTeacherCaptureAction(input) {
+  const kind = cleanText(input?.kind, 40);
+  const scope = normalizeWorkflowScope(input?.scope) || workflowUrlScope(input?.pageUrl);
+  if (!scope) return null;
+  if (kind === 'navigate') {
+    const url = safeHttpUrl(input?.url);
+    return url ? { kind, scope, url } : null;
+  }
+  if (!['click', 'field', 'checked'].includes(kind)) return null;
+  const target = normalizeTarget(input?.target);
+  if (!isReplayableWorkflowTarget(target)) return null;
+  if (kind === 'checked' && typeof input?.checked !== 'boolean') return null;
+  return {
+    kind,
+    scope,
+    target,
+    ...(kind === 'checked' ? { checked: input.checked } : {}),
+    ...(kind === 'field' && input?.submit === true ? { submit: true } : {}),
+  };
+}
+
+/** Compile a user demonstration into the existing value-free workflow schema. */
+export function compileWorkflowFromDemonstration(input, options = {}) {
+  const ts = timestamp(options.now, nowMs());
+  const name = normalizeSavedWorkflowName(input?.name);
+  if (!name) return { workflow: null, warnings: [], reason: 'name_required' };
+  const start = normalizeWorkflowScope(input?.start) || workflowUrlScope(input?.startUrl);
+  if (!start) return { workflow: null, warnings: [], reason: 'http_start_url_required' };
+
+  const rawActions = Array.isArray(input?.actions) ? input.actions : [];
+  const previouslySkipped = Math.max(0, Math.floor(Number(input?.skippedActionCount) || 0));
+  const warnings = previouslySkipped
+    ? [`Skipped ${previouslySkipped} demonstrated action(s) because no safe, reusable target was available.`]
+    : [];
+  if (input?.actionLimitReached === true) {
+    warnings.push(`Stopped recording additional actions after the ${MAX_STEPS}-step workflow limit.`);
+  }
+  const parameters = [];
+  const steps = [];
+  let skippedActionCount = previouslySkipped;
+  for (const raw of rawActions) {
+    const action = normalizeTeacherCaptureAction(raw);
+    if (!action) {
+      skippedActionCount += 1;
+      warnings.push('Skipped a demonstrated action because it had no safe, reusable target or URL.');
+      continue;
+    }
+    if (action.kind === 'navigate') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'navigate',
+        args: { url: action.url },
+        scope: action.scope,
+        expected: { kind: 'url_changed' },
+      });
+    } else if (action.kind === 'click') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'click_ax',
+        args: {},
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'tool_success' },
+      });
+    } else if (action.kind === 'checked') {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: 'set_checked',
+        args: { checked: action.checked },
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'checked', value: action.checked },
+      });
+    } else if (parameters.length < MAX_PARAMETERS) {
+      const base = parameterBase(action.target, `input_${parameters.length + 1}`);
+      const id = uniqueParameterId(base, parameters);
+      parameters.push({
+        id,
+        label: cleanText(
+          action.target.label || action.target.ariaLabel || action.target.name
+            || action.target.fieldName || id,
+          120,
+        ),
+        required: true,
+        sensitive: sensitiveParameter(action.target),
+        type: 'text',
+      });
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        tool: action.submit ? 'set_field' : 'type_ax',
+        args: {
+          text: { [WORKFLOW_PARAM_REF_KEY]: id },
+          clear: true,
+          ...(action.submit ? { submit: true } : {}),
+        },
+        target: action.target,
+        scope: action.scope,
+        expected: { kind: 'tool_verified' },
+      });
+    } else {
+      skippedActionCount += 1;
+      warnings.push('Skipped a demonstrated field because the workflow parameter limit was reached.');
+    }
+    if (steps.length >= MAX_STEPS) break;
+  }
+
+  if (!steps.length) return { workflow: null, warnings, reason: 'no_replayable_steps' };
+  const workflow = normalizeSavedWorkflow({
+    schema: SAVED_WORKFLOW_SCHEMA,
+    id: options.id || createSavedWorkflowId(ts),
+    name,
+    createdAt: ts,
+    updatedAt: ts,
+    source: { runId: '', webbrainVersion: cleanText(input?.webbrainVersion, 40) },
+    start,
+    parameters,
+    steps,
+    stats: {
+      sourceToolCount: rawActions.length + previouslySkipped,
+      compiledStepCount: steps.length,
+      skippedToolCount: skippedActionCount,
+    },
+  }, { now: ts });
+  return workflow
+    ? { workflow, warnings, reason: '' }
+    : { workflow: null, warnings, reason: 'normalization_failed' };
+}
+
 function normalizeParameter(input) {
   const id = cleanId(input?.id).toLowerCase();
   if (!id) return null;
@@ -842,6 +971,88 @@ export function findWorkflowTarget(target, candidates) {
   return { status: 'matched', candidate: ranked[0].candidate, score: ranked[0].score };
 }
 
+function workflowHealingTargetCompatible(previous, replacement) {
+  if (scoreWorkflowTarget(previous, replacement) <= 0) return false;
+  if (!!previous?.href !== !!replacement?.href) return false;
+  if (previous?.href) {
+    try {
+      if (new URL(previous.href).origin !== new URL(replacement.href).origin) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Return user-reviewable replacement targets after strict matching fails.
+ * Every replacement must be independently replayable, and duplicate semantic
+ * descriptors are removed rather than choosing an arbitrary live ref.
+ */
+export function findWorkflowHealingCandidates(target, candidates, options = {}) {
+  const expected = normalizeTarget(target);
+  if (!expected) return [];
+  const limit = Math.max(1, Math.min(5, Math.floor(Number(options.limit) || 5)));
+  const ranked = [];
+  const fingerprintCounts = new Map();
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const refId = cleanText(candidate?.refId, 100);
+    const replacement = normalizeTarget(candidate);
+    if (!/^ref_[A-Za-z0-9_-]+$/.test(refId) || !isReplayableWorkflowTarget(replacement)) continue;
+    if (!workflowHealingTargetCompatible(expected, replacement)) continue;
+    const score = scoreWorkflowTarget(expected, replacement);
+    const fingerprint = JSON.stringify(replacement);
+    fingerprintCounts.set(fingerprint, (fingerprintCounts.get(fingerprint) || 0) + 1);
+    ranked.push({ refId, target: replacement, score, fingerprint });
+  }
+  return ranked
+    .filter((entry) => fingerprintCounts.get(entry.fingerprint) === 1)
+    .sort((a, b) => b.score - a.score || a.fingerprint.localeCompare(b.fingerprint))
+    .slice(0, limit)
+    .map(({ refId, target: replacement, score }) => ({ refId, target: replacement, score }));
+}
+
+/** Apply an approved batch of target replacements without changing workflow identity. */
+export function applyWorkflowTargetHealings(input, healings, options = {}) {
+  const ts = timestamp(options.now, nowMs());
+  const workflow = normalizeSavedWorkflow(input, { now: ts });
+  if (!workflow) return { changed: false, reason: 'invalid_workflow', workflow: null, healedStepCount: 0 };
+  const repairs = Array.isArray(healings) ? healings : [];
+  if (!repairs.length || repairs.length > MAX_STEPS) {
+    return { changed: false, reason: 'no_changes', workflow, healedStepCount: 0 };
+  }
+  const seen = new Set();
+  let healedStepCount = 0;
+  for (const repair of repairs) {
+    const stepId = cleanId(repair?.stepId);
+    const previousTarget = normalizeTarget(repair?.previousTarget);
+    const replacement = normalizeTarget(repair?.target);
+    if (!stepId || seen.has(stepId) || !previousTarget || !isReplayableWorkflowTarget(replacement)
+        || !workflowHealingTargetCompatible(previousTarget, replacement)) {
+      return { changed: false, reason: 'invalid_healing', workflow, healedStepCount: 0 };
+    }
+    seen.add(stepId);
+    const step = workflow.steps.find((candidate) => candidate.id === stepId);
+    if (!step || JSON.stringify(step.target || null) !== JSON.stringify(previousTarget)) {
+      return { changed: false, reason: 'stale_target', workflow, healedStepCount: 0 };
+    }
+    if (JSON.stringify(previousTarget) === JSON.stringify(replacement)) continue;
+    step.target = replacement;
+    if (['type_ax', 'set_field'].includes(step.tool) && sensitiveParameter(replacement)) {
+      const parameterId = cleanId(step.args?.text?.[WORKFLOW_PARAM_REF_KEY]);
+      const parameter = workflow.parameters.find((candidate) => candidate.id === parameterId);
+      if (parameter) parameter.sensitive = true;
+    }
+    healedStepCount += 1;
+  }
+  if (!healedStepCount) return { changed: false, reason: 'no_changes', workflow, healedStepCount: 0 };
+  workflow.updatedAt = ts;
+  const normalized = normalizeSavedWorkflow(workflow, { now: ts });
+  return normalized
+    ? { changed: true, reason: '', workflow: normalized, healedStepCount }
+    : { changed: false, reason: 'invalid_healing', workflow, healedStepCount: 0 };
+}
+
 export async function compileLatestSuccessfulWorkflow(traceReader, options = {}) {
   if (!traceReader?.listRuns || !traceReader?.getRunEvents) {
     return { workflow: null, warnings: [], reason: 'trace_reader_required' };
@@ -898,6 +1109,36 @@ export function createSavedWorkflowStore(storageArea, options = {}) {
       if (index >= 0) store.workflows[index] = workflow;
       else store.workflows.unshift(workflow);
       return { changed: true, workflow, store: await write(store) };
+    },
+    async rename(id, name) {
+      const normalizedName = normalizeSavedWorkflowName(name);
+      if (!normalizedName) {
+        return { changed: false, reason: 'name_required', workflow: null, store: await read() };
+      }
+      const store = await read();
+      const index = store.workflows.findIndex((item) => item.id === id);
+      if (index < 0) return { changed: false, reason: 'not_found', workflow: null, store };
+      const workflow = {
+        ...store.workflows[index],
+        name: normalizedName,
+        updatedAt: now(),
+      };
+      store.workflows[index] = workflow;
+      return { changed: true, workflow, store: await write(store) };
+    },
+    async healTargets(id, input = {}) {
+      const store = await read();
+      const index = store.workflows.findIndex((item) => item.id === id);
+      if (index < 0) return { changed: false, reason: 'not_found', workflow: null, store, healedStepCount: 0 };
+      const current = store.workflows[index];
+      const expectedUpdatedAt = Number(input.expectedUpdatedAt);
+      if (!Number.isFinite(expectedUpdatedAt) || current.updatedAt !== expectedUpdatedAt) {
+        return { changed: false, reason: 'workflow_changed', workflow: current, store, healedStepCount: 0 };
+      }
+      const healed = applyWorkflowTargetHealings(current, input.healings, { now: now() });
+      if (!healed.changed) return { ...healed, store };
+      store.workflows[index] = healed.workflow;
+      return { ...healed, store: await write(store) };
     },
     async delete(id) {
       const store = await read();

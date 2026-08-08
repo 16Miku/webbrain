@@ -73,6 +73,7 @@ import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefi
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
 import {
+  findWorkflowHealingCandidates,
   findWorkflowTarget,
   parseAccessibilityTreeDescriptors,
   redactWorkflowArgsForTelemetry,
@@ -102,7 +103,9 @@ const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const PLAN_REVIEW_CONFIDENCE_DEFAULT = 0.75;
 const COST_ALLOWANCE_SESSION_KEY = 'costAllowanceSessionUsd';
 const COST_ALLOWANCE_TOTAL_KEY = 'costAllowanceTotalUsd';
-const CLOUD_COST_SPENT_KEY = 'cloudCostSpentUsd';
+// Do not inherit the legacy cloudCostSpentUsd bucket: it also contains
+// historical WebBrain Cloud estimates, which are exempt from user spend caps.
+const CLOUD_COST_SPENT_KEY = 'meteredProviderCostSpentUsd';
 const COST_EPSILON = 1e-9;
 const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
@@ -391,7 +394,7 @@ export class Agent extends LoopDetector {
     this.screenshotClickScale = new Map();
     this.costAllowanceSessionUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
     this.costAllowanceTotalUsd = DEFAULT_CLOUD_COST_ALLOWANCE_USD;
-    this.cloudCostSpentUsd = 0;
+    this.meteredProviderCostSpentUsd = 0;
     this._costUpdateQueue = Promise.resolve();
 
     // Strict secret-handling mode. When true, the system prompt and `done`
@@ -542,7 +545,7 @@ export class Agent extends LoopDetector {
           this.costAllowanceTotalUsd = this._normalizeCostLimit(changes[COST_ALLOWANCE_TOTAL_KEY].newValue);
         }
         if (changes[CLOUD_COST_SPENT_KEY]) {
-          this.cloudCostSpentUsd = this._normalizeCostSpent(changes[CLOUD_COST_SPENT_KEY].newValue);
+          this.meteredProviderCostSpentUsd = this._normalizeCostSpent(changes[CLOUD_COST_SPENT_KEY].newValue);
         }
       });
     } catch { /* storage API unavailable in this context */ }
@@ -557,6 +560,7 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
+    this._runStartGuard = null;
     // Ordinary runs capture and act in their original tab without activating
     // it. Managed cloud runs and the explicit /foreground compatibility
     // override retain the old Page.bringToFront behavior for their lifetime.
@@ -895,6 +899,38 @@ export class Agent extends LoopDetector {
     this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
   }
 
+  setRunStartGuard(guard) {
+    this._runStartGuard = typeof guard === 'function' ? guard : null;
+  }
+
+  _runEntryKind(defaultKind, runOptions = {}) {
+    if (runOptions?.cloudRun === true) return 'cloud';
+    if (runOptions?.scheduledRun === true) return 'scheduled';
+    return defaultKind;
+  }
+
+  async assertRunStartAllowed(tabId, defaultKind = 'interactive', runOptions = {}) {
+    await this._runStartGuard?.(tabId, {
+      kind: this._runEntryKind(defaultKind, runOptions),
+      runOptions,
+    });
+  }
+
+  async _claimRunEntry(tabId, defaultKind, runOptions = {}) {
+    if (this._runningTabs.has(tabId)) {
+      throw new Error('An agent run is already in progress for this tab.');
+    }
+    // Claim synchronously before awaiting the external guard so teacher-mode
+    // startup cannot race a run whose persisted teacher-state check is pending.
+    this._runningTabs.add(tabId);
+    try {
+      await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
+    } catch (error) {
+      this._runningTabs.delete(tabId);
+      throw error;
+    }
+  }
+
   isRunning(tabId) {
     return this._runningTabs.has(tabId);
   }
@@ -1191,13 +1227,13 @@ export class Agent extends LoopDetector {
 
   _isCostMeteredProvider(provider) {
     const config = provider?.config || {};
-    if (config.category === 'local') return false;
+    // WebBrain Cloud is billed and allowance-controlled by the managed
+    // service, not by the user's per-provider API account. Its upstream token
+    // cost must not consume the extension's user-configured spend allowance.
+    if (config.providerName === 'webbrain-cloud') return false;
     if (this._isLocalBaseUrl(config.baseUrl)) return false;
     if (config.type === 'anthropic_oauth') return false;
-    const isMeteredCategory = config.category === 'cloud' || config.category === 'router';
-    if (isMeteredCategory) return true;
-    if (config.providerName === 'openrouter') return true;
-    return !!(config.apiKey && /^https?:\/\//i.test(config.baseUrl || ''));
+    return config.category === 'cloud' || config.category === 'router';
   }
 
   _usageTokenCounts(usage) {
@@ -1341,12 +1377,12 @@ export class Agent extends LoopDetector {
       ]);
       this.costAllowanceSessionUsd = this._normalizeCostLimit(stored[COST_ALLOWANCE_SESSION_KEY]);
       this.costAllowanceTotalUsd = this._normalizeCostLimit(stored[COST_ALLOWANCE_TOTAL_KEY]);
-      this.cloudCostSpentUsd = this._normalizeCostSpent(stored[CLOUD_COST_SPENT_KEY]);
+      this.meteredProviderCostSpentUsd = this._normalizeCostSpent(stored[CLOUD_COST_SPENT_KEY]);
     } catch { /* keep in-memory defaults */ }
     return {
       sessionLimitUsd: this.costAllowanceSessionUsd,
       totalLimitUsd: this.costAllowanceTotalUsd,
-      totalSpentUsd: this.cloudCostSpentUsd,
+      totalSpentUsd: this.meteredProviderCostSpentUsd,
     };
   }
 
@@ -1380,7 +1416,7 @@ export class Agent extends LoopDetector {
       const state = await this._getCostAllowanceState();
       const nextTotal = state.totalSpentUsd + costUsd;
       if (costState) costState.spentUsd = this._normalizeCostSpent(costState.spentUsd) + costUsd;
-      this.cloudCostSpentUsd = nextTotal;
+      this.meteredProviderCostSpentUsd = nextTotal;
       try { await chrome.storage.local.set({ [CLOUD_COST_SPENT_KEY]: nextTotal }); } catch {}
       return this._checkCostAllowanceState({ ...state, totalSpentUsd: nextTotal }, costState);
     });
@@ -10925,6 +10961,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return 'deny';
   }
 
+  async _promptWorkflowTargetHealing(tabId, workflow, step, stepIndex, candidates, onUpdate) {
+    const choices = Array.isArray(candidates) ? candidates.slice(0, 5) : [];
+    if (!choices.length) return null;
+    const clarifyId = `workflow_heal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now() });
+    });
+    try {
+      onUpdate('clarify', {
+        clarifyId,
+        workflowHealing: {
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          stepId: step.id,
+          stepNumber: stepIndex + 1,
+          tool: step.tool,
+          previousTarget: step.target,
+          candidates: choices.map((candidate, index) => ({
+            id: `candidate_${index}`,
+            target: candidate.target,
+          })),
+        },
+        question: `Choose a replacement target for saved workflow step ${stepIndex + 1}. The workflow will update only if the action succeeds and its postcondition is verified.`,
+        options: ['deny'],
+      });
+    } catch {}
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0) this._pendingClarifications.delete(tabId);
+    if (response?.cancelled || ['timeout', 'auto'].includes(response?.source)) return null;
+    const match = String(response?.answer || '').match(/^candidate_(\d)$/);
+    const index = match ? Number(match[1]) : -1;
+    return choices[index] || null;
+  }
+
   /**
    * Check and clear abort flag.
    */
@@ -15538,47 +15611,72 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  async _endSavedWorkflowTraceRun(runId, status, finalContent) {
+    await trace.endRun(runId, { status, finalContent });
+  }
+
   async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
-    if (this._runningTabs.has(tabId)) throw new Error('An agent run is already in progress for this tab.');
     if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
       throw new Error('Saved workflow is missing or invalid.');
     }
-    await this._hydrate(tabId);
-    // Deterministic workflow replay is an independent task even when it never
-    // falls back to processMessage. Clear stale selected-text grounding before
-    // any replay action so a successful replay cannot poison the next turn.
-    this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
-    // Align pre-run cleanup with processMessage so a prior Act turn cannot
-    // leak click-AX CDP fallbacks, plan guards, or active-skill state into
-    // deterministic replay (or the reverse on the next turn).
-    this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
-    this._clearRunLoopState(tabId);
-    this._resetRichTextToolbarAudit(tabId);
-    this._clickAxCdpFallbacks?.delete(tabId);
-    this.abortFlags.delete(tabId);
-    this._prepareClarificationAuthorizationForRun(tabId);
-    this.permissions.beginTurn(tabId);
-    this.conversationModes.set(tabId, 'act');
-    const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
-    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
-    const startUrl = await this._currentUrl(tabId);
-    const conversationId = await this.ensureConversationId(tabId, 'act');
-    const traceRunId = await trace.startRun({
-      conversationId,
-      userMessage: `Run saved workflow: ${workflow.name}`,
-      tabUrl: startUrl,
-      mode: 'act',
-      model: this.providerManager?.getActive?.()?.model || '',
-      providerId: this.providerManager?.activeProviderId || '',
-      runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
-        tabId,
+    await this._claimRunEntry(tabId, 'workflow', runOptions);
+    let completionRunToken = '';
+    let previousForegroundCapture = false;
+    let capturePolicyConfigured = false;
+    let startUrl = '';
+    let traceRunId = null;
+    try {
+      await this._hydrate(tabId);
+      // Deterministic workflow replay is an independent task even when it never
+      // falls back to processMessage. Clear stale selected-text grounding before
+      // any replay action so a successful replay cannot poison the next turn.
+      this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
+      // Align pre-run cleanup with processMessage so a prior Act turn cannot
+      // leak click-AX CDP fallbacks, plan guards, or active-skill state into
+      // deterministic replay (or the reverse on the next turn).
+      this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      this._clearRunLoopState(tabId);
+      this._resetRichTextToolbarAudit(tabId);
+      this._clickAxCdpFallbacks?.delete(tabId);
+      this.abortFlags.delete(tabId);
+      this._prepareClarificationAuthorizationForRun(tabId);
+      this.permissions.beginTurn(tabId);
+      this.conversationModes.set(tabId, 'act');
+      completionRunToken = this._beginCompletionInvariant(tabId);
+      previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
+      capturePolicyConfigured = true;
+      startUrl = await this._currentUrl(tabId);
+      const conversationId = await this.ensureConversationId(tabId, 'act');
+      traceRunId = await trace.startRun({
+        conversationId,
+        userMessage: `Run saved workflow: ${workflow.name}`,
+        tabUrl: startUrl,
         mode: 'act',
-      }),
-    });
+        model: this.providerManager?.getActive?.()?.model || '',
+        providerId: this.providerManager?.activeProviderId || '',
+        runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
+          tabId,
+          mode: 'act',
+        }),
+      });
+    } catch (error) {
+      try {
+        if (capturePolicyConfigured) {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        }
+      } finally {
+        try {
+          if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
+        } finally {
+          this._runningTabs.delete(tabId);
+        }
+      }
+      throw error;
+    }
     let traceStatus = 'workflow_stopped';
     let finalContent = '';
     let matchedSteps = 0;
+    const verifiedHealings = [];
 
     const finishStopped = (reason, stepIndex = 0) => {
       const summary = `Saved workflow "${workflow.name}" stopped safely at step ${stepIndex + 1}: ${reason}.`;
@@ -15588,7 +15686,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       traceStatus = 'workflow_stopped';
       finalContent = summary;
-      return { status: 'stopped', summary, reason, stepIndex, matchedSteps };
+      return { status: 'stopped', summary, reason, stepIndex, matchedSteps, healings: verifiedHealings };
     };
 
     try {
@@ -15605,6 +15703,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason,
           stepIndex: 0,
           matchedSteps,
+          healings: verifiedHealings,
           prompt: workflowFallbackPrompt(workflow, 0, reason),
         };
       }
@@ -15629,6 +15728,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             reason,
             stepIndex: index,
             matchedSteps,
+            healings: verifiedHealings,
             prompt: workflowFallbackPrompt(workflow, index, reason),
           };
         }
@@ -15640,6 +15740,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         let targetMatch = null;
+        let pendingHealing = null;
         if (step.target) {
           const treeResult = await this.executeTool(tabId, 'get_accessibility_tree', {
             filter: 'all',
@@ -15650,6 +15751,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             : treeResult?.pageContent || treeResult?.tree || treeResult?.content || '';
           const candidates = parseAccessibilityTreeDescriptors(treeText);
           targetMatch = findWorkflowTarget(step.target, candidates);
+          if (targetMatch.status !== 'matched') {
+            const healingCandidates = findWorkflowHealingCandidates(step.target, candidates);
+            const approved = await this._promptWorkflowTargetHealing(
+              tabId, workflow, step, index, healingCandidates, onUpdate,
+            );
+            if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
+            if (approved) {
+              const approvalUrl = await this._currentUrl(tabId);
+              const approvalScope = step.scope || workflow.start;
+              if (workflowUrlMatches(approvalScope, approvalUrl)) {
+                const refreshedTreeResult = await this.executeTool(tabId, 'get_accessibility_tree', {
+                  filter: 'all',
+                  maxChars: 60000,
+                });
+                const refreshedTreeText = typeof refreshedTreeResult === 'string'
+                  ? refreshedTreeResult
+                  : refreshedTreeResult?.pageContent || refreshedTreeResult?.tree
+                    || refreshedTreeResult?.content || '';
+                const refreshedMatch = findWorkflowTarget(
+                  approved.target,
+                  parseAccessibilityTreeDescriptors(refreshedTreeText),
+                );
+                if (refreshedMatch.status === 'matched') {
+                  targetMatch = refreshedMatch;
+                  pendingHealing = {
+                    stepId: step.id,
+                    previousTarget: step.target,
+                    target: approved.target,
+                  };
+                  trace.recordNote(traceRunId, index + 1, 'workflow_target_healing_approved', {
+                    workflowId: workflow.id,
+                    stepId: step.id,
+                    tool: step.tool,
+                    candidateScore: approved.score,
+                  });
+                }
+              }
+            }
+          }
           if (targetMatch.status !== 'matched') {
             trace.recordNote(traceRunId, index + 1, 'workflow_replay_target_miss', {
               workflowId: workflow.id,
@@ -15665,6 +15805,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               reason,
               stepIndex: index,
               matchedSteps,
+              healings: verifiedHealings,
               prompt: workflowFallbackPrompt(workflow, index, reason),
             };
           }
@@ -15731,8 +15872,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             reason: validation.reason,
             stepIndex: index,
             matchedSteps,
+            healings: verifiedHealings,
             prompt: workflowFallbackPrompt(workflow, index, validation.reason),
           };
+        }
+        if (pendingHealing) {
+          const healingVerified = rawResult?.success === true
+            && rawResult?.dispatched !== false
+            && rawResult?.verified !== false
+            && rawResult?.noProgress !== true
+            && rawResult?.inconclusive !== true
+            && rawResult?.outcomeUnknown !== true
+            && rawResult?.ambiguous !== true
+            && rawResult?.stale !== true
+            && rawResult?.wrongTarget !== true;
+          trace.recordNote(traceRunId, index + 1, 'workflow_target_healing_verification', {
+            workflowId: workflow.id,
+            stepId: step.id,
+            tool: step.tool,
+            verified: healingVerified,
+          });
+          if (healingVerified) verifiedHealings.push(pendingHealing);
         }
         matchedSteps += 1;
       }
@@ -15750,18 +15910,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       traceStatus = 'done';
       finalContent = summary;
-      return { status: 'completed', summary, matchedSteps, estimatedLlmCallsSaved: matchedSteps };
+      return {
+        status: 'completed',
+        summary,
+        matchedSteps,
+        estimatedLlmCallsSaved: matchedSteps,
+        healings: verifiedHealings,
+      };
     } finally {
-      await trace.endRun(traceRunId, { status: traceStatus, finalContent });
-      this.currentCostState.delete(tabId);
-      this._planExecutionGuards.delete(tabId);
-      this._resetActiveSkillsForRun(tabId);
-      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
-      this._runningTabs.delete(tabId);
-      this._clearRunLoopState(tabId);
-      if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
-      this._clickAxCdpFallbacks?.delete(tabId);
-      this._clearCompletionInvariant(tabId, completionRunToken);
+      try {
+        try {
+          await this._endSavedWorkflowTraceRun(traceRunId, traceStatus, finalContent);
+        } finally {
+          this.currentCostState.delete(tabId);
+          this._planExecutionGuards.delete(tabId);
+          this._resetActiveSkillsForRun(tabId);
+          this._clearRunLoopState(tabId);
+          if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
+          this._clickAxCdpFallbacks?.delete(tabId);
+        }
+      } finally {
+        try {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        } finally {
+          try {
+            this._clearCompletionInvariant(tabId, completionRunToken);
+          } finally {
+            this._runningTabs.delete(tabId);
+          }
+        }
+      }
     }
   }
 
@@ -21841,10 +22019,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -21865,7 +22040,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
@@ -22767,10 +22941,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Process a message with streaming output.
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
-    if (this._runningTabs.has(tabId)) {
-      throw new Error('An agent run is already in progress for this tab.');
-    }
-    this._runningTabs.add(tabId);
+    await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
       // Hydration has to run before the toolbar-ledger reset below, so a
       // persisted obligation cannot outlive the run that cleared it. It is
@@ -22791,7 +22962,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
-    this._runningTabs.add(tabId);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);

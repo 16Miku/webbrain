@@ -403,7 +403,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -469,7 +469,7 @@ async function init() {
   if (tracingToggle) tracingToggle.checked = stored.tracingEnabled === true;
   const sessionLimit = normalizeCostAmount(stored.costAllowanceSessionUsd);
   const totalLimit = normalizeCostAmount(stored.costAllowanceTotalUsd);
-  const totalSpent = normalizeCostAmount(stored.cloudCostSpentUsd, 0);
+  const totalSpent = normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0);
   if (costSessionLimitInput) costSessionLimitInput.value = sessionLimit.toFixed(2);
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
@@ -1137,13 +1137,13 @@ costSessionLimitInput?.addEventListener('change', async () => {
 costTotalLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costTotalLimitInput.value);
   costTotalLimitInput.value = value.toFixed(2);
-  const stored = await browser.storage.local.get(['cloudCostSpentUsd']);
-  renderCostAllowanceSpent(normalizeCostAmount(stored.cloudCostSpentUsd, 0), value);
+  const stored = await browser.storage.local.get(['meteredProviderCostSpentUsd']);
+  renderCostAllowanceSpent(normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0), value);
   await browser.storage.local.set({ costAllowanceTotalUsd: value }).catch(() => {});
 });
 
 btnResetCostSpend?.addEventListener('click', async () => {
-  await browser.storage.local.set({ cloudCostSpentUsd: 0 });
+  await browser.storage.local.set({ meteredProviderCostSpentUsd: 0 });
   renderCostAllowanceSpent(0, normalizeCostAmount(costTotalLimitInput?.value));
 });
 

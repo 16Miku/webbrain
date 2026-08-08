@@ -24,12 +24,15 @@ for its available flags.
 | `/memory` | Show saved user memory |
 | `/memory --add <text>` | Save a user preference to memory |
 | `/memory --forget <id>` | Forget a saved memory by ID |
-| `/workflow` | List saved workflows and their IDs |
+| `/workflow` | Open the saved-workflow manager with Run, Rename, Export, and guarded Delete actions |
 | `/workflow --save <name>` | Compile the latest successful traced run into a reusable, value-free workflow |
 | `/workflow --run <id>` | Run a saved workflow in Act mode, collecting any runtime parameters locally |
 | `/workflow --delete <id>` | Delete a saved workflow |
 | `/workflow --export <id>` | Download a sanitized portable `webbrain-workflow/1` JSON file |
 | `/workflow --import --file` | Import a portable workflow file as a new local saved workflow |
+| `/teach` | Show the current tab's Teacher mode status and captured action count |
+| `/teach --start <name>` | Start learning a saved workflow from your demonstrated clicks and field edits |
+| `/teach --end` | Stop teaching and compile the captured actions into a value-free saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** See [below](#allow-api). |
 | `/foreground [prompt]` | Run one local task in the foreground for visual compatibility |
 | `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting. |
