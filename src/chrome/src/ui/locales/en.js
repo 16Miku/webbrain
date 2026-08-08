@@ -562,9 +562,9 @@ export default {
   'st.display.tracing.label': 'Record traces (for model comparison)',
   'st.display.tracing.desc_html': 'Persist every run (LLM requests, responses, tool calls, screenshots) into local IndexedDB so you can inspect and compare models side-by-side. Opens in a separate Traces tab. Off by default because it adds disk writes per step. <a href="traces.html" target="_blank" style="color:var(--accent);">Open Traces page →</a>',
   'st.display.cost_session_limit.label': 'Cloud cost session allowance',
-  'st.display.cost_session_limit.desc': 'Stops cloud and OpenRouter runs before another paid model call once this session reaches the reported or estimated cost allowance. Default $10.',
+  'st.display.cost_session_limit.desc': 'Stops eligible cloud and router runs before another paid model call once this session reaches the reported or estimated cost allowance. Default $10.',
   'st.display.cost_total_limit.label': 'Cloud cost total allowance',
-  'st.display.cost_total_limit.desc': 'Tracks reported or estimated cloud/OpenRouter model spend across the extension and stops further paid calls at the allowance. Local providers are not counted.',
+  'st.display.cost_total_limit.desc': 'Tracks reported or estimated spend for eligible cloud and router model calls across the extension and stops further paid calls at the allowance.',
   'st.display.cost_reset': 'Reset spend',
   'st.display.strict_secret.label': 'Strict secret handling',
   'st.display.strict_secret.desc': 'Refuse to quote credentials (passwords, API keys, tokens, OTPs) in summaries or assistant text — even when you explicitly ask for them. Useful if you regularly share trace files or screen-share. Off by default: webbrain runs in your own browser, so by default the agent shows you values you ask for and just keeps `done` summaries tidy.',
@@ -965,4 +965,5 @@ export default {
   "sp.workflows.healing.keep": "Keep the saved target",
   "sp.workflows.healing.saved": "Updated {count} locator(s) in “{name}”.",
   "sp.workflows.healing.not_saved": "The approved locator for “{name}” was not saved because the workflow changed or verification was inconclusive.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

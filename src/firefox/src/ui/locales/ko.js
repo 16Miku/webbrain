@@ -936,4 +936,5 @@ export default {
   "sp.workflows.healing.keep": "저장된 대상 유지",
   "sp.workflows.healing.saved": "“{name}”에서 로케이터 {count}개를 업데이트했습니다.",
   "sp.workflows.healing.not_saved": "워크플로가 변경되었거나 검증 결과가 불확실하여 “{name}”에서 승인한 로케이터를 저장하지 않았습니다.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

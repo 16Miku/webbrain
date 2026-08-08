@@ -936,4 +936,5 @@ export default {
   "sp.workflows.healing.keep": "ใช้เป้าหมายที่บันทึกไว้ต่อไป",
   "sp.workflows.healing.saved": "อัปเดตตัวระบุตำแหน่ง {count} รายการใน “{name}” แล้ว",
   "sp.workflows.healing.not_saved": "ไม่ได้บันทึกตัวระบุตำแหน่งที่อนุมัติสำหรับ “{name}” เพราะเวิร์กโฟลว์เปลี่ยนแปลงหรือผลการยืนยันไม่ชัดเจน",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

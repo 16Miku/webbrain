@@ -961,4 +961,5 @@ export default {
   "sp.workflows.healing.keep": "सहेजा गया लक्ष्य रखें",
   "sp.workflows.healing.saved": "“{name}” में {count} लोकेटर अपडेट किए गए।",
   "sp.workflows.healing.not_saved": "“{name}” के लिए स्वीकृत लोकेटर सहेजा नहीं गया क्योंकि वर्कफ़्लो बदल गया था या सत्यापन निर्णायक नहीं था।",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

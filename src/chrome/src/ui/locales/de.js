@@ -934,4 +934,5 @@ export default {
   "sp.workflows.healing.keep": "Gespeichertes Ziel beibehalten",
   "sp.workflows.healing.saved": "{count} Locator in „{name}“ aktualisiert.",
   "sp.workflows.healing.not_saved": "Der bestätigte Locator für „{name}“ wurde nicht gespeichert, weil sich der Workflow geändert hat oder die Prüfung nicht eindeutig war.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };

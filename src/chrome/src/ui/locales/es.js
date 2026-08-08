@@ -963,4 +963,5 @@ export default {
   "sp.workflows.healing.keep": "Conservar el objetivo guardado",
   "sp.workflows.healing.saved": "Se actualizaron {count} localizadores en «{name}».",
   "sp.workflows.healing.not_saved": "El localizador aprobado para «{name}» no se guardó porque el flujo cambió o la verificación no fue concluyente.",
+  'st.display.cost_allowance_scope': 'Applies only to usage-billed cloud and router providers. WebBrain Cloud and local providers are excluded.',
 };
