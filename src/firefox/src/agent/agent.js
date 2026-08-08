@@ -98,6 +98,7 @@ import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -135,6 +136,7 @@ const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'get_shadow_dom',
   'shadow_dom_query',
   'get_frames',
+  'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
 ]);
@@ -143,6 +145,7 @@ const COMPLETION_DOCUMENT_URL_TOOLS = new Set([
   'read_page',
   'read_page_source',
   'get_interactive_elements',
+  'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
 ]);
@@ -3111,7 +3114,7 @@ export class Agent extends LoopDetector {
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
-  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
   static NAV_PRONE_TOOLS = new Set(['click', 'click_ax', 'set_checked', 'navigate', 'go_back', 'go_forward', 'execute_js', 'iframe_click']);
   static RECOMMENDED_ACTION_FAST_PATH_IDS = new Set(['download-media', 'tweet-webbrain', 'post-webbrain-linkedin']);
   static RECOMMENDED_ACTION_FIRST_TOOLS = Object.freeze({
@@ -3179,6 +3182,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       s = s.slice(cut);
     }
     return s.trim();
+  }
+
+  static _traceMediaCounts(messages) {
+    let imageBlockCount = 0;
+    let documentBlockCount = 0;
+    for (const message of Array.isArray(messages) ? messages : []) {
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      for (const block of blocks) {
+        if (block?.type === 'image_url') imageBlockCount += 1;
+        if (block?.type === 'document') documentBlockCount += 1;
+      }
+    }
+    return { imageBlockCount, documentBlockCount };
   }
 
   _shouldAutoScreenshot(toolName) {
@@ -5185,7 +5201,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ],
         });
         const runIdForShot = this.currentRunId.get(tabId);
-        if (runIdForShot) {
+        if (runIdForShot && fnName !== 'inspect_viewport') {
           void trace.recordScreenshot(runIdForShot, null, attachedImage, `screenshot-tool:${fnName}`);
         }
       }
@@ -5756,29 +5772,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const coordinateSpace = opts.coordinateSpace === 'page' ? 'page' : 'viewport';
-    let navigationFrames;
-    try {
-      navigationFrames = await browser.webNavigation.getAllFrames({ tabId });
-    } catch {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-    }
-    if (!Array.isArray(navigationFrames) || navigationFrames.length === 0) {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-    }
-    const frameSnapshots = (await Promise.all(navigationFrames.map(async (frame) => {
-      try {
-        const resp = await browser.tabs.sendMessage(tabId, {
-          target: 'redaction-content',
-          action: 'get_redaction_regions',
-          params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
-        }, { frameId: frame.frameId });
-        return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
-      } catch {
-        return null;
-      }
-    }))).filter(Boolean);
-    const resp = frameSnapshots.find((frame) => frame.frameId === 0);
-    if (!resp) return dataUrl;
+    const snapshot = opts.redactionSnapshot
+      ? this._normalizeScreenshotRedactionSnapshot(opts.redactionSnapshot, coordinateSpace)
+      : await this._captureScreenshotRedactionSnapshot(tabId, { coordinateSpace });
+    if (!snapshot) return dataUrl;
 
     const suppliedBounds = opts.capturedCssBounds;
     const hasCapturedBounds = coordinateSpace === 'page' &&
@@ -5786,9 +5783,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       Number.isFinite(suppliedBounds?.y) &&
       Number.isFinite(suppliedBounds?.width) && suppliedBounds.width > 0 &&
       Number.isFinite(suppliedBounds?.height) && suppliedBounds.height > 0;
-    const cssBox = hasCapturedBounds
-      ? suppliedBounds
-      : (resp?.viewport || { width: imageWidth, height: imageHeight });
+    const cssBox = hasCapturedBounds ? suppliedBounds : snapshot.viewport;
     const cssW = Number.isFinite(cssBox.width) && cssBox.width > 0 ? cssBox.width : imageWidth;
     const cssH = Number.isFinite(cssBox.height) && cssBox.height > 0 ? cssBox.height : imageHeight;
     const scaleX = imageWidth / cssW;
@@ -5800,7 +5795,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? suppliedBounds.y
       : (Number.isFinite(opts.offsetY) ? opts.offsetY : 0);
 
-    const regions = mergeRedactionFrameRegions(frameSnapshots);
+    const regions = snapshot.regions;
     if (!regions.length) return dataUrl;
 
     const imageRegions = mapRegionsToImage(regions, {
@@ -5819,6 +5814,155 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._compressJpegToByteCeiling(redacted);
     } catch {
       return redacted;
+    }
+  }
+
+  _normalizeScreenshotRedactionSnapshot(snapshot, coordinateSpace = 'viewport') {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const expectedSpace = coordinateSpace === 'page' ? 'page' : 'viewport';
+    if (snapshot.coordinateSpace !== expectedSpace) return null;
+    const width = Number(snapshot.viewport?.width);
+    const height = Number(snapshot.viewport?.height);
+    if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) return null;
+    if (!Array.isArray(snapshot.regions)
+        || snapshot.regions.length > STAGED_SCREENSHOT_REDACTION_MAX_REGIONS) return null;
+    const regions = snapshot.regions.map((region) => {
+      const x = Number(region?.rect?.x);
+      const y = Number(region?.rect?.y);
+      const w = Number(region?.rect?.w);
+      const h = Number(region?.rect?.h);
+      if (![x, y, w, h].every(Number.isFinite) || !(w > 0 && h > 0)) return null;
+      return {
+        kind: String(region?.kind || 'input').slice(0, 20),
+        rect: { x, y, w, h },
+      };
+    });
+    if (regions.some(region => !region)) return null;
+    return {
+      coordinateSpace: expectedSpace,
+      viewport: { width, height },
+      regions,
+    };
+  }
+
+  async _captureScreenshotRedactionSnapshot(tabId, opts = {}) {
+    const coordinateSpace = opts.coordinateSpace === 'page' ? 'page' : 'viewport';
+    let navigationFrames;
+    try {
+      navigationFrames = await browser.webNavigation.getAllFrames({ tabId });
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(navigationFrames) || navigationFrames.length === 0) {
+      return null;
+    }
+    const frameSnapshots = await Promise.all(navigationFrames.map(async (frame) => {
+      const frameMetadata = {
+        frameId: frame.frameId,
+        parentFrameId: frame.parentFrameId,
+        url: frame.url || '',
+      };
+      try {
+        const resp = await browser.tabs.sendMessage(tabId, {
+          target: 'redaction-content',
+          action: 'get_redaction_regions',
+          params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
+        }, { frameId: frame.frameId });
+        if (!resp || resp.complete !== true || resp.overflowed === true
+            || !Array.isArray(resp.elements) || !Array.isArray(resp.childFrames)
+            || !(Number(resp.viewport?.width) > 0 && Number(resp.viewport?.height) > 0)) {
+          return { ...frameMetadata, inspectionFailed: true };
+        }
+        return { ...resp, ...frameMetadata };
+      } catch {
+        return { ...frameMetadata, inspectionFailed: true };
+      }
+    }));
+    const topFrame = frameSnapshots.find((frame) => frame.frameId === 0);
+    if (!topFrame) return null;
+    const regions = mergeRedactionFrameRegions(frameSnapshots, {
+      maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS + 1,
+      requireCompleteFrameCoverage: true,
+    });
+    if (!Array.isArray(regions)) return null;
+    return this._normalizeScreenshotRedactionSnapshot({
+      coordinateSpace,
+      viewport: topFrame.viewport,
+      // Ask for one sentinel beyond the stored cap so overflow is detected
+      // and the staged screenshot fails closed instead of silently leaving
+      // later-frame sensitive regions visible.
+      regions,
+    }, coordinateSpace);
+  }
+
+  async captureScreenshotRedactionSnapshotForUser(tabId, opts = {}) {
+    if (!tabId) return { ok: false };
+    try {
+      const snapshot = await this._captureScreenshotRedactionSnapshot(tabId, opts);
+      return snapshot ? { ok: true, snapshot } : { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  async captureViewportScreenshotForUser(tabId) {
+    if (!tabId) return { ok: false, error: 'No tab ID' };
+    try {
+      const tab = await browser.tabs.get(tabId);
+      if (!tab?.active || tab.windowId == null) {
+        return { ok: false, error: 'The requested tab is no longer active' };
+      }
+      return await this._withIndicatorsHidden(tabId, async () => {
+        const before = this.screenshotRedaction
+          ? await this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'viewport' })
+          : null;
+        const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        const current = await browser.tabs.get(tabId);
+        if (!current?.active || current.windowId !== tab.windowId) {
+          return { ok: false, error: 'The active tab changed during screenshot capture' };
+        }
+        const after = await this.captureScreenshotRedactionSnapshotForUser(tabId, {
+          coordinateSpace: 'viewport',
+        });
+        // Neither scan succeeding means the privacy pass cannot run here at all
+        // (PDF viewer, about: pages, restricted domains) rather than that the
+        // page moved mid-capture, so /screenshot again can never succeed. Name
+        // the real blocker instead of suggesting a guaranteed-to-fail retry.
+        if (this.screenshotRedaction && before?.ok !== true && after?.ok !== true) {
+          return {
+            ok: false,
+            error: 'Screenshot redaction cannot inspect this page, so no private model-facing copy can be made. Turn off screenshot redaction in Settings to capture it.',
+          };
+        }
+        if (this.screenshotRedaction && (
+          before?.ok !== true
+          || after.ok !== true
+          || JSON.stringify(before.snapshot) !== JSON.stringify(after.snapshot)
+        )) {
+          return { ok: false, error: 'The page changed during screenshot capture; try /screenshot again' };
+        }
+        const redactionSnapshotResult = this.screenshotRedaction ? before : after;
+        let modelDataUrl = dataUrl;
+        if (this.screenshotRedaction) {
+          modelDataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, {
+            coordinateSpace: 'viewport',
+            redactionSnapshot: before.snapshot,
+          });
+          if (before.snapshot.regions.length > 0 && modelDataUrl === dataUrl) {
+            return { ok: false, error: 'Could not create the private model-facing screenshot copy' };
+          }
+        }
+        return {
+          ok: true,
+          dataUrl,
+          redactionSnapshotReady: redactionSnapshotResult?.ok === true,
+          redactionSnapshot: redactionSnapshotResult?.snapshot,
+          modelRedactionReady: this.screenshotRedaction === true,
+          ...(modelDataUrl !== dataUrl ? { modelDataUrl } : {}),
+        };
+      });
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
     }
   }
 
@@ -7007,7 +7151,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, onTraceStarted = null) {
+  async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
     const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
     // Tracing must never break a run: a recorder failure returns null and the
     // run proceeds untraced rather than throwing out of the message path.
@@ -7023,15 +7167,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabUrl,
         tabTitle,
         mode,
+        attachments: Array.isArray(runOptions?.traceAttachments) ? runOptions.traceAttachments : [],
         conversationId: this.conversationIds.get(tabId) || null,
+        force: runOptions?.cloudRun === true,
       });
     } catch {
       return null;
     }
     if (runId) {
       this.currentRunId.set(tabId, runId);
-      if (typeof onTraceStarted === 'function') {
-        try { onTraceStarted(runId); } catch {}
+      if (typeof runOptions?.onTraceStarted === 'function') {
+        try { runOptions.onTraceStarted(runId); } catch {}
       }
     }
     return runId;
@@ -7883,6 +8029,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider?.model,
             messageCount: plannerMessages.length,
             toolsCount: 0,
+            ...Agent._traceMediaCounts(plannerMessages),
             phase: 'intent',
           });
         } catch {}
@@ -8026,6 +8173,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider?.model,
             messageCount: plannerMessages.length,
             toolsCount: 0,
+            ...Agent._traceMediaCounts(plannerMessages),
             phase: 'planner',
           });
         } catch {}
@@ -8467,6 +8615,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           model: provider?.model,
           messageCount: prunedMessages.length,
           toolsCount: Array.isArray(tools) ? tools.length : 0,
+          ...Agent._traceMediaCounts(prunedMessages),
           phase,
         });
       } catch {}
@@ -14858,8 +15007,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
-    if (name === 'screenshot') {
+    if (name === 'screenshot' || name === 'inspect_viewport') {
       try {
+        const isViewportInspection = name === 'inspect_viewport';
+        if (isViewportInspection && !this._canTakeAutoScreenshot(tabId)) {
+          return {
+            success: false,
+            error: 'Visual inspection skipped: maxScreenshotsPerTurn was reached for this turn. Continue with page-reading tools or answer from the visual evidence already collected.',
+          };
+        }
         // Firefox captureTab targets the run tab directly, so the user can
         // continue working in another tab while the agent gathers vision.
         const tab = await browser.tabs.get(tabId);
@@ -14899,6 +15055,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         };
         const captured = await this._retryBlankScreenshotCapture(await captureOnce(), captureOnce, { probe });
+        if (captured?.blankFrameRetry?.finalBlank) {
+          return {
+            success: false,
+            error: 'Visual capture remained blank after retries. Continue with page-reading tools.',
+          };
+        }
         if (!captured?.dataUrl) {
           return {
             success: false,
@@ -14915,6 +15077,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this.screenshotRedaction) {
           dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
         }
+        // Trace the capture itself, but leave the per-turn budget alone until a
+        // model actually receives it below. Charging a slot here would let a
+        // failed vision sub-call on a provider without vision burn the turn's
+        // only inspection and block the retry that would have recovered it.
+        if (isViewportInspection) {
+          const inspectionRunId = this.currentRunId.get(tabId);
+          if (inspectionRunId) {
+            await trace.recordScreenshot(inspectionRunId, null, dataUrl, 'inspect_viewport capture');
+          }
+        }
 
         // Route the image through whichever vision path is actually wired up.
         // Returning a bare `{image: dataUrl}` blob looks like success but
@@ -14925,8 +15097,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const visionProvider = await this.providerManager.getVisionProvider();
 
         if (visionProvider) {
-          const desc = await this._describeScreenshot(tabId, dataUrl, 'screenshot_tool');
+          const desc = await this._describeScreenshot(
+            tabId,
+            dataUrl,
+            isViewportInspection ? 'inspect_viewport' : 'screenshot_tool',
+          );
           if (desc) {
+            if (isViewportInspection) this._recordAutoScreenshot(tabId);
             return {
               success: true,
               method: 'vision_describe',
@@ -14940,6 +15117,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (provider?.supportsVision) {
           // The batch loop will strip `_attachImage` before stringifying and
           // push the image on a follow-up user message as an image_url block.
+          if (isViewportInspection) this._recordAutoScreenshot(tabId);
           return {
             success: true,
             method: 'image_attach',
@@ -14955,7 +15133,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'This model cannot see images: it has no vision capability and no dedicated vision model is configured. Enable "Model supports vision" for the active provider or set a vision model. For now, use get_accessibility_tree, get_interactive_elements, or read_page.',
         };
       } catch (e) {
-        return { success: false, error: `Screenshot failed: ${e.message}` };
+        return { success: false, error: `${name === 'inspect_viewport' ? 'Visual inspection' : 'Screenshot'} failed: ${e.message}` };
       }
     }
 
@@ -17040,11 +17218,63 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.`,
           };
         }
-        // Budget-resize a model-facing copy; leave the original attachment
-        // untouched so the UI/history still has the user-picked full image
-        // (issue #311 maxImageDimension).
-        const shrunk = await this._shrinkImageForBudget(att.dataUrl, 0, 0, this._budgetForCapture());
-        blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: shrunk.dataUrl }) });
+        let modelSourceDataUrl = att.dataUrl;
+        let deferredFullPageRedaction = null;
+        if (att.source === 'slash_screenshot' && this.screenshotRedaction) {
+          const coordinateSpace = att.fullPage ? 'page' : 'viewport';
+          const redactionSnapshot = att.redactionSnapshotReady === true
+            ? this._normalizeScreenshotRedactionSnapshot(att.redactionSnapshot, coordinateSpace)
+            : null;
+          if (att.modelRedactionReady === true) {
+            const retainedModelCopy = String(att.modelDataUrl || '');
+            if (retainedModelCopy) modelSourceDataUrl = retainedModelCopy;
+            else if (!redactionSnapshot || redactionSnapshot.regions.length > 0) {
+              return {
+                ok: false,
+                error: 'This staged screenshot lost its private model-facing copy. Run /screenshot again before sending it.',
+              };
+            }
+          } else if (att.fullPage && redactionSnapshot) {
+            deferredFullPageRedaction = { coordinateSpace, redactionSnapshot };
+          } else {
+            return {
+              ok: false,
+              error: 'This staged screenshot has no capture-time privacy data bound to a private model copy. Run /screenshot again before sending it, or turn off screenshot redaction in Settings.',
+            };
+          }
+        }
+        // Budget-resize the retained model-facing copy; leave the original
+        // attachment untouched for local preview/save.
+        const shrunk = await this._shrinkImageForBudget(modelSourceDataUrl, 0, 0, this._budgetForCapture());
+        // A slash-command screenshot keeps its original pixels for the local
+        // preview/save path, but the copy crossing the model boundary must
+        // honor the same on-device redaction setting as agent-owned captures.
+        // Ordinary user-uploaded images are not browser screenshots and stay
+        // byte-faithful apart from the existing vision-budget resize.
+        let modelDataUrl = shrunk.dataUrl;
+        if (deferredFullPageRedaction) {
+          const unredactedDataUrl = modelDataUrl;
+          modelDataUrl = await this._redactScreenshotDataUrl(options.tabId, modelDataUrl, {
+            coordinateSpace: deferredFullPageRedaction.coordinateSpace,
+            redactionSnapshot: deferredFullPageRedaction.redactionSnapshot,
+            ...(att.fullPage && att.captureBounds ? { capturedCssBounds: att.captureBounds } : {}),
+            imageWidth: shrunk.width,
+            imageHeight: shrunk.height,
+          });
+          // _redactScreenshotDataUrl returns its input unchanged on several
+          // non-throwing failure paths (no mapped rect lands in bounds, the
+          // canvas/bitmap APIs are unavailable, JPEG compression falls back).
+          // Refuse the send rather than push unredacted pixels, matching the
+          // viewport guard in captureViewportScreenshotForUser.
+          if (deferredFullPageRedaction.redactionSnapshot.regions.length > 0
+              && modelDataUrl === unredactedDataUrl) {
+            return {
+              ok: false,
+              error: 'Could not create the private model-facing copy of this screenshot. Run /screenshot again before sending it.',
+            };
+          }
+        }
+        blocks.push({ type: 'image_url', image_url: this._withImageDetail({ url: modelDataUrl }) });
       } else if (att.kind === 'document') {
         if (!provider?.supportsDocuments) {
           return {
@@ -17158,7 +17388,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
       this.abortFlags.delete(tabId);
-      return 'Stopped by user before the run started.';
+      const stopped = 'Stopped by user before the run started.';
+      if (Array.isArray(attachments) && attachments.length) {
+        onUpdate('attachment_rejected', { error: stopped });
+      }
+      return stopped;
     }
 
     // Clear any stale abort flag before any LLM work. The planner gate makes a
@@ -17180,6 +17414,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (mode === 'dev' && provider.promptTier === 'compact') {
       const msg = this._devModeBlockedMessage(provider);
+      if (Array.isArray(attachments) && attachments.length) {
+        const error = `${msg} Attachments were not sent.`;
+        onUpdate('attachment_rejected', { error });
+        return (finalResponse = error);
+      }
       messages.push(enriched);
       if (runOptions?.selectionGroundingScopeStarted === true) {
         this._finalizeSelectionGroundingScope(tabId, messages, enriched);
@@ -17226,6 +17465,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._pinTextAttachmentMetadata(tabId, sourceBoundAttachments, { canUseScratchpadTool });
     }
+    runOptions = {
+      ...runOptions,
+      traceAttachments: (sourceBoundAttachments || []).map(att => ({
+        kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+        name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
+        mimeType: String(att?.mimeType || '').slice(0, 120),
+        size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
+        source: att?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+      })),
+    };
 
     // Everything that can throw — trace start, planner gate, run setup, and the
     // agent loop — runs inside this try so the finally always ends the trace
@@ -17242,7 +17491,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const traceTabInfo = await this._getTabUrlTitle(tabId);
       plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions,
       );
     }
 
@@ -17418,7 +17667,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (!runId) {
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, null, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, null, runOptions,
       );
     }
 
@@ -17485,6 +17734,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             model: provider.model,
             messageCount: prunedMessages.length,
             toolsCount: (chatOpts.tools || []).length,
+            ...Agent._traceMediaCounts(prunedMessages),
           });
           try {
             if (shouldOrderInteractiveAskTrace) queueAskStreamingTraceWrite(writeRequestTrace);
@@ -18006,7 +18256,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const traceTabInfo = await this._getTabUrlTitle(tabId);
       plannerTabInfo = selectionOnly ? { tabUrl: '', tabTitle: '' } : traceTabInfo;
       runId = await this._startTraceRun(
-        tabId, userMessage, mode, provider, traceTabInfo, runOptions?.onTraceStarted,
+        tabId, userMessage, mode, provider, traceTabInfo, runOptions,
       );
     }
 

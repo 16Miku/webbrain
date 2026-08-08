@@ -40,6 +40,19 @@ function normalizeText(value, max = 20000) {
   return text.length > max ? `${text.slice(0, max)}\n[truncated]` : text;
 }
 
+function normalizeAttachment(attachment) {
+  return {
+    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    name: normalizeText(attachment?.name || 'attachment', 240),
+    mimeType: normalizeText(attachment?.mimeType || '', 120),
+    size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
+    source: attachment?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+    deliveryState: ['sending', 'included', 'not-sent', 'unknown'].includes(attachment?.deliveryState)
+      ? attachment.deliveryState
+      : 'included',
+  };
+}
+
 function normalizeMessage(message, index) {
   return {
     role: ['user', 'assistant', 'system', 'error'].includes(message?.role) ? message.role : 'unknown',
@@ -47,6 +60,9 @@ function normalizeMessage(message, index) {
     format: message?.format === 'markdown' ? 'markdown' : 'text',
     index: Number.isFinite(Number(message?.index)) ? Number(message.index) : index,
     createdAt: Number.isFinite(Number(message?.createdAt)) ? Number(message.createdAt) : null,
+    attachments: (Array.isArray(message?.attachments) ? message.attachments : [])
+      .map(normalizeAttachment)
+      .filter(attachment => attachment.name),
   };
 }
 
@@ -81,7 +97,7 @@ function normalizeRecord(input, existing = null) {
   const now = Date.now();
   const messages = (Array.isArray(input?.messages) ? input.messages : [])
     .map(normalizeMessage)
-    .filter((message) => message.text);
+    .filter((message) => message.text || message.attachments.length);
   const userMessageCount = messages.filter((message) => message.role === 'user').length;
   const assistantMessageCount = messages.filter((message) => message.role === 'assistant').length;
   const record = {
@@ -128,10 +144,13 @@ export async function saveChatHistoryRecord(input) {
 }
 
 function sameMessageContent(left, right) {
+  const leftAttachments = (Array.isArray(left.attachments) ? left.attachments : []).map(normalizeAttachment);
+  const rightAttachments = (Array.isArray(right.attachments) ? right.attachments : []).map(normalizeAttachment);
   return left.role === right.role
     && left.text === right.text
     && (left.format || 'text') === (right.format || 'text')
-    && Number(left.index) === Number(right.index);
+    && Number(left.index) === Number(right.index)
+    && JSON.stringify(leftAttachments) === JSON.stringify(rightAttachments);
 }
 
 /**
@@ -171,7 +190,7 @@ export async function repairChatHistoryRecordMessages(id, messages) {
           }
           return normalized;
         })
-        .filter((message) => message.text);
+        .filter((message) => message.text || message.attachments.length);
 
       const unchanged = previousMessages.length === normalizedMessages.length
         && previousMessages.every((message, index) => sameMessageContent(message, normalizedMessages[index]));

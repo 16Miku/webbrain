@@ -1093,6 +1093,238 @@ test('mergeRedactionFrameRegions maps nested iframe regions into top capture coo
   ];
   assert.deepEqual(mergeRedactionFrameRegions(frames), expected);
   assert.deepEqual(mergeRedactionFrameRegionsFx(frames), expected, 'Firefox frame mapping should match Chrome');
+
+  const incompleteFrames = [
+    frames[0],
+    { ...frames[1], inspectionFailed: true },
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(incompleteFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when a rendered child cannot be inspected',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(incompleteFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when a rendered child cannot be inspected',
+  );
+
+  const hiddenFrames = [
+    {
+      ...frames[0],
+      childFrames: [{
+        url: 'https://pay.example/form',
+        rendered: false,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+      }],
+    },
+    { ...frames[1], inspectionFailed: true },
+  ];
+  assert.deepEqual(
+    mergeRedactionFrameRegions(hiddenFrames, { requireCompleteFrameCoverage: true }),
+    [expected[0]],
+    'strict Chrome frame mapping should ignore an uninspectable child that contributes no pixels',
+  );
+  assert.deepEqual(
+    mergeRedactionFrameRegionsFx(hiddenFrames, { requireCompleteFrameCoverage: true }),
+    [expected[0]],
+    'strict Firefox frame mapping should ignore an uninspectable child that contributes no pixels',
+  );
+
+  // The DOM collector only enumerates iframe/frame, so an <object>/<embed>
+  // sub-document reaches the mapper as a navigation child with no descriptor
+  // left to pair with. Its pixels are in the capture and there is no rect to
+  // map its regions through, so coverage cannot be claimed.
+  const undescribedChildFrames = [
+    { ...frames[0], childFrames: [] },
+    { ...frames[1], childFrames: [] },
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(undescribedChildFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when a navigation child frame has no DOM descriptor',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(undescribedChildFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when a navigation child frame has no DOM descriptor',
+  );
+  assert.deepEqual(
+    mergeRedactionFrameRegions(undescribedChildFrames),
+    [expected[0]],
+    'non-strict frame mapping should still return the frames it can account for',
+  );
+
+  // Navigation frames sort by frame id and descriptors keep DOM order, so two
+  // rendered siblings sharing a URL cannot be told apart. Binding the wrong one
+  // maps a frame's password region onto the other frame's rectangle and leaves
+  // the real pixels visible, so an ambiguous URL must fail closed.
+  const duplicateUrlFrames = [
+    {
+      frameId: 0,
+      parentFrameId: -1,
+      url: 'https://shop.example/',
+      viewport: { width: 1000, height: 800 },
+      elements: [],
+      childFrames: [
+        { url: 'https://pay.example/form', rect: { x: 0, y: 0, w: 400, h: 300 } },
+        { url: 'https://pay.example/form', rect: { x: 500, y: 0, w: 400, h: 300 } },
+      ],
+    },
+    {
+      frameId: 2,
+      parentFrameId: 0,
+      url: 'https://pay.example/form',
+      viewport: { width: 400, height: 300 },
+      elements: [{ kind: 'input', type: 'password', rect: { x: 10, y: 10, w: 100, h: 20 } }],
+      childFrames: [],
+    },
+    {
+      frameId: 3,
+      parentFrameId: 0,
+      url: 'https://pay.example/form',
+      viewport: { width: 400, height: 300 },
+      elements: [{ kind: 'input', type: 'password', rect: { x: 10, y: 10, w: 100, h: 20 } }],
+      childFrames: [],
+    },
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(duplicateUrlFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when two rendered siblings share a URL',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(duplicateUrlFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when two rendered siblings share a URL',
+  );
+
+  // Only one of the duplicates is in the capture, but the mapper still cannot
+  // tell which navigation frame owns it.
+  const duplicateUrlOneRendered = [
+    {
+      ...duplicateUrlFrames[0],
+      childFrames: [
+        { url: 'https://pay.example/form', rect: { x: 0, y: 0, w: 400, h: 300 } },
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+      ],
+    },
+    duplicateUrlFrames[1],
+    duplicateUrlFrames[2],
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(duplicateUrlOneRendered, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict frame mapping should fail when a rendered frame cannot be distinguished from a hidden same-URL sibling',
+  );
+
+  // Two same-URL siblings that contribute no pixels are harmless: neither can
+  // put regions into the capture, so mis-pairing them changes nothing.
+  const duplicateUrlNoPixels = [
+    {
+      ...duplicateUrlFrames[0],
+      childFrames: [
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+        { url: 'https://pay.example/form', rendered: false, rect: { x: 0, y: 0, w: 0, h: 0 } },
+      ],
+    },
+    duplicateUrlFrames[1],
+    duplicateUrlFrames[2],
+  ];
+  assert.deepEqual(
+    mergeRedactionFrameRegions(duplicateUrlNoPixels, { requireCompleteFrameCoverage: true }),
+    [],
+    'strict frame mapping should tolerate ambiguous siblings that contribute no pixels',
+  );
+});
+
+test('capture-time redaction snapshots require inspection only for rendered frames', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const api = {
+        webNavigation: {
+          getAllFrames: async () => [
+            { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+            { frameId: 2, parentFrameId: 0, url: 'https://child.example.test/' },
+          ],
+        },
+        tabs: {
+          sendMessage: async (_tabId, _message, options) => {
+            if (options?.frameId === 2) throw new Error('frame navigated');
+            return {
+              viewport: { width: 800, height: 600 },
+              elements: [],
+              childFrames: [{
+                url: 'https://child.example.test/',
+                rect: { x: 20, y: 30, w: 400, h: 300 },
+              }],
+              overflowed: false,
+              complete: true,
+            };
+          },
+        },
+      };
+      globalThis[apiName] = api;
+      const agent = new AgentClass({});
+      assert.equal(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        null,
+        `${label}: one uninspected child frame must invalidate the privacy snapshot`,
+      );
+
+      api.tabs.sendMessage = async (_tabId, _message, options) => {
+        if (options?.frameId === 2) throw new Error('hidden frame unavailable');
+        return {
+          viewport: { width: 800, height: 600 },
+          elements: [{ kind: 'input', type: 'password', rect: { x: 40, y: 50, w: 160, h: 30 } }],
+          childFrames: [{
+            url: 'https://child.example.test/',
+            rendered: false,
+            rect: { x: 0, y: 0, w: 0, h: 0 },
+          }],
+          overflowed: false,
+          complete: true,
+        };
+      };
+      assert.deepEqual(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        {
+          coordinateSpace: 'viewport',
+          viewport: { width: 800, height: 600 },
+          regions: [{ kind: 'password', rect: { x: 40, y: 50, w: 160, h: 30 } }],
+        },
+        `${label}: a hidden uninspectable child must not discard visible top-frame redaction`,
+      );
+
+      api.webNavigation.getAllFrames = async () => [
+        { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+      ];
+      api.tabs.sendMessage = async () => ({
+        viewport: { width: 800, height: 600 },
+        elements: Array.from({ length: 400 }, (_, index) => ({
+          kind: 'input',
+          type: 'text',
+          rect: { x: index, y: 10, w: 20, h: 10 },
+        })),
+        childFrames: [],
+        overflowed: true,
+        complete: false,
+      });
+      assert.equal(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        null,
+        `${label}: a collector overflow signal must invalidate the privacy snapshot`,
+      );
+    }
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.browser = previousBrowser;
+  }
 });
 
 test('page-coordinate redaction uses captured CSS bounds instead of the grown live document', async () => {
@@ -1108,6 +1340,8 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
       { kind: 'input', type: 'password', rect: { x: 300, y: 4200, w: 100, h: 100 } },
     ],
     childFrames: [],
+    overflowed: false,
+    complete: true,
   };
   try {
     const browserApi = {
@@ -1194,7 +1428,7 @@ test('redaction content scripts run in all frames and startup waits for the stor
   }
 });
 
-test('redaction collectors filter offscreen fields and classify PII before the region cap', () => {
+test('redaction collectors filter offscreen fields and report incomplete region scans', () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
     const start = source.indexOf('function collectRedactionRegions(params)');
@@ -1202,14 +1436,69 @@ test('redaction collectors filter offscreen fields and classify PII before the r
     const body = source.slice(start, end);
     assert.match(body, /space === 'page' \|\| \([\s\S]*?r\.right > 0[\s\S]*?r\.top < window\.innerHeight/,
       `${browserName}: viewport collection should reject offscreen rectangles`);
-    assert.match(body, /looksLikePiiText\(text\)\) continue;[\s\S]*?selected\.push\(\{ kind: 'text'/,
+    assert.match(body, /looksLikePiiText\(text\)\) continue;[\s\S]*?addRegion\(\{ kind: 'text'/,
       `${browserName}: only classified PII should count against MAX_REGIONS`);
+    assert.match(body, /if \(selected\.length >= MAX_REGIONS\) \{[\s\S]*?overflowed = true;[\s\S]*?complete: collectionComplete && !overflowed/,
+      `${browserName}: per-frame region overflow must be explicit`);
+    assert.match(body, /scanned >= MAX_SCANNED_TEXT_NODES[\s\S]*?collectionComplete = false;/,
+      `${browserName}: hitting the text scan ceiling must fail closed`);
+    assert.match(body, /const contributesPixels[\s\S]*?style\.visibility === 'hidden'[\s\S]*?childFrames\.push\(\{[\s\S]*?rendered: contributesPixels\(frame, r\),[\s\S]*?rect:/,
+      `${browserName}: child-frame order should be retained while capture visibility is explicit`);
+  }
+});
+
+test('redaction collectors expose a per-frame overflow sentinel', () => {
+  const visibleRect = { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 };
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    let messageListener = null;
+    const fields = Array.from({ length: 401 }, () => ({
+      tagName: 'INPUT',
+      type: 'text',
+      isContentEditable: false,
+      getBoundingClientRect: () => visibleRect,
+    }));
+    const runtime = { onMessage: { addListener(listener) { messageListener = listener; } } };
+    const context = {
+      chrome: { runtime },
+      browser: browserName === 'firefox' ? { runtime } : undefined,
+      window: {
+        innerWidth: 800,
+        innerHeight: 600,
+        scrollX: 0,
+        scrollY: 0,
+        pageXOffset: 0,
+        pageYOffset: 0,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+      document: {
+        documentElement: { scrollWidth: 800, scrollHeight: 600 },
+        querySelectorAll(selector) {
+          if (selector.startsWith('input:not')) return fields;
+          return [];
+        },
+      },
+      setTimeout,
+      clearTimeout,
+    };
+    vm.runInNewContext(source, context);
+    assert.equal(typeof messageListener, 'function', `${browserName}: collector listener should register`);
+    let response = null;
+    messageListener({
+      target: 'redaction-content',
+      action: 'get_redaction_regions',
+      params: { coordinateSpace: 'viewport' },
+    }, {}, value => { response = value; });
+    assert.equal(response?.elements?.length, 400, `${browserName}: the returned region list should retain the safe cap`);
+    assert.equal(response?.overflowed, true, `${browserName}: a 401st region must set the overflow sentinel`);
+    assert.equal(response?.complete, false, `${browserName}: an overflowed frame must not claim complete coverage`);
   }
 });
 
 test('remaining model-facing screenshot fallbacks apply redaction', () => {
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
-  const chromeStart = chromeSource.indexOf("if (name === 'screenshot')");
+  const chromeStart = chromeSource.indexOf("if (name === 'screenshot'");
   const chromeEnd = chromeSource.indexOf("if (name === 'done')", chromeStart);
   const chromeBody = chromeSource.slice(chromeStart, chromeEnd);
   const fallbackIndex = chromeBody.indexOf('chrome.tabs.captureVisibleTab');
@@ -4673,7 +4962,7 @@ test('trace export: renders the full tool chain from trace events, in order', ()
   assert.match(markdown, /## Turn 1 — Find the cheapest Sony WH-1000XM5/);
   assert.match(markdown, /\*\*Planner:\*\*\n```json\n\{"summary"/);   // planner labelled + fenced, model's ```json language preserved
   assert.ok(!/```\n```/.test(markdown), 'planner content must not be double-fenced');
-  assert.match(markdown, /Screenshots, notes and vision sub-calls are recorded but not rendered here/);   // honest footer
+  assert.match(markdown, /Screenshot pixels and vision descriptions are omitted here/);   // honest privacy footer
   // order preserved, retries kept distinct (no aggregation)
   assert.ok(markdown.indexOf('fetch_url') < markdown.indexOf('research_url'), 'order preserved');
   assert.equal((markdown.match(/research_url/g) || []).length, 2, 'each retry emitted, not aggregated');
@@ -4684,7 +4973,52 @@ test('trace export: renders the full tool chain from trace events, in order', ()
   assert.ok(!markdown.includes('role heading '.repeat(60)), 'huge result body must not be dumped');
   assert.match(markdown, /⚠️ error \(loop\): stopped by user/);
   assert.match(markdown, /Cheapest option: CHF 203/);
-  assert.ok(!markdown.includes('viewport'), 'screenshot events omitted');
+  assert.match(markdown, /Visual capture: viewport/);
+});
+
+test('trace export: proves visual delivery without exporting pixels or OCR text', () => {
+  const runs = [{
+    run: {
+      runId: 'visual-proof',
+      userMessage: 'What does this ad say?',
+      model: 'vision-test',
+      status: 'done',
+      attachments: [{
+        kind: 'image',
+        name: 'example-screenshot.png',
+        mimeType: 'image/png',
+        size: 2048,
+        source: 'slash_screenshot',
+      }],
+    },
+    events: [
+      {
+        runId: 'visual-proof', seq: 1, kind: 'screenshot',
+        data: { caption: 'inspect_viewport capture', screenshot_base64: 'PRIVATE_PIXELS' },
+      },
+      {
+        runId: 'visual-proof', seq: 2, kind: 'vision_sub_call',
+        data: {
+          context: 'inspect_viewport',
+          model: 'vision-sidecar',
+          latencyMs: 42,
+          description: 'PRIVATE OCR DESCRIPTION',
+        },
+      },
+      {
+        runId: 'visual-proof', seq: 3, kind: 'llm_request',
+        data: { messageCount: 4, toolsCount: 12, imageBlockCount: 1, documentBlockCount: 0 },
+      },
+    ],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /User attachments: image "example-screenshot\.png" \(slash screenshot, 2\.0kb\)/, `${label}: attachment metadata missing`);
+    assert.match(markdown, /Visual capture: inspect_viewport capture/, `${label}: capture status missing`);
+    assert.match(markdown, /Vision sub-call \(inspect_viewport · vision-sidecar · 42 ms\): succeeded/, `${label}: vision outcome missing`);
+    assert.match(markdown, /Model request: 4 messages · 12 tools · 1 image block · 0 document blocks/, `${label}: model media counts missing`);
+    assert.doesNotMatch(markdown, /PRIVATE_PIXELS|PRIVATE OCR DESCRIPTION/, `${label}: private visual content leaked`);
+  }
 });
 
 test('trace export: preserves structured pageGate before truncated article text and shows NYTimes fallback', () => {
@@ -4850,7 +5184,7 @@ test('trace export: notes appear before the footer', () => {
   const { markdown } = tracesToMarkdown(TRACE_RUNS, { notes: ['2 of 3 turn(s) could not load their event log.'] });
   assert.match(markdown, /_Note: 2 of 3 turn\(s\) could not load their event log\._/);
   assert.ok(
-    markdown.indexOf('_Note:') < markdown.indexOf('Screenshots, notes and vision sub-calls'),
+    markdown.indexOf('_Note:') < markdown.indexOf('Screenshot pixels and vision descriptions'),
     'notes should come before the screenshot footer',
   );
 });
@@ -6321,7 +6655,7 @@ test('new_tab stays in the background and explicitly preserves run ownership', (
   for (const browserName of ['chrome', 'firefox']) {
     const agentSource = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
     const start = agentSource.indexOf("if (name === 'new_tab')");
-    const end = agentSource.indexOf("if (name === 'screenshot')", start);
+    const end = agentSource.indexOf("if (name === 'screenshot'", start);
     const body = agentSource.slice(start, end);
     assert.match(body, /const createProps = \{ url: args\.url, active: false \}/, `${browserName}: helper tab must not steal focus`);
     assert.match(body, /retargeted: false/, `${browserName}: result must expose the run boundary`);
@@ -8653,7 +8987,7 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
 test('chrome screenshot tool saves pre-budget data URL when save:true', () => {
   // Structural: save path must prefer saveDataUrl (full CSS) over budgeted dataUrl.
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
-  const start = source.indexOf("if (name === 'screenshot')");
+  const start = source.indexOf("if (name === 'screenshot'");
   const end = source.indexOf("if (name === 'done')", start);
   assert.ok(start >= 0 && end > start, 'screenshot tool block not found');
   const body = source.slice(start, end);
@@ -8853,8 +9187,12 @@ test('local screenshot implementations do not foreground ordinary run tabs', () 
     'Chrome should mention bringToFront only in policy documentation and its foreground compatibility branch',
   );
   assert.match(chromeAgent, /if \(this\._foregroundCaptureTabs\.has\(tabId\)\)[\s\S]*?'Page\.bringToFront'/);
-  assert.doesNotMatch(firefoxAgent, /captureVisibleTab/);
-  assert.match(firefoxAgent, /browser\.tabs\.captureTab\(tabId,/);
+  const firefoxAutoCapture = firefoxAgent.slice(
+    firefoxAgent.indexOf('async _captureAutoScreenshot('),
+    firefoxAgent.indexOf('async _redactScreenshotDataUrl(', firefoxAgent.indexOf('async _captureAutoScreenshot(')),
+  );
+  assert.doesNotMatch(firefoxAutoCapture, /captureVisibleTab/);
+  assert.match(firefoxAutoCapture, /browser\.tabs\.captureTab\(tabId,/);
   assert.doesNotMatch(firefoxScheduler, /active:\s*job\.source !== 'watch'/);
   assert.match(firefoxScheduler, /tabs\.create\(\{ url: job\.target\.url, active: false \}\)/);
 });
@@ -14404,6 +14742,11 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       assert.equal(names.includes('full_page_screenshot'), false, `[${label}] ${modeLabel} tools must not expose full_page_screenshot`);
       assert.equal(names.includes('record_tab'), false, `[${label}] ${modeLabel} tools must not expose record_tab`);
       assert.equal(names.includes('stop_recording'), false, `[${label}] ${modeLabel} tools must not expose stop_recording`);
+      assert.equal(names.includes('inspect_viewport'), true, `[${label}] ${modeLabel} tools must expose read-only visual inspection`);
+      const inspectTool = tools.find(tool => tool.function?.name === 'inspect_viewport');
+      assert.deepEqual(inspectTool?.function?.parameters?.properties, {}, `[${label}] ${modeLabel} visual inspection must not expose save or coordinate arguments`);
+      assert.match(inspectTool?.function?.description || '', /may be retained in an enabled diagnostic trace/i, `[${label}] ${modeLabel} visual inspection must disclose trace retention`);
+      assert.doesNotMatch(inspectTool?.function?.description || '', /never downloaded or saved/i, `[${label}] ${modeLabel} visual inspection must not promise that trace pixels are never stored`);
     }
 
     for (const [promptLabel, prompt] of prompts) {
@@ -14413,6 +14756,8 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       assert.doesNotMatch(prompt, /\brecord_tab\b/i, `[${label}] ${promptLabel} prompt must not mention record_tab`);
       assert.doesNotMatch(prompt, /\bstop_recording\b/i, `[${label}] ${promptLabel} prompt must not mention stop_recording`);
       assert.doesNotMatch(prompt, /\b(?:take|taking) (?:a |fresh )?screenshot\b/i, `[${label}] ${promptLabel} prompt must not tell the model to take a screenshot`);
+      assert.match(prompt, /inspect_viewport/, `[${label}] ${promptLabel} prompt must teach autonomous visual inspection`);
+      assert.match(prompt, /(?:(?:never ask|do not ask)[^\n]*\/screenshot|\/screenshot[^\n]*never require)/i, `[${label}] ${promptLabel} prompt must not offload agent vision to the user`);
       assert.match(prompt, /\/screenshot\b/, `[${label}] ${promptLabel} prompt should direct chat-image requests to the /screenshot slash command`);
       if (promptLabel !== 'ask') {
         assert.match(prompt, /(?:auto-screenshot|injected visual context|verification screenshot)/i, `[${label}] ${promptLabel} prompt should preserve automatic visual verification guidance`);
@@ -14427,6 +14772,164 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       }
     }
   }
+});
+
+test('inspect_viewport is read-only, vision-visible, and shares the screenshot budget', async () => {
+  const providerManager = {
+    getActive: () => ({ name: 'vision-test', supportsVision: true }),
+    getVisionProvider: async () => null,
+  };
+
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (_tabId, method) => (
+      method === 'Page.captureScreenshot' ? { data: 'AA==' } : {}
+    );
+    const agent = new AgentCh(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._compressJpegToByteCeiling = async dataUrl => dataUrl;
+
+    const first = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(first.success, true);
+    assert.equal(first.method, 'image_attach');
+    assert.match(first._attachImage, /^data:image\/jpeg;base64,/);
+    assert.equal(agent.autoScreenshotCount.get(41), 1);
+
+    const second = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(second.success, false);
+    assert.match(second.error, /maxScreenshotsPerTurn/);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+
+  const previousBrowser = globalThis.browser;
+  try {
+    globalThis.browser = {
+      ...(previousBrowser || {}),
+      tabs: {
+        ...(previousBrowser?.tabs || {}),
+        get: async tabId => ({ id: tabId, active: false, url: 'https://example.test/' }),
+        captureTab: async () => 'data:image/png;base64,AA==',
+      },
+    };
+    const agent = new AgentFx(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+
+    const first = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(first.success, true);
+    assert.equal(first.method, 'image_attach');
+    assert.equal(first._attachImage, 'data:image/png;base64,AA==');
+    assert.equal(agent.autoScreenshotCount.get(42), 1);
+
+    const second = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(second.success, false);
+    assert.match(second.error, /maxScreenshotsPerTurn/);
+  } finally {
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('inspect_viewport charges the screenshot budget only when a model receives the capture', async () => {
+  // A dedicated vision model is configured but its sub-call fails, and the
+  // active provider cannot see images, so nothing reaches a model.
+  const providerManager = {
+    getActive: () => ({ name: 'text-only', supportsVision: false }),
+    getVisionProvider: async () => ({ name: 'vision-sidecar' }),
+  };
+
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (_tabId, method) => (
+      method === 'Page.captureScreenshot' ? { data: 'AA==' } : {}
+    );
+    const agent = new AgentCh(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._compressJpegToByteCeiling = async dataUrl => dataUrl;
+    agent._describeScreenshot = async () => null;
+
+    const undelivered = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(undelivered.success, false, 'chrome: no model can see this capture');
+    assert.match(undelivered.error, /cannot see images/);
+    assert.equal(agent.autoScreenshotCount.get(41), undefined, 'chrome: an undelivered capture must not burn a slot');
+    assert.equal(agent._canTakeAutoScreenshot(41), true, 'chrome: a transient sidecar failure must stay recoverable');
+
+    agent._describeScreenshot = async () => ({ model: 'vision-sidecar', text: 'a login form' });
+    const described = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(described.success, true, 'chrome: the recovered sub-call should succeed');
+    assert.equal(described.method, 'vision_describe');
+    assert.equal(agent.autoScreenshotCount.get(41), 1, 'chrome: a delivered description spends one slot');
+
+    const blocked = await agent.executeTool(41, 'inspect_viewport', {});
+    assert.equal(blocked.success, false);
+    assert.match(blocked.error, /maxScreenshotsPerTurn/, 'chrome: the cap still applies once a slot is spent');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
+
+  const previousBrowser = globalThis.browser;
+  try {
+    globalThis.browser = {
+      ...(previousBrowser || {}),
+      tabs: {
+        ...(previousBrowser?.tabs || {}),
+        get: async tabId => ({ id: tabId, active: false, url: 'https://example.test/' }),
+        captureTab: async () => 'data:image/png;base64,AA==',
+      },
+    };
+    const agent = new AgentFx(providerManager);
+    agent.maxScreenshotsPerTurn = 1;
+    agent._captureViewportProbe = async () => ({ innerWidth: 800, innerHeight: 600, url: 'https://example.test/' });
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._retryBlankScreenshotCapture = async first => first;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    agent._describeScreenshot = async () => null;
+
+    const undelivered = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(undelivered.success, false, 'firefox: no model can see this capture');
+    assert.equal(agent.autoScreenshotCount.get(42), undefined, 'firefox: an undelivered capture must not burn a slot');
+    assert.equal(agent._canTakeAutoScreenshot(42), true, 'firefox: a transient sidecar failure must stay recoverable');
+
+    agent._describeScreenshot = async () => ({ model: 'vision-sidecar', text: 'a login form' });
+    const described = await agent.executeTool(42, 'inspect_viewport', {});
+    assert.equal(described.success, true, 'firefox: the recovered sub-call should succeed');
+    assert.equal(described.method, 'vision_describe');
+    assert.equal(agent.autoScreenshotCount.get(42), 1, 'firefox: a delivered description spends one slot');
+  } finally {
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('LLM trace media counts distinguish actual image and document blocks', () => {
+  const messages = [
+    { role: 'user', content: 'plain' },
+    { role: 'user', content: [
+      { type: 'text', text: 'visual context' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,PRIVATE' } },
+      { type: 'document', source: { type: 'base64', data: 'PRIVATE' } },
+    ] },
+  ];
+  assert.deepEqual(AgentCh._traceMediaCounts(messages), { imageBlockCount: 1, documentBlockCount: 1 });
+  assert.deepEqual(AgentFx._traceMediaCounts(messages), { imageBlockCount: 1, documentBlockCount: 1 });
 });
 
 test('agent runtime warnings preserve injected auto-screenshot recovery guidance', () => {
@@ -23650,7 +24153,8 @@ test('sidepanel scopes async tab commands to the original tab', () => {
       ? panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')", screenshotIdx)
       : panel.indexOf("if (command.value === '/export' && action === 'traces')", screenshotIdx);
     const screenshotBody = panel.slice(screenshotIdx, screenshotEnd);
-    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?captureVisibleTab[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url \}\);/, `${label}: /screenshot should not render a captured image into a different tab and should retain its URL for naming`);
+    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?sendToBackground\('capture_viewport_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?pageUrl: tab\.url,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?modelRedactionReady: res\.modelRedactionReady === true,[\s\S]*?modelDataUrl: res\.modelDataUrl,[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should retain the background-created model copy, reject stale-tab completions, and keep the raw URL for local preview`);
+    assert.doesNotMatch(screenshotBody, /Promise\.all|captureVisibleTab|capture_screenshot_redaction_snapshot/, `${label}: the side panel must not race viewport pixels against privacy geometry`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?screenshot-save-btn[\s\S]*?sp\.screenshot\.save_as/, `${label}: screenshot messages should render a visible Save As action`);
     assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindScreenshotSaveButtons\(\);/, `${label}: restored screenshot messages should regain their Save As behavior`);
@@ -23663,7 +24167,7 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     if (label === 'chrome') {
       assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
       const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
-      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ fullPage: true, warning: res\.warning, pageUrl \}\);/, `${label}: /screenshot --full-page should render only into the initiating tab with URL-aware Save As`);
+      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
       assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
       assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
       assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
@@ -23818,7 +24322,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(staleReturnIdx < sendIdx, true, `${label}: stale-tab residual guard must run before chat dispatch`);
     assert.match(
       sendBody,
-      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
+      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
       `${label}: stale-tab residual sends should not mutate or render chat UI in the currently visible tab`,
     );
     assert.doesNotMatch(
@@ -24930,17 +25434,18 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       panel,
-      /const attachmentsForSend = sourceGrounding\s*\? \[\]\s*: retryOptions/,
+      /const attachmentsForSend = sourceGrounding \|\| isWorkflowRun\s*\? \[\]\s*: retryOptions/,
       `${label}: selection-only runs must not inherit pending attachment chips`,
     );
     assert.match(
       panel,
-      /if \(!retryOptions && !sourceGrounding\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId\);/,
+      /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?else clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\);/,
       `${label}: selection-only runs should preserve pending attachments for a later ordinary turn`,
     );
-    assert.ok(
-      panel.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
-      `${label}: unrelated in-flight attachment reads must not block selection-only runs`,
+    assert.match(
+      panel,
+      /if \(!retryOptions && !sourceGrounding && !isWorkflowRun\s*&& !isProcessing && isAttachmentReadPendingForTab\(tabId\)\)/,
+      `${label}: unrelated in-flight attachment reads must not block selection-only or workflow runs`,
     );
     assert.match(
       panel,
@@ -25924,7 +26429,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
+      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
       `${label}: a submitted turn should enter reading-first mode and reveal its question before streaming`,
     );
     assert.match(
@@ -33020,6 +33525,75 @@ test('full-page image assembly reports first-tile fallback errors', async () => 
   }
 });
 
+test('user viewport screenshots retain a capture-bound redacted model copy', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const events = [];
+      globalThis[apiName] = {
+        tabs: {
+          get: async () => ({ id: 42, active: true, windowId: 7 }),
+          captureVisibleTab: async () => {
+            events.push('capture');
+            return 'data:image/png;base64,RAW_VIEWPORT';
+          },
+        },
+      };
+      const agent = new AgentClass({});
+      agent.screenshotRedaction = true;
+      agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+      const snapshot = {
+        coordinateSpace: 'viewport',
+        viewport: { width: 800, height: 600 },
+        regions: [{ kind: 'password', rect: { x: 20, y: 30, w: 120, h: 24 } }],
+      };
+      agent.captureScreenshotRedactionSnapshotForUser = async () => {
+        events.push('snapshot');
+        return { ok: true, snapshot };
+      };
+      agent._redactScreenshotDataUrl = async (_tabId, dataUrl, options) => {
+        events.push('redact');
+        assert.equal(dataUrl, 'data:image/png;base64,RAW_VIEWPORT');
+        assert.equal(options.redactionSnapshot, snapshot);
+        return 'data:image/png;base64,REDACTED_VIEWPORT';
+      };
+
+      const result = await agent.captureViewportScreenshotForUser(42);
+
+      assert.deepEqual(events, ['snapshot', 'capture', 'snapshot', 'redact'], `${label}: capture must be bracketed by matching privacy geometry before redaction`);
+      assert.equal(result.ok, true);
+      assert.equal(result.dataUrl, 'data:image/png;base64,RAW_VIEWPORT', `${label}: local preview pixels should remain untouched`);
+      assert.equal(result.modelDataUrl, 'data:image/png;base64,REDACTED_VIEWPORT', `${label}: the model copy should be created during capture`);
+      assert.equal(result.modelRedactionReady, true);
+
+      // A page the collector can never run on (PDF viewer, chrome://, the Web
+      // Store) fails both scans, so a retry is a dead end and must not be the
+      // advice the user is given.
+      agent.captureScreenshotRedactionSnapshotForUser = async () => ({ ok: false });
+      const uninspectable = await agent.captureViewportScreenshotForUser(42);
+      assert.equal(uninspectable.ok, false, `${label}: an uninspectable page must not produce a screenshot`);
+      assert.match(uninspectable.error, /redaction cannot inspect this page/i, `${label}: the refusal should name redaction as the blocker`);
+      assert.doesNotMatch(uninspectable.error, /try \/screenshot again/, `${label}: a permanent redaction failure must not be reported as a retryable race`);
+
+      let snapshotCalls = 0;
+      agent.captureScreenshotRedactionSnapshotForUser = async () => {
+        snapshotCalls += 1;
+        return snapshotCalls === 1 ? { ok: true, snapshot } : { ok: false };
+      };
+      const raced = await agent.captureViewportScreenshotForUser(42);
+      assert.equal(raced.ok, false, `${label}: a mid-capture privacy change must not produce a screenshot`);
+      assert.match(raced.error, /try \/screenshot again/, `${label}: a genuine mid-capture change should still suggest a retry`);
+    }
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.browser = previousBrowser;
+  }
+});
+
 test('user full-page screenshot responses preserve compositor fallback warnings', async () => {
   const originalAttach = cdpClientCh.attach;
   const originalCapture = cdpClientCh.captureFullPageScreenshot;
@@ -33037,6 +33611,18 @@ test('user full-page screenshot responses preserve compositor fallback warnings'
     assert.equal(result.ok, true);
     assert.equal(result.dataUrl, 'data:image/png;base64,Zmlyc3QtdGlsZQ==');
     assert.match(result.warning, /canvas too large[\s\S]*first captured tile/i);
+    assert.equal(result.redactionUnavailable, undefined, 'a capture with redaction off should stay attachable');
+
+    // With redaction enabled and no capture-time geometry, _applyAttachments
+    // would reject every send, so the capture must not be advertised as staged.
+    agent.screenshotRedaction = true;
+    const unscannable = await agent.captureFullPageScreenshotForUser(42);
+    assert.equal(unscannable.ok, true, 'the local screenshot and save action should survive a failed privacy scan');
+    assert.equal(unscannable.dataUrl, 'data:image/png;base64,Zmlyc3QtdGlsZQ==', 'the local preview pixels should be untouched');
+    assert.equal(unscannable.redactionUnavailable, true, 'a failed privacy scan must be reported to the caller');
+    assert.equal(unscannable.redactionSnapshotReady, undefined, 'a failed privacy scan must not claim capture-time geometry');
+    assert.match(unscannable.warning, /canvas too large/i, 'the compositor warning should survive');
+    assert.match(unscannable.warning, /cannot be attached to a message/i, 'the user should be told why the capture is not attachable');
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;
@@ -33049,6 +33635,7 @@ test('Chrome full-page screenshot paths reject blank background captures after r
   const originalCapture = cdpClientCh.captureFullPageScreenshot;
   const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
   let captureCalls = 0;
+  let redactionSnapshotCalls = 0;
   try {
     globalThis.chrome = {
       ...(originalChrome || {}),
@@ -33074,6 +33661,10 @@ test('Chrome full-page screenshot paths reject blank background captures after r
     });
     agent._preparePageForCapture = async () => {};
     agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent.captureScreenshotRedactionSnapshotForUser = async () => {
+      redactionSnapshotCalls += 1;
+      return { ok: false };
+    };
     agent._captureViewportProbe = async () => ({
       readyState: 'complete',
       documentTextChars: 200,
@@ -33104,12 +33695,72 @@ test('Chrome full-page screenshot paths reject blank background captures after r
       error: 'Full page screenshot failed: Background full-page screenshot remained blank after retries',
     });
     assert.equal(captureCalls, 4, 'each full-page path should retry once before rejecting the blank frame');
+    assert.equal(redactionSnapshotCalls, 2, 'each user-facing capture attempt should collect fresh privacy geometry while the agent tool avoids unused staging metadata');
   } finally {
     AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
     cdpClientCh.attach = originalAttach;
     cdpClientCh.captureFullPageScreenshot = originalCapture;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('user full-page screenshot retries return privacy geometry from the successful capture attempt', async () => {
+  const originalAttach = cdpClientCh.attach;
+  const originalCapture = cdpClientCh.captureFullPageScreenshot;
+  const originalDelays = AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS;
+  let captureCalls = 0;
+  let redactionSnapshotCalls = 0;
+  const captureEvents = [];
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.captureFullPageScreenshot = async () => {
+      captureCalls += 1;
+      captureEvents.push(`capture:${captureCalls}`);
+      return { data: captureCalls === 1 ? 'Ymxhbms=' : 'cmVjb3ZlcmVk' };
+    };
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = [0];
+
+    const agent = new AgentCh({});
+    agent._preparePageForCapture = async () => {};
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._captureViewportProbe = async () => ({
+      documentTextChars: 200,
+      visibleTextChars: 100,
+      domNodes: 50,
+      scrollHeight: 1200,
+      innerHeight: 800,
+    });
+    agent._analyzeScreenshotBlankness = async () => ({ blank: captureCalls === 1 });
+    agent.captureScreenshotRedactionSnapshotForUser = async () => {
+      redactionSnapshotCalls += 1;
+      captureEvents.push(`redaction:${redactionSnapshotCalls}`);
+      return {
+        ok: true,
+        snapshot: {
+          coordinateSpace: 'page',
+          viewport: { width: 800, height: 1200 },
+          regions: [{ kind: 'password', rect: { x: redactionSnapshotCalls, y: 20, w: 100, h: 30 } }],
+        },
+      };
+    };
+
+    const result = await agent.captureFullPageScreenshotForUser(42);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.dataUrl, 'data:image/png;base64,cmVjb3ZlcmVk');
+    assert.equal(captureCalls, 2);
+    assert.equal(redactionSnapshotCalls, 2);
+    assert.deepEqual(
+      captureEvents,
+      ['capture:1', 'redaction:1', 'capture:2', 'redaction:2'],
+      'each privacy snapshot must follow full-page discovery and tile capture for the same attempt',
+    );
+    assert.equal(result.redactionSnapshot.regions[0].rect.x, 2, 'the returned geometry must belong to the retry that supplied the returned pixels');
+  } finally {
+    AgentCh.BLANK_SCREENSHOT_RETRY_DELAYS_MS = originalDelays;
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.captureFullPageScreenshot = originalCapture;
   }
 });
 
@@ -60710,6 +61361,37 @@ test('run UI journal: concurrent tabs, bounded replay, terminal snapshots, and s
   }
 });
 
+test('run UI journal: attachment delivery state survives terminal acknowledgement and remount', () => {
+  for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
+    const persisted = new Map();
+    const journal = new Journal({
+      onChange: (tabId, snapshot) => persisted.set(tabId, structuredClone(snapshot)),
+    });
+    journal.begin(51, `${label}-attachment`, { attachmentCount: 2 });
+    assert.equal(journal.get(51).attachmentDeliveryState, 'sending', `${label}: attachment runs should begin in sending state`);
+    journal.finish(51, `${label}-attachment`, 'completed', 'done');
+    journal.setAttachmentDeliveryState(51, `${label}-attachment`, 'included');
+    assert.equal(journal.get(51).attachmentDeliveryState, 'included', `${label}: terminal delivery state should be durable`);
+    assert.equal(
+      journal.get(51).events.at(-1).data.attachmentDeliveryState,
+      'included',
+      `${label}: the terminal replay event should carry the same delivery state`,
+    );
+    journal.acknowledge(51, `${label}-attachment`, journal.get(51).seq);
+    assert.equal(journal.get(51).events.length, 0, `${label}: terminal replay may be acknowledged`);
+    assert.equal(journal.get(51).attachmentDeliveryState, 'included', `${label}: acknowledgement must retain attachment proof`);
+
+    const remounted = new Journal();
+    remounted.restore(51, persisted.get(51));
+    assert.equal(remounted.get(51).attachmentDeliveryState, 'included', `${label}: a reopened panel should recover the terminal state`);
+
+    const rejected = new Journal();
+    rejected.begin(52, `${label}-rejected`, { attachmentCount: 1 });
+    rejected.record(52, `${label}-rejected`, 'attachment_rejected', { error: 'unsupported' });
+    assert.equal(rejected.get(52).attachmentDeliveryState, 'not-sent', `${label}: structured rejection should be durable as not sent`);
+  }
+});
+
 test('run UI journal: resumed requests preserve sequence and replay boundaries', () => {
   for (const [label, Journal] of [['chrome', RunUiJournalCh], ['firefox', RunUiJournalFx]]) {
     const journal = new Journal();
@@ -62027,6 +62709,7 @@ test('per-tab run UI protocol is wired into both backgrounds and side panels', (
     assert.match(background, /case 'agent_run_state':[\s\S]*?const runUiSnapshot = await getRunUiSnapshot\(tabId\)[\s\S]*?const requestedRunUi = runUiSnapshotForRequest\(runUiSnapshot, requestedRequestId\)[\s\S]*?runUi: requestedRunUi,/, `${label}: remount state should include only the requested UI journal snapshot`);
     assert.match(background, /case 'agent_run_ack':[\s\S]*?runUiJournal\.acknowledge/, `${label}: background should accept ordered replay acknowledgements`);
     assert.match(background, /status: snapshot\.status \|\| 'completed'/, `${label}: run_complete should carry explicit terminal status`);
+    assert.match(background, /runUiJournal\.setAttachmentDeliveryState[\s\S]*attachmentDeliveryState,/, `${label}: background should durably settle attachment delivery before broadcasting completion`);
     assert.match(panel, /const processingTabs = new Set\(\);/, `${label}: processing state should be tab scoped`);
     assert.match(panel, /const localRunRequestIds = new Map\(\);/, `${label}: local request ownership should be tab scoped`);
     assert.match(panel, /function ensureCurrentRunAssistant\(msg\)/, `${label}: rendering should bind updates to their request bubble`);
@@ -62039,6 +62722,7 @@ test('per-tab run UI protocol is wired into both backgrounds and side panels', (
     assert.match(panel, /sendToBackground\('agent_run_ack'/, `${label}: the correct mounted tab should acknowledge replay`);
     assert.match(panel, /function invalidatePlanReviewCards\(/, `${label}: plan copies should be invalidated by tab and run identity`);
     assert.match(panel, /const pendingPlanMatchesRun =/, `${label}: restored plan cards should require an exact live journal match`);
+    assert.match(panel, /reconcileRunMessageAttachmentState\([\s\S]*?runUi\.attachmentDeliveryState/, `${label}: restored runs should reconcile attachment delivery independently of replay acknowledgement`);
     assert.match(panel, /card\.dataset\.runRequestId/, `${label}: plan cards should store their request identity`);
     assert.match(panel, /else if \(event === 'running'\) \{[\s\S]*?setTabProcessing\(runTabId, true\);[\s\S]*?setTabAbortRequested\(runTabId, false\);/, `${label}: scheduled runs should participate in tab-scoped stop state`);
     assert.match(panel, /const switchGeneration = \+\+tabSwitchGeneration;[\s\S]*?if \(switchGeneration !== tabSwitchGeneration\) return;/, `${label}: overlapping tab switches should cancel stale async transitions`);
@@ -62272,13 +62956,14 @@ test('detached-start cancellation survives setup until before LLM work', async (
       agent._manageContext = async () => {};
       agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
       let cancellationChecks = 0;
+      const updates = [];
 
       const final = await agent.processMessage(
         tabId,
         'do not start after Stop',
-        () => {},
+        (type, data) => updates.push({ type, data }),
         'act',
-        [],
+        [{ kind: 'image', name: 'unsent.png', dataUrl: 'data:image/png;base64,UNSENT' }],
         {
           detachedRequestId: `${label}-cancelled-start`,
           isDetachedStartCancelled: () => {
@@ -62290,6 +62975,7 @@ test('detached-start cancellation survives setup until before LLM work', async (
 
       assert.equal(final, 'Stopped by user before the run started.', `${label}: cancelled detached start should stop before provider work`);
       assert.equal(cancellationChecks, 1, `${label}: cancellation should be checked at the final pre-LLM boundary`);
+      assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: pre-validation cancellation should restore unsent attachments`);
       assert.equal(agent.activeRunState(tabId).running, false, `${label}: cancelled setup should release active-run state`);
 
       const continueTabId = tabId + 100;
@@ -62391,6 +63077,460 @@ test('attachments: uploaded images survive screenshot pruning with an untrusted 
     assert.ok(
       !prunedContent.some(block => block?.text === '[older screenshot omitted to save tokens]'),
       `${label} should not replace uploaded images with screenshot placeholders`,
+    );
+  }
+});
+
+test('attachments: slash screenshots redact only the model-facing copy', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const rawDataUrl = 'data:image/png;base64,RAW_LOCAL_SCREENSHOT';
+    const budgetDataUrl = 'data:image/jpeg;base64,BUDGET_COPY';
+    const redactedDataUrl = 'data:image/jpeg;base64,REDACTED_MODEL_COPY';
+    const captureBounds = { x: 0, y: 0, width: 1200, height: 3600 };
+    const redactionSnapshot = {
+      coordinateSpace: 'page',
+      viewport: { width: 1200, height: 3600 },
+      regions: [{ kind: 'password', rect: { x: 20, y: 40, w: 200, h: 30 } }],
+    };
+    const redactionCalls = [];
+    agent.screenshotRedaction = true;
+    agent._shrinkImageForBudget = async () => ({ dataUrl: budgetDataUrl, width: 800, height: 2400 });
+    agent._redactScreenshotDataUrl = async (tabId, dataUrl, options) => {
+      redactionCalls.push({ tabId, dataUrl, options });
+      return redactedDataUrl;
+    };
+    const screenshot = {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      source: 'slash_screenshot',
+      fullPage: true,
+      captureBounds,
+      redactionSnapshotReady: true,
+      redactionSnapshot,
+    };
+    const enriched = { role: 'user', content: 'inspect this capture' };
+
+    const result = await agent._applyAttachments(
+      enriched,
+      [screenshot],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+
+    assert.equal(result.ok, true, `${label}: slash screenshot should be accepted`);
+    assert.equal(screenshot.dataUrl, rawDataUrl, `${label}: local preview/save pixels must remain untouched`);
+    const imageBlock = enriched.content.find(block => block?.type === 'image_url');
+    assert.equal(imageBlock.image_url.url, redactedDataUrl, `${label}: the model must receive the redacted copy`);
+    assert.deepEqual(redactionCalls, [{
+      tabId: 8123,
+      dataUrl: budgetDataUrl,
+      options: {
+        coordinateSpace: 'page',
+        redactionSnapshot,
+        capturedCssBounds: captureBounds,
+        imageWidth: 800,
+        imageHeight: 2400,
+      },
+    }], `${label}: full-page screenshots should redact in page coordinates with immutable capture bounds`);
+
+    const uploaded = { role: 'user', content: 'inspect this upload' };
+    await agent._applyAttachments(
+      uploaded,
+      [{ kind: 'image', name: 'photo.png', dataUrl: rawDataUrl, source: 'user_upload' }],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+    assert.equal(redactionCalls.length, 1, `${label}: ordinary user image uploads must not be treated as browser screenshots`);
+    assert.equal(
+      uploaded.content.find(block => block?.type === 'image_url').image_url.url,
+      budgetDataUrl,
+      `${label}: ordinary image uploads should keep their budgeted model copy`,
+    );
+
+    const retainedModelDataUrl = 'data:image/png;base64,CAPTURE_BOUND_REDACTED_COPY';
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    const viewportEnriched = { role: 'user', content: 'inspect this viewport' };
+    const viewportResult = await agent._applyAttachments(
+      viewportEnriched,
+      [{
+        kind: 'image',
+        name: 'viewport-screenshot.png',
+        dataUrl: rawDataUrl,
+        source: 'slash_screenshot',
+        fullPage: false,
+        modelRedactionReady: true,
+        modelDataUrl: retainedModelDataUrl,
+        redactionSnapshotReady: true,
+        redactionSnapshot: {
+          coordinateSpace: 'viewport',
+          viewport: { width: 800, height: 600 },
+          regions: [{ kind: 'password', rect: { x: 20, y: 40, w: 200, h: 30 } }],
+        },
+      }],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+    assert.equal(viewportResult.ok, true, `${label}: a capture-bound viewport model copy should be accepted`);
+    assert.equal(
+      viewportEnriched.content.find(block => block?.type === 'image_url').image_url.url,
+      retainedModelDataUrl,
+      `${label}: viewport screenshots should reuse the retained redacted pixels`,
+    );
+    assert.equal(redactionCalls.length, 1, `${label}: viewport send must not recalculate privacy geometry later`);
+  }
+});
+
+test('attachments: staged screenshots fail closed when capture-time redaction data is missing', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.screenshotRedaction = true;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    let redactionCalled = false;
+    agent._redactScreenshotDataUrl = async dataUrl => {
+      redactionCalled = true;
+      return dataUrl;
+    };
+    const enriched = { role: 'user', content: 'inspect this capture' };
+
+    const result = await agent._applyAttachments(
+      enriched,
+      [{
+        kind: 'image',
+        name: 'stale-screenshot.png',
+        dataUrl: 'data:image/png;base64,RAW_LOCAL_SCREENSHOT',
+        source: 'slash_screenshot',
+        redactionSnapshotReady: false,
+      }],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+
+    assert.equal(result.ok, false, `${label}: a staged screenshot without capture-time privacy geometry must not be sent`);
+    assert.match(result.error, /capture-time privacy data[\s\S]*\/screenshot again/i, `${label}: the user should get a recoverable recapture instruction`);
+    assert.equal(redactionCalled, false, `${label}: the agent must not query later DOM geometry as a fallback`);
+    assert.equal(enriched.content, 'inspect this capture', `${label}: rejection must happen before model attachment blocks are added`);
+  }
+});
+
+test('attachments: capture-time redaction snapshots fail closed instead of truncating regions', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const snapshot = {
+      coordinateSpace: 'viewport',
+      viewport: { width: 800, height: 600 },
+      regions: Array.from({ length: 400 }, (_, index) => ({
+        kind: 'input',
+        rect: { x: index, y: 10, w: 20, h: 10 },
+      })),
+    };
+
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot(snapshot, 'viewport')?.regions.length,
+      400,
+      `${label}: a complete snapshot at the documented cap should remain usable`,
+    );
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot({
+        ...snapshot,
+        regions: [...snapshot.regions, { kind: 'password', rect: { x: 500, y: 10, w: 20, h: 10 } }],
+      }, 'viewport'),
+      null,
+      `${label}: overflow must invalidate the snapshot rather than silently exposing a later region`,
+    );
+    assert.equal(
+      agent._normalizeScreenshotRedactionSnapshot({
+        ...snapshot,
+        regions: [...snapshot.regions.slice(0, 399), { kind: 'password', rect: { x: 1, y: 2, w: 0, h: 10 } }],
+      }, 'viewport'),
+      null,
+      `${label}: malformed geometry must invalidate the whole privacy snapshot`,
+    );
+  }
+  for (const [label, file] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(
+      source,
+      /const regions = mergeRedactionFrameRegions\(frameSnapshots, \{[\s\S]*?maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS \+ 1,[\s\S]*?requireCompleteFrameCoverage: true,[\s\S]*?if \(!Array\.isArray\(regions\)\) return null/,
+      `${label}: the collector must request an overflow sentinel so normalization can fail closed`,
+    );
+    assert.match(
+      source,
+      /return \{ \.\.\.frameMetadata, inspectionFailed: true \}[\s\S]*?mergeRedactionFrameRegions\(frameSnapshots/,
+      `${label}: frame messaging failures must remain available for rendered-coverage validation`,
+    );
+    assert.match(
+      source,
+      /if \(!resp \|\| resp\.complete !== true \|\| resp\.overflowed === true/,
+      `${label}: a per-frame overflow or incomplete scan must mark that frame uninspected`,
+    );
+  }
+});
+
+test('attachments: staged screenshot restore metadata never substitutes compacted image pixels', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const start = source.indexOf('function encodeStagedScreenshotMetadata(attachment)');
+    const end = source.indexOf('function findStagedScreenshotResult(', start);
+    assert.ok(start >= 0 && end > start, `${label}: staged screenshot metadata codec missing`);
+    const runtime = Function(
+      'MAX_ATTACHMENT_BYTES',
+      'attachmentDataUrlBytes',
+      `${source.slice(start, end)}\nreturn { encodeStagedScreenshotMetadata, decodeStagedScreenshotMetadata };`,
+    )(16 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
+    const rawDataUrl = 'data:image/png;base64,RAW_CAPTURE';
+    const redactionSnapshot = {
+      coordinateSpace: 'viewport',
+      viewport: { width: 800, height: 600 },
+      regions: [{ kind: 'password', rect: { x: 10, y: 20, w: 100, h: 30 } }],
+    };
+    const encoded = runtime.encodeStagedScreenshotMetadata({
+      stagedAttachmentId: 'screenshot-12345678',
+      name: 'page-screenshot.png',
+      mimeType: 'image/png',
+      size: 11,
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      redactionSnapshot,
+    });
+
+    assert.doesNotMatch(encoded, /RAW_CAPTURE|data:image/i, `${label}: the restore envelope must not duplicate screenshot pixels`);
+    assert.deepEqual(runtime.decodeStagedScreenshotMetadata(encoded, rawDataUrl), {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      mimeType: 'image/png',
+      size: 11,
+      source: 'slash_screenshot',
+      stagedAttachmentId: 'screenshot-12345678',
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      redactionSnapshot,
+    }, `${label}: an exact persisted screenshot should restore with its capture-time privacy geometry`);
+    const modelDataUrl = 'data:image/png;base64,REDACTED_CAPTURE';
+    assert.deepEqual(runtime.decodeStagedScreenshotMetadata(encoded, rawDataUrl, {
+      dataUrl: rawDataUrl,
+      modelRedactionReady: true,
+      modelDataUrl,
+    }), {
+      kind: 'image',
+      name: 'page-screenshot.png',
+      dataUrl: rawDataUrl,
+      mimeType: 'image/png',
+      size: 11,
+      source: 'slash_screenshot',
+      stagedAttachmentId: 'screenshot-12345678',
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      modelRedactionReady: true,
+      modelDataUrl,
+      redactionSnapshot,
+    }, `${label}: reload restore should retain the verified model-facing pixels from durable storage`);
+    assert.equal(
+      runtime.decodeStagedScreenshotMetadata(encoded, 'data:image/png;base64,COMPACTED_PIXEL'),
+      null,
+      `${label}: a quota-compacted image must not be mistaken for the staged screenshot`,
+    );
+
+    assert.match(source, /async function stageScreenshotAttachment[\s\S]*?await saveStagedScreenshot\([\s\S]*?if \(!persisted\)[\s\S]*?return null;[\s\S]*?getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)/, `${label}: the UI must confirm a durable pixel write before claiming the screenshot is staged`);
+    assert.match(source, /loadStagedScreenshots\([\s\S]*?decodeStagedScreenshotMetadata\(persistedMetadata, stored\?\.dataUrl \|\| '', stored\)[\s\S]*?setAttribute\('src', attachment\.dataUrl\)/, `${label}: reload restore should recover exact preview and model-facing pixels outside compacted session chat HTML`);
+    assert.match(source, /await markStagedScreenshots\([\s\S]*?deliveryState: 'sending', requestId[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: a screenshot must durably acquire request ownership before its pending claim is cleared`);
+    assert.match(source, /clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\)/, `${label}: an in-flight send should retain durable pixels until delivery settles`);
+    assert.match(source, /const pendingStoredAttachments = storedAttachments\.filter\(attachment => attachment\.deliveryState === 'pending'\)[\s\S]*?Records without a pending result card may belong to a send[\s\S]*?const restoredIds/, `${label}: remount cleanup must preserve records that may be owned by an active request`);
+    assert.match(source, /async function reconcilePersistedStagedScreenshots[\s\S]*?attachment\.deliveryState === 'sending'[\s\S]*?attachment\.requestId[\s\S]*?deliveryState === 'included'[\s\S]*?removePersistedStagedAttachments[\s\S]*?\} else \{[\s\S]*?restorePendingAttachmentsForTab/, `${label}: only a confirmed inclusion may delete the durable pixels; rejected and unconfirmed deliveries return the exact screenshot to the composer`);
+    assert.match(source, /const deliveryState = res\?\.submittedTurnDurable === true \? 'included' : 'unknown';[\s\S]*?if \(deliveryState === 'included'\) \{[\s\S]*?removePersistedStagedAttachments\(tabId, attachmentsForSend\);[\s\S]*?\} else \{[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);/, `${label}: a completed send whose turn was never confirmed durable must keep the screenshot recoverable`);
+    assert.match(source, /const deliveryUnknown = isBackgroundConnectionError\(e\);[\s\S]*?setMessageAttachmentState\(userEl, deliveryUnknown \? 'unknown' : 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);/, `${label}: a lost background connection must return the screenshot to the composer rather than delete it`);
+    assert.doesNotMatch(source, /if \(deliveryUnknown\) await removePersistedStagedAttachments/, `${label}: an unknown delivery must never delete the durable pixels`);
+    // Every deletion of the durable pixels must be gated on a confirmed
+    // inclusion, so an unconfirmed turn can always be recovered.
+    for (const call of source.matchAll(/await removePersistedStagedAttachments\(/g)) {
+      const preceding = source.slice(Math.max(0, call.index - 400), call.index);
+      assert.match(preceding, /deliveryState === 'included'/, `${label}: durable pixels may only be deleted under a confirmed inclusion`);
+    }
+  }
+});
+
+test('attachments: staged screenshot store verifies exact pixels and cleans up', async () => {
+  const sources = [];
+  for (const build of ['chrome', 'firefox']) {
+    const modulePath = path.join(ROOT, `src/${build}/src/ui/staged-screenshot-store.js`);
+    sources.push(fs.readFileSync(modulePath, 'utf8'));
+    assert.match(sources.at(-1), /function storageKey\(tabId, stagedAttachmentId\)[\s\S]*?\$\{prefix\}\$\{id\}/, `${build}: each screenshot should have an independent storage key`);
+    assert.doesNotMatch(sources.at(-1), /next\.push\(record\)|storageArea\.set\(\{ \[key\]: next \}\)/, `${build}: storage mutations must not replace a shared per-tab array`);
+    const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(
+      background,
+      new RegExp(`clearStagedScreenshots\\(${build === 'chrome' ? 'chrome' : 'browser'}\\.storage\\.local, tabId\\)`),
+      `${build}: closing a tab should remove its durable staged pixels`,
+    );
+    const store = await import(pathToFileURL(modulePath).href);
+    const values = {};
+    const storage = {
+      async get(key) {
+        if (key == null) return structuredClone(values);
+        const keys = Array.isArray(key) ? key : [key];
+        return Object.fromEntries(keys
+          .filter(item => Object.hasOwn(values, item))
+          .map(item => [item, structuredClone(values[item])]));
+      },
+      async set(update) { Object.assign(values, structuredClone(update)); },
+      async remove(key) {
+        for (const item of Array.isArray(key) ? key : [key]) delete values[item];
+      },
+    };
+    const attachment = {
+      stagedAttachmentId: 'screenshot-12345678',
+      name: 'page-screenshot.png',
+      dataUrl: 'data:image/png;base64,RAW_CAPTURE',
+      mimeType: 'image/png',
+      size: 11,
+      capturedAt: 123,
+      fullPage: false,
+      redactionSnapshotReady: true,
+      modelRedactionReady: true,
+      modelDataUrl: 'data:image/png;base64,REDACTED_CAPTURE',
+      redactionSnapshot: {
+        coordinateSpace: 'viewport',
+        viewport: { width: 800, height: 600 },
+        regions: [],
+      },
+    };
+
+    assert.equal(await store.saveStagedScreenshot(storage, 55, attachment), true, `${build}: exact readback should confirm staging`);
+    const loadedAttachment = (await store.loadStagedScreenshots(storage, 55))[0];
+    assert.equal(loadedAttachment.dataUrl, attachment.dataUrl, `${build}: stored preview pixels should round-trip exactly`);
+    assert.equal(loadedAttachment.modelDataUrl, attachment.modelDataUrl, `${build}: stored model pixels should round-trip exactly`);
+    assert.equal(loadedAttachment.modelRedactionReady, true, `${build}: stored model-copy readiness should round-trip exactly`);
+    assert.equal(await store.markStagedScreenshots(storage, 55, [{ ...attachment, source: 'slash_screenshot' }], {
+      deliveryState: 'sending',
+      requestId: 'request-55',
+    }), true, `${build}: in-flight ownership should be durably marked`);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(storage, 55)).map(item => [item.deliveryState, item.requestId]),
+      [['sending', 'request-55']],
+      `${build}: reload should retain the active request association`,
+    );
+    assert.equal(await store.markStagedScreenshots(storage, 55, [{ ...attachment, source: 'slash_screenshot' }], {
+      deliveryState: 'pending',
+    }), true, `${build}: a rejected screenshot should return to pending state`);
+    await store.removeStagedScreenshot(storage, 55, attachment.stagedAttachmentId);
+    assert.deepEqual(await store.loadStagedScreenshots(storage, 55), [], `${build}: sent or removed screenshots should be deleted`);
+
+    const older = { ...attachment, stagedAttachmentId: 'screenshot-older123' };
+    const newer = { ...attachment, stagedAttachmentId: 'screenshot-newer123', dataUrl: 'data:image/png;base64,NEW_CAPTURE' };
+    await store.saveStagedScreenshot(storage, 57, older);
+    await Promise.all([
+      store.removeStagedScreenshot(storage, 57, older.stagedAttachmentId),
+      store.saveStagedScreenshot(storage, 57, newer),
+    ]);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(storage, 57)).map(item => item.stagedAttachmentId),
+      [newer.stagedAttachmentId],
+      `${build}: cleanup of an older screenshot must not erase or resurrect a concurrent new capture`,
+    );
+
+    const corruptingStorage = {
+      ...storage,
+      async set(update) {
+        const copy = structuredClone(update);
+        const key = Object.keys(copy)[0];
+        copy[key].dataUrl = 'data:image/png;base64,DIFFERENT_PIXELS';
+        values[key] = copy[key];
+      },
+    };
+    assert.equal(await store.saveStagedScreenshot(corruptingStorage, 56, attachment), false, `${build}: staging must fail when exact pixels cannot be read back`);
+    await store.clearStagedScreenshots(storage, 56);
+
+    // Reads run on every tab switch and every reconnect probe, and each record
+    // holds multi-megabyte pixels for every tab, so they must never deserialize
+    // the whole area.
+    let fullAreaReads = 0;
+    const keyedStorage = {
+      ...storage,
+      async getKeys() { return Object.keys(values); },
+      async get(key) {
+        if (key == null) fullAreaReads += 1;
+        return storage.get(key);
+      },
+    };
+    const otherTabAttachment = { ...attachment, stagedAttachmentId: 'screenshot-othertab1' };
+    await store.saveStagedScreenshot(keyedStorage, 58, attachment);
+    await store.saveStagedScreenshot(keyedStorage, 59, otherTabAttachment);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(keyedStorage, 58)).map(item => item.stagedAttachmentId),
+      [attachment.stagedAttachmentId],
+      `${build}: loading one tab's screenshots should return only that tab's records`,
+    );
+    await store.clearStagedScreenshots(keyedStorage, 58);
+    assert.deepEqual(await store.loadStagedScreenshots(keyedStorage, 58), [], `${build}: clearing a tab should remove its records`);
+    assert.deepEqual(
+      (await store.loadStagedScreenshots(keyedStorage, 59)).map(item => item.stagedAttachmentId),
+      [otherTabAttachment.stagedAttachmentId],
+      `${build}: clearing one tab must not touch another tab's records`,
+    );
+    assert.equal(fullAreaReads, 0, `${build}: staged screenshot reads must never deserialize the whole storage area`);
+    await store.clearStagedScreenshots(keyedStorage, 59);
+  }
+  assert.equal(sources[0], sources[1], 'Chrome and Firefox staged screenshot stores should stay byte-identical');
+});
+
+test('attachments: a full-page screenshot is refused when deferred redaction leaves the pixels unchanged', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    agent.screenshotRedaction = true;
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 4000 });
+    // Every non-throwing failure inside _redactScreenshotDataUrl — no mapped
+    // rect in bounds, no OffscreenCanvas, a compression fallback — surfaces as
+    // the input coming back unchanged.
+    agent._redactScreenshotDataUrl = async (_tabId, dataUrl) => dataUrl;
+    const provider = { name: 'vision-test', supportsVision: true };
+    const attachment = {
+      kind: 'image',
+      source: 'slash_screenshot',
+      fullPage: true,
+      name: 'page-screenshot.png',
+      dataUrl: 'data:image/png;base64,FULL_PAGE_CAPTURE',
+      redactionSnapshotReady: true,
+      modelRedactionReady: false,
+      captureBounds: { width: 800, height: 4000 },
+      redactionSnapshot: {
+        coordinateSpace: 'page',
+        viewport: { width: 800, height: 4000 },
+        regions: [{ kind: 'password', rect: { x: 10, y: 20, w: 100, h: 30 } }],
+      },
+    };
+
+    const enriched = { role: 'user', content: 'what is on this page?' };
+    const blocked = await agent._applyAttachments(enriched, [attachment], provider, { tabId: 7 });
+    assert.equal(blocked.ok, false, `${label}: a failed deferred redaction must not be sent`);
+    assert.match(blocked.error, /private model-facing copy/, `${label}: the refusal should name the missing private copy`);
+    assert.equal(
+      JSON.stringify(enriched.content).includes('FULL_PAGE_CAPTURE'),
+      false,
+      `${label}: unredacted full-page pixels must never reach the message content`,
+    );
+
+    // A page with nothing to redact is legitimately byte-identical afterwards.
+    const cleanEnriched = { role: 'user', content: 'what is on this page?' };
+    const clean = await agent._applyAttachments(cleanEnriched, [{
+      ...attachment,
+      redactionSnapshot: { ...attachment.redactionSnapshot, regions: [] },
+    }], provider, { tabId: 7 });
+    assert.equal(clean.ok, true, `${label}: a page with no sensitive regions should still send`);
+    assert.equal(
+      JSON.stringify(cleanEnriched.content).includes('FULL_PAGE_CAPTURE'),
+      true,
+      `${label}: a screenshot with nothing to redact should reach the model`,
     );
   }
 });
@@ -62609,6 +63749,53 @@ test('attachments: text attachment scratchpad path never writes raw textContent'
   }
 });
 
+test('attachments: trace startup receives the complete run options in both builds', () => {
+  for (const [label, file] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const helperStart = source.indexOf('async _startTraceRun(');
+    const helperEnd = source.indexOf('\n  /**', helperStart);
+    const helper = source.slice(helperStart, helperEnd);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: trace helper should be present`);
+    assert.match(helper, /runOptions = \{\}/, `${label}: trace helper should receive run options`);
+    assert.match(helper, /attachments: Array\.isArray\(runOptions\?\.traceAttachments\)/, `${label}: trace helper should retain attachment metadata`);
+    assert.match(helper, /force: runOptions\?\.cloudRun === true/, `${label}: trace helper should preserve forced cloud tracing`);
+    assert.match(helper, /runOptions\?\.onTraceStarted/, `${label}: trace helper should publish the started trace ID`);
+
+    const optionAwareCalls = source.match(
+      /this\._startTraceRun\(\s*tabId,\s*userMessage,\s*mode,\s*provider,\s*(?:traceTabInfo|null),\s*runOptions,\s*\)/g,
+    ) || [];
+    assert.equal(optionAwareCalls.length, 3, `${label}: every trace startup path should pass complete run options`);
+  }
+});
+
+test('attachments: slash screenshots stage for the next turn and sent bubbles retain metadata-only evidence', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const store = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/chat-history-store.js'), 'utf8');
+    const history = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.js'), 'utf8');
+
+    assert.match(panel, /sendToBackground\('capture_viewport_screenshot', \{ tabId \}\)[\s\S]*stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*modelRedactionReady:[\s\S]*modelDataUrl:[\s\S]*addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must retain the capture-bound model copy before rendering its result card`);
+    assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*modelRedactionReady: modelRedactionReady === true,[\s\S]*modelDataUrl[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy data and model pixels in the tab-scoped pending attachment list`);
+    assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
+    assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
+    assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);
+    assert.match(panel, /userEl = addMessage\('user', text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the actual send attachment set`);
+    assert.match(panel, /function attachmentStateLabel[\s\S]*t\('sp\.attach\.state\.included'\)[\s\S]*t\('sp\.attach\.state\.not_sent'\)[\s\S]*t\('sp\.attach\.state\.unknown'\)[\s\S]*t\('sp\.attach\.state\.sending'\)/, `${label}: attachment bubble must localize delivery labels`);
+    assert.match(panel, /function setMessageAttachmentState[\s\S]*item\.dataset\.deliveryState = state/, `${label}: attachment bubble delivery state must update after send outcome`);
+    assert.match(panel, /sp\.screenshot\.staged_next_message[\s\S]*sp\.screenshot\.full_page_alt/, `${label}: screenshot result status and alt text must be localized`);
+    assert.match(panel, /function reconcileRunMessageAttachmentState[\s\S]*persistMessageAttachmentState/, `${label}: attachment delivery reconciliation must support durable persistence`);
+    assert.match(panel, /reconcileRunMessageAttachmentState\([\s\S]*?runUi\.attachmentDeliveryState/, `${label}: restored terminal runs must repair attachment delivery state from the journal`);
+    assert.match(panel, /const deliveryState = res\?\.submittedTurnDurable === true \? 'included' : 'unknown';[\s\S]*?setMessageAttachmentState\(userEl, deliveryState\)/, `${label}: completed sends must not claim attachment inclusion without durable-turn proof`);
+    assert.match(panel, /const attachments = role === 'user' \? messageAttachmentMetadata\(msgEl\) : \[\][\s\S]*\.\.\.\(attachments\.length \? \{ attachments \} : \{\}\)/, `${label}: history extraction must retain attachment descriptors`);
+    assert.match(store, /function normalizeAttachment[\s\S]*kind:[\s\S]*name:[\s\S]*mimeType:[\s\S]*size:[\s\S]*source:[\s\S]*deliveryState:/, `${label}: history store must normalize safe attachment metadata`);
+    assert.doesNotMatch(store, /dataUrl|textContent|base64/, `${label}: history store must not persist attachment bytes or contents`);
+    assert.match(history, /Attachments:[\s\S]*deliveryState[\s\S]*attachment\.name/, `${label}: Markdown history export must show attachment evidence`);
+  }
+});
+
 test('attachments: notice blocks outside user messages do not exempt images from pruning', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
@@ -62654,6 +63841,47 @@ test('attachments: unsupported-attachment rejection emits a structured update', 
   }
 });
 
+test('attachments: Compact-tier Dev rejection preserves the unsent payload', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const provider = {
+      name: 'compact-test',
+      promptTier: 'compact',
+      supportsVision: true,
+      supportsDocuments: true,
+    };
+    const agent = new AgentClass({ getActive: () => provider });
+    const messages = [{ role: 'system', content: 'system' }];
+    agent._hydrate = async () => {};
+    agent.getConversation = () => messages;
+    agent._expireCurrentToolReasoning = () => {};
+    agent._prepareClarificationAuthorizationForRun = () => {};
+    agent._preactivateRecommendedActionSkill = () => {};
+    agent._selectionGroundedRunOptions = (_tabId, _messages, options) => options;
+    agent._augmentScheduledResumeMessage = (_tabId, text) => text;
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _history, text) => ({ role: 'user', content: text });
+    agent._preactivateNyTimesSkillForRun = () => {};
+    agent._preactivateHumanizerSkillForRun = () => {};
+    let persisted = false;
+    agent._persistSubmittedTurn = async () => { persisted = true; };
+    const updates = [];
+
+    const result = await agent._processMessageInner(
+      901,
+      'inspect this screenshot',
+      (type, data) => updates.push({ type, data }),
+      'dev',
+      [{ kind: 'image', source: 'slash_screenshot', name: 'capture.png' }],
+      {},
+    );
+
+    assert.match(result, /Attachments were not sent/, `${label}: Compact Dev should explain attachment ownership`);
+    assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: Compact Dev should emit a structured rejection`);
+    assert.equal(messages.length, 1, `${label}: a blocked turn must not be added to history`);
+    assert.equal(persisted, false, `${label}: a blocked attachment turn must not be persisted as submitted`);
+  }
+});
+
 test('sidepanel: pending attachments are tab-scoped and send-gated while loading', () => {
   for (const [label, file, htmlFile] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/sidepanel.html'],
@@ -62664,19 +63892,35 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
-    assert.ok(
-      source.includes('if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId))'),
-      `${label} should block normal sends while files load without blocking retries or selection-only runs`,
+    assert.match(
+      source,
+      /if \(!retryOptions && !sourceGrounding && !isWorkflowRun\s*&& !isProcessing && isAttachmentReadPendingForTab\(tabId\)\)/,
+      `${label} should block normal sends while files load without blocking retries, selection-only runs, or workflow replay`,
     );
     assert.ok(source.includes('clearPendingAttachmentsForTab(tabId);'), `${label} should clear pending files with the conversation`);
     assert.match(
       source,
-      /function restorePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?pending\.unshift\(\.\.\.attachments\.filter\(att => !pending\.includes\(att\)\)\);[\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
+      /async function restorePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?await markStagedScreenshots\([\s\S]*?const pendingScreenshotIds = new Set\([\s\S]*?pending\.unshift\([\s\S]*?normalizeAttachmentTabId\(\) === numericTabId[\s\S]*?renderAttachmentPreviews\(\);[\s\S]*?syncSendButtonState\(\);/,
       `${label} should restore sent attachments to their originating tab without duplicating existing objects`,
     );
     assert.match(
       source,
-      /u\?\.type === 'attachment_rejected'\)\)[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
+      /function consumePendingAttachmentsForTab\(tabId, attachments\) \{[\s\S]*?const consumed = new Set\(attachments\);[\s\S]*?const consumedScreenshotIds = new Set\([\s\S]*?pending\.filter\(attachment => !consumed\.has\(attachment\)[\s\S]*?consumedScreenshotIds\.has\(attachment\.stagedAttachmentId\)/,
+      `${label} should remove the retried attachments from pending composer state by object and by durable screenshot id`,
+    );
+    assert.match(
+      source,
+      /if \(retryOptions\) consumePendingAttachmentsForTab\(tabId, attachmentsForSend\);/,
+      `${label} should transfer restored attachment ownership out of the composer before a retry`,
+    );
+    assert.match(
+      source,
+      /const accepted = await sendMessage\(\{[\s\S]*?__retry:[\s\S]*?if \(accepted\) \{[\s\S]*?releaseRetryAttachmentPayload\(btn\.dataset\.retryId\);[\s\S]*?btn\.disabled = true;/,
+      `${label} should retire an accepted retry payload so it cannot be submitted twice`,
+    );
+    assert.match(
+      source,
+      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
       `${label} should restore rejected attachments even after a tab switch and only overwrite an empty current-tab draft`,
     );
     assert.match(
@@ -64075,6 +65319,9 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /Array\.isArray\(res\.warnings\)/);
     assert.match(source, /input\.type = parameter\.sensitive \? 'password' : 'text'/);
     assert.match(source, /inputs\.forEach\(\(input\) => \{ input\.value = ''; \}\)/);
+    assert.match(source, /const isWorkflowRun = !!chatExtraParams\.workflowId;/);
+    assert.match(source, /const attachmentsForSend = sourceGrounding \|\| isWorkflowRun\s*\? \[\]/);
+    assert.match(source, /if \(!sourceGrounding && !isWorkflowRun\) \{[\s\S]*?clearPendingAttachmentsForTab\(tabId, \{ preserveStoredScreenshots: true \}\);/);
     assert.match(source, /name_required:\s*'sp\.workflows\.reason\.name_required'/);
     assert.match(source, /http_start_url_required:\s*'sp\.workflows\.reason\.http_start_url'/);
     assert.match(source, /className = 'workflow-manager'/);
@@ -64094,6 +65341,7 @@ test('saved workflow slash commands are out-of-band and wired in both browsers',
     assert.match(source, /case 'export_saved_workflow':/);
     assert.match(source, /case 'import_saved_workflow':/);
     assert.match(source, /agent\.replaySavedWorkflow\(/);
+    assert.match(source, /attachmentCount: isWorkflowRun\s*\? 0\s*: Array\.isArray\(msg\.attachments\) \? msg\.attachments\.length : 0/);
     assert.match(source, /clearUserMemoryTurnContext\(tabId\)/);
     assert.match(source, /agent\.processMessage\(tabId, replay\.prompt, publishUpdate, 'act', \[\], \{\s*\.\.\.runOptions,\s*preserveRichTextToolbarAudit: true,/);
   }

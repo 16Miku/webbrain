@@ -110,6 +110,16 @@ function _newSeq(runId) {
   return st.seq;
 }
 
+function normalizeTraceAttachments(attachments) {
+  return (Array.isArray(attachments) ? attachments : []).slice(0, 20).map(attachment => ({
+    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    name: String(attachment?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
+    mimeType: String(attachment?.mimeType || '').slice(0, 120),
+    size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
+    source: attachment?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+  }));
+}
+
 // ----- Public API ------------------------------------------------------------
 
 export async function startRun(meta = {}) {
@@ -138,6 +148,7 @@ export async function startRun(meta = {}) {
       tabUrl: meta.tabUrl || '',
       tabTitle: meta.tabTitle || '',
       mode: meta.mode || 'act',
+      attachments: normalizeTraceAttachments(meta.attachments),
       forced,
       stepCount: 0,
       totalInputTokens: 0,
