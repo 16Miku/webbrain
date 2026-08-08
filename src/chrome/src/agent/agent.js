@@ -15614,43 +15614,56 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw new Error('Saved workflow is missing or invalid.');
     }
     await this._claimRunEntry(tabId, 'workflow', runOptions);
+    let completionRunToken = '';
+    let previousForegroundCapture = false;
+    let capturePolicyConfigured = false;
+    let startUrl = '';
+    let traceRunId = null;
     try {
       await this._hydrate(tabId);
+      // Deterministic workflow replay is an independent task even when it never
+      // falls back to processMessage. Clear stale selected-text grounding before
+      // any replay action so a successful replay cannot poison the next turn.
+      this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
+      // Align pre-run cleanup with processMessage so a prior Act turn cannot
+      // leak click-AX CDP fallbacks, plan guards, or active-skill state into
+      // deterministic replay (or the reverse on the next turn).
+      this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      this._clearRunLoopState(tabId);
+      this._resetRichTextToolbarAudit(tabId);
+      this._clickAxCdpFallbacks?.delete(tabId);
+      this.abortFlags.delete(tabId);
+      this._prepareClarificationAuthorizationForRun(tabId);
+      this.permissions.beginTurn(tabId);
+      this.conversationModes.set(tabId, 'act');
+      completionRunToken = this._beginCompletionInvariant(tabId);
+      previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
+      capturePolicyConfigured = true;
+      startUrl = await this._currentUrl(tabId);
+      const conversationId = await this.ensureConversationId(tabId, 'act');
+      traceRunId = await trace.startRun({
+        conversationId,
+        userMessage: `Run saved workflow: ${workflow.name}`,
+        tabUrl: startUrl,
+        mode: 'act',
+        model: this.providerManager?.getActive?.()?.model || '',
+        providerId: this.providerManager?.activeProviderId || '',
+        runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
+          tabId,
+          mode: 'act',
+        }),
+      });
     } catch (error) {
       this._runningTabs.delete(tabId);
+      try {
+        if (capturePolicyConfigured) {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        }
+      } finally {
+        if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
+      }
       throw error;
     }
-    // Deterministic workflow replay is an independent task even when it never
-    // falls back to processMessage. Clear stale selected-text grounding before
-    // any replay action so a successful replay cannot poison the next turn.
-    this._clearSelectionGroundingForIndependentRun(tabId, { ...runOptions, independentRun: true });
-    // Align pre-run cleanup with processMessage so a prior Act turn cannot
-    // leak click-AX CDP fallbacks, plan guards, or active-skill state into
-    // deterministic replay (or the reverse on the next turn).
-    this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
-    this._clearRunLoopState(tabId);
-    this._resetRichTextToolbarAudit(tabId);
-    this._clickAxCdpFallbacks?.delete(tabId);
-    this.abortFlags.delete(tabId);
-    this._prepareClarificationAuthorizationForRun(tabId);
-    this.permissions.beginTurn(tabId);
-    this.conversationModes.set(tabId, 'act');
-    const completionRunToken = this._beginCompletionInvariant(tabId);
-    const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
-    const startUrl = await this._currentUrl(tabId);
-    const conversationId = await this.ensureConversationId(tabId, 'act');
-    const traceRunId = await trace.startRun({
-      conversationId,
-      userMessage: `Run saved workflow: ${workflow.name}`,
-      tabUrl: startUrl,
-      mode: 'act',
-      model: this.providerManager?.getActive?.()?.model || '',
-      providerId: this.providerManager?.activeProviderId || '',
-      runtimeConfig: this._runtimeTraceConfig(this.providerManager?.getActive?.(), {
-        tabId,
-        mode: 'act',
-      }),
-    });
     let traceStatus = 'workflow_stopped';
     let finalContent = '';
     let matchedSteps = 0;
@@ -15896,16 +15909,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         healings: verifiedHealings,
       };
     } finally {
-      await trace.endRun(traceRunId, { status: traceStatus, finalContent });
-      this.currentCostState.delete(tabId);
-      this._planExecutionGuards.delete(tabId);
-      this._resetActiveSkillsForRun(tabId);
-      await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
       this._runningTabs.delete(tabId);
-      this._clearRunLoopState(tabId);
-      if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
-      this._clickAxCdpFallbacks?.delete(tabId);
-      this._clearCompletionInvariant(tabId, completionRunToken);
+      try {
+        await trace.endRun(traceRunId, { status: traceStatus, finalContent });
+        this.currentCostState.delete(tabId);
+        this._planExecutionGuards.delete(tabId);
+        this._resetActiveSkillsForRun(tabId);
+        this._clearRunLoopState(tabId);
+        if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
+        this._clickAxCdpFallbacks?.delete(tabId);
+      } finally {
+        try {
+          await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
+        } finally {
+          this._clearCompletionInvariant(tabId, completionRunToken);
+        }
+      }
     }
   }
 

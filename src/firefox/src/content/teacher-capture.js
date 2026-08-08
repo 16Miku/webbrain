@@ -4,11 +4,11 @@
   window.__webbrainTeacherCaptureInstalled = true;
 
   const INDICATOR_ID = 'webbrain-teacher-indicator';
-  const submittedFields = new WeakMap();
+  const recordedFields = new WeakMap();
   const dirtyFields = new WeakSet();
   let active = false;
   let sessionName = '';
-  let enterSubmitAt = 0;
+  let pendingEnter = null;
 
   function clean(value, max = 240) {
     return String(value || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -110,6 +110,10 @@
     return element.matches('button') ? (!type || type === 'submit') : ['submit', 'image'].includes(type);
   }
 
+  function formFor(element) {
+    return element?.form || element?.closest?.('form') || null;
+  }
+
   function sendAction(action) {
     if (!active || !action) return;
     try {
@@ -155,8 +159,16 @@
   document.addEventListener('click', (event) => {
     if (!active || !event.isTrusted || isTeacherUiEvent(event)) return;
     const element = actionableFromEvent(event);
-    if (!element || isField(element)) return;
-    if (isSubmitControl(element) && Date.now() - enterSubmitAt < 500) return;
+    if (!element) return;
+    const keyboardSubmitClick = (
+      isSubmitControl(element)
+      && event.detail === 0
+      && pendingEnter?.form
+      && formFor(element) === pendingEnter.form
+      && Date.now() - pendingEnter.at < 500
+    );
+    if (pendingEnter && !keyboardSubmitClick) pendingEnter = null;
+    if (isField(element) || keyboardSubmitClick) return;
     if (isCheckable(element)) {
       queueMicrotask(() => {
         if (!active) return;
@@ -180,7 +192,7 @@
     if (!active || !event.isTrusted) return;
     const element = actionableFromEvent(event);
     if (!isField(element)) return;
-    if (Date.now() - (submittedFields.get(element) || 0) < 1000) return;
+    if (Date.now() - (recordedFields.get(element) || 0) < 1000) return;
     dirtyFields.delete(element);
     sendAction({ kind: 'field', target: semanticTarget(element, { field: true }) });
   }, true);
@@ -195,13 +207,33 @@
   }, true);
 
   document.addEventListener('keydown', (event) => {
-    if (!active || !event.isTrusted || event.key !== 'Enter' || event.repeat) return;
+    if (!active || !event.isTrusted) return;
+    if (event.key !== 'Enter' || event.repeat) {
+      pendingEnter = null;
+      return;
+    }
     const element = actionableFromEvent(event);
     if (!isField(element) || element.matches('textarea,[contenteditable]')) return;
+    const action = { kind: 'field', target: semanticTarget(element, { field: true }) };
+    const at = Date.now();
     dirtyFields.delete(element);
-    submittedFields.set(element, Date.now());
-    enterSubmitAt = Date.now();
-    sendAction({ kind: 'field', submit: true, target: semanticTarget(element, { field: true }) });
+    recordedFields.set(element, at);
+    pendingEnter = { element, form: formFor(element), action, at };
+    sendAction(action);
+  }, true);
+
+  document.addEventListener('submit', (event) => {
+    if (!active || !event.isTrusted) return;
+    const pending = pendingEnter;
+    if (!pending?.form || event.target !== pending.form || Date.now() - pending.at >= 1000) return;
+    // Wait until submit propagation finishes so page handlers have a chance to
+    // cancel autocomplete/custom Enter behavior before we mark it replayable.
+    queueMicrotask(() => {
+      if (!active || event.defaultPrevented || pendingEnter !== pending) return;
+      pendingEnter = null;
+      recordedFields.set(pending.element, Date.now());
+      sendAction({ ...pending.action, submit: true });
+    });
   }, true);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

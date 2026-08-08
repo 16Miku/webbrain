@@ -130,6 +130,27 @@ export function createTeacherSessionStore(storageArea, options = {}) {
       session.skippedActionCount += 1;
       return { changed: false, reason, session: await write(session) };
     }
+    const ts = now();
+    const fingerprint = JSON.stringify(action);
+    if (action.kind === 'field' && action.submit === true && ts - session.lastActionAt < 2000) {
+      const lastIndex = session.actions.length - 1;
+      const lastAction = session.actions[lastIndex];
+      const candidateIndex = lastAction?.kind === 'navigate' ? lastIndex - 1 : lastIndex;
+      const candidate = session.actions[candidateIndex];
+      if (
+        candidate?.kind === 'field'
+        && candidate.submit !== true
+        && JSON.stringify({ ...candidate, submit: true }) === fingerprint
+      ) {
+        session.actions[candidateIndex] = action;
+        if (candidateIndex !== lastIndex) session.actions.splice(candidateIndex + 1, 1);
+        if (candidateIndex === lastIndex) session.currentScope = action.scope;
+        session.lastActionAt = ts;
+        session.lastActionKind = action.kind;
+        session.lastActionFingerprint = fingerprint;
+        return { changed: true, reason: '', session: await write(session) };
+      }
+    }
     if (session.actions.length >= TEACHER_ACTION_LIMIT) {
       if (!session.actionLimitReached) {
         session.actionLimitReached = true;
@@ -137,8 +158,6 @@ export function createTeacherSessionStore(storageArea, options = {}) {
       }
       return { changed: false, reason: 'action_limit', session };
     }
-    const ts = now();
-    const fingerprint = JSON.stringify(action);
     if (fingerprint === session.lastActionFingerprint && ts - session.lastActionAt < 200) {
       return { changed: false, reason: 'duplicate', session };
     }
@@ -185,11 +204,15 @@ export function createTeacherSessionStore(storageArea, options = {}) {
       const previous = session.currentScope || session.start;
       const sameScope = previous.origin === destination.origin
         && previous.pathFamily === destination.pathFamily;
-      const recentClick = options.force !== true
-        && session.lastActionKind === 'click'
+      const lastAction = session.actions.at(-1);
+      const recentNavigationTrigger = options.force !== true
+        && (
+          session.lastActionKind === 'click'
+          || (session.lastActionKind === 'field' && lastAction?.submit === true)
+        )
         && now() - session.lastActionAt < 2000;
       session.currentScope = destination;
-      if (sameScope || recentClick) return { changed: true, reason: '', session: await write(session) };
+      if (sameScope || recentNavigationTrigger) return { changed: true, reason: '', session: await write(session) };
       return record(tabId, { kind: 'navigate', scope: previous, url });
     },
     async clear(tabId) {
