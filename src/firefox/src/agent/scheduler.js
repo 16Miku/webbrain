@@ -1539,7 +1539,7 @@ export class ScheduledJobManager {
       await this._validateTaskTarget(job, tabId);
     } catch (e) {
       releaseReservation();
-      if (isActiveRunError(e)) {
+      if (isActiveRunError(e) || e?.code === 'teacher_mode_active') {
         await this._requeue(job, 'The target tab already has an active WebBrain run.');
       } else {
         await this._markFailed(job, e.message);

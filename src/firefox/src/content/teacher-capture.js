@@ -158,10 +158,13 @@
     if (!element || isField(element)) return;
     if (isSubmitControl(element) && Date.now() - enterSubmitAt < 500) return;
     if (isCheckable(element)) {
-      const checked = element.matches('input')
-        ? element.checked === true
-        : element.getAttribute('aria-checked') === 'true';
-      sendAction({ kind: 'checked', checked, target: semanticTarget(element) });
+      queueMicrotask(() => {
+        if (!active) return;
+        const checked = element.matches('input')
+          ? element.checked === true
+          : element.getAttribute('aria-checked') === 'true';
+        sendAction({ kind: 'checked', checked, target: semanticTarget(element) });
+      });
       return;
     }
     sendAction({ kind: 'click', target: semanticTarget(element) });
