@@ -54565,6 +54565,72 @@ test('download_files digest echoes safe downloadIds but never the filename (chro
   }
 });
 
+test('download_files falls back to singular url when providers emit an empty urls placeholder', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const url = 'https://example.com/webbrain-firefox.zip';
+  try {
+    let chromeDownloadOptions = null;
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      downloads: {
+        download(options, cb) {
+          chromeDownloadOptions = options;
+          cb(468);
+        },
+        search(_query, cb) {
+          cb([{
+            id: 468,
+            filename: '/Users/test/Downloads/webbrain-firefox.zip',
+            state: 'complete',
+            bytesReceived: 10,
+            totalBytes: 10,
+          }]);
+        },
+      },
+    };
+    const chromeArgs = { url, urls: [], filename: 'webbrain-firefox.zip' };
+    const chromeResult = await new AgentCh({}).executeTool(42, 'download_files', chromeArgs);
+    assert.equal(chromeResult.success, true);
+    assert.deepEqual(chromeArgs.urls, [url]);
+    assert.equal(chromeDownloadOptions.url, url);
+
+    let firefoxDownloadOptions = null;
+    globalThis.browser = {
+      storage: {
+        local: {
+          async get() { return { downloadDirectory: '' }; },
+        },
+      },
+      downloads: {
+        async download(options) {
+          firefoxDownloadOptions = options;
+          return 469;
+        },
+        async search() {
+          return [{
+            id: 469,
+            filename: '/Users/test/Downloads/webbrain-firefox.zip',
+            state: 'complete',
+            bytesReceived: 10,
+            totalBytes: 10,
+          }];
+        },
+      },
+    };
+    const firefoxArgs = { url, urls: [], filename: 'webbrain-firefox.zip' };
+    const firefoxResult = await new AgentFx({}).executeTool(42, 'download_files', firefoxArgs);
+    assert.equal(firefoxResult.success, true);
+    assert.deepEqual(firefoxArgs.urls, [url]);
+    assert.equal(firefoxDownloadOptions.url, url);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('download_files treats interrupted browser downloads as failed (chrome & firefox)', async () => {
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
@@ -55221,7 +55287,9 @@ test('upload_file prefers a valid downloadId and falls back to filePath for an i
     cdpClientCh.getFileInputFiles = async () => [];
     const consumed = await agent.executeTool(42, 'upload_file', {
       selector: 'input[type=file]',
+      attachmentId: '',
       downloadId: 9123,
+      filePath: '',
     });
     assert.equal(consumed.success, true);
     assert.equal(consumed.attachmentState, 'page_consumed');
@@ -55699,7 +55767,12 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
     };
 
     const agent = new AgentFx({});
-    const args = { selector: 'input[type=file]', downloadId: 8123 };
+    const args = {
+      selector: 'input[type=file]',
+      attachmentId: '',
+      downloadId: 8123,
+      filePath: '',
+    };
     const result = await agent.executeTool(42, 'upload_file', args);
 
     assert.equal(result.success, true);
