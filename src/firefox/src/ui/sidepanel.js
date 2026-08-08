@@ -7934,15 +7934,24 @@ function expirePlanReviewCards({
 
     const assistantEl = card.closest('.message.assistant');
     const textEl = assistantEl?.querySelector('.message-text');
-    if (isPlanReviewTimeoutTerminal(textEl?.textContent)) {
-      // Hide the raw terminal string in favour of the footer below, but leave a
-      // marker behind: extractChatHistoryMessages drops assistant messages with
-      // an empty .message-text, which would erase the turn from saved history.
+    if (textEl && !textEl.querySelector('.plan-review-timeout-history-note')) {
+      // extractChatHistoryMessages drops assistant messages whose .message-text
+      // is empty, and every path that would render the terminal cancellation
+      // suppresses it once the card is expired. Without a marker the turn
+      // disappears from saved and exported history. The marker cannot wait for
+      // that text either: _waitForPlanReview emits plan_resolved before its
+      // caller returns the string, so on a live timeout the text is still empty
+      // here and only the restore path ever sees it.
       const historyNote = document.createElement('span');
       historyNote.className = 'plan-review-timeout-history-note';
       historyNote.textContent = t('sp.plan.timed_out');
-      textEl.replaceChildren(historyNote);
-      assistantEl.querySelector('.msg-copy-btn')?.remove();
+      if (isPlanReviewTimeoutTerminal(textEl.textContent)) {
+        textEl.replaceChildren(historyNote);
+        assistantEl.querySelector('.msg-copy-btn')?.remove();
+      } else {
+        // Anything already streamed before the plan card is real output; keep it.
+        textEl.appendChild(historyNote);
+      }
     }
 
     let footer = card.querySelector('.plan-review-timeout-footer');

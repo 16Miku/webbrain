@@ -61231,6 +61231,14 @@ test('sidepanel: timed-out plans stay visible, inert, and retryable', () => {
       /className = 'plan-review-timeout-history-note'[\s\S]*?textEl\.replaceChildren\(historyNote\)/,
       `${file} should keep the timed-out turn in exported history`,
     );
+    // plan_resolved arrives before the terminal cancellation is ever rendered,
+    // so a live timeout reaches this branch with empty text. Gating the marker
+    // on that text would drop the turn from history on every real timeout.
+    assert.match(
+      expireSource,
+      /if \(textEl && !textEl\.querySelector\('\.plan-review-timeout-history-note'\)\) \{[\s\S]*?\} else \{\s*(?:\/\/[^\n]*\n\s*)*textEl\.appendChild\(historyNote\);/,
+      `${file} should mark the history of a live timeout that never rendered terminal text`,
+    );
     assert.match(
       source,
       /decision === 'timeout'\) \{\s*expirePlanReviewCards\(\{[\s\S]*?\n  \}\n(?:\s*\/\/[^\n]*\n)*\s*invalidatePlanReviewCards\(\{ tabId: numericTabId \}\);/,
