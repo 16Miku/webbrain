@@ -15331,13 +15331,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await downloadResourceFromPage(tabId, args);
     }
     if (name === 'download_files') {
-      if (args.url && !args.urls) args.urls = [args.url];
+      if (args.url && (!Array.isArray(args.urls) || args.urls.length === 0)) {
+        args.urls = [args.url];
+      }
       return await downloadFiles(args);
     }
     if (name === 'upload_file') {
       const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
       try {
         args = args || {};
+        // Some providers materialize omitted optional schema properties as empty
+        // strings. Treat those placeholders as absent so a valid downloadId does
+        // not conflict with a nonexistent user attachment or local path.
+        for (const key of ['selector', 'attachmentId', 'filePath']) {
+          if (typeof args[key] === 'string' && !args[key].trim()) delete args[key];
+        }
         const compactUpload = (
           executionContext?.promptTier || this._resolvePromptTier()
         ) === 'compact';
