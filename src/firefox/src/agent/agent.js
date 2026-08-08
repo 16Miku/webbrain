@@ -17127,7 +17127,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
       this.abortFlags.delete(tabId);
-      return 'Stopped by user before the run started.';
+      const stopped = 'Stopped by user before the run started.';
+      if (Array.isArray(attachments) && attachments.length) {
+        onUpdate('attachment_rejected', { error: stopped });
+      }
+      return stopped;
     }
 
     // Clear any stale abort flag before any LLM work. The planner gate makes a

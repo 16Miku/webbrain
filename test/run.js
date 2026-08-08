@@ -62454,13 +62454,14 @@ test('detached-start cancellation survives setup until before LLM work', async (
       agent._manageContext = async () => {};
       agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
       let cancellationChecks = 0;
+      const updates = [];
 
       const final = await agent.processMessage(
         tabId,
         'do not start after Stop',
-        () => {},
+        (type, data) => updates.push({ type, data }),
         'act',
-        [],
+        [{ kind: 'image', name: 'unsent.png', dataUrl: 'data:image/png;base64,UNSENT' }],
         {
           detachedRequestId: `${label}-cancelled-start`,
           isDetachedStartCancelled: () => {
@@ -62472,6 +62473,7 @@ test('detached-start cancellation survives setup until before LLM work', async (
 
       assert.equal(final, 'Stopped by user before the run started.', `${label}: cancelled detached start should stop before provider work`);
       assert.equal(cancellationChecks, 1, `${label}: cancellation should be checked at the final pre-LLM boundary`);
+      assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: pre-validation cancellation should restore unsent attachments`);
       assert.equal(agent.activeRunState(tabId).running, false, `${label}: cancelled setup should release active-run state`);
 
       const continueTabId = tabId + 100;
