@@ -37,7 +37,7 @@ The MCP server hosts the listener; the extension dials out to it. A Manifest V3 
 **Claude Code**
 
 ```bash
-claude mcp add webbrain -- npx -y @webbrain/mcp-server
+claude mcp add --transport stdio webbrain -- npx -y @webbrain/mcp-server
 ```
 
 **Codex / Cursor / anything reading `mcp.json`**
@@ -104,6 +104,7 @@ in Chromium browsers only, not Firefox.
 | Tool | Purpose |
 |---|---|
 | `webbrain_run` | Delegate a task. `mode='ask'` is read-only; `mode='act'` can click and type, gated by in-browser approval. |
+| `webbrain_extract` | Read authenticated page data into a caller-supplied JSON Schema. Always runs in read-only Ask mode. |
 | `webbrain_status` | Poll a run, or list every run. |
 | `webbrain_respond` | Answer a run sitting at `needs_user_input`. |
 | `webbrain_abort` | Stop a run. Actions already taken are not undone. |
@@ -120,7 +121,37 @@ webbrain_run(task: "open the Stripe dashboard and list last week's failed
 
 Read-only, in the tab you are already authenticated in. No API key, no headless login dance.
 
-## Why task-level and not 50 browser tools
+For predictable JSON instead of prose, give `webbrain_extract` an explicit
+JSON Schema:
+
+```
+webbrain_extract(
+  task: "list the overdue invoices visible in this account",
+  output_schema: {
+    type: "object",
+    properties: {
+      invoices: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            customer: { type: "string" },
+            amount: { type: "number" },
+            due_date: { type: "string" }
+          },
+          required: ["customer", "amount", "due_date"]
+        }
+      }
+    },
+    required: ["invoices"]
+  }
+)
+```
+
+This is still a task-level delegation through the browser agent and its normal
+permission boundary; it is not a direct page-scraping primitive.
+
+## Why six task-level tools and not 50 browser primitives
 
 WebBrain exposes roughly fifty primitives internally — `click_ax`, `type_ax`, `extract_data`, `iframe_read` and so on. This server deliberately does **not** surface them.
 

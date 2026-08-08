@@ -159,6 +159,101 @@ server.registerTool(
 );
 
 server.registerTool(
+  "webbrain_extract",
+  {
+    title: "Extract structured data from the user's real browser",
+    description:
+      "Read a page in the user's actual signed-in browser and return data that matches a " +
+      "caller-supplied JSON Schema. This tool always uses WebBrain Ask mode, so it cannot " +
+      "click, type, navigate or submit. Use it for authenticated reports, tables, account " +
+      "details and other page data that should come back as predictable JSON rather than a " +
+      "prose summary. Use webbrain_run instead when the task needs interaction.\n\n" +
+      "If the run stops with status 'needs_user_input', relay the question to the user and " +
+      "answer with webbrain_respond — never guess on their behalf.",
+    inputSchema: {
+      task: z
+        .string()
+        .min(1)
+        .describe(
+          "What to extract and any scope or filtering rules. Be explicit about the page, " +
+            "time range, rows and fields the result should cover.",
+        ),
+      output_schema: z
+        .record(z.unknown())
+        .describe(
+          "A JSON Schema object describing the exact result. Prefer an object root with " +
+            "properties and required fields so the caller can rely on the returned shape.",
+        ),
+      tab_id: z
+        .number()
+        .int()
+        .optional()
+        .describe("Target a specific browser tab. Omit to use the active tab."),
+      timeout_seconds: z
+        .number()
+        .int()
+        .positive()
+        .max(3600)
+        .optional()
+        .describe(
+          "How long to wait before returning control. The extraction keeps running past " +
+            "this point; poll webbrain_status with its run_id.",
+        ),
+      wait: z
+        .boolean()
+        .default(true)
+        .describe(
+          "Wait for the extraction to settle. Set false to start it and return the run_id " +
+            "immediately.",
+        ),
+    },
+  },
+  async ({ task, output_schema, tab_id, timeout_seconds, wait }): Promise<TextResult> => {
+    const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
+    const runId = `mcp_${randomUUID()}`;
+    try {
+      let started: CloudSnapshot;
+      try {
+        started = await startRun(
+          bridge,
+          {
+            runId,
+            task,
+            mode: "ask",
+            tabId: tab_id,
+            outputSchema: output_schema,
+          },
+          Math.max(1, deadline - Date.now()),
+        );
+      } catch (error) {
+        if (
+          error instanceof BridgeError &&
+          (error.code === "COMMAND_TIMEOUT" || error.code === "COMMAND_INTERRUPTED")
+        ) {
+          return ok(describeSnapshot({ runId, status: "running" }, true));
+        }
+        throw error;
+      }
+
+      if (!wait) {
+        return ok(
+          `Structured extraction started in the background.\n${describeSnapshot(started)}\n\n` +
+            "Poll webbrain_status with this run_id for progress.",
+        );
+      }
+
+      const { snapshot, timedOut } = await awaitSettled(bridge, started.runId, {
+        timeoutMs: Math.max(0, deadline - Date.now()),
+      });
+      return ok(describeSnapshot(snapshot, timedOut));
+    } catch (error) {
+      return toolError(error);
+    }
+  },
+);
+
+server.registerTool(
   "webbrain_status",
   {
     title: "Check a browser run",

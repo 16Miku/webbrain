@@ -253,7 +253,7 @@ into — cookies present, SSO already passed. A headless framework starts logged
 out and stalls at the first login wall; this does not.
 
 ```bash
-claude mcp add webbrain -- npx -y @webbrain/mcp-server
+claude mcp add --transport stdio webbrain -- npx -y @webbrain/mcp-server
 ```
 
 Claude Code launches the server automatically when it starts an MCP session.
@@ -280,11 +280,20 @@ webbrain_run(task: "open the Stripe dashboard and list last week's failed
              payments with amounts and customer emails", mode: "ask")
 ```
 
+Use `webbrain_extract` with a JSON Schema when the caller needs predictable
+structured output instead of a prose summary. The server exposes six task-level
+tools: run, structured extraction, status, clarification response, abort, and
+connection diagnostics.
+
 `mode='ask'` is read-only. `mode='act'` can click and type, gated by the same
 in-browser approval prompts a human gets. The server exposes task delegation
 rather than the ~50 low-level browser primitives: WebBrain's permission gate
 lives in the agent loop, so per-primitive access over a socket would sit below
 the gate and bypass it. Details in [`mcp-server/`](mcp-server/).
+
+The complete client setup, tool arguments, run lifecycle, structured-output
+examples, safety boundaries, and troubleshooting guide live at
+[`web/docs/mcp/`](web/docs/mcp/).
 
 > The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
 > the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
