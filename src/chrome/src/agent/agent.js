@@ -15609,6 +15609,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  async _endSavedWorkflowTraceRun(runId, status, finalContent) {
+    await trace.endRun(runId, { status, finalContent });
+  }
+
   async replaySavedWorkflow(tabId, workflow, parameters = {}, onUpdate = () => {}, runOptions = {}) {
     if (!workflow?.id || !Array.isArray(workflow.steps) || !workflow.steps.length) {
       throw new Error('Saved workflow is missing or invalid.');
@@ -15654,13 +15658,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }),
       });
     } catch (error) {
-      this._runningTabs.delete(tabId);
       try {
         if (capturePolicyConfigured) {
           await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
         }
       } finally {
-        if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
+        try {
+          if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
+        } finally {
+          this._runningTabs.delete(tabId);
+        }
       }
       throw error;
     }
@@ -15909,20 +15916,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         healings: verifiedHealings,
       };
     } finally {
-      this._runningTabs.delete(tabId);
       try {
-        await trace.endRun(traceRunId, { status: traceStatus, finalContent });
-        this.currentCostState.delete(tabId);
-        this._planExecutionGuards.delete(tabId);
-        this._resetActiveSkillsForRun(tabId);
-        this._clearRunLoopState(tabId);
-        if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
-        this._clickAxCdpFallbacks?.delete(tabId);
+        try {
+          await this._endSavedWorkflowTraceRun(traceRunId, traceStatus, finalContent);
+        } finally {
+          this.currentCostState.delete(tabId);
+          this._planExecutionGuards.delete(tabId);
+          this._resetActiveSkillsForRun(tabId);
+          this._clearRunLoopState(tabId);
+          if (traceStatus !== 'workflow_fallback') this._resetRichTextToolbarAudit(tabId);
+          this._clickAxCdpFallbacks?.delete(tabId);
+        }
       } finally {
         try {
           await this._restoreCapturePolicyAfterRun(tabId, previousForegroundCapture);
         } finally {
-          this._clearCompletionInvariant(tabId, completionRunToken);
+          try {
+            this._clearCompletionInvariant(tabId, completionRunToken);
+          } finally {
+            this._runningTabs.delete(tabId);
+          }
         }
       }
     }

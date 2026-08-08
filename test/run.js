@@ -64389,6 +64389,77 @@ for (const [browser, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]])
     }
   });
 
+  test(`${browser} saved workflow retains its run claim until cleanup finishes`, async () => {
+    const tabId = browser === 'chrome' ? 26992 : 26993;
+    const workflow = {
+      id: 'workflow_cleanup_claim',
+      name: 'Cleanup claim',
+      start: { origin: 'https://example.com', pathFamily: '/form' },
+      steps: [{
+        id: 'step_1',
+        tool: 'navigate',
+        args: { url: 'https://example.com/next' },
+        scope: { origin: 'https://example.com', pathFamily: '/form' },
+        expected: { kind: 'url_changed' },
+      }],
+    };
+    const agent = new AgentClass({ getActive: () => ({ model: 'test-model' }) });
+    let currentUrl = 'https://example.com/form';
+    let cleanupStartedResolve;
+    let releaseCleanupResolve;
+    const cleanupStarted = new Promise((resolve) => { cleanupStartedResolve = resolve; });
+    const releaseCleanup = new Promise((resolve) => { releaseCleanupResolve = resolve; });
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.ensureConversationId = async () => 'conversation_cleanup_claim';
+    agent._currentUrl = async () => currentUrl;
+    agent._executeToolBatch = async (_tabId, calls, _messages, onUpdate) => {
+      const tool = calls[0].function.name;
+      currentUrl = 'https://example.com/next';
+      onUpdate('tool_result', { name: tool, result: { success: true } });
+      return { action: 'continue' };
+    };
+    agent._endSavedWorkflowTraceRun = async () => {
+      cleanupStartedResolve();
+      await releaseCleanup;
+    };
+
+    const replay = agent.replaySavedWorkflow(tabId, workflow);
+    let result;
+    await cleanupStarted;
+    try {
+      assert.equal(agent.isRunning(tabId), true, `${browser}: cleanup released the run claim early`);
+      await assert.rejects(
+        agent.replaySavedWorkflow(tabId, workflow),
+        /already in progress/,
+        `${browser}: a second run started while cleanup was pending`,
+      );
+    } finally {
+      releaseCleanupResolve();
+      result = await replay;
+    }
+    assert.equal(result.status, 'completed');
+    assert.equal(agent.isRunning(tabId), false, `${browser}: completed cleanup retained the run claim`);
+
+    currentUrl = 'https://example.com/form';
+    agent._endSavedWorkflowTraceRun = async () => {
+      throw new Error('trace cleanup failed');
+    };
+    await assert.rejects(
+      agent.replaySavedWorkflow(tabId, workflow, {}, () => {}, { cloudRun: true }),
+      /trace cleanup failed/,
+    );
+    assert.equal(agent.isRunning(tabId), false, `${browser}: failed cleanup leaked the run claim`);
+    assert.equal(agent.completionInvariants.has(tabId), false, `${browser}: failed cleanup leaked completion state`);
+    if (browser === 'chrome') {
+      assert.equal(
+        agent._foregroundCaptureTabs.has(tabId),
+        false,
+        `${browser}: failed cleanup leaked capture policy`,
+      );
+    }
+  });
+
   test(`${browser} saved workflow replay resolves fresh targets without exposing runtime parameters`, async () => {
     const workflow = {
       schema: SavedWorkflowsCh.SAVED_WORKFLOW_SCHEMA,
