@@ -1129,6 +1129,8 @@ test('capture-time redaction snapshots reject any discovered frame that cannot b
                 url: 'https://child.example.test/',
                 rect: { x: 20, y: 30, w: 400, h: 300 },
               }],
+              overflowed: false,
+              complete: true,
             };
           },
         },
@@ -1139,6 +1141,26 @@ test('capture-time redaction snapshots reject any discovered frame that cannot b
         await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
         null,
         `${label}: one uninspected child frame must invalidate the privacy snapshot`,
+      );
+
+      api.webNavigation.getAllFrames = async () => [
+        { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+      ];
+      api.tabs.sendMessage = async () => ({
+        viewport: { width: 800, height: 600 },
+        elements: Array.from({ length: 400 }, (_, index) => ({
+          kind: 'input',
+          type: 'text',
+          rect: { x: index, y: 10, w: 20, h: 10 },
+        })),
+        childFrames: [],
+        overflowed: true,
+        complete: false,
+      });
+      assert.equal(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        null,
+        `${label}: a collector overflow signal must invalidate the privacy snapshot`,
       );
     }
   } finally {
@@ -1160,6 +1182,8 @@ test('page-coordinate redaction uses captured CSS bounds instead of the grown li
       { kind: 'input', type: 'password', rect: { x: 300, y: 4200, w: 100, h: 100 } },
     ],
     childFrames: [],
+    overflowed: false,
+    complete: true,
   };
   try {
     const browserApi = {
@@ -1246,7 +1270,7 @@ test('redaction content scripts run in all frames and startup waits for the stor
   }
 });
 
-test('redaction collectors filter offscreen fields and classify PII before the region cap', () => {
+test('redaction collectors filter offscreen fields and report incomplete region scans', () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
     const start = source.indexOf('function collectRedactionRegions(params)');
@@ -1254,8 +1278,61 @@ test('redaction collectors filter offscreen fields and classify PII before the r
     const body = source.slice(start, end);
     assert.match(body, /space === 'page' \|\| \([\s\S]*?r\.right > 0[\s\S]*?r\.top < window\.innerHeight/,
       `${browserName}: viewport collection should reject offscreen rectangles`);
-    assert.match(body, /looksLikePiiText\(text\)\) continue;[\s\S]*?selected\.push\(\{ kind: 'text'/,
+    assert.match(body, /looksLikePiiText\(text\)\) continue;[\s\S]*?addRegion\(\{ kind: 'text'/,
       `${browserName}: only classified PII should count against MAX_REGIONS`);
+    assert.match(body, /if \(selected\.length >= MAX_REGIONS\) \{[\s\S]*?overflowed = true;[\s\S]*?complete: collectionComplete && !overflowed/,
+      `${browserName}: per-frame region overflow must be explicit`);
+    assert.match(body, /scanned >= MAX_SCANNED_TEXT_NODES[\s\S]*?collectionComplete = false;/,
+      `${browserName}: hitting the text scan ceiling must fail closed`);
+  }
+});
+
+test('redaction collectors expose a per-frame overflow sentinel', () => {
+  const visibleRect = { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 };
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    let messageListener = null;
+    const fields = Array.from({ length: 401 }, () => ({
+      tagName: 'INPUT',
+      type: 'text',
+      isContentEditable: false,
+      getBoundingClientRect: () => visibleRect,
+    }));
+    const runtime = { onMessage: { addListener(listener) { messageListener = listener; } } };
+    const context = {
+      chrome: { runtime },
+      browser: browserName === 'firefox' ? { runtime } : undefined,
+      window: {
+        innerWidth: 800,
+        innerHeight: 600,
+        scrollX: 0,
+        scrollY: 0,
+        pageXOffset: 0,
+        pageYOffset: 0,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+      document: {
+        documentElement: { scrollWidth: 800, scrollHeight: 600 },
+        querySelectorAll(selector) {
+          if (selector.startsWith('input:not')) return fields;
+          return [];
+        },
+      },
+      setTimeout,
+      clearTimeout,
+    };
+    vm.runInNewContext(source, context);
+    assert.equal(typeof messageListener, 'function', `${browserName}: collector listener should register`);
+    let response = null;
+    messageListener({
+      target: 'redaction-content',
+      action: 'get_redaction_regions',
+      params: { coordinateSpace: 'viewport' },
+    }, {}, value => { response = value; });
+    assert.equal(response?.elements?.length, 400, `${browserName}: the returned region list should retain the safe cap`);
+    assert.equal(response?.overflowed, true, `${browserName}: a 401st region must set the overflow sentinel`);
+    assert.equal(response?.complete, false, `${browserName}: an overflowed frame must not claim complete coverage`);
   }
 });
 
@@ -62650,6 +62727,11 @@ test('attachments: capture-time redaction snapshots fail closed instead of trunc
       source,
       /if \(frameSnapshots\.some\(frame => !frame\)\) return null/,
       `${label}: a frame messaging failure must invalidate the complete snapshot`,
+    );
+    assert.match(
+      source,
+      /if \(!resp \|\| resp\.complete !== true \|\| resp\.overflowed === true/,
+      `${label}: a per-frame overflow or incomplete scan must invalidate the privacy snapshot`,
     );
   }
 });

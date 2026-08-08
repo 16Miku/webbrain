@@ -5827,7 +5827,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: 'get_redaction_regions',
           params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
         }, { frameId: frame.frameId });
-        if (!resp || !Array.isArray(resp.elements) || !Array.isArray(resp.childFrames)
+        if (!resp || resp.complete !== true || resp.overflowed === true
+            || !Array.isArray(resp.elements) || !Array.isArray(resp.childFrames)
             || !(Number(resp.viewport?.width) > 0 && Number(resp.viewport?.height) > 0)) return null;
         return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
       } catch {

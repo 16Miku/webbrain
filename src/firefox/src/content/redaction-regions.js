@@ -61,32 +61,50 @@
 
     const selected = [];
     const MAX_REGIONS = 400;
+    const MAX_SCANNED_TEXT_NODES = 6000;
+    let overflowed = false;
+    let collectionComplete = true;
+    const addRegion = (region) => {
+      if (selected.length >= MAX_REGIONS) {
+        overflowed = true;
+        return false;
+      }
+      selected.push(region);
+      return true;
+    };
     try {
       const fields = document.querySelectorAll(
         'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="range"]):not([type="color"]), textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'
       );
       for (const el of fields) {
-        if (selected.length >= MAX_REGIONS) break;
         const r = el.getBoundingClientRect();
         if (!visible(r)) continue;
         const tag = (el.tagName || '').toLowerCase();
         const type = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
         const kind = tag === 'select' ? 'select' : (tag === 'textarea' || el.isContentEditable ? 'textarea' : 'input');
-        selected.push({ kind, type, rect: toRect(r) });
+        if (!addRegion({ kind, type, rect: toRect(r) })) break;
       }
 
-      const nodes = document.querySelectorAll('p, span, div, a, td, th, li, h1, h2, h3, h4, h5, h6, label, small, b, strong, i');
-      let scanned = 0;
-      for (const el of nodes) {
-        if (scanned++ > 6000 || selected.length >= MAX_REGIONS) break;
-        if (el.children.length > 0) continue;
-        const text = (el.textContent || '').trim();
-        if (text.length < 5 || text.length > 60 || !looksLikePiiText(text)) continue;
-        const r = el.getBoundingClientRect();
-        if (!visible(r)) continue;
-        selected.push({ kind: 'text', type: '', rect: toRect(r), text });
+      if (!overflowed) {
+        const nodes = document.querySelectorAll('p, span, div, a, td, th, li, h1, h2, h3, h4, h5, h6, label, small, b, strong, i');
+        let scanned = 0;
+        for (const el of nodes) {
+          if (scanned >= MAX_SCANNED_TEXT_NODES) {
+            collectionComplete = false;
+            break;
+          }
+          scanned += 1;
+          if (el.children.length > 0) continue;
+          const text = (el.textContent || '').trim();
+          if (text.length < 5 || text.length > 60 || !looksLikePiiText(text)) continue;
+          const r = el.getBoundingClientRect();
+          if (!visible(r)) continue;
+          if (!addRegion({ kind: 'text', type: '', rect: toRect(r), text })) break;
+        }
       }
-    } catch { /* best effort */ }
+    } catch {
+      collectionComplete = false;
+    }
 
     const childFrames = [];
     try {
@@ -105,9 +123,17 @@
           },
         });
       }
-    } catch { /* best effort */ }
+    } catch {
+      collectionComplete = false;
+    }
 
-    return { elements: selected, viewport, childFrames };
+    return {
+      elements: selected,
+      viewport,
+      childFrames,
+      overflowed,
+      complete: collectionComplete && !overflowed,
+    };
   }
 
   function waitForExactChildFrameRect(params) {
