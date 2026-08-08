@@ -27,10 +27,10 @@ cd mcp-server && npm install && npm run build
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 
 1. Install the [WebBrain extension](https://webbrain.one) and open your browser.
-2. In **WebBrain → Settings → Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
+2. In **WebBrain → Settings → General → Advanced → Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
 3. Ask your MCP client to call `webbrain_connection` to confirm.
 
-> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch by changing the URL in Settings.
+> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → General → Advanced → Cloud bridge**.
 
 ## Register with a client
 
@@ -52,6 +52,52 @@ claude mcp add webbrain -- npx -y @webbrain/mcp-server
   }
 }
 ```
+
+The MCP client launches this command as a child process when it starts the
+configured server; you do not need to keep a second copy running in a terminal.
+After adding the configuration, restart or reconnect the MCP client if WebBrain
+does not appear in its tool list.
+
+## Launch manually
+
+For a direct launch or connection test, run:
+
+```bash
+npx -y @webbrain/mcp-server
+```
+
+Leave that terminal open while using the bridge. The server owns the local
+listener on `127.0.0.1:17374`, and exiting it closes the bridge. Press `Ctrl+C`
+to stop it.
+
+From a source checkout, build and launch the same server with:
+
+```bash
+cd mcp-server
+npm install
+npm run build
+npm start
+```
+
+After it is running, enable `ws://127.0.0.1:17374/extension` under **WebBrain →
+Settings → General → Advanced → Cloud bridge**. Ask the MCP client to call
+`webbrain_connection` to verify the complete connection.
+
+## Troubleshooting
+
+**Connection error: WebSocket error** normally means that no process is
+listening at the URL selected in WebBrain. Confirm the MCP server is still
+running and that Settings uses port `17374`, then check the listener:
+
+```bash
+lsof -nP -iTCP:17374 -sTCP:LISTEN
+```
+
+No output means the MCP server is not listening. If it is listening but the
+extension does not connect, make sure another bridge destination is not selected:
+WebBrain Cloud uses `17373`, this MCP server uses `17374`, and the LM Studio
+plugin uses `17375`. Only one can be selected at a time. The bridge is available
+in Chromium browsers only, not Firefox.
 
 ## Tools
 
