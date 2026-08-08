@@ -1085,7 +1085,11 @@ export class Agent extends LoopDetector {
       const capturePolicy = await this._getFullPageCapturePolicy(tabId);
       await cdpClient.attach(tabId);
       await this._preparePageForCapture(tabId);
+      const redactionSnapshotPromise = this.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: 'page',
+      });
       const captured = await this._captureFullPageWithBlankRetry(tabId, capturePolicy);
+      const redactionSnapshotResult = await redactionSnapshotPromise;
       const capture = captured?.capture;
       const warning = typeof capture === 'object' ? capture?.warning || null : null;
       if (!captured?.dataUrl) {
@@ -1099,10 +1103,83 @@ export class Agent extends LoopDetector {
         ok: true,
         dataUrl: captured.dataUrl,
         warning,
+        ...(redactionSnapshotResult.ok === true && redactionSnapshotResult.snapshot
+          ? { redactionSnapshotReady: true, redactionSnapshot: redactionSnapshotResult.snapshot }
+          : {}),
         ...(captureBounds ? { captureBounds } : {}),
       };
     } catch (e) {
       return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
+  _normalizeScreenshotRedactionSnapshot(snapshot, coordinateSpace = 'viewport') {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const expectedSpace = coordinateSpace === 'page' ? 'page' : 'viewport';
+    if (snapshot.coordinateSpace !== expectedSpace) return null;
+    const width = Number(snapshot.viewport?.width);
+    const height = Number(snapshot.viewport?.height);
+    if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) return null;
+    const regions = Array.isArray(snapshot.regions)
+      ? snapshot.regions.slice(0, 400).map((region) => {
+        const x = Number(region?.rect?.x);
+        const y = Number(region?.rect?.y);
+        const w = Number(region?.rect?.w);
+        const h = Number(region?.rect?.h);
+        if (![x, y, w, h].every(Number.isFinite) || !(w > 0 && h > 0)) return null;
+        return {
+          kind: String(region?.kind || 'input').slice(0, 20),
+          rect: { x, y, w, h },
+        };
+      }).filter(Boolean)
+      : null;
+    if (!regions) return null;
+    return {
+      coordinateSpace: expectedSpace,
+      viewport: { width, height },
+      regions,
+    };
+  }
+
+  async _captureScreenshotRedactionSnapshot(tabId, opts = {}) {
+    const coordinateSpace = opts.coordinateSpace === 'page' ? 'page' : 'viewport';
+    let navigationFrames;
+    try {
+      navigationFrames = await chrome.webNavigation.getAllFrames({ tabId });
+    } catch {
+      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+    }
+    if (!Array.isArray(navigationFrames) || navigationFrames.length === 0) {
+      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+    }
+    const frameSnapshots = (await Promise.all(navigationFrames.map(async (frame) => {
+      try {
+        const resp = await chrome.tabs.sendMessage(tabId, {
+          target: 'redaction-content',
+          action: 'get_redaction_regions',
+          params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
+        }, { frameId: frame.frameId });
+        return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
+      } catch {
+        return null;
+      }
+    }))).filter(Boolean);
+    const topFrame = frameSnapshots.find((frame) => frame.frameId === 0);
+    if (!topFrame) return null;
+    return this._normalizeScreenshotRedactionSnapshot({
+      coordinateSpace,
+      viewport: topFrame.viewport,
+      regions: mergeRedactionFrameRegions(frameSnapshots),
+    }, coordinateSpace);
+  }
+
+  async captureScreenshotRedactionSnapshotForUser(tabId, opts = {}) {
+    if (!tabId) return { ok: false };
+    try {
+      const snapshot = await this._captureScreenshotRedactionSnapshot(tabId, opts);
+      return snapshot ? { ok: true, snapshot } : { ok: false };
+    } catch {
+      return { ok: false };
     }
   }
 
@@ -6646,34 +6723,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    // Collect DOM-aware regions from every injectable frame. The top frame
-    // uses the capture's requested coordinate space; child frames always
-    // report viewport-local coordinates because only their visible viewport
-    // is composited into the top-level screenshot.
     const coordinateSpace = opts.coordinateSpace === 'page' ? 'page' : 'viewport';
-    let navigationFrames;
-    try {
-      navigationFrames = await chrome.webNavigation.getAllFrames({ tabId });
-    } catch {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-    }
-    if (!Array.isArray(navigationFrames) || navigationFrames.length === 0) {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-    }
-    const frameSnapshots = (await Promise.all(navigationFrames.map(async (frame) => {
-      try {
-        const resp = await chrome.tabs.sendMessage(tabId, {
-          target: 'redaction-content',
-          action: 'get_redaction_regions',
-          params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
-        }, { frameId: frame.frameId });
-        return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
-      } catch {
-        return null; // restricted/uninjectable frame — keep the capture path alive
-      }
-    }))).filter(Boolean);
-    const resp = frameSnapshots.find((frame) => frame.frameId === 0);
-    if (!resp) return dataUrl;
+    const snapshot = opts.redactionSnapshot
+      ? this._normalizeScreenshotRedactionSnapshot(opts.redactionSnapshot, coordinateSpace)
+      : await this._captureScreenshotRedactionSnapshot(tabId, { coordinateSpace });
+    if (!snapshot) return dataUrl;
 
     // The captured CSS box (CSS px) in the SAME space as the element rects.
     // A bounded full-page capture can be shorter than the live document, so
@@ -6686,7 +6740,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       Number.isFinite(suppliedBounds?.height) && suppliedBounds.height > 0;
     const cssBox = hasCapturedBounds
       ? suppliedBounds
-      : (resp?.viewport || { width: imageWidth, height: imageHeight });
+      : snapshot.viewport;
     const cssW = Number.isFinite(cssBox.width) && cssBox.width > 0 ? cssBox.width : imageWidth;
     const cssH = Number.isFinite(cssBox.height) && cssBox.height > 0 ? cssBox.height : imageHeight;
     const scaleX = imageWidth / cssW;
@@ -6698,7 +6752,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? suppliedBounds.y
       : (Number.isFinite(opts.offsetY) ? opts.offsetY : 0);
 
-    const regions = mergeRedactionFrameRegions(frameSnapshots);
+    const regions = snapshot.regions;
     if (!regions.length) return dataUrl;
 
     const imageRegions = mapRegionsToImage(regions, {
@@ -21982,8 +22036,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // byte-faithful apart from the existing vision-budget resize.
         let modelDataUrl = shrunk.dataUrl;
         if (att.source === 'slash_screenshot' && this.screenshotRedaction) {
+          const coordinateSpace = att.fullPage ? 'page' : 'viewport';
+          const redactionSnapshot = att.redactionSnapshotReady === true
+            ? this._normalizeScreenshotRedactionSnapshot(att.redactionSnapshot, coordinateSpace)
+            : null;
+          if (!redactionSnapshot) {
+            return {
+              ok: false,
+              error: 'This staged screenshot has no capture-time privacy data. Run /screenshot again before sending it, or turn off screenshot redaction in Settings.',
+            };
+          }
           modelDataUrl = await this._redactScreenshotDataUrl(options.tabId, modelDataUrl, {
-            coordinateSpace: att.fullPage ? 'page' : 'viewport',
+            coordinateSpace,
+            redactionSnapshot,
             ...(att.fullPage && att.captureBounds ? { capturedCssBounds: att.captureBounds } : {}),
             imageWidth: shrunk.width,
             imageHeight: shrunk.height,

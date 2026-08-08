@@ -2004,6 +2004,7 @@ async function handleMessage(msg, sender) {
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
+    'capture_screenshot_redaction_snapshot',
   ].includes(msg.action);
   if (!lightweightAction) {
     // Ensure providers are loaded
@@ -3043,6 +3044,12 @@ async function handleMessage(msg, sender) {
     case 'capture_full_page_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureFullPageScreenshotForUser(tabId);
+    }
+    case 'capture_screenshot_redaction_snapshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: msg.coordinateSpace,
+      });
     }
 
     // --- Page Info (quick, no agent loop) ---

@@ -1797,6 +1797,7 @@ async function handleMessage(msg, sender) {
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
+    'capture_screenshot_redaction_snapshot',
   ].includes(msg.action);
   if (!lightweightAction) {
     if (providerManager.providers.size === 0) {
@@ -2714,6 +2715,13 @@ async function handleMessage(msg, sender) {
       return { ok: false, error: 'Tab recording is not supported in Firefox. This feature requires Chrome\'s tabCapture and OffscreenDocument APIs.' };
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
+
+    case 'capture_screenshot_redaction_snapshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: msg.coordinateSpace,
+      });
+    }
 
     case 'get_page_info': {
       const tabId = msg.tabId || sender.tab?.id;

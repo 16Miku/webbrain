@@ -7132,9 +7132,20 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       if (currentTabId !== tabId || !tab?.active) return '';
       const windowId = tab?.windowId;
       if (windowId != null) {
-        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+        const redactionSnapshotPromise = sendToBackground('capture_screenshot_redaction_snapshot', {
+          tabId,
+          coordinateSpace: 'viewport',
+        }).catch(() => ({ ok: false }));
+        const [dataUrl, redactionSnapshotResult] = await Promise.all([
+          chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
+          redactionSnapshotPromise,
+        ]);
         if (currentTabId !== tabId) return '';
-        const stagedAttachment = stageScreenshotAttachment(tabId, dataUrl, { pageUrl: tab.url });
+        const stagedAttachment = stageScreenshotAttachment(tabId, dataUrl, {
+          pageUrl: tab.url,
+          redactionSnapshotReady: redactionSnapshotResult?.ok === true,
+          redactionSnapshot: redactionSnapshotResult?.snapshot,
+        });
         addScreenshotResultMessage(dataUrl, { pageUrl: tab.url, stagedAttachment });
       }
     } catch (e) {
@@ -7159,6 +7170,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         fullPage: true,
         pageUrl,
         captureBounds: res.captureBounds,
+        redactionSnapshotReady: res.redactionSnapshotReady === true,
+        redactionSnapshot: res.redactionSnapshot,
       });
       addScreenshotResultMessage(res.dataUrl, {
         fullPage: true,
@@ -11401,7 +11414,13 @@ function consumePendingAttachmentsForTab(tabId, attachments) {
   }
 }
 
-function stageScreenshotAttachment(tabId, dataUrl, { fullPage = false, pageUrl = '', captureBounds = null } = {}) {
+function stageScreenshotAttachment(tabId, dataUrl, {
+  fullPage = false,
+  pageUrl = '',
+  captureBounds = null,
+  redactionSnapshotReady = false,
+  redactionSnapshot = null,
+} = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
   const size = attachmentDataUrlBytes(dataUrl);
@@ -11421,6 +11440,8 @@ function stageScreenshotAttachment(tabId, dataUrl, { fullPage = false, pageUrl =
     source: 'slash_screenshot',
     capturedAt: Date.now(),
     fullPage: !!fullPage,
+    redactionSnapshotReady: redactionSnapshotReady === true,
+    ...(redactionSnapshot ? { redactionSnapshot } : {}),
     ...(fullPage && captureBounds ? { captureBounds } : {}),
   };
   getPendingAttachmentsForTab(numericTabId).push(attachment);
