@@ -715,6 +715,7 @@ export class ProviderManager {
       if (!visionModel || !visionModel.baseUrl || !visionModel.model) return null;
       return new OpenAICompatibleProvider({
         type: 'openai',
+        category: 'cloud',
         label: 'Vision Model',
         providerName: 'vision',
         baseUrl: visionModel.baseUrl,

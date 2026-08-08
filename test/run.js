@@ -40367,6 +40367,44 @@ test('Agent cost metering is limited to cloud and router categories and excludes
   }
 });
 
+test('dedicated vision providers are cost-metered when remote and exempt when local', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, apiName, ManagerClass, AgentClass] of [
+      ['chrome', 'chrome', ProviderManagerCh, AgentCh],
+      ['firefox', 'browser', ProviderManagerFx, AgentFx],
+    ]) {
+      let baseUrl = 'https://api.openai.com/v1';
+      globalThis[apiName] = {
+        storage: {
+          local: {
+            get: async () => ({
+              visionModel: { baseUrl, apiKey: 'paid-key', model: 'gpt-5.6-terra' },
+            }),
+          },
+        },
+      };
+
+      const manager = new ManagerClass();
+      const agent = new AgentClass(manager);
+      const remoteVision = await manager.getVisionProvider();
+      assert.equal(remoteVision.config.category, 'cloud', `${label}: dedicated vision should be classified as cloud`);
+      assert.equal(agent._isCostMeteredProvider(remoteVision), true, `${label}: remote dedicated vision should be metered`);
+
+      baseUrl = 'http://localhost:1234/v1';
+      const localVision = await manager.getVisionProvider();
+      assert.equal(localVision.config.category, 'cloud', `${label}: dedicated vision should retain its provider category`);
+      assert.equal(agent._isCostMeteredProvider(localVision), false, `${label}: local dedicated vision should remain exempt`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('cost accounting starts a fresh aggregate after the WebBrain Cloud exemption', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
