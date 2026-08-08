@@ -3047,6 +3047,10 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureFullPageScreenshotForUser(tabId);
     }
+    case 'capture_viewport_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureViewportScreenshotForUser(tabId);
+    }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {

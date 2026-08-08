@@ -6983,22 +6983,21 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     try {
       const tab = tabId == null ? null : await browser.tabs.get(tabId);
       if (currentTabId !== tabId || !tab?.active) return '';
-      const redactionSnapshotPromise = sendToBackground('capture_screenshot_redaction_snapshot', {
-        tabId,
-        coordinateSpace: 'viewport',
-      }).catch(() => ({ ok: false }));
-      const [dataUrl, redactionSnapshotResult] = await Promise.all([
-        browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' }),
-        redactionSnapshotPromise,
-      ]);
+      const res = await sendToBackground('capture_viewport_screenshot', { tabId });
       if (currentTabId !== tabId) return '';
-      const stagedAttachment = await stageScreenshotAttachment(tabId, dataUrl, {
+      if (!res?.ok || !res.dataUrl) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
+        return '';
+      }
+      const stagedAttachment = await stageScreenshotAttachment(tabId, res.dataUrl, {
         pageUrl: tab.url,
-        redactionSnapshotReady: redactionSnapshotResult?.ok === true,
-        redactionSnapshot: redactionSnapshotResult?.snapshot,
+        redactionSnapshotReady: res.redactionSnapshotReady === true,
+        redactionSnapshot: res.redactionSnapshot,
+        modelRedactionReady: res.modelRedactionReady === true,
+        modelDataUrl: res.modelDataUrl,
       });
       if (currentTabId !== tabId) return '';
-      addScreenshotResultMessage(dataUrl, { pageUrl: tab.url, stagedAttachment });
+      addScreenshotResultMessage(res.dataUrl, { pageUrl: tab.url, stagedAttachment });
     } catch (e) {
       if (currentTabId !== tabId) return '';
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
@@ -11186,6 +11185,8 @@ async function stageScreenshotAttachment(tabId, dataUrl, {
   captureBounds = null,
   redactionSnapshotReady = false,
   redactionSnapshot = null,
+  modelRedactionReady = false,
+  modelDataUrl = null,
 } = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
@@ -11209,6 +11210,8 @@ async function stageScreenshotAttachment(tabId, dataUrl, {
     fullPage: !!fullPage,
     redactionSnapshotReady: redactionSnapshotReady === true,
     ...(redactionSnapshot ? { redactionSnapshot } : {}),
+    modelRedactionReady: modelRedactionReady === true,
+    ...(modelRedactionReady === true && modelDataUrl ? { modelDataUrl } : {}),
     ...(fullPage && captureBounds ? { captureBounds } : {}),
   };
   let persisted = false;

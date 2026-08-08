@@ -9073,8 +9073,12 @@ test('local screenshot implementations do not foreground ordinary run tabs', () 
     'Chrome should mention bringToFront only in policy documentation and its foreground compatibility branch',
   );
   assert.match(chromeAgent, /if \(this\._foregroundCaptureTabs\.has\(tabId\)\)[\s\S]*?'Page\.bringToFront'/);
-  assert.doesNotMatch(firefoxAgent, /captureVisibleTab/);
-  assert.match(firefoxAgent, /browser\.tabs\.captureTab\(tabId,/);
+  const firefoxAutoCapture = firefoxAgent.slice(
+    firefoxAgent.indexOf('async _captureAutoScreenshot('),
+    firefoxAgent.indexOf('async _redactScreenshotDataUrl(', firefoxAgent.indexOf('async _captureAutoScreenshot(')),
+  );
+  assert.doesNotMatch(firefoxAutoCapture, /captureVisibleTab/);
+  assert.match(firefoxAutoCapture, /browser\.tabs\.captureTab\(tabId,/);
   assert.doesNotMatch(firefoxScheduler, /active:\s*job\.source !== 'watch'/);
   assert.match(firefoxScheduler, /tabs\.create\(\{ url: job\.target\.url, active: false \}\)/);
 });
@@ -23957,7 +23961,8 @@ test('sidepanel scopes async tab commands to the original tab', () => {
       ? panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')", screenshotIdx)
       : panel.indexOf("if (command.value === '/export' && action === 'traces')", screenshotIdx);
     const screenshotBody = panel.slice(screenshotIdx, screenshotEnd);
-    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?sendToBackground\('capture_screenshot_redaction_snapshot',[\s\S]*?coordinateSpace: 'viewport'[\s\S]*?captureVisibleTab[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, dataUrl, \{[\s\S]*?pageUrl: tab\.url,[\s\S]*?redactionSnapshotReady: redactionSnapshotResult\?\.ok === true,[\s\S]*?redactionSnapshot: redactionSnapshotResult\?\.snapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should capture privacy geometry with the pixels, reject stale-tab completions, and retain its URL for naming`);
+    assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?sendToBackground\('capture_viewport_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?pageUrl: tab\.url,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?modelRedactionReady: res\.modelRedactionReady === true,[\s\S]*?modelDataUrl: res\.modelDataUrl,[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should retain the background-created model copy, reject stale-tab completions, and keep the raw URL for local preview`);
+    assert.doesNotMatch(screenshotBody, /Promise\.all|captureVisibleTab|capture_screenshot_redaction_snapshot/, `${label}: the side panel must not race viewport pixels against privacy geometry`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?screenshot-save-btn[\s\S]*?sp\.screenshot\.save_as/, `${label}: screenshot messages should render a visible Save As action`);
     assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindScreenshotSaveButtons\(\);/, `${label}: restored screenshot messages should regain their Save As behavior`);
@@ -33325,6 +33330,57 @@ test('full-page image assembly reports first-tile fallback errors', async () => 
     else globalThis.createImageBitmap = originalCreateImageBitmap;
     if (originalOffscreenCanvas === undefined) delete globalThis.OffscreenCanvas;
     else globalThis.OffscreenCanvas = originalOffscreenCanvas;
+  }
+});
+
+test('user viewport screenshots retain a capture-bound redacted model copy', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const events = [];
+      globalThis[apiName] = {
+        tabs: {
+          get: async () => ({ id: 42, active: true, windowId: 7 }),
+          captureVisibleTab: async () => {
+            events.push('capture');
+            return 'data:image/png;base64,RAW_VIEWPORT';
+          },
+        },
+      };
+      const agent = new AgentClass({});
+      agent.screenshotRedaction = true;
+      agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+      const snapshot = {
+        coordinateSpace: 'viewport',
+        viewport: { width: 800, height: 600 },
+        regions: [{ kind: 'password', rect: { x: 20, y: 30, w: 120, h: 24 } }],
+      };
+      agent.captureScreenshotRedactionSnapshotForUser = async () => {
+        events.push('snapshot');
+        return { ok: true, snapshot };
+      };
+      agent._redactScreenshotDataUrl = async (_tabId, dataUrl, options) => {
+        events.push('redact');
+        assert.equal(dataUrl, 'data:image/png;base64,RAW_VIEWPORT');
+        assert.equal(options.redactionSnapshot, snapshot);
+        return 'data:image/png;base64,REDACTED_VIEWPORT';
+      };
+
+      const result = await agent.captureViewportScreenshotForUser(42);
+
+      assert.deepEqual(events, ['snapshot', 'capture', 'snapshot', 'redact'], `${label}: capture must be bracketed by matching privacy geometry before redaction`);
+      assert.equal(result.ok, true);
+      assert.equal(result.dataUrl, 'data:image/png;base64,RAW_VIEWPORT', `${label}: local preview pixels should remain untouched`);
+      assert.equal(result.modelDataUrl, 'data:image/png;base64,REDACTED_VIEWPORT', `${label}: the model copy should be created during capture`);
+      assert.equal(result.modelRedactionReady, true);
+    }
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.browser = previousBrowser;
   }
 });
 
@@ -62702,6 +62758,37 @@ test('attachments: slash screenshots redact only the model-facing copy', async (
       budgetDataUrl,
       `${label}: ordinary image uploads should keep their budgeted model copy`,
     );
+
+    const retainedModelDataUrl = 'data:image/png;base64,CAPTURE_BOUND_REDACTED_COPY';
+    agent._shrinkImageForBudget = async dataUrl => ({ dataUrl, width: 800, height: 600 });
+    const viewportEnriched = { role: 'user', content: 'inspect this viewport' };
+    const viewportResult = await agent._applyAttachments(
+      viewportEnriched,
+      [{
+        kind: 'image',
+        name: 'viewport-screenshot.png',
+        dataUrl: rawDataUrl,
+        source: 'slash_screenshot',
+        fullPage: false,
+        modelRedactionReady: true,
+        modelDataUrl: retainedModelDataUrl,
+        redactionSnapshotReady: true,
+        redactionSnapshot: {
+          coordinateSpace: 'viewport',
+          viewport: { width: 800, height: 600 },
+          regions: [{ kind: 'password', rect: { x: 20, y: 40, w: 200, h: 30 } }],
+        },
+      }],
+      { name: 'vision-test', supportsVision: true, supportsDocuments: false },
+      { tabId: 8123 },
+    );
+    assert.equal(viewportResult.ok, true, `${label}: a capture-bound viewport model copy should be accepted`);
+    assert.equal(
+      viewportEnriched.content.find(block => block?.type === 'image_url').image_url.url,
+      retainedModelDataUrl,
+      `${label}: viewport screenshots should reuse the retained redacted pixels`,
+    );
+    assert.equal(redactionCalls.length, 1, `${label}: viewport send must not recalculate privacy geometry later`);
   }
 });
 
@@ -62891,6 +62978,8 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
       capturedAt: 123,
       fullPage: false,
       redactionSnapshotReady: true,
+      modelRedactionReady: true,
+      modelDataUrl: 'data:image/png;base64,REDACTED_CAPTURE',
       redactionSnapshot: {
         coordinateSpace: 'viewport',
         viewport: { width: 800, height: 600 },
@@ -62899,7 +62988,10 @@ test('attachments: staged screenshot store verifies exact pixels and cleans up',
     };
 
     assert.equal(await store.saveStagedScreenshot(storage, 55, attachment), true, `${build}: exact readback should confirm staging`);
-    assert.equal((await store.loadStagedScreenshots(storage, 55))[0].dataUrl, attachment.dataUrl, `${build}: stored pixels should round-trip exactly`);
+    const loadedAttachment = (await store.loadStagedScreenshots(storage, 55))[0];
+    assert.equal(loadedAttachment.dataUrl, attachment.dataUrl, `${build}: stored preview pixels should round-trip exactly`);
+    assert.equal(loadedAttachment.modelDataUrl, attachment.modelDataUrl, `${build}: stored model pixels should round-trip exactly`);
+    assert.equal(loadedAttachment.modelRedactionReady, true, `${build}: stored model-copy readiness should round-trip exactly`);
     assert.equal(await store.markStagedScreenshots(storage, 55, [{ ...attachment, source: 'slash_screenshot' }], {
       deliveryState: 'sending',
       requestId: 'request-55',
@@ -63185,8 +63277,8 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
     const store = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/chat-history-store.js'), 'utf8');
     const history = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.js'), 'utf8');
 
-    assert.match(panel, /sendToBackground\('capture_screenshot_redaction_snapshot',[\s\S]*captureVisibleTab[\s\S]*stageScreenshotAttachment\(tabId, dataUrl, \{[\s\S]*redactionSnapshotReady:[\s\S]*redactionSnapshot:[\s\S]*addScreenshotResultMessage\(dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must bind capture-time privacy geometry before rendering its result card`);
-    assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*redactionSnapshot[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy geometry in the tab-scoped pending attachment list`);
+    assert.match(panel, /sendToBackground\('capture_viewport_screenshot', \{ tabId \}\)[\s\S]*stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*modelRedactionReady:[\s\S]*modelDataUrl:[\s\S]*addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must retain the capture-bound model copy before rendering its result card`);
+    assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*modelRedactionReady: modelRedactionReady === true,[\s\S]*modelDataUrl[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy data and model pixels in the tab-scoped pending attachment list`);
     assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
     assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);

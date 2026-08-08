@@ -18,9 +18,11 @@ function storageKey(tabId, stagedAttachmentId) {
 function normalizeRecord(attachment) {
   const stagedAttachmentId = String(attachment?.stagedAttachmentId || '');
   const dataUrl = String(attachment?.dataUrl || '');
+  const modelDataUrl = String(attachment?.modelDataUrl || '');
   const size = Number(attachment?.size);
   if (!/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
       || !/^data:image\/(?:png|jpeg);base64,/i.test(dataUrl)
+      || (modelDataUrl && !/^data:image\/(?:png|jpeg);base64,/i.test(modelDataUrl))
       || !(Number.isFinite(size) && size > 0)) return null;
   const deliveryState = attachment?.deliveryState === 'sending' ? 'sending' : 'pending';
   return {
@@ -35,11 +37,13 @@ function normalizeRecord(attachment) {
     capturedAt: Number(attachment?.capturedAt) || Date.now(),
     fullPage: attachment?.fullPage === true,
     redactionSnapshotReady: attachment?.redactionSnapshotReady === true,
+    modelRedactionReady: attachment?.modelRedactionReady === true,
     deliveryState,
     ...(deliveryState === 'sending' && attachment?.requestId
       ? { requestId: String(attachment.requestId).slice(0, 200) }
       : {}),
     ...(attachment?.redactionSnapshot ? { redactionSnapshot: attachment.redactionSnapshot } : {}),
+    ...(attachment?.modelRedactionReady === true && modelDataUrl ? { modelDataUrl } : {}),
     ...(attachment?.fullPage === true && attachment?.captureBounds
       ? { captureBounds: attachment.captureBounds }
       : {}),
@@ -73,6 +77,8 @@ export async function saveStagedScreenshot(storageArea, tabId, attachment) {
     && verified.stagedAttachmentId === record.stagedAttachmentId
     && verified.size === record.size
     && verified.dataUrl === record.dataUrl
+    && verified.modelRedactionReady === record.modelRedactionReady
+    && String(verified.modelDataUrl || '') === String(record.modelDataUrl || '')
     && verified.deliveryState === 'pending';
 }
 
@@ -106,6 +112,8 @@ export async function markStagedScreenshots(storageArea, tabId, attachments, {
     return !!actual
       && actual.stagedAttachmentId === expected.stagedAttachmentId
       && actual.dataUrl === expected.dataUrl
+      && actual.modelRedactionReady === expected.modelRedactionReady
+      && String(actual.modelDataUrl || '') === String(expected.modelDataUrl || '')
       && actual.deliveryState === expected.deliveryState
       && String(actual.requestId || '') === String(expected.requestId || '');
   });

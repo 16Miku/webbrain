@@ -5869,6 +5869,57 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  async captureViewportScreenshotForUser(tabId) {
+    if (!tabId) return { ok: false, error: 'No tab ID' };
+    try {
+      const tab = await browser.tabs.get(tabId);
+      if (!tab?.active || tab.windowId == null) {
+        return { ok: false, error: 'The requested tab is no longer active' };
+      }
+      return await this._withIndicatorsHidden(tabId, async () => {
+        const before = this.screenshotRedaction
+          ? await this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'viewport' })
+          : null;
+        const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        const current = await browser.tabs.get(tabId);
+        if (!current?.active || current.windowId !== tab.windowId) {
+          return { ok: false, error: 'The active tab changed during screenshot capture' };
+        }
+        const after = await this.captureScreenshotRedactionSnapshotForUser(tabId, {
+          coordinateSpace: 'viewport',
+        });
+        if (this.screenshotRedaction && (
+          before?.ok !== true
+          || after.ok !== true
+          || JSON.stringify(before.snapshot) !== JSON.stringify(after.snapshot)
+        )) {
+          return { ok: false, error: 'The page changed during screenshot capture; try /screenshot again' };
+        }
+        const redactionSnapshotResult = this.screenshotRedaction ? before : after;
+        let modelDataUrl = dataUrl;
+        if (this.screenshotRedaction) {
+          modelDataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, {
+            coordinateSpace: 'viewport',
+            redactionSnapshot: before.snapshot,
+          });
+          if (before.snapshot.regions.length > 0 && modelDataUrl === dataUrl) {
+            return { ok: false, error: 'Could not create the private model-facing screenshot copy' };
+          }
+        }
+        return {
+          ok: true,
+          dataUrl,
+          redactionSnapshotReady: redactionSnapshotResult?.ok === true,
+          redactionSnapshot: redactionSnapshotResult?.snapshot,
+          modelRedactionReady: this.screenshotRedaction === true,
+          ...(modelDataUrl !== dataUrl ? { modelDataUrl } : {}),
+        };
+      });
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
   /**
    * Add the new tab to the per-window "WebBrain" tab group so the agent's
    * spawned tabs share visual scope with the user's session. Mirrors
@@ -16990,30 +17041,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.`,
           };
         }
-        // Budget-resize a model-facing copy; leave the original attachment
-        // untouched so the UI/history still has the user-picked full image
-        // (issue #311 maxImageDimension).
-        const shrunk = await this._shrinkImageForBudget(att.dataUrl, 0, 0, this._budgetForCapture());
+        let modelSourceDataUrl = att.dataUrl;
+        let deferredFullPageRedaction = null;
+        if (att.source === 'slash_screenshot' && this.screenshotRedaction) {
+          const coordinateSpace = att.fullPage ? 'page' : 'viewport';
+          const redactionSnapshot = att.redactionSnapshotReady === true
+            ? this._normalizeScreenshotRedactionSnapshot(att.redactionSnapshot, coordinateSpace)
+            : null;
+          if (att.modelRedactionReady === true) {
+            const retainedModelCopy = String(att.modelDataUrl || '');
+            if (retainedModelCopy) modelSourceDataUrl = retainedModelCopy;
+            else if (!redactionSnapshot || redactionSnapshot.regions.length > 0) {
+              return {
+                ok: false,
+                error: 'This staged screenshot lost its private model-facing copy. Run /screenshot again before sending it.',
+              };
+            }
+          } else if (att.fullPage && redactionSnapshot) {
+            deferredFullPageRedaction = { coordinateSpace, redactionSnapshot };
+          } else {
+            return {
+              ok: false,
+              error: 'This staged screenshot has no capture-time privacy data bound to a private model copy. Run /screenshot again before sending it, or turn off screenshot redaction in Settings.',
+            };
+          }
+        }
+        // Budget-resize the retained model-facing copy; leave the original
+        // attachment untouched for local preview/save.
+        const shrunk = await this._shrinkImageForBudget(modelSourceDataUrl, 0, 0, this._budgetForCapture());
         // A slash-command screenshot keeps its original pixels for the local
         // preview/save path, but the copy crossing the model boundary must
         // honor the same on-device redaction setting as agent-owned captures.
         // Ordinary user-uploaded images are not browser screenshots and stay
         // byte-faithful apart from the existing vision-budget resize.
         let modelDataUrl = shrunk.dataUrl;
-        if (att.source === 'slash_screenshot' && this.screenshotRedaction) {
-          const coordinateSpace = att.fullPage ? 'page' : 'viewport';
-          const redactionSnapshot = att.redactionSnapshotReady === true
-            ? this._normalizeScreenshotRedactionSnapshot(att.redactionSnapshot, coordinateSpace)
-            : null;
-          if (!redactionSnapshot) {
-            return {
-              ok: false,
-              error: 'This staged screenshot has no capture-time privacy data. Run /screenshot again before sending it, or turn off screenshot redaction in Settings.',
-            };
-          }
+        if (deferredFullPageRedaction) {
           modelDataUrl = await this._redactScreenshotDataUrl(options.tabId, modelDataUrl, {
-            coordinateSpace,
-            redactionSnapshot,
+            coordinateSpace: deferredFullPageRedaction.coordinateSpace,
+            redactionSnapshot: deferredFullPageRedaction.redactionSnapshot,
             ...(att.fullPage && att.captureBounds ? { capturedCssBounds: att.captureBounds } : {}),
             imageWidth: shrunk.width,
             imageHeight: shrunk.height,
