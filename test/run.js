@@ -1087,6 +1087,64 @@ test('mergeRedactionFrameRegions maps nested iframe regions into top capture coo
   ];
   assert.deepEqual(mergeRedactionFrameRegions(frames), expected);
   assert.deepEqual(mergeRedactionFrameRegionsFx(frames), expected, 'Firefox frame mapping should match Chrome');
+
+  const incompleteFrames = [
+    { ...frames[0], childFrames: [] },
+    frames[1],
+  ];
+  assert.equal(
+    mergeRedactionFrameRegions(incompleteFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Chrome frame mapping should fail when a discovered child cannot be located in the screenshot',
+  );
+  assert.equal(
+    mergeRedactionFrameRegionsFx(incompleteFrames, { requireCompleteFrameCoverage: true }),
+    null,
+    'strict Firefox frame mapping should fail when a discovered child cannot be located in the screenshot',
+  );
+});
+
+test('capture-time redaction snapshots reject any discovered frame that cannot be inspected', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, apiName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const api = {
+        webNavigation: {
+          getAllFrames: async () => [
+            { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+            { frameId: 2, parentFrameId: 0, url: 'https://child.example.test/' },
+          ],
+        },
+        tabs: {
+          sendMessage: async (_tabId, _message, options) => {
+            if (options?.frameId === 2) throw new Error('frame navigated');
+            return {
+              viewport: { width: 800, height: 600 },
+              elements: [],
+              childFrames: [{
+                url: 'https://child.example.test/',
+                rect: { x: 20, y: 30, w: 400, h: 300 },
+              }],
+            };
+          },
+        },
+      };
+      globalThis[apiName] = api;
+      const agent = new AgentClass({});
+      assert.equal(
+        await agent._captureScreenshotRedactionSnapshot(991, { coordinateSpace: 'viewport' }),
+        null,
+        `${label}: one uninspected child frame must invalidate the privacy snapshot`,
+      );
+    }
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.browser = previousBrowser;
+  }
 });
 
 test('page-coordinate redaction uses captured CSS bounds instead of the grown live document', async () => {
@@ -62585,8 +62643,13 @@ test('attachments: capture-time redaction snapshots fail closed instead of trunc
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     assert.match(
       source,
-      /mergeRedactionFrameRegions\(frameSnapshots, \{[\s\S]*?maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS \+ 1/,
+      /const regions = mergeRedactionFrameRegions\(frameSnapshots, \{[\s\S]*?maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS \+ 1,[\s\S]*?requireCompleteFrameCoverage: true,[\s\S]*?if \(!Array\.isArray\(regions\)\) return null/,
       `${label}: the collector must request an overflow sentinel so normalization can fail closed`,
+    );
+    assert.match(
+      source,
+      /if \(frameSnapshots\.some\(frame => !frame\)\) return null/,
+      `${label}: a frame messaging failure must invalidate the complete snapshot`,
     );
   }
 });
@@ -62601,10 +62664,10 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
     const end = source.indexOf('function findStagedScreenshotResult(', start);
     assert.ok(start >= 0 && end > start, `${label}: staged screenshot metadata codec missing`);
     const runtime = Function(
-      'MAX_ATTACHMENT_BYTES',
+      'MAX_STAGED_SCREENSHOT_BYTES',
       'attachmentDataUrlBytes',
       `${source.slice(start, end)}\nreturn { encodeStagedScreenshotMetadata, decodeStagedScreenshotMetadata };`,
-    )(16 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
+    )(4 * 1024 * 1024, dataUrl => String(dataUrl || '').includes('RAW_CAPTURE') ? 11 : 1);
     const rawDataUrl = 'data:image/png;base64,RAW_CAPTURE';
     const redactionSnapshot = {
       coordinateSpace: 'viewport',
@@ -62641,6 +62704,10 @@ test('attachments: staged screenshot restore metadata never substitutes compacte
       null,
       `${label}: a quota-compacted image must not be mistaken for the staged screenshot`,
     );
+
+    assert.match(source, /MAX_STAGED_SCREENSHOT_BYTES = 4 \* 1024 \* 1024/, `${label}: staged screenshot bytes should leave room in the session budget`);
+    assert.match(source, /TAB_CHAT_PERSIST_BUDGET - currentChatLength - STAGED_SCREENSHOT_PERSIST_HEADROOM/, `${label}: staging should account for the current persisted chat`);
+    assert.match(source, /currentChatLength \+ prospectiveResultLength \+ STAGED_SCREENSHOT_PERSIST_HEADROOM[\s\S]*?> TAB_CHAT_PERSIST_BUDGET/, `${label}: the exact staged result should remain below the persistence compaction threshold`);
   }
 });
 

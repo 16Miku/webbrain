@@ -1152,34 +1152,40 @@ export class Agent extends LoopDetector {
     try {
       navigationFrames = await chrome.webNavigation.getAllFrames({ tabId });
     } catch {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+      return null;
     }
     if (!Array.isArray(navigationFrames) || navigationFrames.length === 0) {
-      navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+      return null;
     }
-    const frameSnapshots = (await Promise.all(navigationFrames.map(async (frame) => {
+    const frameSnapshots = await Promise.all(navigationFrames.map(async (frame) => {
       try {
         const resp = await chrome.tabs.sendMessage(tabId, {
           target: 'redaction-content',
           action: 'get_redaction_regions',
           params: { coordinateSpace: frame.frameId === 0 ? coordinateSpace : 'viewport' },
         }, { frameId: frame.frameId });
+        if (!resp || !Array.isArray(resp.elements) || !Array.isArray(resp.childFrames)
+            || !(Number(resp.viewport?.width) > 0 && Number(resp.viewport?.height) > 0)) return null;
         return { ...resp, frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url || '' };
       } catch {
         return null;
       }
-    }))).filter(Boolean);
+    }));
+    if (frameSnapshots.some(frame => !frame)) return null;
     const topFrame = frameSnapshots.find((frame) => frame.frameId === 0);
     if (!topFrame) return null;
+    const regions = mergeRedactionFrameRegions(frameSnapshots, {
+      maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS + 1,
+      requireCompleteFrameCoverage: true,
+    });
+    if (!Array.isArray(regions)) return null;
     return this._normalizeScreenshotRedactionSnapshot({
       coordinateSpace,
       viewport: topFrame.viewport,
       // Ask for one sentinel beyond the stored cap so overflow is detected
       // and the staged screenshot fails closed instead of silently leaving
       // later-frame sensitive regions visible.
-      regions: mergeRedactionFrameRegions(frameSnapshots, {
-        maxRegions: STAGED_SCREENSHOT_REDACTION_MAX_REGIONS + 1,
-      }),
+      regions,
     }, coordinateSpace);
   }
 

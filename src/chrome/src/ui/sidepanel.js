@@ -47,6 +47,7 @@ import {
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
+import { TAB_CHAT_PERSIST_BUDGET } from './tab-chat-persistence.js';
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -11332,6 +11333,8 @@ const attachBtn = document.getElementById('btn-attach');
 const fileAttachInput = document.getElementById('file-attach-input');
 const attachmentPreviewList = document.getElementById('attachment-preview-list');
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024; // matches PDF_PASSTHROUGH_MAX_BYTES (pdf-tools.js)
+const MAX_STAGED_SCREENSHOT_BYTES = 4 * 1024 * 1024;
+const STAGED_SCREENSHOT_PERSIST_HEADROOM = 256 * 1024;
 // Text files are injected VERBATIM into the prompt as a text block (no
 // server-side processing like PDFs), so the 16MB binary cap would blow any
 // context window — cap them far lower.
@@ -11378,7 +11381,7 @@ function decodeStagedScreenshotMetadata(value, dataUrl) {
     const actualSize = attachmentDataUrlBytes(dataUrl);
     if (metadata?.version !== 1
         || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
-        || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
+        || !(Number.isFinite(size) && size > 0 && size <= MAX_STAGED_SCREENSHOT_BYTES)
         || actualSize !== size
         || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
       return null;
@@ -11559,9 +11562,21 @@ function stageScreenshotAttachment(tabId, dataUrl, {
   if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
   const size = attachmentDataUrlBytes(dataUrl);
   const name = screenshotDownloadFilename(pageUrl, fullPage);
-  if (size > MAX_ATTACHMENT_BYTES) {
+  const currentChatLength = String(messagesEl?.innerHTML || '').length;
+  const availablePersistChars = Math.max(
+    0,
+    TAB_CHAT_PERSIST_BUDGET - currentChatLength - STAGED_SCREENSHOT_PERSIST_HEADROOM,
+  );
+  const currentStageLimit = Math.min(
+    MAX_STAGED_SCREENSHOT_BYTES,
+    Math.floor(availablePersistChars * 3 / 4),
+  );
+  if (size > currentStageLimit) {
     if (normalizeAttachmentTabId() === numericTabId) {
-      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max: '16MB' })));
+      const max = currentStageLimit >= 1024 * 1024
+        ? `${Math.floor((currentStageLimit * 10) / (1024 * 1024)) / 10}MB`
+        : `${Math.floor(currentStageLimit / 1024)}KB`;
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max })));
     }
     return null;
   }
@@ -11579,6 +11594,13 @@ function stageScreenshotAttachment(tabId, dataUrl, {
     ...(redactionSnapshot ? { redactionSnapshot } : {}),
     ...(fullPage && captureBounds ? { captureBounds } : {}),
   };
+  const prospectiveResultLength = renderScreenshotResult(dataUrl, {
+    fullPage,
+    pageUrl,
+    stagedAttachment: attachment,
+  }).length;
+  if (currentChatLength + prospectiveResultLength + STAGED_SCREENSHOT_PERSIST_HEADROOM
+      > TAB_CHAT_PERSIST_BUDGET) return null;
   getPendingAttachmentsForTab(numericTabId).push(attachment);
   if (normalizeAttachmentTabId() === numericTabId) {
     renderAttachmentPreviews();

@@ -242,7 +242,8 @@ export function mapRegionsToImage(regions, opts = {}) {
  * }>} frames
  * @param {object} [opts]
  * @param {number} [opts.maxRegions=400]
- * @returns {Array<{kind:string,rect:{x:number,y:number,w:number,h:number}}>} Regions in top-frame capture coordinates.
+ * @param {boolean} [opts.requireCompleteFrameCoverage=false]
+ * @returns {Array<{kind:string,rect:{x:number,y:number,w:number,h:number}}>|null} Regions in top-frame capture coordinates.
  */
 export function mergeRedactionFrameRegions(frames, opts = {}) {
   if (!Array.isArray(frames) || frames.length === 0) return [];
@@ -345,6 +346,10 @@ export function mergeRedactionFrameRegions(frames, opts = {}) {
       });
       queue.push(child);
     }
+  }
+
+  if (opts.requireCompleteFrameCoverage === true && transforms.size !== usable.length) {
+    return null;
   }
 
   return merged;
