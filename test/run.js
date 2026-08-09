@@ -67492,10 +67492,33 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
         `${build}: preflight discarded the token-clearance recheck marker`,
       );
 
-      activeFrame.hidden = false;
-      const rearmed = await agent._captchaMutationPreflight(1, 'click_ax');
+      responseField.value = '';
+      const tokenMissing = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(
-        rearmed?.status,
+        tokenMissing?.status,
+        'verification_pending',
+        `${build}: a missing correlated token left stale clearance fail-open`,
+      );
+      assert.equal(
+        tokenMissing?.clearedByResponseToken,
+        undefined,
+        `${build}: missing-token downgrade retained the stale clearance reason`,
+      );
+      assert.equal(
+        agent._captchaGateStates.get(1)?.publicGate?.responseTokenPresent,
+        undefined,
+        `${build}: missing-token downgrade retained the stale token-presence flag`,
+      );
+
+      activeFrame.hidden = false;
+      const rearmed = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'visible' },
+      );
+      assert.equal(
+        rearmed.gate?.status,
         'manual_required',
         `${build}: reappearing challenge frame allowed another paid solve after token rejection`,
       );

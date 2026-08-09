@@ -265,6 +265,16 @@ function withoutLegacyCaptchaVerificationState(gate) {
   return current;
 }
 
+function withoutCaptchaTokenClearanceState(gate) {
+  if (!gate || typeof gate !== 'object') return gate;
+  const {
+    responseTokenPresent: _responseTokenPresent,
+    clearedByResponseToken: _clearedByResponseToken,
+    ...current
+  } = gate;
+  return current;
+}
+
 function normalizeCaptchaGateState(gate) {
   const inferredClearance = gate?.clearedByReadOnlyVerification === true
     || gate?.publicGate?.clearedByReadOnlyVerification === true;
@@ -4442,7 +4452,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && ['verification_pending', 'cleared'].includes(activeGate?.status)
     ) {
       const manualGate = {
-        ...withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+        ...withoutCaptchaTokenClearanceState(
+          withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+        ),
         status: 'manual_required',
         responseTokenPresent: postSolveTokenState.responseTokenPresent,
         activeChallengeAfterSolve: true,
@@ -4455,6 +4467,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       toolResult.captchaGate = manualGate;
       return { gate: manualGate, loopCheck };
+    }
+    if (
+      activeGate?.status === 'cleared'
+      && activeGate.captchaCandidateIdentity
+      && postSolveTokenState?.responseTokenPresent !== true
+    ) {
+      const pendingGate = {
+        ...withoutCaptchaTokenClearanceState(
+          withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+        ),
+        status: 'verification_pending',
+        ...(challenge?.label ? { challengeDialog: { label: challenge.label } } : {}),
+      };
+      this._captchaGateStates.set(tabId, {
+        ...withoutLegacyCaptchaVerificationState(activeGate),
+        status: 'verification_pending',
+        publicGate: pendingGate,
+      });
+      toolResult.captchaGate = pendingGate;
+      return { gate: pendingGate, loopCheck };
     }
     if (!challenge) {
       if (
