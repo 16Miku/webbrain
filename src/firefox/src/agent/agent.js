@@ -56,6 +56,14 @@ import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTyp
 import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
 import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
+import {
+  cloudflareChallengeNavigationTransition,
+  cloudflareChallengePlatformTransition,
+  cloudflareChallengeResponseTransition,
+  cloudflareManagedChallengeGateState,
+  cloudflareManagedChallengeStorageKey,
+  normalizeCloudflareManagedChallengeState,
+} from './cloudflare-managed-challenge.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
@@ -390,6 +398,7 @@ export class Agent extends LoopDetector {
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
+    this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
     // Pre-execution planner (Settings → Plan before Act). Default "try";
     // attempts a read-only planning LLM call and degrades the current turn to
     // Ask/read-only if structured planning itself fails. "strict" fails closed.
@@ -895,10 +904,23 @@ export class Agent extends LoopDetector {
   async _hydrate(tabId) {
     if (this.hydratedTabs.has(tabId)) return;
     this.hydratedTabs.add(tabId);
-    if (this.conversations.has(tabId)) return;
+    const conversationInMemory = this.conversations.has(tabId);
     try {
       const key = this._convKey(tabId);
-      const stored = await browser.storage.session.get(key);
+      const cloudflareKey = cloudflareManagedChallengeStorageKey(tabId);
+      const [stored, cloudflareStored] = await Promise.all([
+        browser.storage.session.get(key),
+        browser.storage.session.get(cloudflareKey),
+      ]);
+      const cloudflareSignal = normalizeCloudflareManagedChallengeState(
+        cloudflareStored?.[cloudflareKey],
+      );
+      if (cloudflareSignal) {
+        this._cloudflareManagedChallenges.set(tabId, cloudflareSignal);
+        const cloudflareGate = cloudflareManagedChallengeGateState(cloudflareSignal);
+        if (cloudflareGate) this._captchaGateStates.set(tabId, cloudflareGate);
+      }
+      if (conversationInMemory) return;
       const entry = stored?.[key];
       if (entry && Array.isArray(entry.messages) && entry.messages.length > 0) {
         this.conversations.set(tabId, entry.messages);
@@ -959,7 +981,7 @@ export class Agent extends LoopDetector {
           && captchaGateState.publicGate
           && typeof captchaGateState.publicGate === 'object'
         ) {
-          this._captchaGateStates.set(tabId, captchaGateState);
+          if (!cloudflareSignal) this._captchaGateStates.set(tabId, captchaGateState);
         }
       }
     } catch (e) { /* session storage may be unavailable */ }
@@ -3457,6 +3479,76 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return BROWSER_MUTATION_TOOLS.has(toolName);
   }
 
+  _persistCloudflareManagedChallenge(tabId, state) {
+    const key = cloudflareManagedChallengeStorageKey(tabId);
+    try {
+      if (state) {
+        browser.storage.session.set({ [key]: state }).catch(() => {});
+      } else {
+        browser.storage.session.remove(key).catch(() => {});
+      }
+    } catch {}
+  }
+
+  _applyCloudflareManagedChallengeTransition(tabId, transition) {
+    if (!Number.isInteger(tabId) || tabId < 0 || !transition?.changed) return null;
+    const state = normalizeCloudflareManagedChallengeState(transition.state);
+    if (state) {
+      this._cloudflareManagedChallenges.set(tabId, state);
+      const gate = cloudflareManagedChallengeGateState(state);
+      if (gate) this._captchaGateStates.set(tabId, gate);
+      this._persistCloudflareManagedChallenge(tabId, state);
+      return { kind: transition.kind, gate: gate?.publicGate || null };
+    }
+    this._cloudflareManagedChallenges.delete(tabId);
+    if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+      this._captchaGateStates.delete(tabId);
+    }
+    this._persistCloudflareManagedChallenge(tabId, null);
+    return { kind: transition.kind, gate: null };
+  }
+
+  observeCloudflareManagedChallengeResponse(details) {
+    const tabId = details?.tabId;
+    return this._applyCloudflareManagedChallengeTransition(
+      tabId,
+      cloudflareChallengeResponseTransition(
+        this._cloudflareManagedChallenges.get(tabId),
+        details,
+      ),
+    );
+  }
+
+  observeCloudflareChallengePlatformRequest(details) {
+    const tabId = details?.tabId;
+    return this._applyCloudflareManagedChallengeTransition(
+      tabId,
+      cloudflareChallengePlatformTransition(
+        this._cloudflareManagedChallenges.get(tabId),
+        details,
+      ),
+    );
+  }
+
+  observeCloudflareManagedChallengeNavigation(details) {
+    const tabId = details?.tabId;
+    return this._applyCloudflareManagedChallengeTransition(
+      tabId,
+      cloudflareChallengeNavigationTransition(
+        this._cloudflareManagedChallenges.get(tabId),
+        details,
+      ),
+    );
+  }
+
+  _activeCloudflareManagedChallengeGate(tabId) {
+    const signal = this._cloudflareManagedChallenges.get(tabId);
+    const gate = cloudflareManagedChallengeGateState(signal);
+    if (!gate) return null;
+    this._captchaGateStates.set(tabId, gate);
+    return gate.publicGate;
+  }
+
   _shouldRetryCaptchaManualGate(gate) {
     const publicGate = gate?.publicGate;
     const postSolveFailure = publicGate?.solveAttempted === true
@@ -3489,6 +3581,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (toolName === 'solve_captcha' && gate.status === 'solve_required') return null;
     if (gate.status === 'manual_required') {
+      if (gate.publicGate?.cloudflareManagedChallenge === true) {
+        return {
+          success: false,
+          denied: true,
+          noDispatch: true,
+          captchaGate: true,
+          manualCompletionRequired: true,
+          cloudflareManagedChallenge: true,
+          captchaDiagnostics: gate.publicGate?.diagnostics || null,
+          error: 'A full-page Cloudflare managed challenge is active. Stop automation and ask the user to complete it manually. Do not submit or call solve_captcha; navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
+        };
+      }
       return {
         success: false,
         denied: true,
@@ -3698,6 +3802,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || toolResult.error
     ) {
       return { gate: null, loopCheck: { kind: 'none' } };
+    }
+
+    const cloudflareManagedGate = this._activeCloudflareManagedChallengeGate(tabId);
+    if (cloudflareManagedGate) {
+      toolResult.captchaGate = cloudflareManagedGate;
+      return { gate: cloudflareManagedGate, loopCheck: { kind: 'none' } };
     }
 
     const activeGate = this._captchaGateStates.get(tabId);
@@ -5073,7 +5183,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
         onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
       } else if (captchaGateDecision?.status === 'manual_required') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable supported widget was detected. Stop automation and ask the user to complete it manually. Do not dismiss, close, or resubmit the challenge.]';
+        resultContent += captchaGateDecision.cloudflareManagedChallenge === true
+          ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Stop automation and ask the user to complete it manually. Do not submit or call solve_captcha; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+          : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable supported widget was detected. Stop automation and ask the user to complete it manually. Do not dismiss, close, or resubmit the challenge.]';
         onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
       } else if (captchaGateDecision?.status === 'cleared') {
         if (captchaGateDecision.clearedByResponseToken === true) {
@@ -5153,7 +5265,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           () => ({ success: false, skipped: true, error: 'skipped: manual CAPTCHA completion is required' }),
         );
         const captchaRunId = this.currentRunId.get(tabId);
-        const value = 'A verification challenge is active, but WebBrain could not safely solve a supported widget. Please complete the verification manually, then start or continue the task.';
+        const value = 'A verification challenge is active, and WebBrain cannot continue safely with automatic solving. Please complete the verification manually, then start or continue the task.';
         if (captchaRunId) trace.recordError(captchaRunId, step, 'captcha_gate', value);
         this._persist(tabId);
         return { action: 'return', value, status: 'captcha_manual_required' };
@@ -10431,6 +10543,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.recentNavUrls.delete(tabId);
     this.completionInvariants.delete(tabId);
     this._captchaGateStates.delete(tabId);
+    if (preserveRunGuard) {
+      this._activeCloudflareManagedChallengeGate(tabId);
+    } else {
+      this._cloudflareManagedChallenges.delete(tabId);
+      this._persistCloudflareManagedChallenge(tabId, null);
+    }
     this._userAttachmentHandles.delete(tabId);
     this._runUpdateCallbacks.delete(tabId);
     if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);
