@@ -6,6 +6,29 @@ const PUBLIC_MEDIA_HOST_RE = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagra
 const DATING_HOST_RE = /(^|\.)(tinder\.com|bumble\.com|hinge\.co|okcupid\.com|match\.com|pof\.com|badoo\.com|happn\.com|coffeemeetsbagel\.com)$/i;
 const SHOPPING_HOST_RE = /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.[a-z.]+|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.[a-z.]+|shopeekh\.com|lazada\.[a-z.]+)$/i;
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun)\b/i;
+const COUPON_SHOPPING_DOMAINS = [
+  'amazon.com', 'amazon.ca', 'amazon.com.mx', 'amazon.com.br', 'amazon.co.uk', 'amazon.de', 'amazon.fr',
+  'amazon.it', 'amazon.es', 'amazon.nl', 'amazon.pl', 'amazon.se', 'amazon.com.be', 'amazon.co.jp',
+  'amazon.in', 'amazon.com.au', 'amazon.sg', 'amazon.ae', 'amazon.sa', 'amazon.com.tr', 'amazon.eg',
+  'ebay.com', 'ebay.ca', 'ebay.co.uk', 'ebay.de', 'ebay.fr', 'ebay.it', 'ebay.es', 'ebay.com.au',
+  'etsy.com', 'walmart.com', 'target.com', 'bestbuy.com', 'aliexpress.com', 'mercadolivre.com.br',
+  'hepsiburada.com', 'trendyol.com', 'n11.com', 'shopeekh.com',
+  'mercadolibre.com.ar', 'mercadolibre.com.mx', 'mercadolibre.com.co', 'mercadolibre.cl',
+  'mercadolibre.com.pe', 'mercadolibre.com.uy', 'mercadolibre.com.ve', 'mercadolibre.com.ec',
+  'mercadolibre.com.bo', 'mercadolibre.com.py', 'mercadolibre.com.do', 'mercadolibre.com.gt',
+  'mercadolibre.com.hn', 'mercadolibre.com.ni', 'mercadolibre.com.pa', 'mercadolibre.com.sv',
+  'mercadolibre.co.cr',
+  'shopee.com', 'shopee.com.br', 'shopee.com.co', 'shopee.com.mx', 'shopee.cl', 'shopee.co.id',
+  'shopee.com.my', 'shopee.com.ph', 'shopee.sg', 'shopee.co.th', 'shopee.vn', 'shopee.tw',
+  'lazada.com', 'lazada.co.id', 'lazada.com.my', 'lazada.com.ph', 'lazada.sg', 'lazada.co.th', 'lazada.vn',
+];
+const COUPON_PRODUCT_PATH_RE = /\/(?:dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun|ip|detail)(?:\/|$)/i;
+const COUPON_BESTBUY_PRODUCT_PATH_RE = /\/site\/[^/]+\/\d+\.p(?:\/|$)/i;
+const COUPON_CHECKOUT_PATH_RE = /\/(?:cart|basket|bag|checkout|checkouts|shopping-cart|shopping-bag|warenkorb|panier|carrito|carrinho|sacola|sepet|troli|keranjang|gio-hang|koszyk|korzina)(?:\/|$)/i;
+const COUPON_CHECKOUT_HOST_RE = /^(?:checkout|cart)\./i;
+const COUPON_FIELD_RE = /\b(coupon|promo(?:tional)?|voucher|discount)\b/i;
+const COUPON_EMPTY_CART_RE = /\b(?:your\s+)?(?:cart|basket|bag)\s+(?:is\s+)?empty\b|\b(?:no|zero)\s+items?\s+in\s+(?:your\s+)?(?:cart|basket|bag)\b/i;
+const COUPON_PRICE_RE = /[₺$€£¥₹₩]|\b(?:USD|EUR|GBP|TRY|CAD|AUD|JPY|BRL|MXN|INR)\s*\d|\d\s*(?:USD|EUR|GBP|TRY|CAD|AUD|JPY|BRL|MXN|INR)\b/i;
 const RELEASES_PATH_RE = /^\/[^/]+\/[^/]+\/releases(?:\/|$)/i;
 const SEARCH_INPUT_RE = /^(search|q|query|keyword|keywords|s)$/i;
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com)$/i;
@@ -136,6 +159,24 @@ function visibleTreeArgs(maxDepth = 10) {
   return { filter: 'visible', maxDepth };
 }
 
+function couponRunOptions() {
+  return {
+    id: 'find-coupons',
+    skipPlanner: true,
+    autoExecute: true,
+    tool: 'get_accessibility_tree',
+    args: visibleTreeArgs(12),
+    summary: 'Find bounded coupon candidates and verify savings only through the merchant checkout UI.',
+    steps: [
+      'Read the visible product, cart, or checkout first; record the exact item, seller, subtotal, current discount or coupon, and payable total that are actually shown.',
+      'Check merchant-provided offers first, then research at most five external candidate codes relevant to this exact merchant and item.',
+      'Without a visible coupon field, report only unverified candidates; never add an item or start checkout merely to test a code.',
+      'Preserve the existing coupon, gift cards, store credit, and loyalty rewards; replace it only if safely restorable. Try codes one at a time. Call one active only when the merchant accepts it and the payable total or explicit discount changes. Keep the best saving or restore the original state.',
+      'Report sources, rejections, restrictions, and before/after savings. Never place the order, pay, enter or change address, shipping, or payment details, or join a membership or subscription. Stop on CAPTCHA or rate limit. Never follow affiliate redirects or install extensions.',
+    ],
+  };
+}
+
 function webbrainTweetRunOptions(postText) {
   const exactPost = String(postText || '').trim();
   return {
@@ -183,6 +224,43 @@ function hasCartOrPriceSignal(pageInfo = {}) {
   // symbols separately so a symbol-only price (e.g. "Total $50") still registers.
   return /\b(add to cart|buy now|checkout|basket|cart|price|discount|sale|shipping)\b/i.test(haystack)
     || /[₺$€£]/.test(haystack);
+}
+
+function isKnownCouponShoppingHost(host = '') {
+  return COUPON_SHOPPING_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function hasCouponFieldSignal(pageInfo = {}) {
+  const signal = (pageInfo.forms || []).slice(0, 20).flatMap((form) => {
+    const inputs = (form?.inputs || []).slice(0, 40).filter((input) => {
+      const type = String(input?.type || '').toLowerCase();
+      return !['hidden', 'submit', 'button', 'reset', 'image'].includes(type);
+    });
+    return inputs.flatMap((input) => [input?.type, input?.name, input?.id, input?.placeholder, input?.ariaLabel, input?.label]);
+  }).filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+  return COUPON_FIELD_RE.test(signal);
+}
+
+function couponPageSignal(pageInfo = {}) {
+  return [pageInfo.title, pageInfo.description, String(pageInfo.text || '').slice(0, 6000)].filter(Boolean).join(' ');
+}
+
+function hasCouponProductSignal(signal = '') {
+  return COUPON_PRICE_RE.test(signal) || /\b(add to (?:cart|basket|bag)|buy now|in stock|out of stock|sale price|list price|current price)\b/i.test(signal);
+}
+
+function hasCouponCheckoutValueSignal(signal = '') {
+  return COUPON_PRICE_RE.test(signal) || /\b(subtotal|order total|payable total|amount due|cart total|estimated total|quantity|qty|\d+\s+items?)\b/i.test(signal);
+}
+
+function isCouponShoppingContext(pageInfo = {}, host = '', path = '/') {
+  if (!isKnownCouponShoppingHost(host)) return false;
+  const pageSignal = couponPageSignal(pageInfo);
+  if (COUPON_EMPTY_CART_RE.test(pageSignal)) return false;
+  const isCheckoutPage = COUPON_CHECKOUT_HOST_RE.test(host) || COUPON_CHECKOUT_PATH_RE.test(path);
+  if (isCheckoutPage) return hasCouponFieldSignal(pageInfo) || hasCouponCheckoutValueSignal(pageSignal);
+  const isProductPage = COUPON_PRODUCT_PATH_RE.test(path) || COUPON_BESTBUY_PRODUCT_PATH_RE.test(path);
+  return isProductPage && hasCouponProductSignal(pageSignal);
 }
 
 function communicationSignal(pageInfo = {}, { includeUrl = true } = {}) {
@@ -395,6 +473,16 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
       prompt: publicMediaHost ? publicMediaDownloadPrompt(kind, needsExplicitUrl) : 'Download the video or photo from this post.',
       mode: 'act',
       ...(publicMediaHost ? { runOptions: publicMediaDownloadRunOptions(kind, needsExplicitUrl) } : {}),
+    });
+  }
+
+  if (isCouponShoppingContext(pageInfo, host, path)) {
+    addUnique(actions, {
+      id: 'find-coupons',
+      label: 'Find coupon codes',
+      prompt: 'Inspect this exact product, cart, or checkout through the visible page first. Check merchant-provided offers before researching at most five external candidate codes. If no coupon field is visible, report them only as unverified candidates and never add an item or start checkout merely to test them. If a field is visible, preserve the existing coupon, gift cards, store credit, and loyalty rewards; replace it only if safely restorable. Try codes one at a time, and call one active only when the merchant explicitly accepts it and the payable total or explicit discount changes. Keep the best saving or restore the original state. Report restrictions and before/after totals. Never place the order, pay, enter or change address, shipping, or payment details, or join a membership or subscription. Stop on CAPTCHA or rate limit. Never follow affiliate redirects or install extensions.',
+      mode: 'act',
+      runOptions: couponRunOptions(),
     });
   }
 

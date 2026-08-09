@@ -10624,6 +10624,177 @@ for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActio
   });
 }
 
+for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+  test(`coupon recommendation targets verified commerce contexts in ${label}`, () => {
+    const positiveCases = [
+      {
+        name: 'recognized product page',
+        pageInfo: {
+          url: 'https://www.amazon.com/dp/B000000',
+          title: 'Wireless headphones',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+      {
+        name: 'cart route without an exposed coupon field',
+        pageInfo: {
+          url: 'https://www.walmart.com/cart',
+          title: 'Cart',
+          description: 'Subtotal $42.00',
+        },
+      },
+      {
+        name: 'checkout with a merchant promo field',
+        pageInfo: {
+          url: 'https://checkout.ebay.com/',
+          title: 'Checkout',
+          forms: [{ inputs: [{ type: 'text', name: 'redemptionCode', placeholder: 'Coupon or promo code' }] }],
+        },
+      },
+      {
+        name: 'Shopee Cambodia product detail page',
+        pageInfo: {
+          url: 'https://www.shopeekh.com/kh-en/detail/123',
+          title: 'Wireless headphones',
+          description: 'US$20.00',
+        },
+      },
+    ];
+
+    for (const { name, pageInfo } of positiveCases) {
+      const actions = buildRecommendedActions(pageInfo, { max: 8 });
+      const coupon = actions.find((action) => action.id === 'find-coupons');
+      assert.ok(coupon, `${label}: missing coupon action for ${name}`);
+      assert.ok(buildRecommendedActions(pageInfo).some((action) => action.id === 'find-coupons'), `${label}: default action limit hid coupons for ${name}`);
+      assert.equal(coupon.label, 'Find coupon codes');
+      assert.equal(coupon.mode, 'act');
+      assert.equal(coupon.runOptions?.id, 'find-coupons');
+      assert.equal(coupon.runOptions?.skipPlanner, true);
+      assert.equal(coupon.runOptions?.autoExecute, true);
+      assert.equal(coupon.runOptions?.tool, 'get_accessibility_tree');
+      assert.deepEqual(coupon.runOptions?.args, { filter: 'visible', maxDepth: 12 });
+      const compareIndex = actions.findIndex((action) => action.id === 'compare-price');
+      if (compareIndex >= 0) {
+        assert.ok(actions.indexOf(coupon) < compareIndex, `${label}: coupon action should not be truncated behind compare-price`);
+      }
+    }
+  });
+
+  test(`coupon recommendation rejects ambiguous and lookalike pages in ${label}`, () => {
+    const negativeCases = [
+      {
+        name: 'generic storefront homepage',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          links: [{ text: 'Cart', href: '/gp/cart/view.html' }, { text: 'Today\'s deals', href: '/deals' }],
+        },
+      },
+      {
+        name: 'storefront tracking form with a hidden discount field',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          forms: [{ inputs: [{ type: 'hidden', name: 'discount_tracking' }] }],
+        },
+      },
+      {
+        name: 'storefront marketing form with promo metadata',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          forms: [{ inputs: [{ type: 'text', name: 'promoNewsletter', placeholder: 'Get promotions by email' }] }],
+        },
+      },
+      {
+        name: 'gift-card redemption field',
+        pageInfo: {
+          url: 'https://www.target.com/account/giftcards',
+          title: 'Redeem a gift card',
+          forms: [{ inputs: [{ type: 'text', id: 'gift_code', placeholder: 'Gift code' }] }],
+        },
+      },
+      {
+        name: 'shopping-cart help article',
+        pageInfo: {
+          url: 'https://www.amazon.com/gp/help/customer/display.html',
+          title: 'Shopping Cart Help',
+          description: 'Learn how the cart works and review common questions.',
+        },
+      },
+      {
+        name: 'empty cart with product recommendations',
+        pageInfo: {
+          url: 'https://www.walmart.com/cart',
+          title: 'Your cart is empty',
+          text: 'Your cart is empty. Recommended products starting at $19.99.',
+        },
+      },
+      {
+        name: 'product-shaped help route with only a global cart link',
+        pageInfo: {
+          url: 'https://www.amazon.com/product/help',
+          title: 'Product Help',
+          description: 'Learn about product support.',
+          links: [{ text: 'Cart', href: '/gp/cart/view.html' }],
+        },
+      },
+      {
+        name: 'lookalike commerce domain',
+        pageInfo: {
+          url: 'https://amazon.com.evil.test/dp/B000000',
+          title: 'Product',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+      {
+        name: 'unknown merchant with coupon-shaped input',
+        pageInfo: {
+          url: 'https://shop.example.com/checkout',
+          title: 'Checkout',
+          forms: [{ inputs: [{ type: 'text', name: 'coupon', placeholder: 'Promo code' }] }],
+        },
+      },
+      {
+        name: 'malformed URL',
+        pageInfo: {
+          url: 'not a URL',
+          title: 'Product',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+    ];
+
+    for (const { name, pageInfo } of negativeCases) {
+      const actions = buildRecommendedActions(pageInfo, { max: 8 });
+      assert.equal(actions.some((action) => action.id === 'find-coupons'), false, `${label}: false coupon action for ${name}`);
+    }
+  });
+
+  test(`coupon recommendation pins verification and checkout safety in ${label}`, () => {
+    const actions = buildRecommendedActions({
+      url: 'https://www.target.com/cart',
+      title: 'Cart',
+      description: 'Subtotal $75.00',
+      forms: [{ inputs: [{ type: 'text', id: 'promo-code', placeholder: 'Promo code' }] }],
+    }, { max: 8 });
+    const coupon = actions.find((action) => action.id === 'find-coupons');
+    assert.ok(coupon);
+    const contract = [coupon.prompt, coupon.runOptions?.summary, ...(coupon.runOptions?.steps || [])].join(' ');
+    assert.match(contract, /at most five external candidate codes/i);
+    assert.match(contract, /unverified candidates/i);
+    assert.match(contract, /merchant explicitly accepts/i);
+    assert.match(contract, /payable total or explicit discount/i);
+    assert.match(contract, /preserve the existing coupon/i);
+    assert.match(contract, /gift card.*store credit.*loyalty rewards/i);
+    assert.match(contract, /never place the order/i);
+    assert.match(contract, /never .*enter or change.*payment/i);
+    assert.match(contract, /never .*join.*membership or subscription/i);
+    assert.match(contract, /affiliate redirects/i);
+    assert.match(contract, /captcha.*rate limit/i);
+  });
+}
+
 test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
   const expectedTweetSteps = (exactPost) => [
     'Open https://x.com/compose/post in the current tab through the visible browser UI.',
@@ -60205,6 +60376,80 @@ test('planner gate: trusted WebBrain social promotion actions skip planner and p
           `${label} should reject a forged immediate tool for the ${fixture.name} fast path`,
         );
       }
+    }
+  });
+});
+
+test('planner gate: coupon fast path accepts only its read-only preflight', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, [label, AgentClass, buildRecommendedActions]] of [
+      ['chrome', AgentCh, buildRecommendedActionsCh],
+      ['firefox', AgentFx, buildRecommendedActionsFx],
+    ].entries()) {
+      const tabId = 9250 + index;
+      const agent = new AgentClass({ getActive: () => ({}) });
+      const coupon = buildRecommendedActions({
+        url: 'https://www.walmart.com/cart',
+        title: 'Cart',
+        description: 'Subtotal $42.00',
+      }, { max: 8 }).find((action) => action.id === 'find-coupons');
+      assert.ok(coupon?.runOptions, `${label}: coupon ready plan missing`);
+
+      assert.deepEqual(
+        agent._recommendedActionFastPathPlan({ recommendedAction: coupon.runOptions }),
+        {
+          id: 'find-coupons',
+          tool: 'get_accessibility_tree',
+          summary: coupon.runOptions.summary,
+          steps: coupon.runOptions.steps,
+        },
+        `${label}: valid coupon plan should skip a redundant planner call`,
+      );
+      assert.equal(
+        agent._recommendedActionFastPathPlan({ recommendedAction: { ...coupon.runOptions, tool: 'navigate' } }),
+        null,
+        `${label}: coupon fast path must reject a forged immediate tool`,
+      );
+      assert.equal(
+        agent._recommendedActionFastPathPlan({ recommendedAction: { ...coupon.runOptions, skipPlanner: false } }),
+        null,
+        `${label}: coupon fast path must require the first-party skip marker`,
+      );
+      assert.equal(
+        AgentClass.RECOMMENDED_ACTION_FIRST_TOOLS['find-coupons']?.has('get_accessibility_tree'),
+        true,
+        `${label}: coupon preflight tool should be allowlisted`,
+      );
+
+      agent.setPlanBeforeActMode('strict');
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      let plannerCalls = 0;
+      agent._runPlannerGate = async () => {
+        plannerCalls += 1;
+        throw new Error('coupon recommended action should not call the planner');
+      };
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        agent.conversations.get(tabId),
+        { role: 'user', content: coupon.prompt },
+        () => {},
+        'act',
+        null,
+        null,
+        null,
+        { recommendedAction: coupon.runOptions },
+      );
+      assert.equal(outcome.proceed, true, `${label}: coupon ready plan should proceed`);
+      assert.equal(plannerCalls, 0, `${label}: coupon ready plan should bypass planner`);
+      const scratchpadIndex = agent._findScratchpadIndex(agent.conversations.get(tabId));
+      assert.ok(scratchpadIndex >= 0, `${label}: coupon ready plan should be pinned`);
+      const scratchpad = agent._extractScratchpadBody(agent.conversations.get(tabId)[scratchpadIndex].content);
+      assert.match(scratchpad, /pinned by recommended action/i);
+      assert.match(scratchpad, /at most five external candidate codes/i);
+      assert.match(scratchpad, /Never place the order/i);
+      assert.match(scratchpad, /payment details/i);
+      assert.match(scratchpad, /membership or subscription/i);
     }
   });
 });
