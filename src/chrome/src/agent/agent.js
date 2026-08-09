@@ -52,7 +52,7 @@ import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
-import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
+import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
@@ -4153,7 +4153,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       func: detectChallengeDialogInPage,
       args: [{
         includeFrameContext: true,
-        allowGenericFailure: options?.allowGenericFailure === true,
+        ...captchaChallengeMatcherOptions(),
       }],
     });
     const inspected = (results) => {
@@ -4166,7 +4166,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!label) return [];
         const normalized = detectChallengeDialog(
           `dialog ${JSON.stringify(label.slice(0, 200))}`,
-          { allowGenericFailure: options?.allowGenericFailure === true },
         );
         if (!normalized?.normalizedLabel) return [];
         return [{
@@ -4271,13 +4270,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? toolResult.captchaChallengeFrameId
       : null;
     let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
-    let challenge = detectChallengeDialog(toolResult.pageContent, {
-      allowGenericFailure: !!activeGate,
-    });
+    let challenge = detectChallengeDialog(toolResult.pageContent);
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
         `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
-        { allowGenericFailure: !!activeGate },
       );
     }
     if (
@@ -4288,12 +4284,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: observedChallengeFrameId,
-        allowGenericFailure: !!activeGate,
       });
       if (recheck.challenge?.label) {
         challenge = detectChallengeDialog(
           `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
-          { allowGenericFailure: !!activeGate },
         );
         observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
           ? recheck.challenge.frameId
@@ -4389,7 +4383,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: activeGate.challengeFrameId,
-        allowGenericFailure: true,
       });
       if (frameInspection.challenge?.label) {
         challenge = detectChallengeDialog(
@@ -4410,7 +4403,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     let postSolveTokenState = null;
     if (
-      ['verification_pending', 'cleared'].includes(activeGate?.status)
+      ['verification_pending', 'manual_required', 'cleared'].includes(activeGate?.status)
       && activeGate.captchaCandidateIdentity
     ) {
       await inspectCaptchaFrames();
@@ -4421,7 +4414,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       }
     }
-    const loopCheck = challenge || authoritativeRootRead
+    const directCaptchaEvidence = !!activeGate?.captchaCandidateIdentity
+      || activeGate?.publicGate?.languageNeutralFrameTrigger === true;
+    const loopCheck = challenge || (authoritativeRootRead && !directCaptchaEvidence)
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
           dialogLabel: challenge?.normalizedLabel || '',
@@ -4448,6 +4443,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: clearedGate, loopCheck };
     }
     if (!challenge) {
+      if (
+        activeGate
+        && authoritativeRootRead
+        && directCaptchaEvidence
+      ) {
+        toolResult.captchaGate = activeGate.publicGate;
+        return { gate: activeGate.publicGate, loopCheck };
+      }
       if (activeGate && authoritativeRootRead) {
         const clearedGate = {
           ...activeGate.publicGate,
