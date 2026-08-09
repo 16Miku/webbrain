@@ -26466,9 +26466,10 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       css,
-      /#chat-shell \{[\s\S]*?position: relative;[\s\S]*?min-height: 0;[\s\S]*?\.chat-navigation \{[\s\S]*?position: absolute;[\s\S]*?left: 50%;[\s\S]*?transform: translateX\(-50%\);/,
-      `${label}: navigation pill should be shell-positioned and RTL-safe`,
+      /#chat-shell \{[\s\S]*?position: relative;[\s\S]*?min-height: 0;[\s\S]*?\.chat-navigation \{[\s\S]*?position: absolute;[\s\S]*?inset-inline-end: 12px;/,
+      `${label}: navigation pill should sit quietly at the shell's logical trailing edge`,
     );
+    assert.doesNotMatch(css, /\.chat-navigation \{[^}]*left: 50%;/, `${label}: navigation pill should no longer be centered over the reply`);
     assert.match(
       css,
       /\.message\.assistant\.chat-navigation-inset \.message-content \{[\s\S]*?padding-block-end: 60px;/,
@@ -26669,6 +26670,45 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       panel,
       /command\.value === '\/schedule'[\s\S]*?action === 'create'[\s\S]*?await renderScheduleComposer\(payload, tabId\);/,
       `${label}: schedule forms should finish rendering before slash-command reveal`,
+    );
+  }
+});
+
+test('Act-mode risk warning can be dismissed permanently', () => {
+  for (const [label, prefix, storage] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+
+    assert.match(
+      html,
+      /id="act-warning"[\s\S]*?data-i18n="sp\.mode\.act\.warning"[\s\S]*?id="act-warning-dismiss"[\s\S]*?data-i18n-aria-label="sp\.review\.close"/,
+      `${label}: the warning should keep its copy on the left and expose an accessible close button`,
+    );
+    assert.match(
+      css,
+      /#act-warning-dismiss \{[\s\S]*?width: 30px;[\s\S]*?height: 30px;[\s\S]*?margin-inline-start: auto;[\s\S]*?font-size: 22px;/,
+      `${label}: the warning close button should be prominent and pinned to the logical right`,
+    );
+    assert.match(css, /#act-warning-dismiss:focus-visible \{[\s\S]*?outline:/, `${label}: the warning close button should have a keyboard focus treatment`);
+    assert.match(panel, /const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';/, `${label}: permanent dismissal should have one storage key`);
+    assert.match(
+      panel,
+      new RegExp(`${storage}\\.storage\\.local\\.get\\(\\[PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY\\]\\)[\\s\\S]*?actWarningDismissed = stored\\?\\.\\[ACT_WARNING_DISMISSED_KEY\\] === true;[\\s\\S]*?actWarningPreferenceLoaded = true;`),
+      `${label}: warning visibility should wait for and restore the saved dismissal`,
+    );
+    assert.match(
+      panel,
+      /function updateActWarning\(\) \{[\s\S]*?actWarningPreferenceLoaded[\s\S]*?!actWarningDismissed[\s\S]*?agentMode !== 'ask'[\s\S]*?!askBeforeConsequential/,
+      `${label}: a dismissed warning should stay hidden across mode changes`,
+    );
+    assert.match(
+      panel,
+      new RegExp(`actWarningDismiss\\?\\.addEventListener\\('click',[\\s\\S]*?actWarningDismissed = true;[\\s\\S]*?updateActWarning\\(\\);[\\s\\S]*?${storage}\\.storage\\.local\\.set\\(\\{ \\[ACT_WARNING_DISMISSED_KEY\\]: true \\}\\)`),
+      `${label}: closing the warning should hide it immediately and persist forever`,
     );
   }
 });
