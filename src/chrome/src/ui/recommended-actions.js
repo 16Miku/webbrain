@@ -1,4 +1,5 @@
 import { isDirectPublicMediaUrl } from '../agent/public-media-url.js';
+import { COUPON_MERCHANT_DOMAINS } from './coupon-domains.js';
 import { t } from './i18n.js';
 
 const SOCIAL_HOST_RE = /(^|\.)(instagram\.com|tiktok\.com|x\.com|twitter\.com|facebook\.com|fb\.com|threads\.net|youtube\.com|youtu\.be|reddit\.com|pinterest\.com|snapchat\.com)$/i;
@@ -7,22 +8,6 @@ const MEETING_HOST_RE = /(^|\.)(zoom\.us|meet\.google\.com|teams\.microsoft\.com
 const DATING_HOST_RE = /(^|\.)(tinder\.com|bumble\.com|hinge\.co|okcupid\.com|match\.com|pof\.com|badoo\.com|happn\.com|coffeemeetsbagel\.com)$/i;
 const SHOPPING_HOST_RE = /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.[a-z.]+|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.[a-z.]+|shopeekh\.com|lazada\.[a-z.]+)$/i;
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun)\b/i;
-const COUPON_SHOPPING_DOMAINS = [
-  'amazon.com', 'amazon.ca', 'amazon.com.mx', 'amazon.com.br', 'amazon.co.uk', 'amazon.de', 'amazon.fr',
-  'amazon.it', 'amazon.es', 'amazon.nl', 'amazon.pl', 'amazon.se', 'amazon.com.be', 'amazon.co.jp',
-  'amazon.in', 'amazon.com.au', 'amazon.sg', 'amazon.ae', 'amazon.sa', 'amazon.com.tr', 'amazon.eg',
-  'ebay.com', 'ebay.ca', 'ebay.co.uk', 'ebay.de', 'ebay.fr', 'ebay.it', 'ebay.es', 'ebay.com.au',
-  'etsy.com', 'walmart.com', 'target.com', 'bestbuy.com', 'aliexpress.com', 'mercadolivre.com.br',
-  'hepsiburada.com', 'trendyol.com', 'n11.com', 'shopeekh.com',
-  'mercadolibre.com.ar', 'mercadolibre.com.mx', 'mercadolibre.com.co', 'mercadolibre.cl',
-  'mercadolibre.com.pe', 'mercadolibre.com.uy', 'mercadolibre.com.ve', 'mercadolibre.com.ec',
-  'mercadolibre.com.bo', 'mercadolibre.com.py', 'mercadolibre.com.do', 'mercadolibre.com.gt',
-  'mercadolibre.com.hn', 'mercadolibre.com.ni', 'mercadolibre.com.pa', 'mercadolibre.com.sv',
-  'mercadolibre.co.cr',
-  'shopee.com', 'shopee.com.br', 'shopee.com.co', 'shopee.com.mx', 'shopee.cl', 'shopee.co.id',
-  'shopee.com.my', 'shopee.com.ph', 'shopee.sg', 'shopee.co.th', 'shopee.vn', 'shopee.tw',
-  'lazada.com', 'lazada.co.id', 'lazada.com.my', 'lazada.com.ph', 'lazada.sg', 'lazada.co.th', 'lazada.vn',
-];
 const COUPON_PRODUCT_PATH_RE = /\/(?:dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun|ip|detail)(?:\/|$)/i;
 const COUPON_BESTBUY_PRODUCT_PATH_RE = /\/site\/[^/]+\/\d+\.p(?:\/|$)/i;
 const COUPON_CHECKOUT_PATH_RE = /\/(?:cart|basket|bag|checkout|checkouts|shopping-cart|shopping-bag|warenkorb|panier|carrito|carrinho|sacola|sepet|troli|keranjang|gio-hang|koszyk|korzina)(?:\/|$)/i;
@@ -228,7 +213,12 @@ function hasCartOrPriceSignal(pageInfo = {}) {
 }
 
 function isKnownCouponShoppingHost(host = '') {
-  return COUPON_SHOPPING_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  let candidate = host;
+  while (candidate.includes('.')) {
+    if (COUPON_MERCHANT_DOMAINS.has(candidate)) return true;
+    candidate = candidate.slice(candidate.indexOf('.') + 1);
+  }
+  return false;
 }
 
 function hasCouponFieldSignal(pageInfo = {}) {
