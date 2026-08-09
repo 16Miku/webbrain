@@ -191,6 +191,126 @@ kbd {
   padding-bottom: 24px;
 }
 .docs-sidebar { padding-top: 42px; }
+.docs-search { display: block; margin: 0 0 26px; }
+.docs-search-label {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--faint);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.docs-search-control { position: relative; }
+.docs-search-control input {
+  width: 100%;
+  height: 42px;
+  padding: 0 54px 0 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.docs-search-control input::placeholder { color: var(--faint); }
+.docs-search-control input::-webkit-search-cancel-button { display: none; }
+.docs-search-control input:focus {
+  border-color: color-mix(in srgb, var(--signal) 62%, var(--line));
+  background: var(--panel);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 13%, transparent);
+}
+.docs-search-icon {
+  position: absolute;
+  left: 13px;
+  top: 13px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  color: var(--faint);
+  pointer-events: none;
+}
+.docs-search-key {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  padding: 0 6px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 20px;
+  pointer-events: none;
+}
+.docs-search-clear {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.docs-search-clear:hover { background: var(--panel-3); color: var(--ink); }
+.docs-search-results {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+}
+.docs-sidebar .docs-search-result {
+  display: grid;
+  gap: 2px;
+  padding: 11px 12px;
+  border-radius: 0;
+  color: var(--muted);
+}
+.docs-sidebar .docs-search-result + .docs-search-result { border-top: 1px solid var(--line); }
+.docs-sidebar .docs-search-result:hover,
+.docs-sidebar .docs-search-result.is-active {
+  background: var(--signal-soft);
+  color: var(--ink);
+  box-shadow: inset 2px 0 var(--signal);
+}
+.docs-search-result-page {
+  overflow: hidden;
+  color: var(--signal);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.docs-search-result strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.docs-search-result-detail {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.docs-search-status { min-height: 17px; padding: 5px 2px 0; color: var(--faint); font-size: 10px; line-height: 1.2; }
 .sidebar-label, .on-this-page h2 {
   margin: 0 0 11px;
   color: var(--faint);
