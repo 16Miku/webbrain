@@ -8014,7 +8014,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('one CAPTCHA solve remains gated until a root read confirms clearance', async () => {
+test('one CAPTCHA solve remains gated until exact token and frame state confirms clearance', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -8073,7 +8073,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       new Set(['solve_captcha']),
       2,
     );
-    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a root-read turn`);
+    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a verification turn`);
     assert.deepEqual(executed, ['solve_captcha'], `${label}: second paid solve dispatched`);
     assert.match(String(retryMessages[0]?.content), /do not submit, dismiss, or call solve_captcha again/i);
 
@@ -8088,7 +8088,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       { filter: 'visible' },
     );
     assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: changed challenge key reset the attempted solve`);
-    assert.equal(firstPersistent.gate?.verificationRetryRequired, true, `${label}: bounded verification retry was not requested`);
+    assert.equal(firstPersistent.gate?.verificationRetryRequired, undefined, `${label}: legacy read retry state survived`);
     assert.equal(agent._captchaGateStates.get(tabId)?.key, 'https://example.test/signup\nsecurity verification', `${label}: changed challenge key replaced the attempted-solve identity`);
     const persistent = await agent._observeCaptchaChallenge(
       tabId,
@@ -8096,8 +8096,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       changedChallengeResult,
       { filter: 'visible' },
     );
-    assert.equal(persistent.gate?.status, 'manual_required', `${label}: dialog surviving the bounded retry offered another solve`);
-    assert.equal(persistent.gate?.solveFailedToClearChallenge, true, `${label}: persistent-dialog reason missing`);
+    assert.equal(persistent.gate?.status, 'verification_pending', `${label}: renamed dialog text overrode inconclusive widget state`);
+    assert.equal(persistent.gate?.solveFailedToClearChallenge, undefined, `${label}: legacy dialog inference state survived`);
     const changedManual = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8107,14 +8107,13 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(changedManual.gate?.status, 'cleared', `${label}: unrelated post-CAPTCHA dialog kept the failed solve gated`);
-    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: unrelated post-CAPTCHA dialog left a persisted gate`);
+    assert.equal(changedManual.gate?.status, 'verification_pending', `${label}: unrelated dialog text independently cleared the pending gate`);
+    assert.equal(agent._captchaGateStates.has(tabId), true, `${label}: inconclusive post-solve gate was discarded`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
-      verificationAttempts: 0,
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
@@ -8132,8 +8131,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(confirmation.gate?.status, 'cleared', `${label}: non-challenge confirmation dialog kept the solved CAPTCHA gated`);
-    assert.equal(confirmationAgent._captchaGateStates.has(tabId), false, `${label}: confirmation dialog leaked a cleared CAPTCHA gate`);
+    assert.equal(confirmation.gate?.status, 'verification_pending', `${label}: confirmation copy independently cleared the pending gate`);
+    assert.equal(confirmationAgent._captchaGateStates.has(tabId), true, `${label}: confirmation copy discarded inconclusive widget state`);
 
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
@@ -8155,12 +8154,12 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       clearedResult,
       {},
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: absent root dialog did not clear gate`);
-    assert.equal(clearedAgent._captchaGateStates.has(tabId), false, `${label}: verified gate state leaked`);
+    assert.equal(cleared.gate?.status, 'verification_pending', `${label}: absent root dialog independently cleared the pending gate`);
+    assert.equal(clearedAgent._captchaGateStates.has(tabId), true, `${label}: absent dialog discarded inconclusive widget state`);
   }
 });
 
-test('CAPTCHA gate survives user continuations and only a complete dialog-capable root read clears it', async () => {
+test('manual CAPTCHA gate survives user continuations until page inspection confirms completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8823 : 8824;
     const agent = new AgentClass({});
@@ -8176,6 +8175,11 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
     };
     agent._captchaGateStates.set(tabId, state);
     agent.conversations.set(tabId, [{ role: 'system', content: 'test' }]);
+    let challengePresent = true;
+    agent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: challengePresent ? { label: 'Security verification' } : null,
+      inspectionComplete: true,
+    });
 
     agent._clearRunLoopState(tabId);
     assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: run continuation discarded the unresolved gate`);
@@ -8204,6 +8208,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
       assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: ${description} cleared the unresolved gate`);
     }
 
+    challengePresent = false;
     const cleared = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8211,9 +8216,10 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
         pageContent: 'main [ref_1]\n heading "Welcome" [ref_2]',
         pageUrl: 'https://example.test/signup',
       },
-      { filter: 'visible' },
+      { filter: 'interactive', ref_id: 'ref_1', page: 2, maxDepth: 3 },
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: complete visible root read did not clear the gate`);
+    assert.equal(cleared.gate?.status, 'cleared', `${label}: completed manual challenge did not clear after direct page inspection`);
+    assert.equal(cleared.gate?.clearedByManualCompletion, true, `${label}: manual completion reason missing`);
     assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: cleared gate remained active`);
 
     agent._captchaGateStates.set(tabId, state);
@@ -8222,7 +8228,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
   }
 });
 
-test('pending and token-cleared CAPTCHA gates hydrate after a background worker restart', async () => {
+test('pending, legacy-cleared, and token-cleared CAPTCHA gates hydrate safely after restart', async () => {
   for (const [label, AgentClass, apiName] of [
     ['chrome', AgentCh, 'chrome'],
     ['firefox', AgentFx, 'browser'],
@@ -8233,10 +8239,45 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
     const clearedTabId = tabId + 10;
     const clearedAgent = new AgentClass({});
     const clearedKey = clearedAgent._convKey(clearedTabId);
-    const captchaGateState = {
+    const legacyClearedTabId = tabId + 20;
+    const legacyClearedAgent = new AgentClass({});
+    const legacyClearedKey = legacyClearedAgent._convKey(legacyClearedTabId);
+    const persistedCaptchaGateState = {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
       verificationAttempts: 1,
+      verificationFrameReadRequired: true,
+      publicGate: {
+        status: 'verification_pending',
+        verificationRetryRequired: true,
+        verificationReadRequired: true,
+        solveFailedToClearChallenge: true,
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    };
+    const persistedLegacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'cleared',
+      publicGate: {
+        status: 'cleared',
+        solveAttempted: true,
+        clearedByReadOnlyVerification: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const legacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'manual_required',
+      publicGate: {
+        status: 'manual_required',
+        solveAttempted: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const captchaGateState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'verification_pending',
       publicGate: {
         status: 'verification_pending',
         challengeDialog: { label: 'Security verification' },
@@ -8269,12 +8310,17 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
             [key]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
-              captchaGateState,
+              captchaGateState: persistedCaptchaGateState,
             },
             [clearedKey]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
               captchaGateState: clearedCaptchaGateState,
+            },
+            [legacyClearedKey]: {
+              messages: [{ role: 'system', content: 'test' }],
+              mode: 'act',
+              captchaGateState: persistedLegacyClearedState,
             },
           }),
         },
@@ -8288,6 +8334,12 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
         clearedAgent._captchaGateStates.get(clearedTabId),
         clearedCaptchaGateState,
         `${label}: worker restart lost the token-clearance recheck marker`,
+      );
+      await legacyClearedAgent._hydrate(legacyClearedTabId);
+      assert.deepEqual(
+        legacyClearedAgent._captchaGateStates.get(legacyClearedTabId),
+        legacyClearedState,
+        `${label}: worker restart trusted legacy read-only clearance`,
       );
     } finally {
       globalThis[apiName] = previousApi;
@@ -67394,9 +67446,10 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       );
       assert.equal(
         stillActive.gate?.status,
-        'verification_pending',
-        `${build}: token cleared the gate while its active frame remained visible`,
+        'manual_required',
+        `${build}: active challenge after the one solve did not fail closed`,
       );
+      assert.equal(stillActive.gate?.activeChallengeAfterSolve, true, `${build}: active post-solve challenge reason missing`);
       assert.equal(
         stillActive.gate?.clearedByResponseToken,
         undefined,
@@ -67443,8 +67496,8 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       const rearmed = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(
         rearmed?.status,
-        'solve_required',
-        `${build}: reappearing challenge frame did not re-arm after token rejection`,
+        'manual_required',
+        `${build}: reappearing challenge frame allowed another paid solve after token rejection`,
       );
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: re-armed gate was not persisted`);
     });
@@ -67694,7 +67747,6 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
       agent._captchaGateStates.set(1, {
         key: 'https://example.test/signup\nsecurity verification',
         status: 'verification_pending',
-        verificationAttempts: 0,
         challengeFrameId: 7,
         challengeFrameUrl: 'https://challenge.example.test/verify',
         publicGate: {
@@ -67727,7 +67779,7 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         { filter: 'visible' },
       );
       assert.equal(childUninspectable.gate?.status, 'verification_pending', `${build}: inaccessible challenge frame cleared the gate`);
-      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, true, `${build}: inaccessible frame did not fail closed`);
+      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, undefined, `${build}: inaccessible frame recreated legacy read state`);
 
       childInspectionFails = false;
       childChallengeVisible = false;
@@ -67740,8 +67792,8 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         },
         { filter: 'visible' },
       );
-      assert.equal(childCleared.gate?.status, 'cleared', `${build}: cleared child frame kept CAPTCHA gate active`);
-      assert.equal(agent._captchaGateStates.has(1), false, `${build}: cleared child-frame gate remained persisted`);
+      assert.equal(childCleared.gate?.status, 'verification_pending', `${build}: absent child dialog independently cleared an uncorrelated gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive child-frame gate was discarded`);
     } finally {
       globalThis.chrome = previousChrome;
       globalThis.browser = previousBrowser;
