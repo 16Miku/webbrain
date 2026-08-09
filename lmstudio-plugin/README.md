@@ -12,13 +12,19 @@
 >
 > That triggers LM Studio to download the plugin from the Hub into your local
 > plugins directory. You can also install from inside LM Studio (integrations
-> icon next to the chat input → toggle **webbrain/web-tools** on) or via CLI
-> with `lms clone webbrain/web-tools`.
+> icon next to the chat input → toggle **webbrain/web-tools** on). For a CLI
+> install, clone the artifact, enter the cloned directory, then install it:
+>
+> ```bash
+> lms clone webbrain/web-tools
+> cd web-tools
+> lms dev --install
+> ```
 
 Give any LM Studio model the ability to read the live web — and, if you
 have the browser extension, to act inside your own signed-in session.
 
-**Works with no browser, nothing installed:**
+**Works without the browser extension:**
 
 - **`fetch_url`** — raw HTTP fetch with content-type smarts. JSON gets
   pretty-printed, HTML is stripped to readable text + `<title>`,
@@ -68,14 +74,19 @@ extension ships, ported off `chrome.*` onto Node `fetch`.
 
 ## Install
 
+The simplest installation path is the **Run in LM Studio** button on the
+[Hub listing](https://lmstudio.ai/webbrain/web-tools). For a terminal-based
+install, `lms clone` only copies the artifact into the current directory; run
+the install command from that cloned plugin directory:
+
 ```bash
 lms clone webbrain/web-tools
+cd web-tools
+lms dev --install
 ```
 
-That pulls the plugin from LM Studio Hub into your local plugins
-directory. Open LM Studio, click the integrations icon next to the
-chat input, and toggle **webbrain/web-tools** on (see screenshot
-above). Any tool-capable model in the same chat can now call
+Open LM Studio, click the integrations icon next to the chat input, and toggle
+**webbrain/web-tools** on. Any tool-capable model in the same chat can now call
 `fetch_url` and `research_url`.
 
 Try it:
