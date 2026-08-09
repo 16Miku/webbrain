@@ -1097,12 +1097,11 @@ body {
 
 .chat-navigation {
   position: absolute;
-  left: 50%;
+  inset-inline-end: 12px;
   bottom: 12px;
   z-index: 7;
   display: inline-block;
   max-width: calc(100% - 36px);
-  transform: translateX(-50%);
   transition: transform 0.15s, opacity 0.4s ease;
 }
 
@@ -1134,7 +1133,7 @@ body {
 
 .chat-navigation:hover,
 .chat-navigation:focus-within {
-  transform: translate(-50%, -1px);
+  transform: translateY(-1px);
   opacity: 1;
   transition: transform 0.15s, opacity 0.12s ease;
 }
@@ -1957,6 +1956,37 @@ body {
 
 #act-warning svg {
   flex-shrink: 0;
+}
+
+#act-warning-dismiss {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-block: -4px;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  opacity: 0.72;
+}
+
+#act-warning-dismiss:hover {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  opacity: 1;
+}
+
+#act-warning-dismiss:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  outline-offset: 1px;
+  opacity: 1;
 }
 
 .selection-scope-banner {

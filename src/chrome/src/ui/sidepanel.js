@@ -558,6 +558,7 @@ const modeToggleHighlight = (() => {
   return el;
 })();
 const actWarning = document.getElementById('act-warning');
+const actWarningDismiss = document.getElementById('act-warning-dismiss');
 const inputArea = document.getElementById('input-area');
 const slashCommandMenuEl = document.getElementById('slash-command-menu');
 const queuedMessagesEl = document.getElementById('queued-messages');
@@ -1253,9 +1254,12 @@ chrome.storage.onChanged.addListener((changes) => {
 // prompted per consequential action, so the standing banner is redundant —
 // only surface it in Act mode when the gate is disabled.
 const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';
+const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';
 const PERMISSION_EDUCATION_KEY = 'permissionPromptEducation';
 const PERMISSION_EDUCATION_THRESHOLD = 2;
 let askBeforeConsequential = true; // gate ON by default
+let actWarningDismissed = false;
+let actWarningPreferenceLoaded = false;
 let permissionEducationState = { promptCount: 0, hintShown: false };
 
 function normalizePermissionEducationState(value) {
@@ -1365,8 +1369,10 @@ async function maybeShowPermissionEducationHint(card) {
   scrollToBottom();
 }
 
-chrome.storage.local.get(PERMISSION_GATE_KEY).then((stored) => {
+chrome.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then((stored) => {
   if (stored && stored[PERMISSION_GATE_KEY] === false) askBeforeConsequential = false;
+  actWarningDismissed = stored?.[ACT_WARNING_DISMISSED_KEY] === true;
+  actWarningPreferenceLoaded = true;
   updateActWarning();
   updateInputPlaceholder();
 }).catch(() => {});
@@ -1382,13 +1388,27 @@ chrome.storage.onChanged.addListener((changes) => {
     updateActWarning();
     updateInputPlaceholder();
   }
+  if (changes[ACT_WARNING_DISMISSED_KEY]) {
+    actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
+    actWarningPreferenceLoaded = true;
+    updateActWarning();
+  }
 });
 
 function updateActWarning() {
   if (!actWarning) return;
-  const show = agentMode !== 'ask' && !askBeforeConsequential;
+  const show = actWarningPreferenceLoaded
+    && !actWarningDismissed
+    && agentMode !== 'ask'
+    && !askBeforeConsequential;
   actWarning.classList.toggle('hidden', !show);
 }
+
+actWarningDismiss?.addEventListener('click', () => {
+  actWarningDismissed = true;
+  updateActWarning();
+  void chrome.storage.local.set({ [ACT_WARNING_DISMISSED_KEY]: true }).catch(() => {});
+});
 
 /**
  * Play a short chime when the agent finishes a task. Lazy-creates the Audio
