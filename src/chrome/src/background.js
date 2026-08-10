@@ -1038,11 +1038,10 @@ chrome.storage.onChanged.addListener((changes) => {
 // ────────────────────────────────────────────────────────────────────────
 // Side-panel visibility model — Claude-for-Chrome style
 //
-// We tie the side panel to a per-window "WebBrain" tab group rather than to
-// individual tabs. When automatic grouping is enabled and the user clicks
-// the action, the source tab joins (or seeds) a tab group; the panel is
-// enabled only for tabs in that group.
-// Switch to any tab outside the group → panel disabled → Chrome hides it.
+// We use a per-window "WebBrain" tab group to keep an active sidebar session
+// visually organized. When automatic grouping is enabled and the user clicks
+// the action, the source tab joins (or seeds) that group. Side-panel access is
+// still enabled per tab, so opting out of grouping never disables the panel.
 //
 // Why this and not a per-tab Set?
 //
