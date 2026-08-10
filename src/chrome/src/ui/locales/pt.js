@@ -538,6 +538,8 @@ export default {
   'st.display.verbose.desc': "Mostre detalhes completos da chamada da ferramenta, argumentos e resultados JSON brutos. Desativado por padrão para uma experiência de bate-papo mais limpa.",
   'st.display.selection_shortcut.label': "Atalho de seleção",
   'st.display.selection_shortcut.desc': "Mostre um botão WebBrain ao selecionar texto em uma página. A ação nativa do clique com o botão direito permanece disponível quando esta opção está desativada.",
+  'st.display.auto_group_tabs.label': 'Agrupar abas do WebBrain',
+  'st.display.auto_group_tabs.desc': 'Coloque automaticamente as abas abertas pela barra de ferramentas, pelo menu de contexto ou pelo agente em um grupo de abas do navegador chamado WebBrain. Desativar isso não altera os grupos existentes.',
   'st.display.screenshot.label': "Substituição de captura de tela",
   'st.display.screenshot.desc': "Capture uma captura de tela da página quando a leitura do DOM falhar ou retornar conteúdo insuficiente. Requer um modelo com capacidade de visão.",
   'st.display.site_adapters.label': "Adaptadores de site",
