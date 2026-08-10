@@ -137,7 +137,7 @@
     },
     "focus-input": {
       "suggested_key": {
-        "default": "Ctrl+Slash"
+        "default": "Ctrl+Period"
       },
       "description": "Focus the input"
     }
