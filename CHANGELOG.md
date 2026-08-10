@@ -4,6 +4,37 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [27.1.5] - 2026-08-08
+
+### Changed
+- Updated the LM Studio plugin for the current browser-delegation protocol.
+
+### Fixed
+- Hid empty assistant placeholders until response content is ready to render.
+
+## [27.1.4] - 2026-08-08
+
+### Fixed
+- Kept timed-out plan reviews visible and added an explicit retry path.
+
+## [27.1.3] - 2026-08-08
+
+### Fixed
+- Corrected assistant response bubble width in the side panel.
+
+## [27.1.2] - 2026-08-08
+
+### Changed
+- Expanded MCP setup and usage documentation.
+
+### Fixed
+- Reported API-mutation grants in the transcript and removed stale authorization presentation.
+
+## [27.1.1] - 2026-08-08
+
+### Changed
+- Hardened CI integration and release security checks for the 27.1 series.
+
 ## [27.1.0] - 2026-08-08
 
 ### Added
