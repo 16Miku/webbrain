@@ -60,6 +60,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   CONFIG_STORAGE_KEYS,
   createConfigExport,
@@ -978,11 +979,11 @@ browser.storage.onChanged.addListener((changes) => {
 // Tab grouping (visual scope for a WebBrain session)
 //
 // Same UX shape as the Chrome build (see src/chrome/src/background.js):
-// when the user clicks the browser action, the source tab joins (or
-// seeds) a colored "WebBrain" tab group for that window. Agent-spawned
-// tabs (new_tab tool, target=_blank redirects) auto-join the same group
-// via agent.js's `_addToWebBrainGroup`. The group label is what tells
-// the user at a glance "this is part of a WebBrain session".
+// when automatic grouping is enabled and the user clicks the browser
+// action, the source tab joins (or seeds) a colored "WebBrain" tab group
+// for that window. Agent-spawned tabs (new_tab tool, target=_blank
+// redirects) auto-join the same group via agent.js's
+// `_addToWebBrainGroup`.
 //
 // What we DON'T do on Firefox: scope the sidebar's visibility to group
 // membership. browser.sidebarAction is window-level, not per-tab —
@@ -1019,12 +1020,13 @@ function saveWebBrainGroups() {
 loadWebBrainGroups();
 
 /**
- * Make sure `tab.windowId` has a "WebBrain" group AND that `tab` is in
- * it. Always creates a fresh group rather than rebranding the user's
- * existing group (Option 2 from the Chrome PR — strictly less invasive).
+ * When automatic grouping is enabled, make sure `tab.windowId` has a
+ * "WebBrain" group AND that `tab` is in it. Always creates a fresh group
+ * rather than rebranding the user's existing group.
  */
 async function ensureWebBrainGroup(tab) {
   if (!browser.tabGroups || !tab?.id || tab.windowId == null) return -1;
+  if (!await shouldAutoGroupTabs(browser.storage.local)) return -1;
   try {
     let groupId = webBrainGroupByWindow.get(tab.windowId);
 
@@ -2890,3 +2892,18 @@ async function handleMessage(msg, sender) {
       throw new Error(`Unknown action: ${msg.action}`);
   }
 }
+
+// --- Keyboard shortcuts (browser.commands) ---
+// Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
+// to work. Custom commands fire here in the background script; we dispatch them via
+// storage.onChanged so the side panel (and any other extension page) can react
+// reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
+browser.commands.onCommand.addListener(async (command) => {
+  // _execute_sidebar_action is handled natively by Firefox — no need to forward
+  if (command === '_execute_sidebar_action') return;
+  try {
+    await browser.storage.local.set({ _wb_cmd: { command, ts: Date.now() } });
+  } catch (err) {
+    console.error('[WebBrain] failed to dispatch command:', command, err);
+  }
+});

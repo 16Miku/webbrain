@@ -533,6 +533,8 @@ export default {
   'st.display.verbose.desc': 'Zeigt vollständige Tool-Call-Details, Argumente und rohes JSON-Ergebnis. Standardmäßig deaktiviert für ein aufgeräumteres Chat-Erlebnis.',
   'st.display.selection_shortcut.label': 'Auswahlverknüpfung',
   'st.display.selection_shortcut.desc': 'Zeigt einen WebBrain-Button, wenn Sie Text auf einer Seite auswählen.',
+  'st.display.auto_group_tabs.label': 'WebBrain-Tabs gruppieren',
+  'st.display.auto_group_tabs.desc': 'Tabs, die über die Symbolleiste, das Kontextmenü oder den Agenten geöffnet werden, automatisch in einer Browser-Tabgruppe namens WebBrain ablegen. Das Deaktivieren ändert vorhandene Gruppen nicht.',
   'st.display.screenshot.label': 'Screenshot-Fallback',
   'st.display.screenshot.desc': 'Erstellt einen Screenshot der Seite, wenn das DOM-Lesen fehlschlägt oder unzureichende Inhalte liefert. Erfordert ein visionfähiges Modell.',
   'st.display.site_adapters.label': 'Website-Adapter',

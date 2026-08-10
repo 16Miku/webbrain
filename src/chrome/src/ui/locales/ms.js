@@ -228,6 +228,8 @@ export default {
   'st.display.verbose.desc': 'Tunjukkan butiran penuh panggilan alat, argumen, dan hasil JSON mentah. Dimatikan secara lalai untuk pengalaman sembang yang lebih bersih.',
   'st.display.selection_shortcut.label': 'Pintasan pilihan',
   'st.display.selection_shortcut.desc': 'Paparkan butang WebBrain apabila anda memilih teks pada halaman. Tindakan klik kanan asli kekal tersedia apabila pilihan ini dimatikan.',
+  'st.display.auto_group_tabs.label': 'Kumpulkan tab WebBrain',
+  'st.display.auto_group_tabs.desc': 'Letakkan tab yang dibuka melalui bar alat, menu konteks atau oleh ejen secara automatik dalam kumpulan tab pelayar bernama WebBrain. Mematikannya tidak mengubah kumpulan sedia ada.',
   'st.display.screenshot.label': 'Tangkapan skrin sandaran',
   'st.display.screenshot.desc': 'Ambil tangkapan skrin halaman apabila pembacaan DOM gagal atau memulangkan kandungan yang tidak mencukupi. Memerlukan model yang menyokong penglihatan.',
   'st.display.site_adapters.label': 'Penyesuai laman',

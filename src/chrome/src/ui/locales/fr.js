@@ -228,6 +228,8 @@ export default {
   'st.display.verbose.desc': 'Affiche tous les détails des appels d\'outils, les arguments et les résultats JSON bruts. Désactivé par défaut pour un chat plus épuré.',
   'st.display.selection_shortcut.label': 'Raccourci de sélection',
   'st.display.selection_shortcut.desc': 'Affiche un bouton WebBrain lorsque vous sélectionnez du texte sur une page. L’action native du menu contextuel reste disponible lorsque cette option est désactivée.',
+  'st.display.auto_group_tabs.label': 'Regrouper les onglets WebBrain',
+  'st.display.auto_group_tabs.desc': 'Place automatiquement les onglets ouverts depuis la barre d’outils, le menu contextuel ou par l’agent dans un groupe d’onglets du navigateur nommé WebBrain. La désactivation ne modifie pas les groupes existants.',
   'st.display.screenshot.label': 'Capture de secours',
   'st.display.screenshot.desc': 'Capture une image de la page quand la lecture du DOM échoue ou renvoie un contenu insuffisant. Nécessite un modèle compatible vision.',
   'st.display.site_adapters.label': 'Adaptateurs de site',

@@ -228,6 +228,8 @@ export default {
   'st.display.verbose.desc': 'Muestra todos los detalles de las llamadas a herramientas, argumentos y resultados JSON sin procesar. Desactivado por defecto para una experiencia de chat más limpia.',
   'st.display.selection_shortcut.label': 'Acceso directo de selección',
   'st.display.selection_shortcut.desc': 'Muestra un botón de WebBrain cuando seleccionas texto en una página. La acción nativa del menú contextual seguirá disponible cuando esta opción esté desactivada.',
+  'st.display.auto_group_tabs.label': 'Agrupar pestañas de WebBrain',
+  'st.display.auto_group_tabs.desc': 'Coloca automáticamente las pestañas abiertas desde la barra de herramientas, el menú contextual o por el agente en un grupo de pestañas del navegador llamado WebBrain. Desactivar esta opción no cambia los grupos existentes.',
   'st.display.screenshot.label': 'Captura de pantalla como respaldo',
   'st.display.screenshot.desc': 'Captura una imagen de la página cuando la lectura del DOM falla o devuelve contenido insuficiente. Requiere un modelo con capacidad de visión.',
   'st.display.site_adapters.label': 'Adaptadores de sitio',

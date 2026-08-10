@@ -524,6 +524,8 @@ export default {
   'st.display.verbose.desc': "Hiển thị đầy đủ chi tiết lệnh gọi công cụ, đối số và kết quả JSON thô. Tắt theo mặc định để có trải nghiệm trò chuyện rõ ràng hơn.",
   'st.display.selection_shortcut.label': "Phím tắt lựa chọn",
   'st.display.selection_shortcut.desc': "Hiển thị nút WebBrain khi bạn chọn văn bản trên một trang. Hành động nhấp chuột phải nguyên bản vẫn khả dụng khi tính năng này tắt.",
+  'st.display.auto_group_tabs.label': 'Nhóm các tab WebBrain',
+  'st.display.auto_group_tabs.desc': 'Tự động đặt các tab được mở từ thanh công cụ, menu ngữ cảnh hoặc bởi tác nhân vào một nhóm tab trình duyệt có tên WebBrain. Việc tắt tùy chọn này không thay đổi các nhóm hiện có.',
   'st.display.screenshot.label': "Dự phòng ảnh chụp màn hình",
   'st.display.screenshot.desc': "Chụp ảnh màn hình của trang khi việc đọc DOM không thành công hoặc trả về không đủ nội dung. Yêu cầu một mô hình có khả năng nhìn.",
   'st.display.site_adapters.label': "Bộ điều hợp trang web",
