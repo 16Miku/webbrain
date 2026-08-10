@@ -96,6 +96,7 @@ import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '..
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
+import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
@@ -5967,8 +5968,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Add the new tab to the per-window "WebBrain" tab group so the agent's
-   * spawned tabs share visual scope with the user's session. Mirrors
+   * When automatic grouping is enabled, add the new tab to the per-window
+   * "WebBrain" tab group so spawned tabs share visual scope. Mirrors
    * src/chrome/src/agent/agent.js — same Option-2 semantics: query for
    * an existing WebBrain group by title (rather than inheriting from
    * sourceTab.groupId), so we never drag agent outputs into the user's
@@ -6014,6 +6015,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _addToWebBrainGroup(sourceTab, tabId) {
     if (!browser.tabGroups || !sourceTab?.id || tabId == null) return -1;
+    if (!await shouldAutoGroupTabs(browser.storage.local)) return -1;
     try {
       let existing = null;
       try {
