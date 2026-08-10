@@ -71,6 +71,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   CONFIG_STORAGE_KEYS,
   createConfigExport,
@@ -1038,8 +1039,9 @@ chrome.storage.onChanged.addListener((changes) => {
 // Side-panel visibility model — Claude-for-Chrome style
 //
 // We tie the side panel to a per-window "WebBrain" tab group rather than to
-// individual tabs. When the user clicks the action, the source tab joins
-// (or seeds) a tab group; the panel is enabled only for tabs in that group.
+// individual tabs. When automatic grouping is enabled and the user clicks
+// the action, the source tab joins (or seeds) a tab group; the panel is
+// enabled only for tabs in that group.
 // Switch to any tab outside the group → panel disabled → Chrome hides it.
 //
 // Why this and not a per-tab Set?
@@ -1142,13 +1144,13 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() =>
 // race to fight.
 
 /**
- * Make sure `tab.windowId` has a WebBrain group AND that `tab` is in it.
- * Returns the group ID, or -1 on failure / unsupported. Called from the
- * action.onClicked handler so the sidebar's source tab is always grouped
- * before the user can switch tabs and break visibility.
+ * When automatic grouping is enabled, make sure `tab.windowId` has a
+ * WebBrain group AND that `tab` is in it. Returns the group ID, or -1 when
+ * disabled, unsupported, or failed.
  */
 async function ensureWebBrainGroup(tab) {
   if (!chrome.tabGroups || !tab?.id || tab.windowId == null) return -1;
+  if (!await shouldAutoGroupTabs(chrome.storage.local)) return -1;
   try {
     let groupId = webBrainGroupByWindow.get(tab.windowId);
 

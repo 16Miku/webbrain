@@ -10,6 +10,7 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   USER_MEMORY_STORAGE_KEY,
 } from './agent/user-memory.js';
+import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -22,6 +23,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   themeMode: 'system',
   verboseMode: false,
   selectionShortcutEnabled: true,
+  [AUTO_GROUP_TABS_KEY]: true,
   helpImproveWebBrain: true,
   screenshotFallback: true,
   maxAgentSteps: 130,
@@ -77,6 +79,7 @@ const CONFIG_STORAGE_KEY_SET = new Set(CONFIG_STORAGE_KEYS);
 const BOOLEAN_KEYS = new Set([
   'verboseMode',
   'selectionShortcutEnabled',
+  AUTO_GROUP_TABS_KEY,
   'helpImproveWebBrain',
   'screenshotFallback',
   'clarifyTimeoutSemanticsV2',
