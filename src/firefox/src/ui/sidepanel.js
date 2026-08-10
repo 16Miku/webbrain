@@ -48,6 +48,10 @@ import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandForWindow,
+} from '../shortcut-command.js';
+import {
   clearStagedScreenshots,
   loadStagedScreenshots,
   markStagedScreenshots,
@@ -7875,9 +7879,16 @@ browser.runtime.onMessage.addListener((msg) => {
 // (browser.commands.onCommand). The background dispatches them via
 // storage.local so the side panel can receive them reliably even when
 // runtime.sendMessage would miss the panel.
-browser.storage.onChanged.addListener((changes) => {
-  if (!changes._wb_cmd?.newValue) return;
-  const { command } = changes._wb_cmd.newValue;
+const shortcutWindowIdPromise = browser.windows.getCurrent()
+  .then(windowInfo => Number.isInteger(windowInfo?.id) ? windowInfo.id : null)
+  .catch(() => null);
+browser.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== 'local' || !changes[SHORTCUT_COMMAND_STORAGE_KEY]?.newValue) return;
+  const windowId = await shortcutWindowIdPromise;
+  const command = shortcutCommandForWindow(
+    changes[SHORTCUT_COMMAND_STORAGE_KEY].newValue,
+    windowId,
+  );
   switch (command) {
     case 'switch-to-ask':
       if (!isProcessing) setMode('ask');

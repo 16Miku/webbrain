@@ -62,6 +62,10 @@ import {
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandEnvelope,
+} from './shortcut-command.js';
+import {
   CONFIG_STORAGE_KEYS,
   createConfigExport,
   mergeConfigPatchSettings,
@@ -2922,11 +2926,13 @@ async function handleMessage(msg, sender) {
 // to work. Custom commands fire here in the background script; we dispatch them via
 // storage.onChanged so the side panel (and any other extension page) can react
 // reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
-browser.commands.onCommand.addListener(async (command) => {
+browser.commands.onCommand.addListener(async (command, tab) => {
   // _execute_sidebar_action is handled natively by Firefox — no need to forward
   if (command === '_execute_sidebar_action') return;
+  const envelope = shortcutCommandEnvelope(command, tab);
+  if (!envelope) return;
   try {
-    await browser.storage.local.set({ _wb_cmd: { command, ts: Date.now() } });
+    await browser.storage.local.set({ [SHORTCUT_COMMAND_STORAGE_KEY]: envelope });
   } catch (err) {
     console.error('[WebBrain] failed to dispatch command:', command, err);
   }

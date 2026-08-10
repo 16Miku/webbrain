@@ -4127,6 +4127,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
   }
 
+  _queueCloudflareManagedChallengeCleanup(tabId) {
+    if (!Number.isInteger(tabId) || tabId < 0) return Promise.resolve(null);
+    this._cloudflareManagedChallenges.delete(tabId);
+    if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+      this._captchaGateStates.delete(tabId);
+    }
+    const previous = this._cloudflareManagedChallengeTransitions.get(tabId);
+    const runCleanup = async () => {
+      // A response transition may have repopulated in-memory state while its
+      // storage write was finishing. Delete again after the queue drains.
+      this._cloudflareManagedChallenges.delete(tabId);
+      if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+        this._captchaGateStates.delete(tabId);
+      }
+      await this._persistCloudflareManagedChallenge(tabId, null);
+      return null;
+    };
+    const cleanupPromise = previous
+      ? previous.catch(() => null).then(runCleanup)
+      : runCleanup();
+    this._cloudflareManagedChallengeTransitions.set(tabId, cleanupPromise);
+    return cleanupPromise.finally(() => {
+      if (this._cloudflareManagedChallengeTransitions.get(tabId) === cleanupPromise) {
+        this._cloudflareManagedChallengeTransitions.delete(tabId);
+      }
+    });
+  }
+
   observeCloudflareManagedChallengeResponse(details) {
     const tabId = details?.tabId;
     return this._queueCloudflareManagedChallengeTransition(
@@ -11924,8 +11952,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (preserveRunGuard) {
       this._activeCloudflareManagedChallengeGate(tabId);
     } else {
-      this._cloudflareManagedChallenges.delete(tabId);
-      this._persistCloudflareManagedChallenge(tabId, null);
+      this._queueCloudflareManagedChallengeCleanup(tabId).catch(() => {});
     }
     this._userAttachmentHandles.delete(tabId);
     this._runUpdateCallbacks.delete(tabId);

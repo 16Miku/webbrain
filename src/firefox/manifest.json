@@ -119,25 +119,25 @@
     },
     "switch-to-ask": {
       "suggested_key": {
-        "default": "Ctrl+Shift+A"
+        "default": "Alt+Shift+A"
       },
       "description": "Switch to Ask mode"
     },
     "switch-to-act": {
       "suggested_key": {
-        "default": "Ctrl+Shift+X"
+        "default": "Alt+Shift+X"
       },
       "description": "Switch to Act mode"
     },
     "switch-to-dev": {
       "suggested_key": {
-        "default": "Ctrl+Shift+D"
+        "default": "Alt+Shift+D"
       },
       "description": "Switch to Dev mode"
     },
     "focus-input": {
       "suggested_key": {
-        "default": "Ctrl+Period"
+        "default": "Alt+Shift+I"
       },
       "description": "Focus the input"
     }

@@ -693,6 +693,12 @@ const {
   'file://' + path.join(ROOT, 'scripts/update-coupon-domains.mjs').replace(/\\/g, '/')
 );
 const {
+  shortcutCommandEnvelope,
+  shortcutCommandForWindow,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/shortcut-command.js').replace(/\\/g, '/')
+);
+const {
   assertMatchingArchiveVersion,
   assertStoreSafeFlagLicenseEntries,
   listZipEntryNames,
@@ -8110,6 +8116,64 @@ test('Cloudflare transitions serialize dedicated storage updates per tab', async
   }
 });
 
+test('Cloudflare tab cleanup drains pending challenge writes before removal', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8881 : 8882;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    let releaseFirstSet;
+    let firstSetStarted;
+    const firstSetStartedPromise = new Promise(resolve => { firstSetStarted = resolve; });
+    const firstSetReleasePromise = new Promise(resolve => { releaseFirstSet = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({}),
+          set: async values => {
+            firstSetStarted();
+            await firstSetReleasePromise;
+            Object.assign(stored, values);
+          },
+          remove: async key => {
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      agent.hydratedTabs.add(tabId);
+      const armed = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      await firstSetStartedPromise;
+
+      agent._cleanupTab(tabId);
+      const cleanup = agent._cloudflareManagedChallengeTransitions.get(tabId);
+      assert.ok(cleanup, `${build}: cleanup was not queued behind the pending write`);
+      assert.equal(agent._cloudflareManagedChallenges.has(tabId), false, `${build}: cleanup should clear in-memory challenge state immediately`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: cleanup should clear the challenge gate immediately`);
+
+      releaseFirstSet();
+      await Promise.all([armed, cleanup]);
+      assert.equal(stored[storageKey], undefined, `${build}: pending challenge write survived tab cleanup`);
+      assert.equal(agent._cloudflareManagedChallenges.has(tabId), false, `${build}: cleanup restored stale in-memory challenge state`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: cleanup restored a stale challenge gate`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
 test('dedicated Cloudflare storage remains authoritative over stale conversation snapshots', async () => {
   for (const [build, AgentClass, apiName, detector] of [
     ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
@@ -11519,6 +11583,30 @@ test('coupon-domain generator bounds its fixed source set and fails closed on em
     }),
     /contained no merchant domains/,
   );
+});
+
+test('coupon-domain generator stops oversized streaming responses before buffering them', async () => {
+  let cancelled = false;
+  let chunksSent = 0;
+  await assert.rejects(
+    collectCouponFollowDomains({
+      concurrency: 1,
+      fetchImpl: async () => new Response(new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(1024 * 1024));
+          chunksSent++;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }), {
+        headers: { 'content-type': 'text/html' },
+      }),
+    }),
+    /exceeded the 4194304-byte response limit/,
+  );
+  assert.ok(chunksSent <= 6, `the generator read beyond the first stream-prefetched chunk (${chunksSent} chunks)`);
+  assert.equal(cancelled, true, 'the generator should cancel the oversized response stream');
 });
 
 test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
@@ -22502,7 +22590,14 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     const configModule = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
 
-    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: General should expose an accessible default-on toggle`);
+    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: Advanced should expose an accessible default-on toggle`);
+    const advancedStart = html.indexOf('<div class="advanced-settings-body">');
+    const advancedEnd = html.indexOf('</details>', advancedStart);
+    const toggleIndex = html.indexOf('id="toggle-auto-group-tabs"');
+    assert.ok(
+      advancedStart >= 0 && toggleIndex > advancedStart && toggleIndex < advancedEnd,
+      `${label}: tab grouping should live inside Settings > General > Advanced`,
+    );
     assert.match(html, /data-i18n="st\.display\.auto_group_tabs\.label"[\s\S]*?data-i18n="st\.display\.auto_group_tabs\.desc"/, `${label}: tab-group setting should be localized`);
     assert.match(settings, /autoGroupTabsToggle\.checked = stored\[AUTO_GROUP_TABS_KEY\] !== false/, `${label}: unset storage should hydrate as enabled`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[AUTO_GROUP_TABS_KEY\\]: autoGroupTabsToggle\\.checked \\}\\)`), `${label}: changes should persist immediately`);
@@ -22518,6 +22613,40 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
       assert.ok(locale['st.display.auto_group_tabs.desc']?.trim(), `${label}/${filename}: missing tab-group description`);
     }
   }
+});
+
+test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  const expected = {
+    'switch-to-ask': 'Alt+Shift+A',
+    'switch-to-act': 'Alt+Shift+X',
+    'switch-to-dev': 'Alt+Shift+D',
+    'focus-input': 'Alt+Shift+I',
+  };
+  for (const [command, shortcut] of Object.entries(expected)) {
+    assert.equal(manifest.commands[command].suggested_key.default, shortcut, `${command} should extend Firefox's existing WebBrain shortcut family`);
+  }
+  const reservedDefaults = new Set(['Ctrl+Shift+A', 'Ctrl+Shift+X', 'Ctrl+Shift+D', 'Ctrl+Period']);
+  for (const command of Object.keys(expected)) {
+    assert.equal(reservedDefaults.has(manifest.commands[command].suggested_key.default), false, `${command} should not claim a Firefox default`);
+  }
+
+  assert.deepEqual(shortcutCommandEnvelope('switch-to-ask', { windowId: 42 }, 1234), {
+    command: 'switch-to-ask',
+    windowId: 42,
+    ts: 1234,
+  });
+  assert.equal(shortcutCommandEnvelope('_execute_sidebar_action', { windowId: 42 }), null, 'native sidebar commands should not be relayed through storage');
+  assert.equal(shortcutCommandEnvelope('unknown', { windowId: 42 }), null, 'unknown commands should fail closed');
+  assert.equal(shortcutCommandEnvelope('focus-input', {}), null, 'commands without a source window should fail closed');
+  assert.equal(shortcutCommandForWindow({ command: 'switch-to-dev', windowId: 42 }, 42), 'switch-to-dev');
+  assert.equal(shortcutCommandForWindow({ command: 'switch-to-dev', windowId: 42 }, 43), '', 'another browser window should ignore the command');
+  assert.equal(shortcutCommandForWindow({ command: 'unknown', windowId: 42 }, 42), '', 'unknown stored commands should fail closed');
+
+  const background = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const sidepanel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
+  assert.match(background, /browser\.commands\.onCommand\.addListener\(async \(command, tab\) => \{[\s\S]*?shortcutCommandEnvelope\(command, tab\)[\s\S]*?browser\.storage\.local\.set\(\{ \[SHORTCUT_COMMAND_STORAGE_KEY\]: envelope \}\)/, 'Firefox background should persist a window-scoped command envelope');
+  assert.match(sidepanel, /browser\.windows\.getCurrent\(\)[\s\S]*?shortcutCommandForWindow\(\s*changes\[SHORTCUT_COMMAND_STORAGE_KEY\](?:\?\.|\.)newValue,\s*windowId,?\s*\)/, 'Firefox sidebars should route commands only to their own browser window');
 });
 
 test('settings Providers tab has a search box beside provider filters', () => {
