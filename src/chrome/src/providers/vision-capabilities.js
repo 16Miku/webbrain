@@ -29,7 +29,7 @@ export function visionCapabilityIdentity(providerId, config) {
     providerId,
     baseUrl,
     model,
-    key: `${providerId}\n${baseUrl}\n${model.toLowerCase()}`,
+    key: `${providerId}\n${baseUrl}\n${model}`,
   };
 }
 
@@ -44,7 +44,7 @@ export function visionDetectionMatches(providerId, config, detection = config?.v
     && detection?.providerId === providerId
     && detection?.source === DETECTION_SOURCES[providerId]
     && canonicalizeVisionBaseUrl(detection?.baseUrl) === identity.baseUrl
-    && String(detection?.model || '').trim().toLowerCase() === identity.model.toLowerCase()
+    && String(detection?.model || '').trim() === identity.model
     && typeof detection?.supportsVision === 'boolean';
 }
 
@@ -62,8 +62,8 @@ function modelId(entry) {
 
 function selectModel(entries, requestedModel, { preferLoaded = false } = {}) {
   if (!Array.isArray(entries) || !entries.length) return null;
-  const requested = String(requestedModel || '').trim().toLowerCase();
-  if (requested) return entries.find(entry => modelId(entry).toLowerCase() === requested) || null;
+  const requested = String(requestedModel || '').trim();
+  if (requested) return entries.find(entry => modelId(entry) === requested) || null;
   if (preferLoaded) {
     const loaded = entries.filter(entry =>
       String(entry?.state || '').toLowerCase() === 'loaded'

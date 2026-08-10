@@ -38,7 +38,7 @@ class BaseLLMProvider {
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | 云端 | `webbrain-cloud 1.0` | 是 |
 | `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
-| `ollama` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `ollama` | `openai` | 本地 | （已加载模型） | 通过 `/api/show` 自动检测 / 覆盖 |
 | `lmstudio` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `jan` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `vllm` | `openai` | 本地 | （已加载模型） | 是（默认开启） |

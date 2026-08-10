@@ -38,7 +38,7 @@ class BaseLLMProvider {
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Oui |
 | `llamacpp` | `llamacpp` | local | (modèle chargé) | Métadonnées auto / surcharge |
-| `ollama` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
+| `ollama` | `openai` | local | (modèle chargé) | Auto via `/api/show` / surcharge |
 | `lmstudio` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `jan` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `vllm` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |

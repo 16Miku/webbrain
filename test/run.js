@@ -37600,7 +37600,8 @@ test('local vision metadata parsers require authoritative provider evidence', ()
       { key: 'text-model', capabilities: { vision: false } },
       { key: 'vision-model', capabilities: { vision: true } },
     ] };
-    assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'VISION-MODEL', 'v1'), true);
+    assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'vision-model', 'v1'), true);
+    assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'VISION-MODEL', 'v1'), null);
     assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'missing', 'v1'), null);
     assert.equal(vision.parseLmStudioVisionSupport({ data: [{ id: 'legacy-vlm', type: 'vlm' }] }, 'legacy-vlm', 'v0'), true);
 
@@ -37611,6 +37612,36 @@ test('local vision metadata parsers require authoritative provider evidence', ()
     assert.equal(vision.parseLocalAiVisionSupport(localAi, 'vision'), true);
     assert.equal(vision.parseLocalAiVisionSupport(localAi, 'text'), false);
     assert.equal(vision.parseLocalAiVisionSupport(localAi, 'missing'), null);
+  }
+});
+
+test('local vision identities preserve case-sensitive model IDs', () => {
+  for (const vision of [VisionCapabilitiesCh, VisionCapabilitiesFx]) {
+    const upperConfig = {
+      baseUrl: 'http://localhost:1234/v1',
+      model: 'CaseModel',
+      visionMode: 'auto',
+    };
+    const upperIdentity = vision.visionCapabilityIdentity('lmstudio', upperConfig);
+    const lowerIdentity = vision.visionCapabilityIdentity('lmstudio', { ...upperConfig, model: 'casemodel' });
+    assert.notEqual(upperIdentity.key, lowerIdentity.key, 'case-only model changes need distinct single-flight keys');
+
+    const detection = {
+      providerId: 'lmstudio',
+      model: 'CaseModel',
+      baseUrl: upperIdentity.baseUrl,
+      supportsVision: true,
+      source: 'lmstudio_models',
+    };
+    assert.equal(vision.visionDetectionMatches('lmstudio', upperConfig, detection), true);
+    assert.equal(vision.visionDetectionMatches('lmstudio', { ...upperConfig, model: 'casemodel' }, detection), false);
+
+    const caseDistinctModels = { models: [
+      { key: 'CaseModel', capabilities: { vision: true } },
+      { key: 'casemodel', capabilities: { vision: false } },
+    ] };
+    assert.equal(vision.parseLmStudioVisionSupport(caseDistinctModels, 'CaseModel', 'v1'), true);
+    assert.equal(vision.parseLmStudioVisionSupport(caseDistinctModels, 'casemodel', 'v1'), false);
   }
 });
 

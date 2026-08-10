@@ -38,7 +38,7 @@ class BaseLLMProvider {
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Yes |
 | `llamacpp` | `llamacpp` | local | (loaded model) | Auto metadata / override |
-| `ollama` | `openai` | local | (loaded model) | Yes (default on) |
+| `ollama` | `openai` | local | (loaded model) | Auto via `/api/show` / override |
 | `lmstudio` | `openai` | local | (loaded model) | Auto metadata / override |
 | `jan` | `openai` | local | (loaded model) | Yes (default on) |
 | `vllm` | `openai` | local | (loaded model) | Yes (default on) |
