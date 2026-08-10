@@ -21896,6 +21896,49 @@ test('Settings > General configures WebBrain download subdirectory with system-d
   }
 });
 
+test('automatic WebBrain tab grouping has a portable user opt-out', async () => {
+  const chromePreferencePath = path.join(ROOT, 'src/chrome/src/tab-group-preference.js');
+  const firefoxPreferencePath = path.join(ROOT, 'src/firefox/src/tab-group-preference.js');
+  const chromePreferenceSource = fs.readFileSync(chromePreferencePath, 'utf8');
+  const firefoxPreferenceSource = fs.readFileSync(firefoxPreferencePath, 'utf8');
+  assert.equal(firefoxPreferenceSource, chromePreferenceSource, 'tab-group preference helpers should stay mirrored');
+
+  const preference = await import(pathToFileURL(chromePreferencePath).href);
+  assert.equal(preference.AUTO_GROUP_TABS_KEY, 'autoGroupTabs');
+  assert.equal(await preference.shouldAutoGroupTabs(null), true, 'missing storage should preserve the existing default');
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({}) }), true, 'unset preference should keep grouping enabled');
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({ autoGroupTabs: true }) }), true);
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({ autoGroupTabs: false }) }), false);
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => { throw new Error('storage unavailable'); } }), true, 'storage failures should preserve existing behavior');
+
+  for (const [label, prefix, runtime] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const configModule = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
+
+    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: General should expose an accessible default-on toggle`);
+    assert.match(html, /data-i18n="st\.display\.auto_group_tabs\.label"[\s\S]*?data-i18n="st\.display\.auto_group_tabs\.desc"/, `${label}: tab-group setting should be localized`);
+    assert.match(settings, /autoGroupTabsToggle\.checked = stored\[AUTO_GROUP_TABS_KEY\] !== false/, `${label}: unset storage should hydrate as enabled`);
+    assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[AUTO_GROUP_TABS_KEY\\]: autoGroupTabsToggle\\.checked \\}\\)`), `${label}: changes should persist immediately`);
+    assert.match(background, new RegExp(`if \\(!await shouldAutoGroupTabs\\(${runtime}\\.storage\\.local\\)\\) return -1;`), `${label}: toolbar, context-menu, and install grouping should honor the opt-out`);
+    assert.match(agent, new RegExp(`if \\(!await shouldAutoGroupTabs\\(${runtime}\\.storage\\.local\\)\\) return -1;`), `${label}: agent-created tabs should honor the opt-out`);
+    assert.equal(configModule.DEFAULT_CONFIG_SETTINGS.autoGroupTabs, true, `${label}: portable config should preserve the existing default`);
+    assert.ok(configModule.CONFIG_STORAGE_KEYS.includes('autoGroupTabs'), `${label}: config export/import should include the preference`);
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      assert.ok(locale['st.display.auto_group_tabs.label']?.trim(), `${label}/${filename}: missing tab-group label`);
+      assert.ok(locale['st.display.auto_group_tabs.desc']?.trim(), `${label}/${filename}: missing tab-group description`);
+    }
+  }
+});
+
 test('settings Providers tab has a search box beside provider filters', () => {
   for (const [label, htmlRel, settingsRel, localeRel] of [
     ['chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/locales/en.js'],

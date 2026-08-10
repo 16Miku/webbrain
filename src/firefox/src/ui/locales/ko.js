@@ -220,6 +220,8 @@ export default {
   'st.display.verbose.desc': '도구 호출의 상세 내용, 인수, 원본 JSON 결과를 모두 표시합니다. 기본적으로는 끔으로 깔끔한 채팅 환경을 제공합니다.',
   'st.display.selection_shortcut.label': '선택 바로가기',
   'st.display.selection_shortcut.desc': '페이지에서 텍스트를 선택하면 WebBrain 버튼을 표시합니다. 이 옵션을 꺼도 기본 오른쪽 클릭 작업은 계속 사용할 수 있습니다.',
+  'st.display.auto_group_tabs.label': 'WebBrain 탭 그룹화',
+  'st.display.auto_group_tabs.desc': '도구 모음, 컨텍스트 메뉴 또는 에이전트가 연 탭을 WebBrain이라는 브라우저 탭 그룹에 자동으로 배치합니다. 이 옵션을 꺼도 기존 그룹은 변경되지 않습니다.',
   'st.display.screenshot.label': '스크린샷 폴백',
   'st.display.screenshot.desc': 'DOM 읽기에 실패하거나 내용이 부족할 때 페이지의 스크린샷을 캡처합니다. 비전 지원 모델이 필요합니다.',
   'st.display.site_adapters.label': '사이트 어댑터',

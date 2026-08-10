@@ -524,6 +524,8 @@ export default {
   'st.display.verbose.desc': "جزئیات تماس کامل ابزار، آرگومان ها و نتایج خام JSON را نمایش دهید. به طور پیش‌فرض برای تجربه چت تمیزتر خاموش است.",
   'st.display.selection_shortcut.label': "میانبر انتخاب",
   'st.display.selection_shortcut.desc': "هنگامی که متنی را در یک صفحه انتخاب می کنید، دکمه WebBrain را نشان دهید. عمل کلیک راست بومی در صورت خاموش بودن در دسترس باقی می ماند.",
+  'st.display.auto_group_tabs.label': 'گروه‌بندی برگه‌های WebBrain',
+  'st.display.auto_group_tabs.desc': 'برگه‌هایی را که از نوار ابزار، منوی زمینه یا توسط عامل باز می‌شوند، به‌طور خودکار در یک گروه برگه مرورگر با نام WebBrain قرار دهید. خاموش کردن این گزینه گروه‌های موجود را تغییر نمی‌دهد.',
   'st.display.screenshot.label': "اسکرین شات بازگشتی",
   'st.display.screenshot.desc': "هنگامی که خواندن DOM ناموفق است یا محتوای ناکافی را برمی گرداند، از صفحه عکس بگیرید. به مدلی با قابلیت بینایی نیاز دارد.",
   'st.display.site_adapters.label': "آداپتورهای سایت",

@@ -524,6 +524,8 @@ export default {
   'st.display.verbose.desc': "पूर्ण टूल कॉल विवरण, तर्क और कच्चे JSON परिणाम दिखाएं। बेहतर चैट अनुभव के लिए डिफ़ॉल्ट रूप से बंद।",
   'st.display.selection_shortcut.label': "चयन शॉर्टकट",
   'st.display.selection_shortcut.desc': "जब आप किसी पृष्ठ पर टेक्स्ट का चयन करते हैं तो एक WebBrain बटन दिखाएं। इसके बंद होने पर मूल राइट-क्लिक क्रिया उपलब्ध रहती है।",
+  'st.display.auto_group_tabs.label': 'WebBrain टैब समूहित करें',
+  'st.display.auto_group_tabs.desc': 'टूलबार, संदर्भ मेनू या एजेंट द्वारा खोले गए टैब को WebBrain नामक ब्राउज़र टैब समूह में स्वचालित रूप से रखें। इसे बंद करने से मौजूदा समूह नहीं बदलेंगे।',
   'st.display.screenshot.label': "स्क्रीनशॉट फ़ॉलबैक",
   'st.display.screenshot.desc': "DOM रीडिंग विफल होने या अपर्याप्त सामग्री लौटाने पर पृष्ठ का स्क्रीनशॉट कैप्चर करें। एक दृष्टि-सक्षम मॉडल की आवश्यकता है।",
   'st.display.site_adapters.label': "साइट एडाप्टर",
