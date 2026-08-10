@@ -325,6 +325,7 @@ export class Agent extends LoopDetector {
     this._runUpdateCallbacks = new Map();
     this.plannerFollowUpSkipTabs = new Set(); // tabIds allowed one short follow-up after an approved try-mode plan
     this.hydratedTabs = new Set(); // tabIds we've already pulled from storage
+    this._hydrationPromises = new Map(); // tabId -> shared in-flight storage hydration
     this.persistTimers = new Map(); // tabId -> debounce handle
     this.abortFlags = new Map(); // tabId -> boolean
     this.currentRunId = new Map(); // tabId -> active trace runId (for recorder hooks)
@@ -446,6 +447,7 @@ export class Agent extends LoopDetector {
     this.captchaSolverEnabled = false;
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
     this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
+    this._cloudflareManagedChallengeTransitions = new Map(); // tabId -> serialized transition promise
     // Pre-execution planner (Settings → Plan before Act). Default "try";
     // attempts a read-only planning LLM call and degrades the current turn to
     // Ask/read-only if structured planning itself fails. "strict" fails closed.
@@ -4022,65 +4024,77 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return BROWSER_MUTATION_TOOLS.has(toolName);
   }
 
-  _persistCloudflareManagedChallenge(tabId, state) {
+  async _persistCloudflareManagedChallenge(tabId, state) {
     const key = cloudflareManagedChallengeStorageKey(tabId);
     try {
       if (state) {
-        chrome.storage.session.set({ [key]: state }).catch(() => {});
+        await chrome.storage.session.set({ [key]: state });
       } else {
-        chrome.storage.session.remove(key).catch(() => {});
+        await chrome.storage.session.remove(key);
       }
     } catch {}
   }
 
-  _applyCloudflareManagedChallengeTransition(tabId, transition) {
+  async _applyCloudflareManagedChallengeTransition(tabId, transition) {
     if (!Number.isInteger(tabId) || tabId < 0 || !transition?.changed) return null;
     const state = normalizeCloudflareManagedChallengeState(transition.state);
     if (state) {
       this._cloudflareManagedChallenges.set(tabId, state);
       const gate = cloudflareManagedChallengeGateState(state);
       if (gate) this._captchaGateStates.set(tabId, gate);
-      this._persistCloudflareManagedChallenge(tabId, state);
+      await this._persistCloudflareManagedChallenge(tabId, state);
       return { kind: transition.kind, gate: gate?.publicGate || null };
     }
     this._cloudflareManagedChallenges.delete(tabId);
     if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
       this._captchaGateStates.delete(tabId);
     }
-    this._persistCloudflareManagedChallenge(tabId, null);
+    await this._persistCloudflareManagedChallenge(tabId, null);
     return { kind: transition.kind, gate: null };
+  }
+
+  _queueCloudflareManagedChallengeTransition(tabId, createTransition) {
+    if (!Number.isInteger(tabId) || tabId < 0) return Promise.resolve(null);
+    const previous = this._cloudflareManagedChallengeTransitions.get(tabId)
+      || Promise.resolve();
+    const transitionPromise = previous
+      .catch(() => null)
+      .then(async () => {
+        await this._hydrate(tabId);
+        return this._applyCloudflareManagedChallengeTransition(
+          tabId,
+          createTransition(this._cloudflareManagedChallenges.get(tabId)),
+        );
+      });
+    this._cloudflareManagedChallengeTransitions.set(tabId, transitionPromise);
+    return transitionPromise.finally(() => {
+      if (this._cloudflareManagedChallengeTransitions.get(tabId) === transitionPromise) {
+        this._cloudflareManagedChallengeTransitions.delete(tabId);
+      }
+    });
   }
 
   observeCloudflareManagedChallengeResponse(details) {
     const tabId = details?.tabId;
-    return this._applyCloudflareManagedChallengeTransition(
+    return this._queueCloudflareManagedChallengeTransition(
       tabId,
-      cloudflareChallengeResponseTransition(
-        this._cloudflareManagedChallenges.get(tabId),
-        details,
-      ),
+      current => cloudflareChallengeResponseTransition(current, details),
     );
   }
 
   observeCloudflareChallengePlatformRequest(details) {
     const tabId = details?.tabId;
-    return this._applyCloudflareManagedChallengeTransition(
+    return this._queueCloudflareManagedChallengeTransition(
       tabId,
-      cloudflareChallengePlatformTransition(
-        this._cloudflareManagedChallenges.get(tabId),
-        details,
-      ),
+      current => cloudflareChallengePlatformTransition(current, details),
     );
   }
 
   observeCloudflareManagedChallengeNavigation(details) {
     const tabId = details?.tabId;
-    return this._applyCloudflareManagedChallengeTransition(
+    return this._queueCloudflareManagedChallengeTransition(
       tabId,
-      cloudflareChallengeNavigationTransition(
-        this._cloudflareManagedChallenges.get(tabId),
-        details,
-      ),
+      current => cloudflareChallengeNavigationTransition(current, details),
     );
   }
 
@@ -7884,7 +7898,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _hydrate(tabId) {
     if (this.hydratedTabs.has(tabId)) return;
-    this.hydratedTabs.add(tabId);
+    const inFlight = this._hydrationPromises.get(tabId);
+    if (inFlight) return inFlight;
+    const hydrationPromise = this._hydrateFromSession(tabId);
+    this._hydrationPromises.set(tabId, hydrationPromise);
+    try {
+      await hydrationPromise;
+      this.hydratedTabs.add(tabId);
+    } finally {
+      if (this._hydrationPromises.get(tabId) === hydrationPromise) {
+        this._hydrationPromises.delete(tabId);
+      }
+    }
+  }
+
+  async _hydrateFromSession(tabId) {
     const conversationInMemory = this.conversations.has(tabId);
     try {
       const key = this._convKey(tabId);
@@ -7963,6 +7991,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           )
           && captchaGateState.publicGate
           && typeof captchaGateState.publicGate === 'object'
+          && captchaGateState.cloudflareManagedChallenge !== true
+          && captchaGateState.publicGate.cloudflareManagedChallenge !== true
         ) {
           if (!cloudflareSignal) this._captchaGateStates.set(tabId, captchaGateState);
         }
@@ -7989,6 +8019,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const serialized = serializeConversationForSession(messages, {
       maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
     });
+    const captchaGateState = this._captchaGateStates.get(tabId) || null;
     return {
       mode: this.conversationModes.get(tabId) || 'ask',
       messages: serialized.messages,
@@ -8001,7 +8032,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
       richTextToolbarAudit: this._persistedRichTextToolbarAudit(tabId),
-      captchaGateState: this._captchaGateStates.get(tabId) || null,
+      captchaGateState: captchaGateState?.cloudflareManagedChallenge === true
+        || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
+        ? null
+        : captchaGateState,
     };
   }
 

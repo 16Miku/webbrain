@@ -1252,7 +1252,7 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 
 browser.webNavigation?.onCommitted?.addListener?.((details) => {
   if (details.frameId !== 0) return;
-  agent.observeCloudflareManagedChallengeNavigation(details);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordTeacherNavigation(details.tabId, details.url, {
     force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
   });
@@ -1260,13 +1260,13 @@ browser.webNavigation?.onCommitted?.addListener?.((details) => {
 });
 browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
   if (details.frameId !== 0) return;
-  agent.observeCloudflareManagedChallengeNavigation(details);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordTeacherNavigation(details.tabId, details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
   if (details.frameId !== 0) return;
-  agent.observeCloudflareManagedChallengeNavigation(details);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   invalidateContextMenuForTab(details.tabId);
 });
 
@@ -1275,10 +1275,10 @@ browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
 // challenge-platform requests alone are not sufficient because ordinary bot
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
-  agent.observeCloudflareManagedChallengeResponse(details);
+  agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
 };
 const observeCloudflareChallengePlatformRequest = details => {
-  agent.observeCloudflareChallengePlatformRequest(details);
+  agent.observeCloudflareChallengePlatformRequest(details).catch(() => {});
 };
 browser.webRequest?.onHeadersReceived?.addListener?.(
   observeCloudflareManagedChallengeResponse,
