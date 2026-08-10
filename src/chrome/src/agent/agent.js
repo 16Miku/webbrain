@@ -94,6 +94,7 @@ import {
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { chromeProtectedPageFailure, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
+import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
@@ -3265,8 +3266,9 @@ export class Agent extends LoopDetector {
   }
 
   /**
-   * Add a tab to the "WebBrain" tab group — reused by both the explicit
-   * `new_tab` tool and the click handler's target=_blank redirect fallback.
+   * When automatic grouping is enabled, add a tab to the "WebBrain" tab
+   * group. Reused by both the explicit `new_tab` tool and the click
+   * handler's target=_blank redirect fallback.
    *
    * We look up the WebBrain group by title within the source tab's
    * window rather than by source-tab-membership: if the source is in a
@@ -3332,6 +3334,7 @@ export class Agent extends LoopDetector {
 
   async _addToWebBrainGroup(sourceTab, tabId) {
     if (!chrome.tabGroups || !sourceTab?.id || tabId == null) return -1;
+    if (!await shouldAutoGroupTabs(chrome.storage.local)) return -1;
     try {
       // Find an existing WebBrain group in this window, if any.
       let existing = null;
