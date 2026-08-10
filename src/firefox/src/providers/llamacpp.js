@@ -1,5 +1,6 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
+import { configuredVisionSupport } from './vision-capabilities.js';
 
 /**
  * Provider for local llama.cpp server (OpenAI-compatible API on localhost).
@@ -29,7 +30,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
   }
 
   get supportsVision() {
-    return !!this.config.supportsVision;
+    return configuredVisionSupport('llamacpp', this.config);
   }
 
   get useCompactPrompt() {

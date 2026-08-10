@@ -714,7 +714,7 @@ export default {
   'st.provider.field.model_optional': "मॉडल (वैकल्पिक)",
   'st.provider.field.context_window': "संदर्भ विंडो (टोकन)",
   'st.provider.field.supports_vision': "मॉडल दृष्टि का समर्थन करता है (मल्टीमॉडल)",
-  'st.provider.field.vision_auto': 'स्वचालित (Ollama से)',
+  'st.provider.field.vision_auto': 'स्वचालित',
   'st.provider.field.vision_force_on': 'बलपूर्वक चालू',
   'st.provider.field.vision_detected_vision': 'स्वतः पहचाना गया: विज़न',
   'st.provider.field.vision_detected_text': 'स्वतः पहचाना गया: केवल टेक्स्ट',

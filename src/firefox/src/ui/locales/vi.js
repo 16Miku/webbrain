@@ -714,7 +714,7 @@ export default {
   'st.provider.field.model_optional': "Mô hình (tùy chọn)",
   'st.provider.field.context_window': "Cửa sổ ngữ cảnh (mã thông báo)",
   'st.provider.field.supports_vision': "Mô hình hỗ trợ tầm nhìn (đa phương thức)",
-  'st.provider.field.vision_auto': 'Tự động (từ Ollama)',
+  'st.provider.field.vision_auto': 'Tự động',
   'st.provider.field.vision_force_on': 'Buộc bật',
   'st.provider.field.vision_detected_vision': 'Tự động phát hiện: Thị giác',
   'st.provider.field.vision_detected_text': 'Tự động phát hiện: Chỉ văn bản',

@@ -7078,28 +7078,30 @@ function requestConfigurationFile(tabId) {
   input.click();
 }
 
-function toggledVisionProviderConfig(providerId, config) {
-  if (providerId === 'ollama') {
-    const visionEnabled = config.visionMode === 'on' ||
-      (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
-    const enabled = !visionEnabled;
-    return {
-      enabled,
-      config: { ...config, visionMode: enabled ? 'on' : 'off' },
-    };
-  }
-  const enabled = !config.supportsVision;
-  return {
-    enabled,
-    config: { ...config, supportsVision: enabled },
-  };
-}
-
 /**
  * Parse leading slash commands out of the user's message.
  * Returns the cleaned text (empty string if fully consumed).
  * May trigger async UI side effects (screenshot, export, etc.).
  */
+function toggledVisionProviderConfig(providerId, config) {
+  if (providerId === 'ollama') {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  if (['llamacpp', 'lmstudio', 'localai'].includes(providerId)) {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  const enabled = !config.supportsVision;
+  return { enabled, config: { ...config, supportsVision: enabled } };
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);

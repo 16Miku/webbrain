@@ -277,7 +277,7 @@ export default {
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',
   'st.provider.field.supports_vision': 'モデルは画像認識（マルチモーダル）対応',
-  'st.provider.field.vision_auto': '自動（Ollama から）',
+  'st.provider.field.vision_auto': '自動',
   'st.provider.field.vision_force_on': '強制的にオン',
   'st.provider.field.vision_detected_vision': '自動検出：画像対応',
   'st.provider.field.vision_detected_text': '自動検出：テキストのみ',

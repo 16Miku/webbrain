@@ -714,7 +714,7 @@ export default {
   'st.provider.field.model_optional': "مدل (اختیاری)",
   'st.provider.field.context_window': "پنجره زمینه (توکن ها)",
   'st.provider.field.supports_vision': "مدل از بینایی پشتیبانی می کند (چند وجهی)",
-  'st.provider.field.vision_auto': 'خودکار (از Ollama)',
+  'st.provider.field.vision_auto': 'خودکار',
   'st.provider.field.vision_force_on': 'اجباری روشن',
   'st.provider.field.vision_detected_vision': 'شناسایی خودکار: بینایی',
   'st.provider.field.vision_detected_text': 'شناسایی خودکار: فقط متن',

@@ -6926,19 +6926,21 @@ function requestConfigurationFile(tabId) {
 
 function toggledVisionProviderConfig(providerId, config) {
   if (providerId === 'ollama') {
-    const visionEnabled = config.visionMode === 'on' ||
-      (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
     const enabled = !visionEnabled;
-    return {
-      enabled,
-      config: { ...config, visionMode: enabled ? 'on' : 'off' },
-    };
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  if (['llamacpp', 'lmstudio', 'localai'].includes(providerId)) {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
   }
   const enabled = !config.supportsVision;
-  return {
-    enabled,
-    config: { ...config, supportsVision: enabled },
-  };
+  return { enabled, config: { ...config, supportsVision: enabled } };
 }
 
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {

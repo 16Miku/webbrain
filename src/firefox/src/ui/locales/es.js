@@ -269,7 +269,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opcional)',
   'st.provider.field.supports_vision': 'El modelo admite visión (multimodal)',
-  'st.provider.field.vision_auto': 'Automático (desde Ollama)',
+  'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forzar activación',
   'st.provider.field.vision_detected_vision': 'Detectado automáticamente: Visión',
   'st.provider.field.vision_detected_text': 'Detectado automáticamente: Solo texto',

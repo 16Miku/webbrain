@@ -14,6 +14,16 @@ import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // fetch ever ran, so onboarding reported "no models" for a reachable server.)
 import { fetchWithFallback } from './fetch-with-fallback.js';
 import {
+  AUTO_VISION_PROVIDER_IDS,
+  VISION_MODES,
+  parseLlamaCppVisionSupport,
+  parseLmStudioVisionSupport,
+  parseLocalAiVisionSupport,
+  visionCapabilityIdentity,
+  visionDetectionMatches,
+  visionDetectionSource,
+} from './vision-capabilities.js';
+import {
   canonicalizeOllamaBaseUrl,
   lmStudioContextWindowIsLive,
   parseLlamaCppPropsContextWindow,
@@ -42,6 +52,7 @@ const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'hugg
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
 const OLLAMA_VISION_MODES = new Set(['auto', 'on', 'off']);
 const OLLAMA_VISION_METADATA_TIMEOUT_MS = 3000;
+const VISION_METADATA_TIMEOUT_MS = 3000;
 
 /**
  * Manages LLM provider instances and persists configuration.
@@ -51,6 +62,8 @@ export class ProviderManager {
     this.providers = new Map();
     this.activeProviderId = null;
     this._ollamaVisionChecks = new Map();
+    this._visionCapabilityChecks = new Map();
+    this._visionCapabilityEpochs = new Map();
   }
 
   /**
@@ -74,6 +87,14 @@ export class ProviderManager {
       !OLLAMA_VISION_MODES.has(rawStoredOllama.visionMode)
       || Object.hasOwn(rawStoredOllama, 'supportsVision')
     );
+    const genericVisionConfigMigrated = [...AUTO_VISION_PROVIDER_IDS].some((id) => {
+      const config = data.providers?.[id];
+      return !!config && (
+        !VISION_MODES.has(config.visionMode)
+        || Object.hasOwn(config, 'supportsVision')
+        || (!String(config.model || '').trim() && config.visionDetection != null)
+      );
+    });
     const hadLegacyClaudeSubscription = Object.hasOwn(data.providers || {}, 'claude_subscription');
     const stored = this._migrateStoredProviderConfigs(data.providers || {});
     const legacyActiveProviderId = ['webbrain', 'openai_subscription'].includes(data.activeProvider)
@@ -84,7 +105,7 @@ export class ProviderManager {
     // without dropping keys that don't exist in stored.
     const defaults = this._defaultConfigs();
     const configs = {};
-    let providerStateMigrated = ollamaVisionConfigMigrated;
+    let providerStateMigrated = ollamaVisionConfigMigrated || genericVisionConfigMigrated;
     for (const [id, config] of Object.entries(defaults)) {
       const storedConfig = stored[id];
       const hasConfiguredMarker = !!storedConfig && Object.hasOwn(storedConfig, 'configured');
@@ -185,14 +206,8 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         supportsAskStreaming: true,
-        // Default ON for local providers: in practice users who reach for
-        // local OpenAI-compatible backends in 2026 are running multimodal
-        // models (Qwen-VL, Llama 3.2-Vision, etc.). False-positives where a
-        // text-only model is loaded with vision=true still work — the agent
-        // just sends image_url blocks the model ignores. False-negatives
-        // (vision-capable model loaded with vision=false) silently lose the
-        // multimodal channel, which is the worse failure mode.
-        supportsVision: true,
+        visionMode: 'auto',
+        visionDetection: null,
         enabled: true,
       },
       ollama: {
@@ -219,7 +234,8 @@ export class ProviderManager {
         contextWindow: 16384,
         apiKey: 'lm-studio',
         supportsAskStreaming: true,
-        supportsVision: true,
+        visionMode: 'auto',
+        visionDetection: null,
         enabled: true,
       },
       jan: {
@@ -271,7 +287,8 @@ export class ProviderManager {
         contextWindow: 16384,
         apiKey: '',
         supportsAskStreaming: true,
-        supportsVision: true,
+        visionMode: 'auto',
+        visionDetection: null,
         enabled: true,
       },
       gpt4all: {
@@ -606,6 +623,21 @@ export class ProviderManager {
       };
       delete migrated.ollama.supportsVision;
     }
+    for (const id of AUTO_VISION_PROVIDER_IDS) {
+      if (!migrated[id]) continue;
+      const legacySupportsVision = migrated[id].supportsVision;
+      const hasConfiguredModel = !!String(migrated[id].model || '').trim();
+      migrated[id] = {
+        ...migrated[id],
+        visionMode: VISION_MODES.has(migrated[id].visionMode)
+          ? migrated[id].visionMode
+          : (legacySupportsVision === false ? 'off' : 'auto'),
+        // With an empty Model field the server's loaded model can change
+        // without a settings update, so never restore a persisted detection.
+        visionDetection: hasConfiguredModel ? (migrated[id].visionDetection || null) : null,
+      };
+      delete migrated[id].supportsVision;
+    }
     // Existing installs stored omitToolsWhenImagesPresent:true for WebBrain
     // Cloud, which suppressed native tools on every screenshot turn and broke
     // tool calling. Force it off so the saved config picks up the new default.
@@ -699,6 +731,12 @@ export class ProviderManager {
         : 'auto';
       delete normalizedConfig.supportsVision;
     }
+    if (AUTO_VISION_PROVIDER_IDS.has(id)) {
+      normalizedConfig.visionMode = VISION_MODES.has(normalizedConfig.visionMode)
+        ? normalizedConfig.visionMode
+        : 'auto';
+      delete normalizedConfig.supportsVision;
+    }
     switch (normalizedConfig.type) {
       case 'llamacpp':
         return new LlamaCppProvider(normalizedConfig);
@@ -728,6 +766,121 @@ export class ProviderManager {
       throw new Error(`No active provider: ${this.activeProviderId}`);
     }
     return provider;
+  }
+
+  async _fetchVisionCapability(providerId, provider, identity) {
+    const root = identity.baseUrl.replace(/\/v1$/i, '');
+    const headers = this._modelListHeaders(provider);
+    const controller = new AbortController();
+    const fetchJson = async (url) => {
+      const response = await fetchWithFallback(url, {
+        method: 'GET',
+        headers,
+        timeoutMs: VISION_METADATA_TIMEOUT_MS,
+        signal: controller.signal,
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      try {
+        return { ok: true, data: await response.json() };
+      } catch {
+        return { ok: false, malformed: true };
+      }
+    };
+    const request = (async () => {
+      try {
+        if (providerId === 'llamacpp') {
+          const query = identity.model ? `?model=${encodeURIComponent(identity.model)}` : '';
+          const result = await fetchJson(`${root}/props${query}`);
+          if (!result.ok) return result;
+          const supportsVision = parseLlamaCppVisionSupport(result.data);
+          return supportsVision == null ? { ok: false, malformed: true } : { ok: true, supportsVision };
+        }
+        if (providerId === 'lmstudio') {
+          const current = await fetchJson(`${root}/api/v1/models`);
+          if (current.ok) {
+            const supportsVision = parseLmStudioVisionSupport(current.data, identity.model, 'v1');
+            if (supportsVision != null) return { ok: true, supportsVision };
+          }
+          const legacy = await fetchJson(`${root}/api/v0/models`);
+          if (!legacy.ok) return legacy;
+          const supportsVision = parseLmStudioVisionSupport(legacy.data, identity.model, 'v0');
+          return supportsVision == null ? { ok: false, malformed: true } : { ok: true, supportsVision };
+        }
+        if (providerId === 'localai') {
+          const result = await fetchJson(`${root}/v1/models/capabilities`);
+          if (!result.ok) return result;
+          const supportsVision = parseLocalAiVisionSupport(result.data, identity.model);
+          return supportsVision == null ? { ok: false, malformed: true } : { ok: true, supportsVision };
+        }
+        return { ok: false, skipped: true };
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    })();
+    let timeoutId;
+    const timeout = new Promise((resolve) => {
+      timeoutId = setTimeout(() => {
+        controller.abort(new DOMException('Vision capability metadata timed out', 'TimeoutError'));
+        resolve({ ok: false, timeout: true });
+      }, VISION_METADATA_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([request, timeout]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async ensureVisionCapability(id) {
+    const provider = this.providers.get(id);
+    if (!provider || !AUTO_VISION_PROVIDER_IDS.has(id)) return { ok: false, skipped: true };
+    const mode = VISION_MODES.has(provider.config.visionMode) ? provider.config.visionMode : 'auto';
+    if (mode !== 'auto') return { ok: true, skipped: true, supportsVision: mode === 'on' };
+    const identity = visionCapabilityIdentity(id, provider.config);
+    if (!identity) return { ok: false, skipped: true };
+    const hasConfiguredModel = !!identity.model;
+    if (hasConfiguredModel && visionDetectionMatches(id, provider.config)) {
+      return { ok: true, cached: true, supportsVision: provider.config.visionDetection.supportsVision };
+    }
+
+    const epoch = this._visionCapabilityEpochs.get(id) || 0;
+    let pending = this._visionCapabilityChecks.get(identity.key);
+    if (!pending) {
+      pending = this._fetchVisionCapability(id, provider, identity);
+      this._visionCapabilityChecks.set(identity.key, pending);
+    }
+    const result = await pending;
+    if ((!hasConfiguredModel || !result.ok) && this._visionCapabilityChecks.get(identity.key) === pending) {
+      // Empty-model identities describe whatever is currently loaded, not a
+      // stable model. Coalesce only concurrent callers, then recheck next turn.
+      this._visionCapabilityChecks.delete(identity.key);
+    }
+    const current = this.providers.get(id);
+    const currentIdentity = visionCapabilityIdentity(id, current?.config);
+    if (!current || current.config.visionMode !== 'auto'
+      || currentIdentity?.key !== identity.key
+      || (this._visionCapabilityEpochs.get(id) || 0) !== epoch) {
+      return { ...result, stale: true };
+    }
+    if (!result.ok) {
+      if (!hasConfiguredModel && current.config.visionDetection?.transient === true) {
+        const { visionDetection: _ignored, ...withoutDetection } = current.config;
+        this.providers.set(id, this._createProvider(id, withoutDetection));
+      }
+      return result;
+    }
+
+    const detection = {
+      providerId: id,
+      model: identity.model,
+      baseUrl: identity.baseUrl,
+      supportsVision: result.supportsVision,
+      source: visionDetectionSource(id),
+      ...(!hasConfiguredModel ? { transient: true } : {}),
+    };
+    this.providers.set(id, this._createProvider(id, { ...current.config, visionDetection: detection }));
+    if (hasConfiguredModel) await this.save();
+    return { ok: true, supportsVision: result.supportsVision, detection };
   }
 
   _ollamaVisionIdentity(config) {
@@ -822,8 +975,11 @@ export class ProviderManager {
   }
 
   async prepareActiveProviderCapabilities() {
-    if (this.activeProviderId !== 'ollama') return { ok: true, skipped: true };
-    return this.ensureOllamaVisionCapability('ollama');
+    if (this.activeProviderId === 'ollama') return this.ensureOllamaVisionCapability('ollama');
+    if (AUTO_VISION_PROVIDER_IDS.has(this.activeProviderId)) {
+      return this.ensureVisionCapability(this.activeProviderId);
+    }
+    return { ok: true, skipped: true };
   }
 
   /**
@@ -886,6 +1042,19 @@ export class ProviderManager {
       const nextIdentity = this._ollamaVisionIdentity(merged);
       if (currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
         merged.visionDetection = null;
+      }
+    }
+    if (AUTO_VISION_PROVIDER_IDS.has(id)) {
+      merged.visionMode = VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
+      delete merged.supportsVision;
+      const currentIdentity = visionCapabilityIdentity(id, current);
+      const nextIdentity = visionCapabilityIdentity(id, merged);
+      if (currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
+        merged.visionDetection = null;
+        this._visionCapabilityEpochs.set(id, (this._visionCapabilityEpochs.get(id) || 0) + 1);
+        for (const key of this._visionCapabilityChecks.keys()) {
+          if (key.startsWith(`${id}\n`)) this._visionCapabilityChecks.delete(key);
+        }
       }
     }
     this.providers.set(id, this._createProvider(id, merged));

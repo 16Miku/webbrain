@@ -75,9 +75,12 @@ export async function fetchWithTimeout(url, options = {}) {
   try {
     const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
+    // Keep the caller signal linked after headers arrive so a stalled body
+    // read remains cancellable by the caller's stricter deadline.
     return res;
   } catch (e) {
     clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
     if (callerSignal?.aborted) {
       throw callerSignal.reason instanceof Error
         ? callerSignal.reason

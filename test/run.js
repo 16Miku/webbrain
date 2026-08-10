@@ -784,6 +784,12 @@ const { LlamaCppProvider: LlamaCppProviderCh } = await import(
 const { LlamaCppProvider: LlamaCppProviderFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/llamacpp.js').replace(/\\/g, '/')
 );
+const VisionCapabilitiesCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/vision-capabilities.js').replace(/\\/g, '/')
+);
+const VisionCapabilitiesFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/providers/vision-capabilities.js').replace(/\\/g, '/')
+);
 const { AzureOpenAIProvider: AzureOpenAIProviderCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/azure-openai.js').replace(/\\/g, '/')
 );
@@ -37581,6 +37587,164 @@ test('llama.cpp provider defaults to mid prompt tier for saved configs without c
     assert.equal(provider.config.category, 'local');
     assert.equal(provider.promptTier, 'mid');
     assert.equal(provider.contextWindow, 16384);
+  }
+});
+
+test('local vision metadata parsers require authoritative provider evidence', () => {
+  for (const vision of [VisionCapabilitiesCh, VisionCapabilitiesFx]) {
+    assert.equal(vision.parseLlamaCppVisionSupport({ modalities: { vision: true } }), true);
+    assert.equal(vision.parseLlamaCppVisionSupport({ modalities: { vision: false } }), false);
+    assert.equal(vision.parseLlamaCppVisionSupport({ modalities: {} }), null);
+
+    const lmModels = { models: [
+      { key: 'text-model', capabilities: { vision: false } },
+      { key: 'vision-model', capabilities: { vision: true } },
+    ] };
+    assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'VISION-MODEL', 'v1'), true);
+    assert.equal(vision.parseLmStudioVisionSupport(lmModels, 'missing', 'v1'), null);
+    assert.equal(vision.parseLmStudioVisionSupport({ data: [{ id: 'legacy-vlm', type: 'vlm' }] }, 'legacy-vlm', 'v0'), true);
+
+    const localAi = { data: [
+      { id: 'text', input_modalities: ['text'] },
+      { id: 'vision', input_modalities: ['text', 'image'] },
+    ] };
+    assert.equal(vision.parseLocalAiVisionSupport(localAi, 'vision'), true);
+    assert.equal(vision.parseLocalAiVisionSupport(localAi, 'text'), false);
+    assert.equal(vision.parseLocalAiVisionSupport(localAi, 'missing'), null);
+  }
+});
+
+test('llama.cpp, LM Studio, and LocalAI migrate to tri-state vision alongside Ollama', () => {
+  for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+    const manager = new PM();
+    const defaults = manager._defaultConfigs();
+    for (const id of ['ollama', 'llamacpp', 'lmstudio', 'localai']) {
+      assert.equal(defaults[id].visionMode, 'auto', `${id}: default mode`);
+      assert.equal(defaults[id].visionDetection, null, `${id}: default detection`);
+      assert.equal(Object.hasOwn(defaults[id], 'supportsVision'), false, `${id}: legacy boolean should be gone`);
+    }
+    for (const id of ['llamacpp', 'lmstudio', 'localai']) {
+      const migratedOff = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: false } })[id];
+      assert.equal(migratedOff.visionMode, 'off');
+      const migratedAuto = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: true } })[id];
+      assert.equal(migratedAuto.visionMode, 'auto');
+      const migratedBlank = manager._migrateStoredProviderConfigs({
+        [id]: { model: '', visionMode: 'auto', visionDetection: { supportsVision: true } },
+      })[id];
+      assert.equal(migratedBlank.visionDetection, null, `${id}: blank-model detections must not survive reload`);
+    }
+    assert.equal(defaults.jan.supportsVision, true, 'unprobed local providers retain their existing behavior');
+  }
+});
+
+test('local vision detection uses official metadata endpoints with Chrome/Firefox parity', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const calls = [];
+  globalThis.chrome = { runtime: {}, storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } } };
+  globalThis.browser = { storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } } };
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('/props')) return new Response(JSON.stringify({ modalities: { vision: false } }), { status: 200 });
+    if (String(url).endsWith('/api/v1/models')) {
+      return new Response(JSON.stringify({ models: [{ key: 'lm-vlm', capabilities: { vision: true } }] }), { status: 200 });
+    }
+    if (String(url).endsWith('/v1/models/capabilities')) {
+      return new Response(JSON.stringify({ data: [{ id: 'local-vlm', input_modalities: ['text', 'image'] }] }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const provider = { config: { apiKey: '' } };
+      assert.deepEqual(await manager._fetchVisionCapability('llamacpp', provider, {
+        baseUrl: 'http://localhost:8080', model: 'router/model',
+      }), { ok: true, supportsVision: false });
+      assert.deepEqual(await manager._fetchVisionCapability('lmstudio', provider, {
+        baseUrl: 'http://localhost:1234/v1', model: 'lm-vlm',
+      }), { ok: true, supportsVision: true });
+      assert.deepEqual(await manager._fetchVisionCapability('localai', provider, {
+        baseUrl: 'http://localhost:8081/v1', model: 'local-vlm',
+      }), { ok: true, supportsVision: true });
+    }
+    assert.ok(calls.some(url => url.endsWith('/props?model=router%2Fmodel')));
+    assert.ok(calls.some(url => url.endsWith('/api/v1/models')));
+    assert.ok(calls.some(url => url.endsWith('/v1/models/capabilities')));
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('blank-model local vision checks are per-turn, single-flight, transient, and fail closed', async () => {
+  for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+    const manager = new PM();
+    let saves = 0;
+    manager.save = async () => { saves++; };
+    manager.providers.set('lmstudio', manager._createProvider('lmstudio', {
+      type: 'openai', providerName: 'lmstudio', baseUrl: 'http://localhost:1234/v1',
+      model: '', visionMode: 'auto', visionDetection: null,
+    }));
+
+    let resolveFirst;
+    let fetchCalls = 0;
+    manager._fetchVisionCapability = async () => {
+      fetchCalls++;
+      return new Promise(resolve => { resolveFirst = resolve; });
+    };
+    const first = manager.ensureVisionCapability('lmstudio');
+    const joined = manager.ensureVisionCapability('lmstudio');
+    assert.equal(fetchCalls, 1, 'concurrent checks should share one request');
+    resolveFirst({ ok: true, supportsVision: false });
+    await Promise.all([first, joined]);
+    assert.equal(manager.providers.get('lmstudio').supportsVision, false);
+    assert.equal(manager.providers.get('lmstudio').config.visionDetection.transient, true);
+    assert.equal(manager._visionCapabilityChecks.size, 0, 'blank identity must be evicted after the turn');
+    assert.equal(saves, 0, 'blank-model detection must not be persisted');
+
+    manager._fetchVisionCapability = async () => {
+      fetchCalls++;
+      return { ok: true, supportsVision: true };
+    };
+    await manager.ensureVisionCapability('lmstudio');
+    assert.equal(fetchCalls, 2, 'next turn must recheck the server loaded-model slot');
+    assert.equal(manager.providers.get('lmstudio').supportsVision, true, 'hot-swapped vision model should take effect');
+    assert.equal(saves, 0);
+
+    manager._fetchVisionCapability = async () => {
+      fetchCalls++;
+      return { ok: false, timeout: true };
+    };
+    await manager.ensureVisionCapability('lmstudio');
+    assert.equal(fetchCalls, 3);
+    assert.equal(manager.providers.get('lmstudio').supportsVision, false, 'failed recheck must clear the prior transient true');
+    assert.equal(manager.providers.get('lmstudio').config.visionDetection, undefined);
+  }
+});
+
+test('tri-state local vision controls and pre-enrichment preparation stay mirrored', () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    for (const marker of ['async _processMessageInner(', 'async _processMessageStreamInner(']) {
+      const start = agent.indexOf(marker);
+      const preparation = agent.indexOf('prepareActiveProviderCapabilities', start);
+      const enrichment = agent.indexOf('const enriched = await this._enrichUserMessageWithCurrentPage(', start);
+      assert.ok(preparation > start && preparation < enrichment, `${prefix}/${marker}: detection must precede enrichment`);
+    }
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    for (const id of ['ollama', 'llamacpp', 'lmstudio', 'localai']) {
+      const start = settings.indexOf(`${id}: {`);
+      const block = settings.slice(start, settings.indexOf('\n    },', start));
+      assert.match(block, /VISION_MODE_FIELD/, `${prefix}/${id}: tri-state selector missing`);
+    }
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(panel, /toggledVisionProviderConfig\(active, config\)/);
   }
 });
 
