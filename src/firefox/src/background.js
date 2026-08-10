@@ -2892,3 +2892,18 @@ async function handleMessage(msg, sender) {
       throw new Error(`Unknown action: ${msg.action}`);
   }
 }
+
+// --- Keyboard shortcuts (browser.commands) ---
+// Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
+// to work. Custom commands fire here in the background script; we dispatch them via
+// storage.onChanged so the side panel (and any other extension page) can react
+// reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
+browser.commands.onCommand.addListener(async (command) => {
+  // _execute_sidebar_action is handled natively by Firefox — no need to forward
+  if (command === '_execute_sidebar_action') return;
+  try {
+    await browser.storage.local.set({ _wb_cmd: { command, ts: Date.now() } });
+  } catch (err) {
+    console.error('[WebBrain] failed to dispatch command:', command, err);
+  }
+});
