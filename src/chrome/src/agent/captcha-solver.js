@@ -22,7 +22,7 @@ import {
   normalizeCaptchaType,
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
-import { buildCaptchaDiagnostics } from './captcha-gate.js';
+import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -258,6 +258,7 @@ export async function detectCaptcha(tabId, constraints = {}) {
     chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: detectCaptchaCandidatesInPage,
+      args: [null, captchaChallengeMatcherOptions()],
     }),
     frameTreePromise,
   ]);

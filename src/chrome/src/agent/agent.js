@@ -52,7 +52,7 @@ import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
-import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
+import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
@@ -4205,7 +4205,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       func: detectChallengeDialogInPage,
       args: [{
         includeFrameContext: true,
-        allowGenericFailure: options?.allowGenericFailure === true,
+        ...captchaChallengeMatcherOptions(),
       }],
     });
     const inspected = (results) => {
@@ -4218,7 +4218,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!label) return [];
         const normalized = detectChallengeDialog(
           `dialog ${JSON.stringify(label.slice(0, 200))}`,
-          { allowGenericFailure: options?.allowGenericFailure === true },
         );
         if (!normalized?.normalizedLabel) return [];
         return [{
@@ -4323,13 +4322,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? toolResult.captchaChallengeFrameId
       : null;
     let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
-    let challenge = detectChallengeDialog(toolResult.pageContent, {
-      allowGenericFailure: !!activeGate,
-    });
+    let challenge = detectChallengeDialog(toolResult.pageContent);
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
         `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
-        { allowGenericFailure: !!activeGate },
       );
     }
     if (
@@ -4340,12 +4336,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: observedChallengeFrameId,
-        allowGenericFailure: !!activeGate,
       });
       if (recheck.challenge?.label) {
         challenge = detectChallengeDialog(
           `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
-          { allowGenericFailure: !!activeGate },
         );
         observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
           ? recheck.challenge.frameId
@@ -4412,20 +4406,67 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
     }
+    const requestedPage = toolArgs?.page;
+    const requestedMaxDepth = toolArgs?.maxDepth;
+    const parsedMaxDepth = Number(requestedMaxDepth);
+    const authoritativeRootRead = !toolArgs?.ref_id
+      && (
+        requestedPage === undefined
+        || requestedPage === null
+        || requestedPage === ''
+        || Number(requestedPage) === 1
+      )
+      && treeFilter !== 'interactive'
+      && (
+        requestedMaxDepth === undefined
+        || requestedMaxDepth === null
+        || requestedMaxDepth === ''
+        || (Number.isFinite(parsedMaxDepth) && parsedMaxDepth >= 15)
+      )
+      && toolResult.truncated !== true
+      && toolResult.hasMore !== true
+      && toolResult.autoDegraded !== true;
+    if (
+      !challenge
+      && activeGate
+      && authoritativeRootRead
+      && Number.isInteger(activeGate.challengeFrameId)
+    ) {
+      const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        expectedFrameId: activeGate.challengeFrameId,
+      });
+      if (frameInspection.challenge?.label) {
+        challenge = detectChallengeDialog(
+          `dialog ${JSON.stringify(String(frameInspection.challenge.label).slice(0, 200))}`
+        );
+      } else if (!frameInspection.inspectionComplete) {
+        const guardedState = normalizeCaptchaGateState(activeGate);
+        this._captchaGateStates.set(tabId, guardedState);
+        toolResult.captchaGate = guardedState.publicGate;
+        return { gate: guardedState.publicGate, loopCheck: { kind: 'none' } };
+      }
+    }
+    const correlatedCaptchaCandidateIdentity =
+      activeGate?.publicGate?.candidateNotCorrelated === true
+        ? null
+        : activeGate?.captchaCandidateIdentity;
     let postSolveTokenState = null;
     if (
       ['verification_pending', 'manual_required', 'cleared'].includes(activeGate?.status)
-      && activeGate.captchaCandidateIdentity
+      && correlatedCaptchaCandidateIdentity
     ) {
       await inspectCaptchaFrames();
       if (!detectionFailed && detection && typeof detection === 'object') {
         postSolveTokenState = captchaPostSolveTokenState(
           detection,
-          activeGate.captchaCandidateIdentity,
+          correlatedCaptchaCandidateIdentity,
         );
       }
     }
-    const loopCheck = challenge
+    const directCaptchaEvidence = !!correlatedCaptchaCandidateIdentity
+      || activeGate?.publicGate?.languageNeutralFrameTrigger === true;
+    const loopCheck = challenge || (authoritativeRootRead && !directCaptchaEvidence)
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
           dialogLabel: challenge?.normalizedLabel || '',
@@ -4493,14 +4534,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: pendingGate, loopCheck };
     }
     if (!challenge) {
-      if (
-        activeGate?.status === 'manual_required'
-        && !activeGate.captchaCandidateIdentity
-        && activeGate.publicGate?.languageNeutralFrameTrigger !== true
-      ) {
+      if (activeGate?.status === 'manual_required' && !directCaptchaEvidence) {
         const manualInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
           includeStatus: true,
-          allowGenericFailure: true,
           ...(Number.isInteger(activeGate.challengeFrameId)
             ? { expectedFrameId: activeGate.challengeFrameId }
             : {}),
@@ -4515,6 +4551,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolResult.captchaGate = clearedGate;
           return { gate: clearedGate, loopCheck };
         }
+      }
+      if (activeGate && authoritativeRootRead && activeGate.status !== 'cleared') {
+        const guardedState = normalizeCaptchaGateState(activeGate);
+        this._captchaGateStates.set(tabId, guardedState);
+        toolResult.captchaGate = guardedState.publicGate;
+        return { gate: guardedState.publicGate, loopCheck };
       }
       if (activeGate?.status === 'cleared') {
         return { gate: null, loopCheck };
@@ -4609,7 +4651,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
       ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
     };
-    const captchaCandidateIdentity = captchaGateCandidateIdentity(detection?.selected);
+    const captchaCandidateIdentity = selectedCorrelated
+      ? captchaGateCandidateIdentity(detection?.selected)
+      : null;
     this._captchaGateStates.set(tabId, {
       key,
       status: publicGate.status,

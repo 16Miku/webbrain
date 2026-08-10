@@ -539,6 +539,12 @@ const CaptchaGateCh = await import(
 const CaptchaGateFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js').replace(/\\/g, '/')
 );
+function detectCaptchaChallengeInPage(gate, options = null) {
+  return gate.detectChallengeDialogInPage({
+    ...gate.captchaChallengeMatcherOptions(),
+    ...(options || {}),
+  });
+}
 const ToolCallParserCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js').replace(/\\/g, '/')
 );
@@ -7667,15 +7673,43 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
     assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure, { allowGenericFailure: true })?.label,
-      'Email verification failed',
-      `${build}: active CAPTCHA could not retain a renamed failure dialog`,
+      gate.detectChallengeDialog(genericFailure),
+      null,
+      `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
     assert.equal(
       gate.detectChallengeDialog('dialog "CAPTCHA verification failed" [ref_7]')?.label,
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
     );
+  }
+});
+
+test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+  assert.equal(
+    CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    'Chrome and Firefox exported different CAPTCHA matcher sources',
+  );
+  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+    assert.deepEqual(
+      gate.captchaChallengeMatcherOptions(),
+      { challengeLabelPatternSource: gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE },
+      `${build}: serialized matcher options diverged from the module matcher`,
+    );
+    const sourceCopies = [
+      'captcha-gate.js',
+      'captcha-frame-runtime.js',
+      'captcha-solver.js',
+      'agent.js',
+    ].reduce((count, file) => {
+      const source = fs.readFileSync(
+        path.join(ROOT, `src/${build}/src/agent/${file}`),
+        'utf8',
+      );
+      return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
+    }, 0);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
   }
 });
 
@@ -7703,7 +7737,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
-        assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
         const observation = await agent._observeCaptchaChallenge(
           1,
@@ -7746,22 +7780,25 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
       );
       const runtime = await import(pathToFileURL(
         path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
       ).href);
-      const detected = runtime.detectCaptchaCandidatesInPage({
-        window: {
-          location: globalThis.location,
-          innerWidth: globalThis.innerWidth,
-          innerHeight: globalThis.innerHeight,
-          getComputedStyle: globalThis.getComputedStyle,
+      const detected = runtime.detectCaptchaCandidatesInPage(
+        {
+          window: {
+            location: globalThis.location,
+            innerWidth: globalThis.innerWidth,
+            innerHeight: globalThis.innerHeight,
+            getComputedStyle: globalThis.getComputedStyle,
+          },
+          document: globalThis.document,
         },
-        document: globalThis.document,
-      });
+        gate.captchaChallengeMatcherOptions(),
+      );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
       );
@@ -7774,21 +7811,21 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'reCAPTCHA' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Email verification failed' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: generic application failure armed preflight`);
+      assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: generic application failure armed preflight`);
       assert.equal(
-        gate.detectChallengeDialogInPage({ allowGenericFailure: true })?.label,
-        'Email verification failed',
-        `${build}: active-gate failure context was ignored`,
+        detectCaptchaChallengeInPage(gate),
+        null,
+        `${build}: active-gate context promoted a generic failure to CAPTCHA evidence`,
       );
     });
 
@@ -7813,7 +7850,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, hiddenStageNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
       );
@@ -7847,7 +7884,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     ];
     await withCaptchaFakePage(build, shadowDialogNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
@@ -7955,7 +7992,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: shadow dialog under a hidden host armed the preflight`,
       );
@@ -8071,7 +8108,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('one CAPTCHA solve remains gated until exact token and frame state confirms clearance', async () => {
+test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -8088,6 +8125,7 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       status: 'solve_required',
       publicGate: {
         status: 'solve_required',
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8145,7 +8183,7 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       { filter: 'visible' },
     );
     assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: changed challenge key reset the attempted solve`);
-    assert.equal(firstPersistent.gate?.verificationRetryRequired, undefined, `${label}: legacy read retry state survived`);
+    assert.equal(firstPersistent.gate?.verificationRetryRequired, undefined, `${label}: regex miss entered the legacy text retry ladder`);
     assert.equal(agent._captchaGateStates.get(tabId)?.key, 'https://example.test/signup\nsecurity verification', `${label}: changed challenge key replaced the attempted-solve identity`);
     const persistent = await agent._observeCaptchaChallenge(
       tabId,
@@ -8153,8 +8191,8 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       changedChallengeResult,
       { filter: 'visible' },
     );
-    assert.equal(persistent.gate?.status, 'verification_pending', `${label}: renamed dialog text overrode inconclusive widget state`);
-    assert.equal(persistent.gate?.solveFailedToClearChallenge, undefined, `${label}: legacy dialog inference state survived`);
+    assert.equal(persistent.gate?.status, 'verification_pending', `${label}: generic failure text overrode the frame-backed gate`);
+    assert.equal(persistent.gate?.solveFailedToClearChallenge, undefined, `${label}: generic failure text created a CAPTCHA failure reason`);
     const changedManual = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8164,8 +8202,8 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       },
       { filter: 'visible' },
     );
-    assert.equal(changedManual.gate?.status, 'verification_pending', `${label}: unrelated dialog text independently cleared the pending gate`);
-    assert.equal(agent._captchaGateStates.has(tabId), true, `${label}: inconclusive post-solve gate was discarded`);
+    assert.equal(changedManual.gate?.status, 'verification_pending', `${label}: unrelated dialog text cleared the frame-backed gate`);
+    assert.equal(agent._captchaGateStates.has(tabId), true, `${label}: unrelated dialog text discarded the frame-backed gate`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {
@@ -8174,6 +8212,7 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8188,8 +8227,8 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       },
       { filter: 'visible' },
     );
-    assert.equal(confirmation.gate?.status, 'verification_pending', `${label}: confirmation copy independently cleared the pending gate`);
-    assert.equal(confirmationAgent._captchaGateStates.has(tabId), true, `${label}: confirmation copy discarded inconclusive widget state`);
+    assert.equal(confirmation.gate?.status, 'verification_pending', `${label}: confirmation copy cleared the frame-backed gate`);
+    assert.equal(confirmationAgent._captchaGateStates.has(tabId), true, `${label}: confirmation copy discarded the frame-backed gate`);
 
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
@@ -8198,6 +8237,7 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
     });
@@ -8211,8 +8251,8 @@ test('one CAPTCHA solve remains gated until exact token and frame state confirms
       clearedResult,
       {},
     );
-    assert.equal(cleared.gate?.status, 'verification_pending', `${label}: absent root dialog independently cleared the pending gate`);
-    assert.equal(clearedAgent._captchaGateStates.has(tabId), true, `${label}: absent dialog discarded inconclusive widget state`);
+    assert.equal(cleared.gate?.status, 'verification_pending', `${label}: absent English dialog cleared the frame-backed gate`);
+    assert.equal(clearedAgent._captchaGateStates.has(tabId), true, `${label}: regex miss discarded the frame-backed gate`);
   }
 });
 
@@ -67547,8 +67587,16 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
     });
 
+    const unrelatedVisibleResponseField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-background',
+      name: 'g-recaptcha-response',
+    });
     const unrelatedVisibleNodes = [
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' }),
+      captchaEl(
+        'div',
+        { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' },
+        [unrelatedVisibleResponseField],
+      ),
       captchaEl('div', {
         role: 'dialog',
         innerText: 'Security verification\nUse your passkey',
@@ -67565,6 +67613,20 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       });
       assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated visible reCAPTCHA was selected for a passkey dialog`);
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: visible-only candidate did not fail closed`);
+      unrelatedVisibleResponseField.value = 'background-widget-token';
+      const tokenUpdate = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
+      }, { filter: 'interactive' });
+      assert.equal(
+        tokenUpdate.gate?.status,
+        'manual_required',
+        `${build}: unrelated widget token cleared the passkey dialog gate`,
+      );
+      assert.equal(
+        tokenUpdate.gate?.clearedByResponseToken,
+        undefined,
+        `${build}: unrelated widget token was reported as gate clearance`,
+      );
     });
 
     const arkoseNodes = [
@@ -68037,7 +68099,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       agent._currentUrl = async () => 'https://example.test/signup';
       agent._captchaGateStates.set(3, {
         key: 'https://example.test/signup\nsecurity verification',
-        status: 'verification_pending',
+        status: 'manual_required',
         captchaCandidateIdentity: {
           frameId: 0,
           framePathIndexes: [],
@@ -68050,8 +68112,8 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
           alsoResponseFieldIndex: 0,
         },
         publicGate: {
-          status: 'verification_pending',
-          solveAttempted: true,
+          status: 'manual_required',
+          solverDisabled: true,
           challengeDialog: { label: 'Security verification' },
         },
       });
@@ -68064,7 +68126,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       assert.equal(
         compatibilityToken.gate?.clearedByResponseToken,
         true,
-        `${build}: hCaptcha compatibility token did not clear its exact gate`,
+        `${build}: hCaptcha compatibility token did not clear its exact manual gate`,
       );
     });
   }
