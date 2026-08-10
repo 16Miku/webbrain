@@ -524,6 +524,8 @@ export default {
   'st.display.verbose.desc': 'Show full tool call details, arguments, and raw JSON results. Off by default for a cleaner chat experience.',
   'st.display.selection_shortcut.label': 'Selection shortcut',
   'st.display.selection_shortcut.desc': 'Show a WebBrain button when you select text on a page. The native right-click action remains available when this is off.',
+  'st.display.auto_group_tabs.label': 'Group WebBrain tabs',
+  'st.display.auto_group_tabs.desc': 'Automatically place tabs opened from the toolbar, context menu, or by the agent in a named WebBrain browser tab group. Turning this off does not change existing groups.',
   'st.display.screenshot.label': 'Screenshot Fallback',
   'st.display.screenshot.desc': 'Capture a screenshot of the page when DOM reading fails or returns insufficient content. Requires a vision-capable model.',
   'st.display.site_adapters.label': 'Site adapters',
