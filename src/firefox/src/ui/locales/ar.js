@@ -220,6 +220,8 @@ export default {
   'st.display.verbose.desc': 'إظهار تفاصيل استدعاءات الأدوات كاملة، والمعطيات، ونتائج JSON الأولية. مُعطَّل افتراضيًا للحصول على تجربة محادثة أنظف.',
   'st.display.selection_shortcut.label': 'اختصار التحديد',
   'st.display.selection_shortcut.desc': 'اعرض زر WebBrain عند تحديد نص في صفحة. يظل إجراء النقر بزر الماوس الأيمن الأصلي متاحًا عند إيقاف هذا الخيار.',
+  'st.display.auto_group_tabs.label': 'تجميع علامات تبويب WebBrain',
+  'st.display.auto_group_tabs.desc': 'ضع تلقائيًا علامات التبويب المفتوحة من شريط الأدوات أو قائمة السياق أو بواسطة الوكيل في مجموعة علامات تبويب متصفح باسم WebBrain. لن يؤدي إيقاف هذا الخيار إلى تغيير المجموعات الحالية.',
   'st.display.screenshot.label': 'لقطة شاشة احتياطية',
   'st.display.screenshot.desc': 'التقاط لقطة شاشة للصفحة عند فشل قراءة DOM أو إذا أعادت محتوى غير كافٍ. يتطلّب نموذجًا يدعم الرؤية.',
   'st.display.site_adapters.label': 'محوّلات المواقع',
