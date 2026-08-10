@@ -7,6 +7,14 @@ const DETECTION_SOURCES = {
   localai: 'localai_capabilities',
 };
 
+export function visionProviderKind(providerId, config = {}) {
+  if (config?.type === 'llamacpp') return 'llamacpp';
+  const id = String(providerId || '').trim().toLowerCase();
+  if (AUTO_VISION_PROVIDER_IDS.has(id)) return id;
+  const providerName = String(config?.providerName || '').trim().toLowerCase();
+  return AUTO_VISION_PROVIDER_IDS.has(providerName) ? providerName : null;
+}
+
 export function canonicalizeVisionBaseUrl(value) {
   const raw = String(value || '').trim().replace(/\/+$/, '');
   if (!raw) return '';

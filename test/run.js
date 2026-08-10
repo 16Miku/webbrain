@@ -37617,6 +37617,11 @@ test('local vision metadata parsers require authoritative provider evidence', ()
 
 test('local vision identities preserve case-sensitive model IDs', () => {
   for (const vision of [VisionCapabilitiesCh, VisionCapabilitiesFx]) {
+    assert.equal(vision.visionProviderKind('custom_llama', { type: 'llamacpp' }), 'llamacpp');
+    assert.equal(vision.visionProviderKind('custom_lm', { type: 'openai', providerName: 'lmstudio' }), 'lmstudio');
+    assert.equal(vision.visionProviderKind('custom_local', { type: 'openai', providerName: 'localai' }), 'localai');
+    assert.equal(vision.visionProviderKind('custom_openai', { type: 'openai', providerName: 'custom' }), null);
+
     const upperConfig = {
       baseUrl: 'http://localhost:1234/v1',
       model: 'CaseModel',
@@ -37664,6 +37669,15 @@ test('llama.cpp, LM Studio, and LocalAI migrate to tri-state vision alongside Ol
       })[id];
       assert.equal(migratedBlank.visionDetection, null, `${id}: blank-model detections must not survive reload`);
     }
+    const migratedCustomOn = manager._migrateStoredProviderConfigs({
+      custom_llama: { type: 'llamacpp', model: 'fixed', supportsVision: true },
+    }).custom_llama;
+    assert.equal(migratedCustomOn.visionMode, 'on', 'custom llama.cpp legacy true remains an explicit override');
+    assert.equal(Object.hasOwn(migratedCustomOn, 'supportsVision'), false);
+    const migratedCustomOff = manager._migrateStoredProviderConfigs({
+      custom_lm: { type: 'openai', providerName: 'lmstudio', model: 'fixed', supportsVision: false },
+    }).custom_lm;
+    assert.equal(migratedCustomOff.visionMode, 'off', 'custom LM Studio legacy false remains an explicit override');
     assert.equal(defaults.jan.supportsVision, true, 'unprobed local providers retain their existing behavior');
   }
 });
@@ -37710,6 +37724,42 @@ test('local vision detection uses official metadata endpoints with Chrome/Firefo
     else globalThis.chrome = previousChrome;
     if (previousBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = previousBrowser;
+  }
+});
+
+test('custom local provider IDs use their canonical vision detector and preserve explicit overrides', async () => {
+  const cases = [
+    ['custom_llama', { type: 'llamacpp', baseUrl: 'http://localhost:8080', model: 'llama-vlm' }, 'llamacpp'],
+    ['custom_lm', { type: 'openai', providerName: 'lmstudio', baseUrl: 'http://localhost:1234/v1', model: 'lm-vlm' }, 'lmstudio'],
+    ['custom_local', { type: 'openai', providerName: 'localai', baseUrl: 'http://localhost:8081/v1', model: 'local-vlm' }, 'localai'],
+  ];
+  for (const [label, PM] of [['chrome', ProviderManagerCh], ['firefox', ProviderManagerFx]]) {
+    for (const [id, config, expectedKind] of cases) {
+      const manager = new PM();
+      manager.save = async () => {};
+      manager.providers.set(id, manager._createProvider(id, {
+        ...config,
+        visionMode: 'auto',
+        visionDetection: null,
+      }));
+      manager.activeProviderId = id;
+      let detectorKind = null;
+      manager._fetchVisionCapability = async (kind) => {
+        detectorKind = kind;
+        return { ok: true, supportsVision: true };
+      };
+
+      const result = await manager.prepareActiveProviderCapabilities();
+      assert.equal(detectorKind, expectedKind, `${label}/${id}: custom ID should route to the canonical detector`);
+      assert.equal(result.supportsVision, true, `${label}/${id}: preflight should apply detected capability`);
+      assert.equal(manager.getActive().supportsVision, true, `${label}/${id}: provider getter should see canonical detection`);
+      assert.equal(manager.getActive().config.visionDetection.providerId, expectedKind,
+        `${label}/${id}: persisted detection should use the canonical provider kind`);
+
+      await manager.updateProvider(id, { supportsVision: false });
+      assert.equal(manager.getActive().config.visionMode, 'off', `${label}/${id}: legacy false update should become an override`);
+      assert.equal(manager.getActive().supportsVision, false, `${label}/${id}: explicit override should beat prior detection`);
+    }
   }
 });
 

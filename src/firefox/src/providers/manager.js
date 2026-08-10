@@ -16,6 +16,7 @@ import {
   visionCapabilityIdentity,
   visionDetectionMatches,
   visionDetectionSource,
+  visionProviderKind,
 } from './vision-capabilities.js';
 import {
   canonicalizeOllamaBaseUrl,
@@ -79,9 +80,8 @@ export class ProviderManager {
       !OLLAMA_VISION_MODES.has(rawStoredOllama.visionMode)
       || Object.hasOwn(rawStoredOllama, 'supportsVision')
     );
-    const genericVisionConfigMigrated = [...AUTO_VISION_PROVIDER_IDS].some((id) => {
-      const config = data.providers?.[id];
-      return !!config && (
+    const genericVisionConfigMigrated = Object.entries(data.providers || {}).some(([id, config]) => {
+      return !!visionProviderKind(id, config) && (
         !VISION_MODES.has(config.visionMode)
         || Object.hasOwn(config, 'supportsVision')
         || (!String(config.model || '').trim() && config.visionDetection != null)
@@ -602,16 +602,19 @@ export class ProviderManager {
       };
       delete migrated.ollama.supportsVision;
     }
-    for (const id of AUTO_VISION_PROVIDER_IDS) {
-      if (!migrated[id]) continue;
-      const legacySupportsVision = migrated[id].supportsVision;
-      const hasConfiguredModel = !!String(migrated[id].model || '').trim();
+    for (const [id, config] of Object.entries(migrated)) {
+      if (!visionProviderKind(id, config)) continue;
+      const legacySupportsVision = config.supportsVision;
+      const hasConfiguredModel = !!String(config.model || '').trim();
+      const isBuiltInAutoProvider = AUTO_VISION_PROVIDER_IDS.has(id);
       migrated[id] = {
-        ...migrated[id],
-        visionMode: VISION_MODES.has(migrated[id].visionMode)
-          ? migrated[id].visionMode
-          : (legacySupportsVision === false ? 'off' : 'auto'),
-        visionDetection: hasConfiguredModel ? (migrated[id].visionDetection || null) : null,
+        ...config,
+        visionMode: VISION_MODES.has(config.visionMode)
+          ? config.visionMode
+          : (legacySupportsVision === false
+            ? 'off'
+            : (legacySupportsVision === true && !isBuiltInAutoProvider ? 'on' : 'auto')),
+        visionDetection: hasConfiguredModel ? (config.visionDetection || null) : null,
       };
       delete migrated[id].supportsVision;
     }
@@ -706,10 +709,13 @@ export class ProviderManager {
         : 'auto';
       delete normalizedConfig.supportsVision;
     }
-    if (AUTO_VISION_PROVIDER_IDS.has(id)) {
+    if (visionProviderKind(id, normalizedConfig)) {
+      const legacySupportsVision = normalizedConfig.supportsVision;
       normalizedConfig.visionMode = VISION_MODES.has(normalizedConfig.visionMode)
         ? normalizedConfig.visionMode
-        : 'auto';
+        : (typeof legacySupportsVision === 'boolean'
+          ? (legacySupportsVision ? 'on' : 'off')
+          : 'auto');
       delete normalizedConfig.supportsVision;
     }
     switch (normalizedConfig.type) {
@@ -808,29 +814,33 @@ export class ProviderManager {
 
   async ensureVisionCapability(id) {
     const provider = this.providers.get(id);
-    if (!provider || !AUTO_VISION_PROVIDER_IDS.has(id)) return { ok: false, skipped: true };
+    const providerKind = visionProviderKind(id, provider?.config);
+    if (!provider || !providerKind) return { ok: false, skipped: true };
     const mode = VISION_MODES.has(provider.config.visionMode) ? provider.config.visionMode : 'auto';
     if (mode !== 'auto') return { ok: true, skipped: true, supportsVision: mode === 'on' };
-    const identity = visionCapabilityIdentity(id, provider.config);
+    const identity = visionCapabilityIdentity(providerKind, provider.config);
     if (!identity) return { ok: false, skipped: true };
     const hasConfiguredModel = !!identity.model;
-    if (hasConfiguredModel && visionDetectionMatches(id, provider.config)) {
+    if (hasConfiguredModel && visionDetectionMatches(providerKind, provider.config)) {
       return { ok: true, cached: true, supportsVision: provider.config.visionDetection.supportsVision };
     }
 
     const epoch = this._visionCapabilityEpochs.get(id) || 0;
-    let pending = this._visionCapabilityChecks.get(identity.key);
+    const checkKey = `${id}\n${identity.key}`;
+    let pending = this._visionCapabilityChecks.get(checkKey);
     if (!pending) {
-      pending = this._fetchVisionCapability(id, provider, identity);
-      this._visionCapabilityChecks.set(identity.key, pending);
+      pending = this._fetchVisionCapability(providerKind, provider, identity);
+      this._visionCapabilityChecks.set(checkKey, pending);
     }
     const result = await pending;
-    if ((!hasConfiguredModel || !result.ok) && this._visionCapabilityChecks.get(identity.key) === pending) {
-      this._visionCapabilityChecks.delete(identity.key);
+    if ((!hasConfiguredModel || !result.ok) && this._visionCapabilityChecks.get(checkKey) === pending) {
+      this._visionCapabilityChecks.delete(checkKey);
     }
     const current = this.providers.get(id);
-    const currentIdentity = visionCapabilityIdentity(id, current?.config);
+    const currentKind = visionProviderKind(id, current?.config);
+    const currentIdentity = visionCapabilityIdentity(currentKind, current?.config);
     if (!current || current.config.visionMode !== 'auto'
+      || currentKind !== providerKind
       || currentIdentity?.key !== identity.key
       || (this._visionCapabilityEpochs.get(id) || 0) !== epoch) {
       return { ...result, stale: true };
@@ -844,11 +854,11 @@ export class ProviderManager {
     }
 
     const detection = {
-      providerId: id,
+      providerId: providerKind,
       model: identity.model,
       baseUrl: identity.baseUrl,
       supportsVision: result.supportsVision,
-      source: visionDetectionSource(id),
+      source: visionDetectionSource(providerKind),
       ...(!hasConfiguredModel ? { transient: true } : {}),
     };
     this.providers.set(id, this._createProvider(id, { ...current.config, visionDetection: detection }));
@@ -949,7 +959,8 @@ export class ProviderManager {
 
   async prepareActiveProviderCapabilities() {
     if (this.activeProviderId === 'ollama') return this.ensureOllamaVisionCapability('ollama');
-    if (AUTO_VISION_PROVIDER_IDS.has(this.activeProviderId)) {
+    const activeProvider = this.providers.get(this.activeProviderId);
+    if (visionProviderKind(this.activeProviderId, activeProvider?.config)) {
       return this.ensureVisionCapability(this.activeProviderId);
     }
     return { ok: true, skipped: true };
@@ -1017,12 +1028,19 @@ export class ProviderManager {
         merged.visionDetection = null;
       }
     }
-    if (AUTO_VISION_PROVIDER_IDS.has(id)) {
-      merged.visionMode = VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
+    const genericVisionKind = visionProviderKind(id, merged);
+    if (genericVisionKind) {
+      const explicitLegacyVision = Object.hasOwn(config, 'supportsVision') && !Object.hasOwn(config, 'visionMode')
+        ? config.supportsVision
+        : null;
+      merged.visionMode = typeof explicitLegacyVision === 'boolean'
+        ? (explicitLegacyVision ? 'on' : 'off')
+        : (VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto');
       delete merged.supportsVision;
-      const currentIdentity = visionCapabilityIdentity(id, current);
-      const nextIdentity = visionCapabilityIdentity(id, merged);
-      if (currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
+      const currentKind = visionProviderKind(id, current);
+      const currentIdentity = visionCapabilityIdentity(currentKind, current);
+      const nextIdentity = visionCapabilityIdentity(genericVisionKind, merged);
+      if (currentKind !== genericVisionKind || currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
         merged.visionDetection = null;
         this._visionCapabilityEpochs.set(id, (this._visionCapabilityEpochs.get(id) || 0) + 1);
         for (const key of this._visionCapabilityChecks.keys()) {
