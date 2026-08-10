@@ -16695,6 +16695,22 @@ const ADAPTERS = [
 - Treat "结算" as order review; "提交订单" creates an order and can leave it in "待付款" even before payment completes. Re-read items, quantities, address, delivery, invoice, discounts, and final total, and do not click "提交订单" without the user's explicit confirmation. Report completion only from the resulting "订单编号" and payment/order status.`,
   },
 
+  // ─── Regional — Pinduoduo (China) ───────────────────────────────────
+  {
+    name: 'pinduoduo',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www\.)?(?:pinduoduo|yangkeduo)\.com|mobile\.yangkeduo\.com)\//.test(url),
+    notes: `
+- Observed 2026-08: www.pinduoduo.com and www.yangkeduo.com are the corporate, app-download, and help surface, not the searchable catalog. Consumer web browsing lives on mobile.yangkeduo.com; a desktop viewport can show an "用手机浏览器扫码在拼多多App打开" overlay, but the underlying search, category, product-feed, and 首页 / 直播 / 分类 / 聊天 / 个人中心 controls are the shopping surface.
+- Starting a search through relative_goods.html / search_result.html or opening goods.html while anonymous can redirect to mobile.yangkeduo.com/login.html?from=... . The page offers "手机登录" and "扫码登录". Stop for the user to complete QR or SMS authentication manually, never request, read, enter, or relay the "验证码", then re-read the encoded destination instead of restarting the task.
+- Use the top search field, keep the search type on "商品", and activate "搜索". "推荐" and category feeds are personalized; extract each candidate's exact title, displayed price, service labels, sales text, and goods URL before navigating, and do not treat feed position or a large sales count as best, cheapest, or most relevant.
+- Interpret sales labels using Pinduoduo's own help definitions: "已拼" is that product's platform sales, "总售" can aggregate some same-product sales, "本店已拼" is store sales, and "全店总售" can aggregate multiple stores owned by one entity. These counts are reference signals, not stock, review scores, seller identity, or proof of product quality.
+- Pinduoduo is a marketplace. Read the selected store and seller, exact 规格, quantity, delivery address, freight, arrival estimate, and return terms before comparing. Labels such as "退货包运费", "极速退款", "假一赔十", and "正品发票" apply only under the displayed item's terms; do not transfer them to other variants or sellers.
+- Distinguish 拼单 / 多人团 pricing and state from 单独购买. A purchase control can enter order review or payment without a cart review step, so never activate it during research. Before any order or payment action, re-read the item, variant, quantity, seller, address, delivery, discounts, group status, and final total, then require the user's explicit confirmation.
+- Pinduoduo's help directs users to 商品详情 > "客服" or 订单详情 > "联系卖家" in the app. Sending a message, photo, offer, address, or other personal data is a separate external action; require the user's exact intent, keep communication and payment on-platform, and never follow a seller-supplied external payment or messaging link.
+- Report completion only from order details with an order number and explicit payment, group, and fulfillment status. "待成团", "待付款", a payment prompt, an "已拼" count, or a submitted refund request is not completion. For a damaged or incorrect item, preserve photos and order evidence, contact the seller, then request Pinduoduo customer-service intervention if unresolved; never confirm receipt from tracking alone.`,
+  },
+
   // ─── Regional — 58.com (China) ─────────────────────────────
   {
     name: '58-com',
