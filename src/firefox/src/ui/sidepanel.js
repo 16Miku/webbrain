@@ -48,6 +48,10 @@ import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandForWindow,
+} from '../shortcut-command.js';
+import {
   clearStagedScreenshots,
   loadStagedScreenshots,
   markStagedScreenshots,
@@ -7868,6 +7872,42 @@ async function sendMessage(extraChatParams = {}) {
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
   acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+// --- Keyboard shortcut commands from background script ---
+// Firefox browser.commands custom shortcuts fire in the background script
+// (browser.commands.onCommand). The background dispatches them via
+// storage.local so the side panel can receive them reliably even when
+// runtime.sendMessage would miss the panel.
+const shortcutWindowIdPromise = browser.windows.getCurrent()
+  .then(windowInfo => Number.isInteger(windowInfo?.id) ? windowInfo.id : null)
+  .catch(() => null);
+browser.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== 'local' || !changes[SHORTCUT_COMMAND_STORAGE_KEY]?.newValue) return;
+  const windowId = await shortcutWindowIdPromise;
+  const command = shortcutCommandForWindow(
+    changes[SHORTCUT_COMMAND_STORAGE_KEY].newValue,
+    windowId,
+  );
+  switch (command) {
+    case 'switch-to-ask':
+      if (!isProcessing) setMode('ask');
+      break;
+    case 'switch-to-act':
+      if (!isProcessing) ensureActMode();
+      break;
+    case 'switch-to-dev':
+      if (!isProcessing) ensureDevMode();
+      break;
+    case 'focus-input':
+      // Firefox won't allow inputEl.focus() if the sidebar panel doesn't
+      // have focus — window.focus() acquires it first so the input focus
+      // actually takes effect.
+      window.focus();
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      break;
+  }
 });
 
 browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

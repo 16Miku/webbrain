@@ -177,6 +177,37 @@ function assertTrustedSourceUrl(value, sourceId) {
   throw new Error(`Unknown network source: ${sourceId}`);
 }
 
+async function readResponseTextBounded(response, url) {
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+      throw new Error(`${url} exceeded the ${MAX_RESPONSE_BYTES}-byte response limit`);
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      receivedBytes += value?.byteLength || 0;
+      if (receivedBytes > MAX_RESPONSE_BYTES) {
+        try { await reader.cancel(); } catch {}
+        throw new Error(`${url} exceeded the ${MAX_RESPONSE_BYTES}-byte response limit`);
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join('');
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+}
+
 async function fetchText(url, { fetchImpl = fetch, sourceId } = {}) {
   assertTrustedSourceUrl(url, sourceId);
   let response;
@@ -213,11 +244,7 @@ async function fetchText(url, { fetchImpl = fetch, sourceId } = {}) {
   if (declaredLength > MAX_RESPONSE_BYTES) {
     throw new Error(`${url} declared ${declaredLength} bytes; limit is ${MAX_RESPONSE_BYTES}`);
   }
-  const text = await response.text();
-  if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
-    throw new Error(`${url} exceeded the ${MAX_RESPONSE_BYTES}-byte response limit`);
-  }
-  return text;
+  return readResponseTextBounded(response, url);
 }
 
 async function mapConcurrent(items, concurrency, task) {

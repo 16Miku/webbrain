@@ -539,6 +539,18 @@ const CaptchaGateCh = await import(
 const CaptchaGateFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js').replace(/\\/g, '/')
 );
+const CloudflareChallengeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
+);
+const CloudflareChallengeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
+);
+function detectCaptchaChallengeInPage(gate, options = null) {
+  return gate.detectChallengeDialogInPage({
+    ...gate.captchaChallengeMatcherOptions(),
+    ...(options || {}),
+  });
+}
 const ToolCallParserCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js').replace(/\\/g, '/')
 );
@@ -687,6 +699,12 @@ const {
   validateCouponDomainProvenance,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/update-coupon-domains.mjs').replace(/\\/g, '/')
+);
+const {
+  shortcutCommandEnvelope,
+  shortcutCommandForWindow,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/shortcut-command.js').replace(/\\/g, '/')
 );
 const {
   assertMatchingArchiveVersion,
@@ -7675,15 +7693,584 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
     assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure, { allowGenericFailure: true })?.label,
-      'Email verification failed',
-      `${build}: active CAPTCHA could not retain a renamed failure dialog`,
+      gate.detectChallengeDialog(genericFailure),
+      null,
+      `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
     assert.equal(
       gate.detectChallengeDialog('dialog "CAPTCHA verification failed" [ref_7]')?.label,
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
     );
+  }
+});
+
+test('Cloudflare managed-challenge signals arm only from top-level response evidence', () => {
+  for (const [build, detector] of [
+    ['chrome', CloudflareChallengeCh],
+    ['firefox', CloudflareChallengeFx],
+  ]) {
+    const challengedResponse = {
+      tabId: 71,
+      type: 'main_frame',
+      url: 'https://protected.example/private?session=must-not-persist#fragment',
+      responseHeaders: [
+        { name: 'Content-Type', value: 'text/html' },
+        { name: 'CF-Mitigated', value: 'challenge' },
+      ],
+    };
+    const armed = detector.cloudflareChallengeResponseTransition(
+      null,
+      challengedResponse,
+      1000,
+    );
+    assert.equal(armed.kind, 'armed_by_response', `${build}: response header did not arm`);
+    assert.equal(armed.state?.active, true, `${build}: armed state missing`);
+    assert.equal(
+      armed.state?.documentKey,
+      'https://protected.example/private',
+      `${build}: challenged document identity retained query/fragment data`,
+    );
+
+    const xhr = detector.cloudflareChallengeResponseTransition(null, {
+      ...challengedResponse,
+      type: 'xmlhttprequest',
+    });
+    assert.equal(xhr.state, null, `${build}: challenged XHR armed a full-page gate`);
+
+    const platformAlone = detector.cloudflareChallengePlatformTransition(null, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1',
+    });
+    assert.equal(platformAlone.state, null, `${build}: challenge-platform activity armed without a response header`);
+    const turnstileAsset = detector.cloudflareChallengePlatformTransition(armed.state, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+    });
+    assert.equal(turnstileAsset.changed, false, `${build}: ordinary Turnstile asset changed interstitial state`);
+
+    const retained = detector.cloudflareChallengePlatformTransition(armed.state, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1',
+    }, 1100);
+    assert.equal(retained.kind, 'retained_by_platform_activity', `${build}: active challenge activity was not retained`);
+    assert.equal(retained.state?.lastChallengePlatformActivityAt, 1100, `${build}: activity timestamp missing`);
+    assert.equal(
+      detector.cloudflareChallengeNavigationTransition(retained.state, {
+        tabId: 71,
+        frameId: 0,
+        url: 'https://protected.example/private?after=commit',
+      }).state?.active,
+      true,
+      `${build}: same-document commit cleared the interstitial`,
+    );
+    assert.equal(
+      detector.cloudflareChallengeNavigationTransition(retained.state, {
+        tabId: 71,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      }).state,
+      null,
+      `${build}: navigation away retained the interstitial`,
+    );
+    assert.equal(
+      detector.cloudflareChallengeResponseTransition(retained.state, {
+        ...challengedResponse,
+        responseHeaders: [{ name: 'Content-Type', value: 'text/html' }],
+      }).state,
+      null,
+      `${build}: subsequent non-challenge response did not clear`,
+    );
+
+    const gate = detector.cloudflareManagedChallengeGateState(retained.state);
+    assert.equal(gate?.status, 'manual_required', `${build}: interstitial was routed to automatic solve`);
+    assert.equal(gate?.publicGate?.cloudflareManagedChallenge, true, `${build}: public gate reason missing`);
+    assert.equal(gate?.publicGate?.diagnostics?.challengePlatformActivity, true, `${build}: retained activity diagnostic missing`);
+  }
+  assert.deepEqual(
+    CloudflareChallengeCh.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    }),
+    CloudflareChallengeFx.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    }),
+    'Chrome and Firefox produced different managed-challenge gates',
+  );
+});
+
+test('Cloudflare managed-challenge gate persists, blocks mutations, and clears from network state', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8871 : 8872;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    const removed = [];
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({ ...stored }),
+          set: async values => Object.assign(stored, values),
+          remove: async key => {
+            removed.push(key);
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      const platformOnly = await agent.observeCloudflareChallengePlatformRequest({
+        tabId,
+        type: 'script',
+        url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/script.js',
+      });
+      assert.equal(platformOnly, null, `${build}: platform request alone armed Agent gate`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: platform-only state persisted a gate`);
+
+      const armed = await agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private?secret=redacted',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      assert.equal(armed?.gate?.status, 'manual_required', `${build}: response-backed gate did not arm`);
+      assert.equal(
+        stored[storageKey]?.documentKey,
+        'https://protected.example/private',
+        `${build}: persisted signal leaked the challenged query`,
+      );
+      const blocked = agent._captchaGateBlockResult(tabId, 'click_ax');
+      assert.equal(blocked?.cloudflareManagedChallenge, true, `${build}: mutation block lost Cloudflare reason`);
+      assert.equal(blocked?.noDispatch, true, `${build}: interstitial mutation was dispatched`);
+      assert.equal(
+        agent._captchaGateBlockResult(tabId, 'solve_captcha')?.manualCompletionRequired,
+        true,
+        `${build}: full-page interstitial allowed automatic solve`,
+      );
+      assert.equal(agent._captchaGateBlockResult(tabId, 'navigate'), null, `${build}: interstitial blocked abandonment navigation`);
+
+      const observation = await agent._observeCaptchaChallenge(
+        tabId,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_1]\n heading "Überprüfung" [ref_2]',
+          pageUrl: 'https://protected.example/private',
+        },
+        { filter: 'visible' },
+      );
+      assert.equal(observation.gate?.cloudflareManagedChallenge, true, `${build}: localized full-page read cleared the gate`);
+
+      await agent.observeCloudflareChallengePlatformRequest({
+        tabId,
+        type: 'script',
+        url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/script.js',
+      });
+      assert.equal(
+        agent._captchaGateStates.get(tabId)?.publicGate?.diagnostics?.challengePlatformActivity,
+        true,
+        `${build}: active platform request did not update diagnostics`,
+      );
+
+      const restarted = new AgentClass({});
+      await restarted._hydrate(tabId);
+      assert.equal(
+        restarted._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: worker restart lost the response-backed interstitial`,
+      );
+
+      const cleared = await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      assert.equal(cleared?.kind, 'cleared_by_response', `${build}: normal response did not clear signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: cleared interstitial kept gate active`);
+      assert.equal(removed.includes(storageKey), true, `${build}: cleared signal remained in session storage`);
+
+      await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      const navigated = await restarted.observeCloudflareManagedChallengeNavigation({
+        tabId,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      });
+      assert.equal(navigated?.kind, 'cleared_by_navigation', `${build}: navigation did not clear signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: navigation left gate active`);
+
+      await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      restarted._cleanupTab(tabId, { preserveRunGuard: true });
+      assert.equal(
+        restarted._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: clearing the conversation disabled the active tab-level gate`,
+      );
+      assert.ok(stored[storageKey], `${build}: clearing the conversation removed the persisted signal`);
+
+      restarted._cleanupTab(tabId);
+      assert.equal(restarted._cloudflareManagedChallenges.has(tabId), false, `${build}: tab cleanup kept the signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: tab cleanup kept the gate`);
+      assert.equal(stored[storageKey], undefined, `${build}: tab cleanup kept the persisted signal`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('Cloudflare restart transitions hydrate persisted state before clearing it', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8873 : 8874;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const persistedSignal = {
+      active: true,
+      documentKey: 'https://protected.example/private',
+      detectedAt: 1000,
+      lastResponseAt: 1000,
+      lastChallengePlatformActivityAt: 0,
+    };
+    const stored = { [storageKey]: persistedSignal };
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({ ...stored }),
+          set: async values => Object.assign(stored, values),
+          remove: async key => { delete stored[key]; },
+        },
+      },
+    };
+    try {
+      const responseRestart = new AgentClass({});
+      const clearedByResponse = await responseRestart.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      assert.equal(
+        clearedByResponse?.kind,
+        'cleared_by_response',
+        `${build}: restart-time normal response missed the persisted challenge`,
+      );
+      assert.equal(stored[storageKey], undefined, `${build}: response clearance left the dedicated signal stored`);
+      await responseRestart._hydrate(tabId);
+      assert.equal(
+        responseRestart._captchaGateStates.has(tabId),
+        false,
+        `${build}: later hydration restored a response-cleared challenge`,
+      );
+
+      stored[storageKey] = persistedSignal;
+      const navigationRestart = new AgentClass({});
+      const clearedByNavigation = await navigationRestart.observeCloudflareManagedChallengeNavigation({
+        tabId,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      });
+      assert.equal(
+        clearedByNavigation?.kind,
+        'cleared_by_navigation',
+        `${build}: restart-time navigation missed the persisted challenge`,
+      );
+      assert.equal(stored[storageKey], undefined, `${build}: navigation clearance left the dedicated signal stored`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('concurrent hydration waits for the dedicated Cloudflare signal', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8875 : 8876;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    let releaseSignalRead;
+    let signalReadStarted;
+    const signalReadStartedPromise = new Promise(resolve => { signalReadStarted = resolve; });
+    const signalReadReleasePromise = new Promise(resolve => { releaseSignalRead = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async key => {
+            if (key !== storageKey) return {};
+            signalReadStarted();
+            await signalReadReleasePromise;
+            return {
+              [storageKey]: {
+                active: true,
+                documentKey: 'https://protected.example/private',
+              },
+            };
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      const firstHydration = agent._hydrate(tabId);
+      await signalReadStartedPromise;
+      let secondResolved = false;
+      const secondHydration = agent._hydrate(tabId).then(() => { secondResolved = true; });
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(
+        secondResolved,
+        false,
+        `${build}: concurrent caller bypassed the in-flight Cloudflare signal read`,
+      );
+      releaseSignalRead();
+      await Promise.all([firstHydration, secondHydration]);
+      assert.equal(
+        agent._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: completed shared hydration did not restore the challenge gate`,
+      );
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('Cloudflare transitions serialize dedicated storage updates per tab', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8879 : 8880;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    let releaseFirstSet;
+    let firstSetStarted;
+    let removeCalls = 0;
+    const firstSetStartedPromise = new Promise(resolve => { firstSetStarted = resolve; });
+    const firstSetReleasePromise = new Promise(resolve => { releaseFirstSet = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({}),
+          set: async values => {
+            firstSetStarted();
+            await firstSetReleasePromise;
+            Object.assign(stored, values);
+          },
+          remove: async key => {
+            removeCalls++;
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      agent.hydratedTabs.add(tabId);
+      const armed = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      await firstSetStartedPromise;
+      const cleared = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(removeCalls, 0, `${build}: clear overtook the pending challenge-state write`);
+      releaseFirstSet();
+      const [armedResult, clearedResult] = await Promise.all([armed, cleared]);
+      assert.equal(armedResult?.kind, 'armed_by_response', `${build}: queued arm result missing`);
+      assert.equal(clearedResult?.kind, 'cleared_by_response', `${build}: queued clear result missing`);
+      assert.equal(stored[storageKey], undefined, `${build}: serialized clear left a stale dedicated signal`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: serialized clear left an active gate`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('Cloudflare tab cleanup drains pending challenge writes before removal', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8881 : 8882;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    let releaseFirstSet;
+    let firstSetStarted;
+    const firstSetStartedPromise = new Promise(resolve => { firstSetStarted = resolve; });
+    const firstSetReleasePromise = new Promise(resolve => { releaseFirstSet = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({}),
+          set: async values => {
+            firstSetStarted();
+            await firstSetReleasePromise;
+            Object.assign(stored, values);
+          },
+          remove: async key => {
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      agent.hydratedTabs.add(tabId);
+      const armed = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      await firstSetStartedPromise;
+
+      agent._cleanupTab(tabId);
+      const cleanup = agent._cloudflareManagedChallengeTransitions.get(tabId);
+      assert.ok(cleanup, `${build}: cleanup was not queued behind the pending write`);
+      assert.equal(agent._cloudflareManagedChallenges.has(tabId), false, `${build}: cleanup should clear in-memory challenge state immediately`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: cleanup should clear the challenge gate immediately`);
+
+      releaseFirstSet();
+      await Promise.all([armed, cleanup]);
+      assert.equal(stored[storageKey], undefined, `${build}: pending challenge write survived tab cleanup`);
+      assert.equal(agent._cloudflareManagedChallenges.has(tabId), false, `${build}: cleanup restored stale in-memory challenge state`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: cleanup restored a stale challenge gate`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('dedicated Cloudflare storage remains authoritative over stale conversation snapshots', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8877 : 8878;
+    const previousApi = globalThis[apiName];
+    const staleGate = detector.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async key => key === `agentConv:${tabId}`
+            ? {
+                [key]: {
+                  messages: [{ role: 'system', content: 'system' }],
+                  captchaGateState: staleGate,
+                },
+              }
+            : {},
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      await agent._hydrate(tabId);
+      assert.equal(
+        agent._captchaGateStates.has(tabId),
+        false,
+        `${build}: stale conversation snapshot revived a cleared Cloudflare gate`,
+      );
+      agent._captchaGateStates.set(tabId, staleGate);
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      assert.equal(
+        agent._conversationStorageEntry(tabId)?.captchaGateState,
+        null,
+        `${build}: conversation snapshot duplicated the dedicated Cloudflare gate`,
+      );
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('backgrounds wire Cloudflare detection to narrow response and platform filters', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(
+      source,
+      /onHeadersReceived\?\.addListener\?\.\([\s\S]*?observeCloudflareManagedChallengeResponse[\s\S]*?types: \['main_frame'\][\s\S]*?\['responseHeaders'\]/,
+      `${build}: top-level response-header listener is missing or too broad`,
+    );
+    assert.match(
+      source,
+      /onBeforeRequest\?\.addListener\?\.\([\s\S]*?observeCloudflareChallengePlatformRequest[\s\S]*?\*:\/\/\*\/cdn-cgi\/challenge-platform\/\*/,
+      `${build}: challenge-platform listener is missing or too broad`,
+    );
+  }
+});
+
+test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+  assert.equal(
+    CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    'Chrome and Firefox exported different CAPTCHA matcher sources',
+  );
+  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+    assert.deepEqual(
+      gate.captchaChallengeMatcherOptions(),
+      { challengeLabelPatternSource: gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE },
+      `${build}: serialized matcher options diverged from the module matcher`,
+    );
+    const sourceCopies = [
+      'captcha-gate.js',
+      'captcha-frame-runtime.js',
+      'captcha-solver.js',
+      'agent.js',
+    ].reduce((count, file) => {
+      const source = fs.readFileSync(
+        path.join(ROOT, `src/${build}/src/agent/${file}`),
+        'utf8',
+      );
+      return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
+    }, 0);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
   }
 });
 
@@ -7711,7 +8298,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
-        assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
         const observation = await agent._observeCaptchaChallenge(
           1,
@@ -7754,22 +8341,25 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
       );
       const runtime = await import(pathToFileURL(
         path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
       ).href);
-      const detected = runtime.detectCaptchaCandidatesInPage({
-        window: {
-          location: globalThis.location,
-          innerWidth: globalThis.innerWidth,
-          innerHeight: globalThis.innerHeight,
-          getComputedStyle: globalThis.getComputedStyle,
+      const detected = runtime.detectCaptchaCandidatesInPage(
+        {
+          window: {
+            location: globalThis.location,
+            innerWidth: globalThis.innerWidth,
+            innerHeight: globalThis.innerHeight,
+            getComputedStyle: globalThis.getComputedStyle,
+          },
+          document: globalThis.document,
         },
-        document: globalThis.document,
-      });
+        gate.captchaChallengeMatcherOptions(),
+      );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
       );
@@ -7782,21 +8372,21 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'reCAPTCHA' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Email verification failed' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: generic application failure armed preflight`);
+      assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: generic application failure armed preflight`);
       assert.equal(
-        gate.detectChallengeDialogInPage({ allowGenericFailure: true })?.label,
-        'Email verification failed',
-        `${build}: active-gate failure context was ignored`,
+        detectCaptchaChallengeInPage(gate),
+        null,
+        `${build}: active-gate context promoted a generic failure to CAPTCHA evidence`,
       );
     });
 
@@ -7821,7 +8411,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, hiddenStageNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
       );
@@ -7855,7 +8445,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     ];
     await withCaptchaFakePage(build, shadowDialogNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
@@ -7963,7 +8553,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: shadow dialog under a hidden host armed the preflight`,
       );
@@ -8079,7 +8669,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('one CAPTCHA solve remains gated until a root read confirms clearance', async () => {
+test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -8096,6 +8686,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       status: 'solve_required',
       publicGate: {
         status: 'solve_required',
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8138,7 +8729,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       new Set(['solve_captcha']),
       2,
     );
-    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a root-read turn`);
+    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a verification turn`);
     assert.deepEqual(executed, ['solve_captcha'], `${label}: second paid solve dispatched`);
     assert.match(String(retryMessages[0]?.content), /do not submit, dismiss, or call solve_captcha again/i);
 
@@ -8153,7 +8744,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       { filter: 'visible' },
     );
     assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: changed challenge key reset the attempted solve`);
-    assert.equal(firstPersistent.gate?.verificationRetryRequired, true, `${label}: bounded verification retry was not requested`);
+    assert.equal(firstPersistent.gate?.verificationRetryRequired, undefined, `${label}: regex miss entered the legacy text retry ladder`);
     assert.equal(agent._captchaGateStates.get(tabId)?.key, 'https://example.test/signup\nsecurity verification', `${label}: changed challenge key replaced the attempted-solve identity`);
     const persistent = await agent._observeCaptchaChallenge(
       tabId,
@@ -8161,8 +8752,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       changedChallengeResult,
       { filter: 'visible' },
     );
-    assert.equal(persistent.gate?.status, 'manual_required', `${label}: dialog surviving the bounded retry offered another solve`);
-    assert.equal(persistent.gate?.solveFailedToClearChallenge, true, `${label}: persistent-dialog reason missing`);
+    assert.equal(persistent.gate?.status, 'verification_pending', `${label}: generic failure text overrode the frame-backed gate`);
+    assert.equal(persistent.gate?.solveFailedToClearChallenge, undefined, `${label}: generic failure text created a CAPTCHA failure reason`);
     const changedManual = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8172,17 +8763,17 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(changedManual.gate?.status, 'cleared', `${label}: unrelated post-CAPTCHA dialog kept the failed solve gated`);
-    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: unrelated post-CAPTCHA dialog left a persisted gate`);
+    assert.equal(changedManual.gate?.status, 'verification_pending', `${label}: unrelated dialog text cleared the frame-backed gate`);
+    assert.equal(agent._captchaGateStates.has(tabId), true, `${label}: unrelated dialog text discarded the frame-backed gate`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
-      verificationAttempts: 0,
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8197,8 +8788,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(confirmation.gate?.status, 'cleared', `${label}: non-challenge confirmation dialog kept the solved CAPTCHA gated`);
-    assert.equal(confirmationAgent._captchaGateStates.has(tabId), false, `${label}: confirmation dialog leaked a cleared CAPTCHA gate`);
+    assert.equal(confirmation.gate?.status, 'verification_pending', `${label}: confirmation copy cleared the frame-backed gate`);
+    assert.equal(confirmationAgent._captchaGateStates.has(tabId), true, `${label}: confirmation copy discarded the frame-backed gate`);
 
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
@@ -8207,6 +8798,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
     });
@@ -8220,12 +8812,12 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       clearedResult,
       {},
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: absent root dialog did not clear gate`);
-    assert.equal(clearedAgent._captchaGateStates.has(tabId), false, `${label}: verified gate state leaked`);
+    assert.equal(cleared.gate?.status, 'verification_pending', `${label}: absent English dialog cleared the frame-backed gate`);
+    assert.equal(clearedAgent._captchaGateStates.has(tabId), true, `${label}: regex miss discarded the frame-backed gate`);
   }
 });
 
-test('CAPTCHA gate survives user continuations and only a complete dialog-capable root read clears it', async () => {
+test('manual CAPTCHA gate survives user continuations until page inspection confirms completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8823 : 8824;
     const agent = new AgentClass({});
@@ -8241,6 +8833,11 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
     };
     agent._captchaGateStates.set(tabId, state);
     agent.conversations.set(tabId, [{ role: 'system', content: 'test' }]);
+    let challengePresent = true;
+    agent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: challengePresent ? { label: 'Security verification' } : null,
+      inspectionComplete: true,
+    });
 
     agent._clearRunLoopState(tabId);
     assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: run continuation discarded the unresolved gate`);
@@ -8269,6 +8866,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
       assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: ${description} cleared the unresolved gate`);
     }
 
+    challengePresent = false;
     const cleared = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8276,9 +8874,10 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
         pageContent: 'main [ref_1]\n heading "Welcome" [ref_2]',
         pageUrl: 'https://example.test/signup',
       },
-      { filter: 'visible' },
+      { filter: 'interactive', ref_id: 'ref_1', page: 2, maxDepth: 3 },
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: complete visible root read did not clear the gate`);
+    assert.equal(cleared.gate?.status, 'cleared', `${label}: completed manual challenge did not clear after direct page inspection`);
+    assert.equal(cleared.gate?.clearedByManualCompletion, true, `${label}: manual completion reason missing`);
     assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: cleared gate remained active`);
 
     agent._captchaGateStates.set(tabId, state);
@@ -8287,7 +8886,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
   }
 });
 
-test('pending and token-cleared CAPTCHA gates hydrate after a background worker restart', async () => {
+test('pending, legacy-cleared, and token-cleared CAPTCHA gates hydrate safely after restart', async () => {
   for (const [label, AgentClass, apiName] of [
     ['chrome', AgentCh, 'chrome'],
     ['firefox', AgentFx, 'browser'],
@@ -8298,10 +8897,45 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
     const clearedTabId = tabId + 10;
     const clearedAgent = new AgentClass({});
     const clearedKey = clearedAgent._convKey(clearedTabId);
-    const captchaGateState = {
+    const legacyClearedTabId = tabId + 20;
+    const legacyClearedAgent = new AgentClass({});
+    const legacyClearedKey = legacyClearedAgent._convKey(legacyClearedTabId);
+    const persistedCaptchaGateState = {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
       verificationAttempts: 1,
+      verificationFrameReadRequired: true,
+      publicGate: {
+        status: 'verification_pending',
+        verificationRetryRequired: true,
+        verificationReadRequired: true,
+        solveFailedToClearChallenge: true,
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    };
+    const persistedLegacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'cleared',
+      publicGate: {
+        status: 'cleared',
+        solveAttempted: true,
+        clearedByReadOnlyVerification: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const legacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'manual_required',
+      publicGate: {
+        status: 'manual_required',
+        solveAttempted: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const captchaGateState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'verification_pending',
       publicGate: {
         status: 'verification_pending',
         challengeDialog: { label: 'Security verification' },
@@ -8334,12 +8968,17 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
             [key]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
-              captchaGateState,
+              captchaGateState: persistedCaptchaGateState,
             },
             [clearedKey]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
               captchaGateState: clearedCaptchaGateState,
+            },
+            [legacyClearedKey]: {
+              messages: [{ role: 'system', content: 'test' }],
+              mode: 'act',
+              captchaGateState: persistedLegacyClearedState,
             },
           }),
         },
@@ -8353,6 +8992,12 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
         clearedAgent._captchaGateStates.get(clearedTabId),
         clearedCaptchaGateState,
         `${label}: worker restart lost the token-clearance recheck marker`,
+      );
+      await legacyClearedAgent._hydrate(legacyClearedTabId);
+      assert.deepEqual(
+        legacyClearedAgent._captchaGateStates.get(legacyClearedTabId),
+        legacyClearedState,
+        `${label}: worker restart trusted legacy read-only clearance`,
       );
     } finally {
       globalThis[apiName] = previousApi;
@@ -11057,6 +11702,30 @@ test('coupon-domain refresh workflow opens a reviewable PR without pushing main'
   assert.match(workflow, /git push --force-with-lease origin "\$BRANCH:\$BRANCH"/);
   assert.match(workflow, /gh pr create[\s\S]*--base main[\s\S]*--head "\$BRANCH"[\s\S]*--draft/);
   assert.doesNotMatch(workflow, /git push origin (?:HEAD:)?main/);
+});
+
+test('coupon-domain generator stops oversized streaming responses before buffering them', async () => {
+  let cancelled = false;
+  let chunksSent = 0;
+  await assert.rejects(
+    collectCouponFollowDomains({
+      concurrency: 1,
+      fetchImpl: async () => new Response(new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(1024 * 1024));
+          chunksSent++;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }), {
+        headers: { 'content-type': 'text/html' },
+      }),
+    }),
+    /exceeded the 4194304-byte response limit/,
+  );
+  assert.ok(chunksSent <= 6, `the generator read beyond the first stream-prefetched chunk (${chunksSent} chunks)`);
+  assert.equal(cancelled, true, 'the generator should cancel the oversized response stream');
 });
 
 test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
@@ -22040,7 +22709,14 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     const configModule = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
 
-    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: General should expose an accessible default-on toggle`);
+    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: Advanced should expose an accessible default-on toggle`);
+    const advancedStart = html.indexOf('<div class="advanced-settings-body">');
+    const advancedEnd = html.indexOf('</details>', advancedStart);
+    const toggleIndex = html.indexOf('id="toggle-auto-group-tabs"');
+    assert.ok(
+      advancedStart >= 0 && toggleIndex > advancedStart && toggleIndex < advancedEnd,
+      `${label}: tab grouping should live inside Settings > General > Advanced`,
+    );
     assert.match(html, /data-i18n="st\.display\.auto_group_tabs\.label"[\s\S]*?data-i18n="st\.display\.auto_group_tabs\.desc"/, `${label}: tab-group setting should be localized`);
     assert.match(settings, /autoGroupTabsToggle\.checked = stored\[AUTO_GROUP_TABS_KEY\] !== false/, `${label}: unset storage should hydrate as enabled`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[AUTO_GROUP_TABS_KEY\\]: autoGroupTabsToggle\\.checked \\}\\)`), `${label}: changes should persist immediately`);
@@ -22056,6 +22732,40 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
       assert.ok(locale['st.display.auto_group_tabs.desc']?.trim(), `${label}/${filename}: missing tab-group description`);
     }
   }
+});
+
+test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  const expected = {
+    'switch-to-ask': 'Alt+Shift+A',
+    'switch-to-act': 'Alt+Shift+X',
+    'switch-to-dev': 'Alt+Shift+D',
+    'focus-input': 'Alt+Shift+I',
+  };
+  for (const [command, shortcut] of Object.entries(expected)) {
+    assert.equal(manifest.commands[command].suggested_key.default, shortcut, `${command} should extend Firefox's existing WebBrain shortcut family`);
+  }
+  const reservedDefaults = new Set(['Ctrl+Shift+A', 'Ctrl+Shift+X', 'Ctrl+Shift+D', 'Ctrl+Period']);
+  for (const command of Object.keys(expected)) {
+    assert.equal(reservedDefaults.has(manifest.commands[command].suggested_key.default), false, `${command} should not claim a Firefox default`);
+  }
+
+  assert.deepEqual(shortcutCommandEnvelope('switch-to-ask', { windowId: 42 }, 1234), {
+    command: 'switch-to-ask',
+    windowId: 42,
+    ts: 1234,
+  });
+  assert.equal(shortcutCommandEnvelope('_execute_sidebar_action', { windowId: 42 }), null, 'native sidebar commands should not be relayed through storage');
+  assert.equal(shortcutCommandEnvelope('unknown', { windowId: 42 }), null, 'unknown commands should fail closed');
+  assert.equal(shortcutCommandEnvelope('focus-input', {}), null, 'commands without a source window should fail closed');
+  assert.equal(shortcutCommandForWindow({ command: 'switch-to-dev', windowId: 42 }, 42), 'switch-to-dev');
+  assert.equal(shortcutCommandForWindow({ command: 'switch-to-dev', windowId: 42 }, 43), '', 'another browser window should ignore the command');
+  assert.equal(shortcutCommandForWindow({ command: 'unknown', windowId: 42 }, 42), '', 'unknown stored commands should fail closed');
+
+  const background = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const sidepanel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
+  assert.match(background, /browser\.commands\.onCommand\.addListener\(async \(command, tab\) => \{[\s\S]*?shortcutCommandEnvelope\(command, tab\)[\s\S]*?browser\.storage\.local\.set\(\{ \[SHORTCUT_COMMAND_STORAGE_KEY\]: envelope \}\)/, 'Firefox background should persist a window-scoped command envelope');
+  assert.match(sidepanel, /browser\.windows\.getCurrent\(\)[\s\S]*?shortcutCommandForWindow\(\s*changes\[SHORTCUT_COMMAND_STORAGE_KEY\](?:\?\.|\.)newValue,\s*windowId,?\s*\)/, 'Firefox sidebars should route commands only to their own browser window');
 });
 
 test('settings Providers tab has a search box beside provider filters', () => {
@@ -67614,8 +68324,16 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
     });
 
+    const unrelatedVisibleResponseField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-background',
+      name: 'g-recaptcha-response',
+    });
     const unrelatedVisibleNodes = [
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' }),
+      captchaEl(
+        'div',
+        { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' },
+        [unrelatedVisibleResponseField],
+      ),
       captchaEl('div', {
         role: 'dialog',
         innerText: 'Security verification\nUse your passkey',
@@ -67632,6 +68350,20 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       });
       assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated visible reCAPTCHA was selected for a passkey dialog`);
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: visible-only candidate did not fail closed`);
+      unrelatedVisibleResponseField.value = 'background-widget-token';
+      const tokenUpdate = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
+      }, { filter: 'interactive' });
+      assert.equal(
+        tokenUpdate.gate?.status,
+        'manual_required',
+        `${build}: unrelated widget token cleared the passkey dialog gate`,
+      );
+      assert.equal(
+        tokenUpdate.gate?.clearedByResponseToken,
+        undefined,
+        `${build}: unrelated widget token was reported as gate clearance`,
+      );
     });
 
     const arkoseNodes = [
@@ -67946,9 +68678,10 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       );
       assert.equal(
         stillActive.gate?.status,
-        'verification_pending',
-        `${build}: token cleared the gate while its active frame remained visible`,
+        'manual_required',
+        `${build}: active challenge after the one solve did not fail closed`,
       );
+      assert.equal(stillActive.gate?.activeChallengeAfterSolve, true, `${build}: active post-solve challenge reason missing`);
       assert.equal(
         stillActive.gate?.clearedByResponseToken,
         undefined,
@@ -67991,12 +68724,35 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
         `${build}: preflight discarded the token-clearance recheck marker`,
       );
 
-      activeFrame.hidden = false;
-      const rearmed = await agent._captchaMutationPreflight(1, 'click_ax');
+      responseField.value = '';
+      const tokenMissing = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(
-        rearmed?.status,
-        'solve_required',
-        `${build}: reappearing challenge frame did not re-arm after token rejection`,
+        tokenMissing?.status,
+        'verification_pending',
+        `${build}: a missing correlated token left stale clearance fail-open`,
+      );
+      assert.equal(
+        tokenMissing?.clearedByResponseToken,
+        undefined,
+        `${build}: missing-token downgrade retained the stale clearance reason`,
+      );
+      assert.equal(
+        agent._captchaGateStates.get(1)?.publicGate?.responseTokenPresent,
+        undefined,
+        `${build}: missing-token downgrade retained the stale token-presence flag`,
+      );
+
+      activeFrame.hidden = false;
+      const rearmed = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'visible' },
+      );
+      assert.equal(
+        rearmed.gate?.status,
+        'manual_required',
+        `${build}: reappearing challenge frame allowed another paid solve after token rejection`,
       );
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: re-armed gate was not persisted`);
     });
@@ -68080,7 +68836,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       agent._currentUrl = async () => 'https://example.test/signup';
       agent._captchaGateStates.set(3, {
         key: 'https://example.test/signup\nsecurity verification',
-        status: 'verification_pending',
+        status: 'manual_required',
         captchaCandidateIdentity: {
           frameId: 0,
           framePathIndexes: [],
@@ -68093,8 +68849,8 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
           alsoResponseFieldIndex: 0,
         },
         publicGate: {
-          status: 'verification_pending',
-          solveAttempted: true,
+          status: 'manual_required',
+          solverDisabled: true,
           challengeDialog: { label: 'Security verification' },
         },
       });
@@ -68107,7 +68863,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       assert.equal(
         compatibilityToken.gate?.clearedByResponseToken,
         true,
-        `${build}: hCaptcha compatibility token did not clear its exact gate`,
+        `${build}: hCaptcha compatibility token did not clear its exact manual gate`,
       );
     });
   }
@@ -68246,7 +69002,6 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
       agent._captchaGateStates.set(1, {
         key: 'https://example.test/signup\nsecurity verification',
         status: 'verification_pending',
-        verificationAttempts: 0,
         challengeFrameId: 7,
         challengeFrameUrl: 'https://challenge.example.test/verify',
         publicGate: {
@@ -68279,7 +69034,7 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         { filter: 'visible' },
       );
       assert.equal(childUninspectable.gate?.status, 'verification_pending', `${build}: inaccessible challenge frame cleared the gate`);
-      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, true, `${build}: inaccessible frame did not fail closed`);
+      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, undefined, `${build}: inaccessible frame recreated legacy read state`);
 
       childInspectionFails = false;
       childChallengeVisible = false;
@@ -68292,8 +69047,8 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         },
         { filter: 'visible' },
       );
-      assert.equal(childCleared.gate?.status, 'cleared', `${build}: cleared child frame kept CAPTCHA gate active`);
-      assert.equal(agent._captchaGateStates.has(1), false, `${build}: cleared child-frame gate remained persisted`);
+      assert.equal(childCleared.gate?.status, 'verification_pending', `${build}: absent child dialog independently cleared an uncorrelated gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive child-frame gate was discarded`);
     } finally {
       globalThis.chrome = previousChrome;
       globalThis.browser = previousBrowser;

@@ -109,5 +109,37 @@
         "optional": ["personallyIdentifyingInfo", "authenticationInfo", "personalCommunications", "websiteContent", "technicalAndInteraction"]
       }
     }
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Open WebBrain panel"
+    },
+    "switch-to-ask": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "Switch to Ask mode"
+    },
+    "switch-to-act": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "Switch to Act mode"
+    },
+    "switch-to-dev": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Switch to Dev mode"
+    },
+    "focus-input": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "Focus the input"
+    }
   }
 }

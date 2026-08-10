@@ -54,8 +54,16 @@ import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
-import { captchaChallengeKey, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
+import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
+import {
+  cloudflareChallengeNavigationTransition,
+  cloudflareChallengePlatformTransition,
+  cloudflareChallengeResponseTransition,
+  cloudflareManagedChallengeGateState,
+  cloudflareManagedChallengeStorageKey,
+  normalizeCloudflareManagedChallengeState,
+} from './cloudflare-managed-challenge.js';
 import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
@@ -221,8 +229,8 @@ function captchaCandidateMatchesGate(candidate, identity) {
     ['alsoResponseFieldIndex', identity.alsoResponseFieldIndex],
   ].filter(([, value]) => Number.isInteger(value));
   // Token-backed clearance requires an exact response-field identity. When
-  // the page exposes no stable id or index, retain the existing read-based
-  // verification path instead of borrowing another widget's token state.
+  // the page exposes no stable id or index, fail closed instead of borrowing
+  // another widget's token state or inferring success from dialog copy.
   return expectedIndexes.length > 0
     && expectedIndexes.some(([field, value]) => candidate[field] === value);
 }
@@ -242,6 +250,55 @@ function captchaPostSolveTokenState(detection, identity) {
     candidate,
     responseTokenPresent: candidate?.responseTokenPresent === true,
     visibleActiveChallenge,
+  };
+}
+
+function withoutLegacyCaptchaVerificationState(gate) {
+  if (!gate || typeof gate !== 'object') return gate;
+  const {
+    verificationAttempts: _verificationAttempts,
+    verificationRetryRequired: _verificationRetryRequired,
+    verificationReadRequired: _verificationReadRequired,
+    verificationFrameReadRequired: _verificationFrameReadRequired,
+    solveFailedToClearChallenge: _solveFailedToClearChallenge,
+    clearedByReadOnlyVerification: _clearedByReadOnlyVerification,
+    ...current
+  } = gate;
+  return current;
+}
+
+function withoutCaptchaTokenClearanceState(gate) {
+  if (!gate || typeof gate !== 'object') return gate;
+  const {
+    responseTokenPresent: _responseTokenPresent,
+    clearedByResponseToken: _clearedByResponseToken,
+    ...current
+  } = gate;
+  return current;
+}
+
+function normalizeCaptchaGateState(gate) {
+  const inferredClearance = gate?.clearedByReadOnlyVerification === true
+    || gate?.publicGate?.clearedByReadOnlyVerification === true;
+  const current = withoutLegacyCaptchaVerificationState(gate);
+  if (!current || typeof current !== 'object') return current;
+  const publicGate = withoutLegacyCaptchaVerificationState(current.publicGate);
+  if (inferredClearance) {
+    const status = current.captchaCandidateIdentity
+      ? 'verification_pending'
+      : 'manual_required';
+    return {
+      ...current,
+      status,
+      publicGate: {
+        ...publicGate,
+        status,
+      },
+    };
+  }
+  return {
+    ...current,
+    publicGate,
   };
 }
 
@@ -306,6 +363,7 @@ export class Agent extends LoopDetector {
     this._runUpdateCallbacks = new Map();
     this.plannerFollowUpSkipTabs = new Set(); // tabIds allowed one short follow-up after an approved try-mode plan
     this.hydratedTabs = new Set(); // tabIds we've already pulled from storage
+    this._hydrationPromises = new Map(); // tabId -> shared in-flight storage hydration
     this.persistTimers = new Map(); // tabId -> debounce handle
     this.abortFlags = new Map(); // tabId -> boolean
     this.currentRunId = new Map(); // tabId -> active trace runId
@@ -391,6 +449,8 @@ export class Agent extends LoopDetector {
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
+    this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
+    this._cloudflareManagedChallengeTransitions = new Map(); // tabId -> serialized transition promise
     // Pre-execution planner (Settings → Plan before Act). Default "try";
     // attempts a read-only planning LLM call and degrades the current turn to
     // Ask/read-only if structured planning itself fails. "strict" fails closed.
@@ -895,11 +955,38 @@ export class Agent extends LoopDetector {
    */
   async _hydrate(tabId) {
     if (this.hydratedTabs.has(tabId)) return;
-    this.hydratedTabs.add(tabId);
-    if (this.conversations.has(tabId)) return;
+    const inFlight = this._hydrationPromises.get(tabId);
+    if (inFlight) return inFlight;
+    const hydrationPromise = this._hydrateFromSession(tabId);
+    this._hydrationPromises.set(tabId, hydrationPromise);
+    try {
+      await hydrationPromise;
+      this.hydratedTabs.add(tabId);
+    } finally {
+      if (this._hydrationPromises.get(tabId) === hydrationPromise) {
+        this._hydrationPromises.delete(tabId);
+      }
+    }
+  }
+
+  async _hydrateFromSession(tabId) {
+    const conversationInMemory = this.conversations.has(tabId);
     try {
       const key = this._convKey(tabId);
-      const stored = await browser.storage.session.get(key);
+      const cloudflareKey = cloudflareManagedChallengeStorageKey(tabId);
+      const [stored, cloudflareStored] = await Promise.all([
+        browser.storage.session.get(key),
+        browser.storage.session.get(cloudflareKey),
+      ]);
+      const cloudflareSignal = normalizeCloudflareManagedChallengeState(
+        cloudflareStored?.[cloudflareKey],
+      );
+      if (cloudflareSignal) {
+        this._cloudflareManagedChallenges.set(tabId, cloudflareSignal);
+        const cloudflareGate = cloudflareManagedChallengeGateState(cloudflareSignal);
+        if (cloudflareGate) this._captchaGateStates.set(tabId, cloudflareGate);
+      }
+      if (conversationInMemory) return;
       const entry = stored?.[key];
       if (entry && Array.isArray(entry.messages) && entry.messages.length > 0) {
         this.conversations.set(tabId, entry.messages);
@@ -959,8 +1046,12 @@ export class Agent extends LoopDetector {
           )
           && captchaGateState.publicGate
           && typeof captchaGateState.publicGate === 'object'
+          && captchaGateState.cloudflareManagedChallenge !== true
+          && captchaGateState.publicGate.cloudflareManagedChallenge !== true
         ) {
-          this._captchaGateStates.set(tabId, captchaGateState);
+          if (!cloudflareSignal) {
+            this._captchaGateStates.set(tabId, normalizeCaptchaGateState(captchaGateState));
+          }
         }
       }
     } catch (e) { /* session storage may be unavailable */ }
@@ -985,6 +1076,7 @@ export class Agent extends LoopDetector {
     const serialized = serializeConversationForSession(messages, {
       maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
     });
+    const captchaGateState = this._captchaGateStates.get(tabId) || null;
     return {
       mode: this.conversationModes.get(tabId) || 'ask',
       messages: serialized.messages,
@@ -997,7 +1089,10 @@ export class Agent extends LoopDetector {
       selectionGroundingScope: this.selectionGroundingScopes.get(tabId) || null,
       clarificationAuthorizationGuard: persistedClarificationGuard,
       richTextToolbarAudit: this._persistedRichTextToolbarAudit(tabId),
-      captchaGateState: this._captchaGateStates.get(tabId) || null,
+      captchaGateState: captchaGateState?.cloudflareManagedChallenge === true
+        || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
+        ? null
+        : captchaGateState,
     };
   }
 
@@ -3459,11 +3554,120 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return BROWSER_MUTATION_TOOLS.has(toolName);
   }
 
+  async _persistCloudflareManagedChallenge(tabId, state) {
+    const key = cloudflareManagedChallengeStorageKey(tabId);
+    try {
+      if (state) {
+        await browser.storage.session.set({ [key]: state });
+      } else {
+        await browser.storage.session.remove(key);
+      }
+    } catch {}
+  }
+
+  async _applyCloudflareManagedChallengeTransition(tabId, transition) {
+    if (!Number.isInteger(tabId) || tabId < 0 || !transition?.changed) return null;
+    const state = normalizeCloudflareManagedChallengeState(transition.state);
+    if (state) {
+      this._cloudflareManagedChallenges.set(tabId, state);
+      const gate = cloudflareManagedChallengeGateState(state);
+      if (gate) this._captchaGateStates.set(tabId, gate);
+      await this._persistCloudflareManagedChallenge(tabId, state);
+      return { kind: transition.kind, gate: gate?.publicGate || null };
+    }
+    this._cloudflareManagedChallenges.delete(tabId);
+    if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+      this._captchaGateStates.delete(tabId);
+    }
+    await this._persistCloudflareManagedChallenge(tabId, null);
+    return { kind: transition.kind, gate: null };
+  }
+
+  _queueCloudflareManagedChallengeTransition(tabId, createTransition) {
+    if (!Number.isInteger(tabId) || tabId < 0) return Promise.resolve(null);
+    const previous = this._cloudflareManagedChallengeTransitions.get(tabId)
+      || Promise.resolve();
+    const transitionPromise = previous
+      .catch(() => null)
+      .then(async () => {
+        await this._hydrate(tabId);
+        return this._applyCloudflareManagedChallengeTransition(
+          tabId,
+          createTransition(this._cloudflareManagedChallenges.get(tabId)),
+        );
+      });
+    this._cloudflareManagedChallengeTransitions.set(tabId, transitionPromise);
+    return transitionPromise.finally(() => {
+      if (this._cloudflareManagedChallengeTransitions.get(tabId) === transitionPromise) {
+        this._cloudflareManagedChallengeTransitions.delete(tabId);
+      }
+    });
+  }
+
+  _queueCloudflareManagedChallengeCleanup(tabId) {
+    if (!Number.isInteger(tabId) || tabId < 0) return Promise.resolve(null);
+    this._cloudflareManagedChallenges.delete(tabId);
+    if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+      this._captchaGateStates.delete(tabId);
+    }
+    const previous = this._cloudflareManagedChallengeTransitions.get(tabId);
+    const runCleanup = async () => {
+      // A response transition may have repopulated in-memory state while its
+      // storage write was finishing. Delete again after the queue drains.
+      this._cloudflareManagedChallenges.delete(tabId);
+      if (this._captchaGateStates.get(tabId)?.cloudflareManagedChallenge === true) {
+        this._captchaGateStates.delete(tabId);
+      }
+      await this._persistCloudflareManagedChallenge(tabId, null);
+      return null;
+    };
+    const cleanupPromise = previous
+      ? previous.catch(() => null).then(runCleanup)
+      : runCleanup();
+    this._cloudflareManagedChallengeTransitions.set(tabId, cleanupPromise);
+    return cleanupPromise.finally(() => {
+      if (this._cloudflareManagedChallengeTransitions.get(tabId) === cleanupPromise) {
+        this._cloudflareManagedChallengeTransitions.delete(tabId);
+      }
+    });
+  }
+
+  observeCloudflareManagedChallengeResponse(details) {
+    const tabId = details?.tabId;
+    return this._queueCloudflareManagedChallengeTransition(
+      tabId,
+      current => cloudflareChallengeResponseTransition(current, details),
+    );
+  }
+
+  observeCloudflareChallengePlatformRequest(details) {
+    const tabId = details?.tabId;
+    return this._queueCloudflareManagedChallengeTransition(
+      tabId,
+      current => cloudflareChallengePlatformTransition(current, details),
+    );
+  }
+
+  observeCloudflareManagedChallengeNavigation(details) {
+    const tabId = details?.tabId;
+    return this._queueCloudflareManagedChallengeTransition(
+      tabId,
+      current => cloudflareChallengeNavigationTransition(current, details),
+    );
+  }
+
+  _activeCloudflareManagedChallengeGate(tabId) {
+    const signal = this._cloudflareManagedChallenges.get(tabId);
+    const gate = cloudflareManagedChallengeGateState(signal);
+    if (!gate) return null;
+    this._captchaGateStates.set(tabId, gate);
+    return gate.publicGate;
+  }
+
   _shouldRetryCaptchaManualGate(gate) {
     const publicGate = gate?.publicGate;
     const postSolveFailure = publicGate?.solveAttempted === true
-      || publicGate?.solveFailed === true
-      || publicGate?.solveFailedToClearChallenge === true;
+      || publicGate?.solveFailed === true;
     return gate?.status === 'manual_required'
       && this.captchaSolverEnabled
       && !postSolveFailure
@@ -3491,6 +3695,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (toolName === 'solve_captcha' && gate.status === 'solve_required') return null;
     if (gate.status === 'manual_required') {
+      if (gate.publicGate?.cloudflareManagedChallenge === true) {
+        return {
+          success: false,
+          denied: true,
+          noDispatch: true,
+          captchaGate: true,
+          manualCompletionRequired: true,
+          cloudflareManagedChallenge: true,
+          captchaDiagnostics: gate.publicGate?.diagnostics || null,
+          error: 'A full-page Cloudflare managed challenge is active. Stop automation and ask the user to complete it manually. Do not submit or call solve_captcha; navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
+        };
+      }
       return {
         success: false,
         denied: true,
@@ -3498,7 +3714,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         captchaGate: true,
         manualCompletionRequired: true,
         captchaDiagnostics: gate.publicGate?.diagnostics || null,
-        error: 'A verification challenge requires manual completion. Do not dismiss or close it, and do not click Continue/Submit again. After the user completes it, first read a complete root accessibility tree with filter "visible" to confirm the dialog is gone.',
+        error: 'A verification challenge requires manual completion. Do not dismiss or close it, and do not click Continue/Submit again. After the user completes it, read the page again so the runtime can verify the exact widget state or directly confirm that an unrecognized challenge surface is gone.',
       };
     }
     if (gate.status === 'verification_pending') {
@@ -3509,7 +3725,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         captchaGate: true,
         captchaVerificationRequired: true,
         captchaDiagnostics: gate.publicGate?.diagnostics || null,
-        error: 'The one allowed CAPTCHA solve returned, but the verification dialog has not been confirmed cleared. Wait briefly, then read a complete root accessibility tree with filter "visible"; do not submit, dismiss, or call solve_captcha again.',
+        error: 'The one allowed CAPTCHA solve returned, but the exact widget token and active challenge-frame state have not confirmed clearance. Wait briefly, then read the page again; do not submit, dismiss, or call solve_captcha again.',
       };
     }
     return {
@@ -3596,7 +3812,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const serializedOptions = JSON.stringify({
       includeFrameContext: true,
-      allowGenericFailure: options?.allowGenericFailure === true,
+      ...captchaChallengeMatcherOptions(),
     });
     const code = `(${detectChallengeDialogInPage.toString()})(${serializedOptions})`;
     const frameEntries = await Promise.all(navigationFrames.map(async frame => {
@@ -3622,7 +3838,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!label) return [];
       const normalized = detectChallengeDialog(
         `dialog ${JSON.stringify(label.slice(0, 200))}`,
-        { allowGenericFailure: options?.allowGenericFailure === true },
       );
       if (!normalized?.normalizedLabel) return [];
       return [{
@@ -3702,19 +3917,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: null, loopCheck: { kind: 'none' } };
     }
 
+    const cloudflareManagedGate = this._activeCloudflareManagedChallengeGate(tabId);
+    if (cloudflareManagedGate) {
+      toolResult.captchaGate = cloudflareManagedGate;
+      return { gate: cloudflareManagedGate, loopCheck: { kind: 'none' } };
+    }
+
     const activeGate = this._captchaGateStates.get(tabId);
     const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
       ? toolResult.captchaChallengeFrameId
       : null;
     let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
-    let challenge = detectChallengeDialog(toolResult.pageContent, {
-      allowGenericFailure: !!activeGate,
-    });
+    let challenge = detectChallengeDialog(toolResult.pageContent);
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
         `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
-        { allowGenericFailure: !!activeGate },
       );
     }
     if (
@@ -3725,12 +3943,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recheck = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: observedChallengeFrameId,
-        allowGenericFailure: !!activeGate,
       });
       if (recheck.challenge?.label) {
         challenge = detectChallengeDialog(
           `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
-          { allowGenericFailure: !!activeGate },
         );
         observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
           ? recheck.challenge.frameId
@@ -3826,39 +4042,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const frameInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
         includeStatus: true,
         expectedFrameId: activeGate.challengeFrameId,
-        allowGenericFailure: true,
       });
       if (frameInspection.challenge?.label) {
         challenge = detectChallengeDialog(
           `dialog ${JSON.stringify(String(frameInspection.challenge.label).slice(0, 200))}`
         );
       } else if (!frameInspection.inspectionComplete) {
-        const guardedGate = {
-          ...activeGate.publicGate,
-          verificationFrameReadRequired: true,
-        };
-        this._captchaGateStates.set(tabId, {
-          ...activeGate,
-          publicGate: guardedGate,
-        });
-        toolResult.captchaGate = guardedGate;
-        return { gate: guardedGate, loopCheck: { kind: 'none' } };
+        const guardedState = normalizeCaptchaGateState(activeGate);
+        this._captchaGateStates.set(tabId, guardedState);
+        toolResult.captchaGate = guardedState.publicGate;
+        return { gate: guardedState.publicGate, loopCheck: { kind: 'none' } };
       }
     }
+    const correlatedCaptchaCandidateIdentity =
+      activeGate?.publicGate?.candidateNotCorrelated === true
+        ? null
+        : activeGate?.captchaCandidateIdentity;
     let postSolveTokenState = null;
     if (
-      ['verification_pending', 'cleared'].includes(activeGate?.status)
-      && activeGate.captchaCandidateIdentity
+      ['verification_pending', 'manual_required', 'cleared'].includes(activeGate?.status)
+      && correlatedCaptchaCandidateIdentity
     ) {
       await inspectCaptchaFrames();
       if (!detectionFailed && detection && typeof detection === 'object') {
         postSolveTokenState = captchaPostSolveTokenState(
           detection,
-          activeGate.captchaCandidateIdentity,
+          correlatedCaptchaCandidateIdentity,
         );
       }
     }
-    const loopCheck = challenge || authoritativeRootRead
+    const directCaptchaEvidence = !!correlatedCaptchaCandidateIdentity
+      || activeGate?.publicGate?.languageNeutralFrameTrigger === true;
+    const loopCheck = challenge || (authoritativeRootRead && !directCaptchaEvidence)
       ? this._checkVerificationChallengeLoop(tabId, {
           pageUrl,
           dialogLabel: challenge?.normalizedLabel || '',
@@ -3870,13 +4085,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ) {
       const alreadyCleared = activeGate.status === 'cleared';
       const clearedGate = {
-        ...activeGate.publicGate,
+        ...withoutLegacyCaptchaVerificationState(activeGate.publicGate),
         status: 'cleared',
         responseTokenPresent: true,
         clearedByResponseToken: true,
       };
       this._captchaGateStates.set(tabId, {
-        ...activeGate,
+        ...withoutLegacyCaptchaVerificationState(activeGate),
         status: 'cleared',
         publicGate: clearedGate,
       });
@@ -3884,23 +4099,80 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       toolResult.captchaGate = clearedGate;
       return { gate: clearedGate, loopCheck };
     }
+    if (
+      postSolveTokenState?.visibleActiveChallenge === true
+      && ['verification_pending', 'cleared'].includes(activeGate?.status)
+    ) {
+      const manualGate = {
+        ...withoutCaptchaTokenClearanceState(
+          withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+        ),
+        status: 'manual_required',
+        responseTokenPresent: postSolveTokenState.responseTokenPresent,
+        activeChallengeAfterSolve: true,
+        ...(challenge?.label ? { challengeDialog: { label: challenge.label } } : {}),
+      };
+      this._captchaGateStates.set(tabId, {
+        ...withoutLegacyCaptchaVerificationState(activeGate),
+        status: 'manual_required',
+        publicGate: manualGate,
+      });
+      toolResult.captchaGate = manualGate;
+      return { gate: manualGate, loopCheck };
+    }
+    if (
+      activeGate?.status === 'cleared'
+      && activeGate.captchaCandidateIdentity
+      && postSolveTokenState?.responseTokenPresent !== true
+    ) {
+      const pendingGate = {
+        ...withoutCaptchaTokenClearanceState(
+          withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+        ),
+        status: 'verification_pending',
+        ...(challenge?.label ? { challengeDialog: { label: challenge.label } } : {}),
+      };
+      this._captchaGateStates.set(tabId, {
+        ...withoutLegacyCaptchaVerificationState(activeGate),
+        status: 'verification_pending',
+        publicGate: pendingGate,
+      });
+      toolResult.captchaGate = pendingGate;
+      return { gate: pendingGate, loopCheck };
+    }
     if (!challenge) {
-      if (activeGate && authoritativeRootRead) {
-        const clearedGate = {
-          ...activeGate.publicGate,
-          status: 'cleared',
-          clearedByReadOnlyVerification: true,
-        };
-        this._captchaGateStates.delete(tabId);
-        toolResult.captchaGate = clearedGate;
-        return { gate: clearedGate, loopCheck };
+      if (activeGate?.status === 'manual_required' && !directCaptchaEvidence) {
+        const manualInspection = await this._detectChallengeDialogBeforeMutation(tabId, {
+          includeStatus: true,
+          ...(Number.isInteger(activeGate.challengeFrameId)
+            ? { expectedFrameId: activeGate.challengeFrameId }
+            : {}),
+        });
+        if (manualInspection.inspectionComplete && !manualInspection.challenge) {
+          const clearedGate = {
+            ...withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+            status: 'cleared',
+            clearedByManualCompletion: true,
+          };
+          this._captchaGateStates.delete(tabId);
+          toolResult.captchaGate = clearedGate;
+          return { gate: clearedGate, loopCheck };
+        }
+      }
+      if (activeGate && authoritativeRootRead && activeGate.status !== 'cleared') {
+        const guardedState = normalizeCaptchaGateState(activeGate);
+        this._captchaGateStates.set(tabId, guardedState);
+        toolResult.captchaGate = guardedState.publicGate;
+        return { gate: guardedState.publicGate, loopCheck };
       }
       if (activeGate?.status === 'cleared') {
         return { gate: null, loopCheck };
       }
       if (activeGate) {
-        toolResult.captchaGate = activeGate.publicGate;
-        return { gate: activeGate.publicGate, loopCheck };
+        const guardedState = normalizeCaptchaGateState(activeGate);
+        this._captchaGateStates.set(tabId, guardedState);
+        toolResult.captchaGate = guardedState.publicGate;
+        return { gate: guardedState.publicGate, loopCheck };
       }
       return { gate: null, loopCheck };
     }
@@ -3908,16 +4180,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const key = captchaChallengeKey(pageUrl, challenge.normalizedLabel);
     const existing = activeGate;
     const retryManualDetection = existing?.status === 'manual_required'
-      && authoritativeRootRead
       && this._shouldRetryCaptchaManualGate(existing);
     if (existing?.status === 'manual_required' && !retryManualDetection) {
       const manualGate = {
-        ...existing.publicGate,
+        ...withoutLegacyCaptchaVerificationState(existing.publicGate),
         status: 'manual_required',
         challengeDialog: { label: challenge.label },
       };
       this._captchaGateStates.set(tabId, {
-        ...existing,
+        ...withoutLegacyCaptchaVerificationState(existing),
         status: 'manual_required',
         publicGate: manualGate,
       });
@@ -3925,60 +4196,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate: manualGate, loopCheck };
     }
     if (existing?.status === 'verification_pending') {
-      if (!authoritativeRootRead) {
-        const pendingGate = {
-          ...existing.publicGate,
-          status: 'verification_pending',
-          challengeDialog: { label: challenge.label },
-          verificationReadRequired: true,
-        };
-        this._captchaGateStates.set(tabId, {
-          ...existing,
-          publicGate: pendingGate,
-        });
-        toolResult.captchaGate = pendingGate;
-        return { gate: pendingGate, loopCheck };
-      }
-
-      const verificationAttempts = Math.max(
-        0,
-        Number(existing.verificationAttempts) || 0
-      ) + 1;
-      if (verificationAttempts < 2) {
-        const pendingGate = {
-          ...existing.publicGate,
-          status: 'verification_pending',
-          challengeDialog: { label: challenge.label },
-          verificationAttempts,
-          verificationRetryRequired: true,
-        };
-        this._captchaGateStates.set(tabId, {
-          ...existing,
-          status: 'verification_pending',
-          publicGate: pendingGate,
-          verificationAttempts,
-        });
-        toolResult.captchaGate = pendingGate;
-        return { gate: pendingGate, loopCheck };
-      }
-
-      const manualGate = {
-        ...existing.publicGate,
-        status: 'manual_required',
+      const pendingGate = {
+        ...withoutLegacyCaptchaVerificationState(existing.publicGate),
+        status: 'verification_pending',
         challengeDialog: { label: challenge.label },
-        solveFailedToClearChallenge: true,
-        verificationAttempts,
       };
       this._captchaGateStates.set(tabId, {
-        ...existing,
-        status: 'manual_required',
-        publicGate: manualGate,
-        verificationAttempts,
+        ...withoutLegacyCaptchaVerificationState(existing),
+        status: 'verification_pending',
+        publicGate: pendingGate,
       });
-      toolResult.captchaGate = manualGate;
-      return { gate: manualGate, loopCheck };
+      toolResult.captchaGate = pendingGate;
+      return { gate: pendingGate, loopCheck };
     }
-    if (existing?.key === key && existing.status !== 'cleared' && !retryManualDetection) {
+    if (existing?.status === 'cleared') {
+      return { gate: null, loopCheck };
+    }
+    if (existing?.key === key && !retryManualDetection) {
       toolResult.captchaGate = existing.publicGate;
       return { gate: existing.publicGate, loopCheck };
     }
@@ -4024,7 +4258,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
       ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
     };
-    const captchaCandidateIdentity = captchaGateCandidateIdentity(detection?.selected);
+    const captchaCandidateIdentity = selectedCorrelated
+      ? captchaGateCandidateIdentity(detection?.selected)
+      : null;
     this._captchaGateStates.set(tabId, {
       key,
       status: publicGate.status,
@@ -4823,17 +5059,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (fnName === 'solve_captcha' && activeCaptchaGate && toolResult && typeof toolResult === 'object') {
         if (toolResult.success === true && toolResult.injected === true) {
           const verificationGate = {
-            ...activeCaptchaGate.publicGate,
+            ...withoutLegacyCaptchaVerificationState(activeCaptchaGate.publicGate),
             status: 'verification_pending',
             solveAttempted: true,
-            verificationAttempts: 0,
           };
           captchaSolveOutcome = verificationGate;
           this._captchaGateStates.set(tabId, {
-            ...activeCaptchaGate,
+            ...withoutLegacyCaptchaVerificationState(activeCaptchaGate),
             status: 'verification_pending',
             publicGate: verificationGate,
-            verificationAttempts: 0,
           });
         } else {
           const manualGate = {
@@ -5075,22 +5309,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
         onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
       } else if (captchaGateDecision?.status === 'manual_required') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable supported widget was detected. Stop automation and ask the user to complete it manually. Do not dismiss, close, or resubmit the challenge.]';
+        resultContent += captchaGateDecision.cloudflareManagedChallenge === true
+          ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Stop automation and ask the user to complete it manually. Do not submit or call solve_captcha; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+          : captchaGateDecision.activeChallengeAfterSolve === true
+          ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
+          : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable supported widget was detected. Stop automation and ask the user to complete it manually. Do not dismiss, close, or resubmit the challenge.]';
         onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
       } else if (captchaGateDecision?.status === 'cleared') {
         if (captchaGateDecision.clearedByResponseToken === true) {
           resultContent += '\n[TRUSTED CAPTCHA GATE: The gated widget now exposes a response token and no active challenge frame remains. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn; the mutation preflight will re-arm the gate if the site rejects the token and shows the challenge again.]';
           onUpdate('warning', { message: 'Response-token verification confirmed the CAPTCHA widget cleared.' });
         } else {
-          resultContent += '\n[TRUSTED CAPTCHA GATE: A read-only root check confirmed that the verification dialog is gone. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn.]';
-          onUpdate('warning', { message: 'Read-only verification confirmed the CAPTCHA dialog cleared.' });
+          resultContent += '\n[TRUSTED CAPTCHA GATE: Manual completion was confirmed for an unrecognized challenge with no correlated widget state. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn.]';
+          onUpdate('warning', { message: 'Manual completion confirmed the unrecognized challenge cleared.' });
         }
       } else if (captchaGateDecision?.status === 'verification_pending') {
-        resultContent += captchaGateDecision.verificationRetryRequired
-          ? '\n[TRUSTED CAPTCHA GATE: The verification dialog was still present on the first complete post-solve check. Wait briefly, then make one final complete root accessibility-tree read with filter "visible". Do not submit, dismiss, or call solve_captcha again.]'
-          : '\n[TRUSTED CAPTCHA GATE: Verification is still pending. Read-only subtree, paginated, truncated, auto-degraded, or interactive-only tree reads cannot clear this gate. Wait briefly, then read a complete root accessibility tree with filter "visible".]';
+        resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
       } else if (captchaSolveOutcome?.status === 'verification_pending') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but the challenge is not yet verified cleared. Wait briefly, then read a complete root accessibility tree with filter "visible". Until that read confirms the dialog is absent, do not submit, dismiss, or call solve_captcha again.]';
+        resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
       } else if (captchaSolveOutcome?.status === 'manual_required') {
         resultContent += '\n[TRUSTED CAPTCHA GATE: The one allowed automatic solve did not clear the verification challenge. Stop automation and ask the user to complete it manually. Do not retry solve_captcha, dismiss, close, or resubmit the challenge.]';
         onUpdate('warning', { message: 'Automatic CAPTCHA solve did not clear the challenge; manual completion is required.' });
@@ -5155,7 +5391,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           () => ({ success: false, skipped: true, error: 'skipped: manual CAPTCHA completion is required' }),
         );
         const captchaRunId = this.currentRunId.get(tabId);
-        const value = 'A verification challenge is active, but WebBrain could not safely solve a supported widget. Please complete the verification manually, then start or continue the task.';
+        const value = 'A verification challenge is active, and WebBrain cannot continue safely with automatic solving. Please complete the verification manually, then start or continue the task.';
         if (captchaRunId) trace.recordError(captchaRunId, step, 'captcha_gate', value);
         this._persist(tabId);
         return { action: 'return', value, status: 'captcha_manual_required' };
@@ -10435,6 +10671,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.recentNavUrls.delete(tabId);
     this.completionInvariants.delete(tabId);
     this._captchaGateStates.delete(tabId);
+    if (preserveRunGuard) {
+      this._activeCloudflareManagedChallengeGate(tabId);
+    } else {
+      this._queueCloudflareManagedChallengeCleanup(tabId).catch(() => {});
+    }
     this._userAttachmentHandles.delete(tabId);
     this._runUpdateCallbacks.delete(tabId);
     if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);

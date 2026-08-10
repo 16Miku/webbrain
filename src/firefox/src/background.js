@@ -62,6 +62,10 @@ import {
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandEnvelope,
+} from './shortcut-command.js';
+import {
   CONFIG_STORAGE_KEYS,
   createConfigExport,
   mergeConfigPatchSettings,
@@ -1254,6 +1258,7 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 
 browser.webNavigation?.onCommitted?.addListener?.((details) => {
   if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordTeacherNavigation(details.tabId, details.url, {
     force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
   });
@@ -1261,12 +1266,35 @@ browser.webNavigation?.onCommitted?.addListener?.((details) => {
 });
 browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
   if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordTeacherNavigation(details.tabId, details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
-  if (details.frameId === 0) invalidateContextMenuForTab(details.tabId);
+  if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  invalidateContextMenuForTab(details.tabId);
 });
+
+// Cloudflare Challenge Pages replace the requested top-level document and
+// expose a response-only signal. Observe only main-frame response headers;
+// challenge-platform requests alone are not sufficient because ordinary bot
+// detection and embedded widgets may use the same managed endpoint.
+const observeCloudflareManagedChallengeResponse = details => {
+  agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
+};
+const observeCloudflareChallengePlatformRequest = details => {
+  agent.observeCloudflareChallengePlatformRequest(details).catch(() => {});
+};
+browser.webRequest?.onHeadersReceived?.addListener?.(
+  observeCloudflareManagedChallengeResponse,
+  { urls: ['<all_urls>'], types: ['main_frame'] },
+  ['responseHeaders'],
+);
+browser.webRequest?.onBeforeRequest?.addListener?.(
+  observeCloudflareChallengePlatformRequest,
+  { urls: ['*://*/cdn-cgi/challenge-platform/*'] },
+);
 
 // Background API call observer (issue #189). Watches XHR/fetch requests the
 // page itself fires — e.g. clicking "Next Page" — so the agent can later spot
@@ -2892,3 +2920,20 @@ async function handleMessage(msg, sender) {
       throw new Error(`Unknown action: ${msg.action}`);
   }
 }
+
+// --- Keyboard shortcuts (browser.commands) ---
+// Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
+// to work. Custom commands fire here in the background script; we dispatch them via
+// storage.onChanged so the side panel (and any other extension page) can react
+// reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
+browser.commands.onCommand.addListener(async (command, tab) => {
+  // _execute_sidebar_action is handled natively by Firefox — no need to forward
+  if (command === '_execute_sidebar_action') return;
+  const envelope = shortcutCommandEnvelope(command, tab);
+  if (!envelope) return;
+  try {
+    await browser.storage.local.set({ [SHORTCUT_COMMAND_STORAGE_KEY]: envelope });
+  } catch (err) {
+    console.error('[WebBrain] failed to dispatch command:', command, err);
+  }
+});
