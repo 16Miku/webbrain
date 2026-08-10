@@ -7872,11 +7872,13 @@ browser.runtime.onMessage.addListener((msg) => {
 
 // --- Keyboard shortcut commands from background script ---
 // Firefox browser.commands custom shortcuts fire in the background script
-// (browser.commands.onCommand). The background forwards them as runtime messages
-// so the side panel can perform the actual mode switch / input focus.
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg?.type !== 'command') return;
-  switch (msg.command) {
+// (browser.commands.onCommand). The background dispatches them via
+// storage.local so the side panel can receive them reliably even when
+// runtime.sendMessage would miss the panel.
+browser.storage.onChanged.addListener((changes) => {
+  if (!changes._wb_cmd?.newValue) return;
+  const { command } = changes._wb_cmd.newValue;
+  switch (command) {
     case 'switch-to-ask':
       if (!isProcessing) setMode('ask');
       break;

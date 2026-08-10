@@ -2893,13 +2893,15 @@ async function handleMessage(msg, sender) {
 
 // --- Keyboard shortcuts (browser.commands) ---
 // Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
-// to work. Custom commands fire here in the background script; we forward them to
-// the side panel where the actual mode switching / input focus logic lives.
-browser.commands.onCommand.addListener((command) => {
+// to work. Custom commands fire here in the background script; we dispatch them via
+// storage.onChanged so the side panel (and any other extension page) can react
+// reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
+browser.commands.onCommand.addListener(async (command) => {
   // _execute_sidebar_action is handled natively by Firefox — no need to forward
   if (command === '_execute_sidebar_action') return;
-
-  browser.runtime.sendMessage({ type: 'command', command }).catch(() => {
-    // Side panel may not be open — this is expected and harmless
-  });
+  try {
+    await browser.storage.local.set({ _wb_cmd: { command, ts: Date.now() } });
+  } catch (err) {
+    console.error('[WebBrain] failed to dispatch command:', command, err);
+  }
 });
