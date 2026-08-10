@@ -1845,17 +1845,20 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 
 chrome.webNavigation?.onHistoryStateUpdated?.addListener((details) => {
   if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'history', details.url);
   recordTeacherNavigation(details.tabId, details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 chrome.webNavigation?.onReferenceFragmentUpdated?.addListener((details) => {
   if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'fragment', details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 chrome.webNavigation?.onCommitted?.addListener((details) => {
   if (details.frameId !== 0) return;
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'committed', details.url);
   recordTeacherNavigation(details.tabId, details.url, {
     force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
@@ -1866,6 +1869,26 @@ chrome.webNavigation?.onCommitted?.addListener((details) => {
 chrome.webNavigation?.onCompleted?.addListener((details) => {
   if (details.frameId === 0) recordNav(details.tabId, 'completed', details.url);
 });
+
+// Cloudflare Challenge Pages replace the requested top-level document and
+// expose a response-only signal. Observe only main-frame response headers;
+// challenge-platform requests alone are not sufficient because ordinary bot
+// detection and embedded widgets may use the same managed endpoint.
+const observeCloudflareManagedChallengeResponse = details => {
+  agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
+};
+const observeCloudflareChallengePlatformRequest = details => {
+  agent.observeCloudflareChallengePlatformRequest(details).catch(() => {});
+};
+chrome.webRequest?.onHeadersReceived?.addListener?.(
+  observeCloudflareManagedChallengeResponse,
+  { urls: ['<all_urls>'], types: ['main_frame'] },
+  ['responseHeaders'],
+);
+chrome.webRequest?.onBeforeRequest?.addListener?.(
+  observeCloudflareChallengePlatformRequest,
+  { urls: ['*://*/cdn-cgi/challenge-platform/*'] },
+);
 
 chrome.tabs.onRemoved.addListener((tabId) => lastNavByTab.delete(tabId));
 

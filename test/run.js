@@ -539,6 +539,12 @@ const CaptchaGateCh = await import(
 const CaptchaGateFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/captcha-gate.js').replace(/\\/g, '/')
 );
+const CloudflareChallengeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
+);
+const CloudflareChallengeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
+);
 function detectCaptchaChallengeInPage(gate, options = null) {
   return gate.detectChallengeDialogInPage({
     ...gate.captchaChallengeMatcherOptions(),
@@ -7681,6 +7687,489 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
       gate.detectChallengeDialog('dialog "CAPTCHA verification failed" [ref_7]')?.label,
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
+    );
+  }
+});
+
+test('Cloudflare managed-challenge signals arm only from top-level response evidence', () => {
+  for (const [build, detector] of [
+    ['chrome', CloudflareChallengeCh],
+    ['firefox', CloudflareChallengeFx],
+  ]) {
+    const challengedResponse = {
+      tabId: 71,
+      type: 'main_frame',
+      url: 'https://protected.example/private?session=must-not-persist#fragment',
+      responseHeaders: [
+        { name: 'Content-Type', value: 'text/html' },
+        { name: 'CF-Mitigated', value: 'challenge' },
+      ],
+    };
+    const armed = detector.cloudflareChallengeResponseTransition(
+      null,
+      challengedResponse,
+      1000,
+    );
+    assert.equal(armed.kind, 'armed_by_response', `${build}: response header did not arm`);
+    assert.equal(armed.state?.active, true, `${build}: armed state missing`);
+    assert.equal(
+      armed.state?.documentKey,
+      'https://protected.example/private',
+      `${build}: challenged document identity retained query/fragment data`,
+    );
+
+    const xhr = detector.cloudflareChallengeResponseTransition(null, {
+      ...challengedResponse,
+      type: 'xmlhttprequest',
+    });
+    assert.equal(xhr.state, null, `${build}: challenged XHR armed a full-page gate`);
+
+    const platformAlone = detector.cloudflareChallengePlatformTransition(null, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1',
+    });
+    assert.equal(platformAlone.state, null, `${build}: challenge-platform activity armed without a response header`);
+    const turnstileAsset = detector.cloudflareChallengePlatformTransition(armed.state, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://challenges.cloudflare.com/turnstile/v0/api.js',
+    });
+    assert.equal(turnstileAsset.changed, false, `${build}: ordinary Turnstile asset changed interstitial state`);
+
+    const retained = detector.cloudflareChallengePlatformTransition(armed.state, {
+      tabId: 71,
+      type: 'script',
+      url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1',
+    }, 1100);
+    assert.equal(retained.kind, 'retained_by_platform_activity', `${build}: active challenge activity was not retained`);
+    assert.equal(retained.state?.lastChallengePlatformActivityAt, 1100, `${build}: activity timestamp missing`);
+    assert.equal(
+      detector.cloudflareChallengeNavigationTransition(retained.state, {
+        tabId: 71,
+        frameId: 0,
+        url: 'https://protected.example/private?after=commit',
+      }).state?.active,
+      true,
+      `${build}: same-document commit cleared the interstitial`,
+    );
+    assert.equal(
+      detector.cloudflareChallengeNavigationTransition(retained.state, {
+        tabId: 71,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      }).state,
+      null,
+      `${build}: navigation away retained the interstitial`,
+    );
+    assert.equal(
+      detector.cloudflareChallengeResponseTransition(retained.state, {
+        ...challengedResponse,
+        responseHeaders: [{ name: 'Content-Type', value: 'text/html' }],
+      }).state,
+      null,
+      `${build}: subsequent non-challenge response did not clear`,
+    );
+
+    const gate = detector.cloudflareManagedChallengeGateState(retained.state);
+    assert.equal(gate?.status, 'manual_required', `${build}: interstitial was routed to automatic solve`);
+    assert.equal(gate?.publicGate?.cloudflareManagedChallenge, true, `${build}: public gate reason missing`);
+    assert.equal(gate?.publicGate?.diagnostics?.challengePlatformActivity, true, `${build}: retained activity diagnostic missing`);
+  }
+  assert.deepEqual(
+    CloudflareChallengeCh.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    }),
+    CloudflareChallengeFx.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    }),
+    'Chrome and Firefox produced different managed-challenge gates',
+  );
+});
+
+test('Cloudflare managed-challenge gate persists, blocks mutations, and clears from network state', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8871 : 8872;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    const removed = [];
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({ ...stored }),
+          set: async values => Object.assign(stored, values),
+          remove: async key => {
+            removed.push(key);
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      const platformOnly = await agent.observeCloudflareChallengePlatformRequest({
+        tabId,
+        type: 'script',
+        url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/script.js',
+      });
+      assert.equal(platformOnly, null, `${build}: platform request alone armed Agent gate`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: platform-only state persisted a gate`);
+
+      const armed = await agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private?secret=redacted',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      assert.equal(armed?.gate?.status, 'manual_required', `${build}: response-backed gate did not arm`);
+      assert.equal(
+        stored[storageKey]?.documentKey,
+        'https://protected.example/private',
+        `${build}: persisted signal leaked the challenged query`,
+      );
+      const blocked = agent._captchaGateBlockResult(tabId, 'click_ax');
+      assert.equal(blocked?.cloudflareManagedChallenge, true, `${build}: mutation block lost Cloudflare reason`);
+      assert.equal(blocked?.noDispatch, true, `${build}: interstitial mutation was dispatched`);
+      assert.equal(
+        agent._captchaGateBlockResult(tabId, 'solve_captcha')?.manualCompletionRequired,
+        true,
+        `${build}: full-page interstitial allowed automatic solve`,
+      );
+      assert.equal(agent._captchaGateBlockResult(tabId, 'navigate'), null, `${build}: interstitial blocked abandonment navigation`);
+
+      const observation = await agent._observeCaptchaChallenge(
+        tabId,
+        'get_accessibility_tree',
+        {
+          pageContent: 'main [ref_1]\n heading "Überprüfung" [ref_2]',
+          pageUrl: 'https://protected.example/private',
+        },
+        { filter: 'visible' },
+      );
+      assert.equal(observation.gate?.cloudflareManagedChallenge, true, `${build}: localized full-page read cleared the gate`);
+
+      await agent.observeCloudflareChallengePlatformRequest({
+        tabId,
+        type: 'script',
+        url: 'https://protected.example/cdn-cgi/challenge-platform/h/b/script.js',
+      });
+      assert.equal(
+        agent._captchaGateStates.get(tabId)?.publicGate?.diagnostics?.challengePlatformActivity,
+        true,
+        `${build}: active platform request did not update diagnostics`,
+      );
+
+      const restarted = new AgentClass({});
+      await restarted._hydrate(tabId);
+      assert.equal(
+        restarted._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: worker restart lost the response-backed interstitial`,
+      );
+
+      const cleared = await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      assert.equal(cleared?.kind, 'cleared_by_response', `${build}: normal response did not clear signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: cleared interstitial kept gate active`);
+      assert.equal(removed.includes(storageKey), true, `${build}: cleared signal remained in session storage`);
+
+      await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      const navigated = await restarted.observeCloudflareManagedChallengeNavigation({
+        tabId,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      });
+      assert.equal(navigated?.kind, 'cleared_by_navigation', `${build}: navigation did not clear signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: navigation left gate active`);
+
+      await restarted.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      restarted._cleanupTab(tabId, { preserveRunGuard: true });
+      assert.equal(
+        restarted._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: clearing the conversation disabled the active tab-level gate`,
+      );
+      assert.ok(stored[storageKey], `${build}: clearing the conversation removed the persisted signal`);
+
+      restarted._cleanupTab(tabId);
+      assert.equal(restarted._cloudflareManagedChallenges.has(tabId), false, `${build}: tab cleanup kept the signal`);
+      assert.equal(restarted._captchaGateStates.has(tabId), false, `${build}: tab cleanup kept the gate`);
+      assert.equal(stored[storageKey], undefined, `${build}: tab cleanup kept the persisted signal`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('Cloudflare restart transitions hydrate persisted state before clearing it', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8873 : 8874;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const persistedSignal = {
+      active: true,
+      documentKey: 'https://protected.example/private',
+      detectedAt: 1000,
+      lastResponseAt: 1000,
+      lastChallengePlatformActivityAt: 0,
+    };
+    const stored = { [storageKey]: persistedSignal };
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({ ...stored }),
+          set: async values => Object.assign(stored, values),
+          remove: async key => { delete stored[key]; },
+        },
+      },
+    };
+    try {
+      const responseRestart = new AgentClass({});
+      const clearedByResponse = await responseRestart.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      assert.equal(
+        clearedByResponse?.kind,
+        'cleared_by_response',
+        `${build}: restart-time normal response missed the persisted challenge`,
+      );
+      assert.equal(stored[storageKey], undefined, `${build}: response clearance left the dedicated signal stored`);
+      await responseRestart._hydrate(tabId);
+      assert.equal(
+        responseRestart._captchaGateStates.has(tabId),
+        false,
+        `${build}: later hydration restored a response-cleared challenge`,
+      );
+
+      stored[storageKey] = persistedSignal;
+      const navigationRestart = new AgentClass({});
+      const clearedByNavigation = await navigationRestart.observeCloudflareManagedChallengeNavigation({
+        tabId,
+        frameId: 0,
+        url: 'https://protected.example/home',
+      });
+      assert.equal(
+        clearedByNavigation?.kind,
+        'cleared_by_navigation',
+        `${build}: restart-time navigation missed the persisted challenge`,
+      );
+      assert.equal(stored[storageKey], undefined, `${build}: navigation clearance left the dedicated signal stored`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('concurrent hydration waits for the dedicated Cloudflare signal', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8875 : 8876;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    let releaseSignalRead;
+    let signalReadStarted;
+    const signalReadStartedPromise = new Promise(resolve => { signalReadStarted = resolve; });
+    const signalReadReleasePromise = new Promise(resolve => { releaseSignalRead = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async key => {
+            if (key !== storageKey) return {};
+            signalReadStarted();
+            await signalReadReleasePromise;
+            return {
+              [storageKey]: {
+                active: true,
+                documentKey: 'https://protected.example/private',
+              },
+            };
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      const firstHydration = agent._hydrate(tabId);
+      await signalReadStartedPromise;
+      let secondResolved = false;
+      const secondHydration = agent._hydrate(tabId).then(() => { secondResolved = true; });
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(
+        secondResolved,
+        false,
+        `${build}: concurrent caller bypassed the in-flight Cloudflare signal read`,
+      );
+      releaseSignalRead();
+      await Promise.all([firstHydration, secondHydration]);
+      assert.equal(
+        agent._captchaGateStates.get(tabId)?.publicGate?.cloudflareManagedChallenge,
+        true,
+        `${build}: completed shared hydration did not restore the challenge gate`,
+      );
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('Cloudflare transitions serialize dedicated storage updates per tab', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8879 : 8880;
+    const storageKey = detector.cloudflareManagedChallengeStorageKey(tabId);
+    const previousApi = globalThis[apiName];
+    const stored = {};
+    let releaseFirstSet;
+    let firstSetStarted;
+    let removeCalls = 0;
+    const firstSetStartedPromise = new Promise(resolve => { firstSetStarted = resolve; });
+    const firstSetReleasePromise = new Promise(resolve => { releaseFirstSet = resolve; });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async () => ({}),
+          set: async values => {
+            firstSetStarted();
+            await firstSetReleasePromise;
+            Object.assign(stored, values);
+          },
+          remove: async key => {
+            removeCalls++;
+            delete stored[key];
+          },
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      agent.hydratedTabs.add(tabId);
+      const armed = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'cf-mitigated', value: 'challenge' }],
+      });
+      await firstSetStartedPromise;
+      const cleared = agent.observeCloudflareManagedChallengeResponse({
+        tabId,
+        type: 'main_frame',
+        url: 'https://protected.example/private',
+        responseHeaders: [{ name: 'content-type', value: 'text/html' }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(removeCalls, 0, `${build}: clear overtook the pending challenge-state write`);
+      releaseFirstSet();
+      const [armedResult, clearedResult] = await Promise.all([armed, cleared]);
+      assert.equal(armedResult?.kind, 'armed_by_response', `${build}: queued arm result missing`);
+      assert.equal(clearedResult?.kind, 'cleared_by_response', `${build}: queued clear result missing`);
+      assert.equal(stored[storageKey], undefined, `${build}: serialized clear left a stale dedicated signal`);
+      assert.equal(agent._captchaGateStates.has(tabId), false, `${build}: serialized clear left an active gate`);
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('dedicated Cloudflare storage remains authoritative over stale conversation snapshots', async () => {
+  for (const [build, AgentClass, apiName, detector] of [
+    ['chrome', AgentCh, 'chrome', CloudflareChallengeCh],
+    ['firefox', AgentFx, 'browser', CloudflareChallengeFx],
+  ]) {
+    const tabId = build === 'chrome' ? 8877 : 8878;
+    const previousApi = globalThis[apiName];
+    const staleGate = detector.cloudflareManagedChallengeGateState({
+      active: true,
+      documentKey: 'https://protected.example/private',
+    });
+    globalThis[apiName] = {
+      ...(previousApi || {}),
+      storage: {
+        ...(previousApi?.storage || {}),
+        session: {
+          get: async key => key === `agentConv:${tabId}`
+            ? {
+                [key]: {
+                  messages: [{ role: 'system', content: 'system' }],
+                  captchaGateState: staleGate,
+                },
+              }
+            : {},
+        },
+      },
+    };
+    try {
+      const agent = new AgentClass({});
+      await agent._hydrate(tabId);
+      assert.equal(
+        agent._captchaGateStates.has(tabId),
+        false,
+        `${build}: stale conversation snapshot revived a cleared Cloudflare gate`,
+      );
+      agent._captchaGateStates.set(tabId, staleGate);
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      assert.equal(
+        agent._conversationStorageEntry(tabId)?.captchaGateState,
+        null,
+        `${build}: conversation snapshot duplicated the dedicated Cloudflare gate`,
+      );
+    } finally {
+      globalThis[apiName] = previousApi;
+    }
+  }
+});
+
+test('backgrounds wire Cloudflare detection to narrow response and platform filters', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
+    assert.match(
+      source,
+      /onHeadersReceived\?\.addListener\?\.\([\s\S]*?observeCloudflareManagedChallengeResponse[\s\S]*?types: \['main_frame'\][\s\S]*?\['responseHeaders'\]/,
+      `${build}: top-level response-header listener is missing or too broad`,
+    );
+    assert.match(
+      source,
+      /onBeforeRequest\?\.addListener\?\.\([\s\S]*?observeCloudflareChallengePlatformRequest[\s\S]*?\*:\/\/\*\/cdn-cgi\/challenge-platform\/\*/,
+      `${build}: challenge-platform listener is missing or too broad`,
     );
   }
 });
