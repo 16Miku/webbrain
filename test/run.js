@@ -3799,6 +3799,55 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
+test('matches Pinduoduo consumer surfaces and includes marketplace and group-buying guidance', () => {
+  const trustedUrls = [
+    'https://pinduoduo.com/',
+    'https://www.pinduoduo.com/home/help/',
+    'https://yangkeduo.com/',
+    'https://www.yangkeduo.com/home/download/',
+    'https://mobile.yangkeduo.com/',
+    'https://mobile.yangkeduo.com/relative_goods.html?__rp_name=search_view&shade_words=%E8%80%B3%E6%9C%BA',
+    'https://mobile.yangkeduo.com/search_result.html?search_key=%E6%89%8B%E6%9C%BA%E5%A3%B3',
+    'https://mobile.yangkeduo.com/goods.html?goods_id=722689895611',
+    'https://mobile.yangkeduo.com/login.html?from=https%3A%2F%2Fmobile.yangkeduo.com%2Fgoods.html%3Fgoods_id%3D722689895611',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'pinduoduo');
+    assert.equal(getActiveAdapterFx(url)?.name, 'pinduoduo');
+  }
+
+  const rejectedUrls = [
+    'https://mms.pinduoduo.com/',
+    'https://ipp.pinduoduo.com/cpp/rule-center',
+    'https://api.pinduoduo.com/',
+    'https://pinduoduo.com.phishing.example/',
+    'https://mobile.yangkeduo.com.phishing.example/goods.html',
+    'https://mobile.yangkeduo.com@phishing.example/goods.html',
+    'https://example.com/?next=https://mobile.yangkeduo.com/goods.html',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'pinduoduo');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'pinduoduo');
+  }
+
+  const adapter = getActiveAdapter('https://mobile.yangkeduo.com/goods.html?goods_id=722689895611');
+  const firefoxAdapter = getActiveAdapterFx('https://www.pinduoduo.com/home/help/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /www\.pinduoduo\.com.*not the searchable catalog.*mobile\.yangkeduo\.com/s);
+  assert.match(adapter?.notes || '', /用手机浏览器扫码在拼多多App打开/);
+  assert.match(adapter?.notes || '', /relative_goods\.html.*search_result\.html.*goods\.html.*login\.html\?from=/s);
+  assert.match(adapter?.notes || '', /手机登录.*扫码登录.*验证码/s);
+  assert.match(adapter?.notes || '', /"商品".*"搜索".*"推荐".*personalized/s);
+  assert.match(adapter?.notes || '', /"已拼".*"总售".*"本店已拼".*"全店总售"/s);
+  assert.match(adapter?.notes || '', /退货包运费.*极速退款.*假一赔十.*正品发票/s);
+  assert.match(adapter?.notes || '', /拼单.*多人团.*单独购买/s);
+  assert.match(adapter?.notes || '', /without a cart review step.*explicit confirmation/s);
+  assert.match(adapter?.notes || '', /商品详情.*客服.*订单详情.*联系卖家/s);
+  assert.match(adapter?.notes || '', /order number.*待成团.*待付款/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
 test('matches 58.com city and service surfaces with safe classifieds guidance', () => {
   const trustedUrls = [
     'https://58.com/',
