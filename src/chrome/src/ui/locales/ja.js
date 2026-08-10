@@ -228,6 +228,8 @@ export default {
   'st.display.verbose.desc': 'ツール呼び出しの詳細・引数・生の JSON 結果をすべて表示します。チャットをすっきり見せるため、デフォルトはオフです。',
   'st.display.selection_shortcut.label': '選択ショートカット',
   'st.display.selection_shortcut.desc': 'ページ上のテキストを選択したときに WebBrain ボタンを表示します。オフにしても、右クリックの標準アクションは引き続き使用できます。',
+  'st.display.auto_group_tabs.label': 'WebBrain タブをグループ化',
+  'st.display.auto_group_tabs.desc': 'ツールバー、コンテキストメニュー、またはエージェントから開いたタブを、WebBrain という名前のブラウザータブグループに自動的にまとめます。オフにしても既存のグループは変更されません。',
   'st.display.screenshot.label': 'スクリーンショットのフォールバック',
   'st.display.screenshot.desc': 'DOM の読み取りに失敗、または内容が不十分なときにページのスクリーンショットを取得します。画像認識対応モデルが必要です。',
   'st.display.site_adapters.label': 'サイトアダプター',
