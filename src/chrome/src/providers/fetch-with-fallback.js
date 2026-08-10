@@ -80,11 +80,18 @@ async function _ensureTimeoutInitialized() {
  */
 export async function fetchWithFallback(url, options = {}) {
   await _ensureTimeoutInitialized();
-  const { timeoutMs = _cachedTimeoutMs, ...fetchOptions } = options;
+  const { timeoutMs = _cachedTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
 
   // Fast path: try direct fetch first, with a connection-phase timeout.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let connectionTimedOut = false;
+  const abortDirectFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortDirectFromCaller();
+  else callerSignal?.addEventListener('abort', abortDirectFromCaller, { once: true });
+  const timeoutId = setTimeout(() => {
+    connectionTimedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
@@ -92,24 +99,34 @@ export async function fetchWithFallback(url, options = {}) {
   } catch (directError) {
     clearTimeout(timeoutId);
 
+    if (callerSignal?.aborted) {
+      throw callerSignal.reason instanceof Error
+        ? callerSignal.reason
+        : new DOMException('The operation was aborted', 'AbortError');
+    }
+
     // If we aborted on timeout, surface that directly — don't fall through to
     // the offscreen proxy, since the same endpoint is likely unresponsive.
-    if (directError.name === 'AbortError') {
+    if (connectionTimedOut) {
       throw new Error(
         `Request to ${url} timed out after ${timeoutMs}ms. ` +
         `The endpoint may be unreachable, blocked by CORS, or stalled. ` +
         `Check the URL/credentials and that the server is responding.`
       );
     }
+    // Preserve the previous no-fallback behavior for fetches aborted by the
+    // browser or another lower layer for reasons unrelated to our timer.
+    if (directError.name === 'AbortError') throw directError;
 
     // Network error (Failed to fetch) — try offscreen proxy
     console.warn(
       `[WebBrain] Direct fetch to ${url} failed (${directError.message}), trying offscreen proxy...`
     );
+    callerSignal?.removeEventListener('abort', abortDirectFromCaller);
 
     try {
       await ensureOffscreen();
-      return await _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs);
+      return await _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal);
     } catch (proxyError) {
       // Offscreen proxy also failed — throw the most useful error
       if (proxyError.bothFailed) {
@@ -140,16 +157,40 @@ export async function fetchWithFallback(url, options = {}) {
  * timeout, killing any stream longer than timeoutMs and delivering all
  * chunks in one burst.)
  */
-async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs) {
+async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal) {
   return await new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: 'offscreen-fetch-stream' });
     let settled = false;           // true once headers are in (or we've failed)
     let streamController = null;   // non-null while the body is streaming
     const encoder = new TextEncoder();
 
+    const callerAbortError = () => callerSignal?.reason instanceof Error
+      ? callerSignal.reason
+      : new DOMException('The operation was aborted', 'AbortError');
+    const cleanupCallerSignal = () => callerSignal?.removeEventListener('abort', onCallerAbort);
+    const onCallerAbort = () => {
+      const error = callerAbortError();
+      clearTimeout(timeoutId);
+      if (!settled) {
+        settled = true;
+        cleanupCallerSignal();
+        try { port.disconnect(); } catch {}
+        reject(error);
+        return;
+      }
+      if (streamController) {
+        const sc = streamController;
+        streamController = null;
+        try { sc.error(error); } catch {}
+      }
+      cleanupCallerSignal();
+      try { port.disconnect(); } catch {}
+    };
+
     const timeoutId = setTimeout(() => {
       if (settled) return;
       settled = true;
+      cleanupCallerSignal();
       try { port.disconnect(); } catch {}
       reject(new Error(`offscreen proxy timed out after ${timeoutMs}ms`));
     }, timeoutMs);
@@ -158,12 +199,14 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs) {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
+      cleanupCallerSignal();
       try { port.disconnect(); } catch {}
       reject(Object.assign(new Error(message), { bothFailed }));
     };
 
     port.onDisconnect.addListener(() => {
       clearTimeout(timeoutId);
+      cleanupCallerSignal();
       if (streamController) {
         const sc = streamController;
         streamController = null;
@@ -172,6 +215,12 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs) {
         failBeforeHeaders('offscreen proxy disconnected before responding');
       }
     });
+
+    if (callerSignal?.aborted) {
+      onCallerAbort();
+      return;
+    }
+    callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
 
     port.onMessage.addListener((msg) => {
       if (msg?.type === 'headers') {

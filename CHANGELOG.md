@@ -53,6 +53,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Allowed automatic i18n for AMO links and updated slash-command documentation across locales.
 
 ### Fixed
+- Stopped sending automatic screenshots to text-only Ollama models by resolving the selected model's native `/api/show` vision capability before each run, with model- and case-sensitive-endpoint-bound caching, cancellable three-second metadata reads, legacy metadata fallbacks, live localized Auto / Force on / Off status, and Chrome/Firefox parity.
 - Fixed a screenshot redaction fail-open path: the deferred full-page redaction now refuses the send when the snapshot had regions but `_redactScreenshotDataUrl` returned the bytes unchanged.
 - Fixed `mergeRedactionFrameRegions` to return `null` under `requireCompleteFrameCoverage` when an object/embed subdocument or unpaired child frame has no DOM descriptor, instead of reporting the snapshot as complete.
 - Fixed `loadStagedScreenshots` and `clearStagedScreenshots` to enumerate keys per-tab instead of reading all of `storage.local`, preventing 16 MB record churn on tab switch and reconnect.

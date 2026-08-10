@@ -269,6 +269,11 @@ export default {
   'st.provider.field.model': 'Modèle',
   'st.provider.field.model_optional': 'Modèle (facultatif)',
   'st.provider.field.supports_vision': 'Le modèle gère la vision (multimodal)',
+  'st.provider.field.vision_auto': 'Automatique (depuis Ollama)',
+  'st.provider.field.vision_force_on': 'Forcer l’activation',
+  'st.provider.field.vision_detected_vision': 'Détection automatique : vision',
+  'st.provider.field.vision_detected_text': 'Détection automatique : texte uniquement',
+  'st.provider.field.vision_pending': 'La détection automatique s’exécutera avant la prochaine requête.',
   'st.provider.field.compact_prompt': 'Prompt compact (supprime certains garde-fous — à n\'activer que pour les modèles de moins de 8B)',
   'st.provider.field.model_loaded_hint': 'laisser vide pour utiliser le modèle chargé',
 

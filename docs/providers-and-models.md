@@ -38,7 +38,7 @@ class BaseLLMProvider {
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Yes |
 | `llamacpp` | `llamacpp` | local | (loaded model) | Yes (default on) |
-| `ollama` | `openai` | local | (loaded model) | Yes (default on) |
+| `ollama` | `openai` | local | (loaded model) | Auto via `/api/show` |
 | `lmstudio` | `openai` | local | (loaded model) | Yes (default on) |
 | `jan` | `openai` | local | (loaded model) | Yes (default on) |
 | `vllm` | `openai` | local | (loaded model) | Yes (default on) |
@@ -155,7 +155,9 @@ local server was started with auth:
 - **SGLang**: `http://localhost:30000/v1` — SGLang's OpenAI-compatible server
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
 
-All seven default `supportsVision: true` since most models loaded locally in 2026 are multimodal.
+Ollama defaults to `visionMode: "auto"` and verifies the selected model through
+its native `/api/show` metadata before attaching images. The other local
+providers retain their existing explicit `supportsVision` behavior.
 
 #### Ollama launch handoff (preview)
 
@@ -217,7 +219,8 @@ Ask mode ignores provider tier and stays read-only. Act mode uses the selected t
 | OpenAI-compatible | Regex against model name (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` patterns |
 | llama.cpp | Explicit `supportsVision` config toggle |
-| Ollama / LM Studio / Jan / vLLM / SGLang / LocalAI | Explicit `supportsVision` config toggle (via OpenAI provider) |
+| Ollama | `POST /api/show` `capabilities`, with legacy projector / `.vision.` metadata fallbacks; Auto / Force on / Off setting |
+| LM Studio / Jan / vLLM / SGLang / LocalAI | Explicit `supportsVision` config toggle (via OpenAI provider) |
 
 ### Anthropic Conversion
 
@@ -328,4 +331,10 @@ myprovider: {
 },
 ```
 
-Vision is auto-detected via model-name regex. If the provider has a known set of vision models, add them to the regex in `openai.js`. Set `supportsStreamUsageOptions: true` only for providers that accept OpenAI-style `stream_options.include_usage`; leave it false when a provider returns usage without accepting that request field.
+Vision is normally auto-detected via model-name regex. Ollama is the exception:
+its Auto mode uses native `/api/show` metadata and fails closed to text-only
+when metadata cannot be verified. If another provider has a known set of vision
+models, add them to the regex in `openai.js`. Set
+`supportsStreamUsageOptions: true` only for providers that accept OpenAI-style
+`stream_options.include_usage`; leave it false when a provider returns usage
+without accepting that request field.

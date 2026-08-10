@@ -90,7 +90,10 @@ LM Studio (`:1234/v1`), Jan (`:1337/v1`), and LocalAI (`:8080/v1`) work the same
 way. Load a model with **at least a 16k-token context window** — 8k works only
 with the Compact tier, and 4k is too small for the system prompt plus tool
 schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
-Studio, and auto-compacts the conversation as it fills up. There is also a
+Studio, and auto-compacts the conversation as it fills up. For Ollama, the
+Vision setting defaults to Auto and reads the selected model's native
+`/api/show` capabilities; Force on and Off remain available as explicit
+overrides. There is also a
 preview `ollama launch webbrain --model <model>` handoff. Details:
 [providers and models](docs/providers-and-models.md#local-providers).
 

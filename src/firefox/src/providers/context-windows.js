@@ -32,6 +32,21 @@ function ollamaModelIdsMatch(left, right) {
 }
 
 /**
+ * Canonicalize an Ollama endpoint for capability-cache identity checks.
+ * URL schemes and hostnames are case-insensitive, but userinfo and paths are
+ * not, so never lowercase the complete URL.
+ */
+export function canonicalizeOllamaBaseUrl(value) {
+  const raw = String(value || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  try {
+    return new URL(raw).toString().replace(/\/+$/, '');
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Clamp a detected/server-reported context window into the range Settings
  * accepts ([MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW] = 4k–1M). Returns null only
  * when the value is missing or unusable (non-positive / NaN). A sub-4k server
@@ -119,6 +134,25 @@ export function parseOllamaPsContextWindow(data, preferredModel = '') {
 export function parseOllamaShowContextWindow(data) {
   if (!data || typeof data !== 'object') return null;
   return parseOllamaNumCtx(data.parameters);
+}
+
+/**
+ * Ollama `POST /api/show` vision capability. Current servers expose an
+ * explicit `capabilities` list. Mirror Ollama CLI's backwards-compatible
+ * fallbacks for older servers that only expose projector or `.vision.` model
+ * metadata. Returns null only when the response is not a usable object;
+ * otherwise absence of all vision signals is authoritative text-only.
+ */
+export function parseOllamaShowVisionSupport(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  if (Array.isArray(data.capabilities)) {
+    return data.capabilities.some((value) => String(value || '').toLowerCase() === 'vision');
+  }
+  if (data.projector_info && typeof data.projector_info === 'object'
+      && Object.keys(data.projector_info).length > 0) return true;
+  if (data.model_info && typeof data.model_info === 'object'
+      && Object.keys(data.model_info).some((key) => String(key).toLowerCase().includes('.vision.'))) return true;
+  return false;
 }
 
 /**

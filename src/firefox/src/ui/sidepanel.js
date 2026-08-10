@@ -6924,6 +6924,23 @@ function requestConfigurationFile(tabId) {
   input.click();
 }
 
+function toggledVisionProviderConfig(providerId, config) {
+  if (providerId === 'ollama') {
+    const visionEnabled = config.visionMode === 'on' ||
+      (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    return {
+      enabled,
+      config: { ...config, visionMode: enabled ? 'on' : 'off' },
+    };
+  }
+  const enabled = !config.supportsVision;
+  return {
+    enabled,
+    config: { ...config, supportsVision: enabled },
+  };
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);
@@ -7309,13 +7326,13 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const { providers, active } = await sendToBackground('get_providers');
       const config = providers[active];
       if (config) {
-        const newVision = !config.supportsVision;
+        const toggled = toggledVisionProviderConfig(active, config);
         await sendToBackground('update_provider', {
           providerId: active,
-          config: { ...config, supportsVision: newVision },
+          config: toggled.config,
         });
         if (currentTabId !== tabId) return '';
-        showComposerToast(systemHtml(newVision
+        showComposerToast(systemHtml(toggled.enabled
           ? t('sp.vision.on')
           : t('sp.vision.off')));
       }

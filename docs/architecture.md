@@ -160,6 +160,10 @@ background.js handleMessage('chat_start')
 
 ### Step 3: Enrich First User Message
 ```
+providerManager.prepareActiveProviderCapabilities()
+  → for Ollama Auto, resolve the model/base-URL-scoped `/api/show` check
+  → coalesce concurrent checks and fail closed to text-only on metadata errors
+
 _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
 
   1. Collect URL + title via chrome.tabs.get(tabId)
@@ -704,6 +708,12 @@ testConnection()              → { ok, error, model }
 ```
 
 `promptTier` drives both the action prompt and the normal tool subset. Local providers default to Mid, cloud providers are forced Full, and the legacy `useCompactPrompt` flag maps to Compact for existing configs. Dev mode is a separate conversation mode: Mid/Full Dev uses the selected Act tier plus `SYSTEM_PROMPT_DEV_APPENDIX`; Compact Dev is blocked before an LLM request is sent.
+
+Ollama is the exception to OpenAI-compatible model-name vision inference. Its
+`visionMode` is `auto`, `on`, or `off`; Auto performs one coalesced,
+three-second `/api/show` metadata check per model/base URL and service-worker
+lifetime before turn enrichment. Only successful metadata is persisted, and a
+late result is applied only if the same Ollama identity is still configured.
 
 See `docs/providers-and-models.md`.
 

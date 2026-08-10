@@ -277,6 +277,11 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opcional)',
   'st.provider.field.supports_vision': 'El modelo admite visión (multimodal)',
+  'st.provider.field.vision_auto': 'Automático (desde Ollama)',
+  'st.provider.field.vision_force_on': 'Forzar activación',
+  'st.provider.field.vision_detected_vision': 'Detectado automáticamente: Visión',
+  'st.provider.field.vision_detected_text': 'Detectado automáticamente: Solo texto',
+  'st.provider.field.vision_pending': 'La detección automática se ejecutará antes de la próxima solicitud.',
   'st.provider.field.compact_prompt': 'Prompt compacto (elimina algunas protecciones — activar solo para modelos de menos de 8B)',
   'st.provider.field.model_loaded_hint': 'déjalo en blanco para usar el modelo cargado',
 
