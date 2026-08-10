@@ -7889,6 +7889,10 @@ browser.storage.onChanged.addListener((changes) => {
       if (!isProcessing) ensureDevMode();
       break;
     case 'focus-input':
+      // Firefox won't allow inputEl.focus() if the sidebar panel doesn't
+      // have focus — window.focus() acquires it first so the input focus
+      // actually takes effect.
+      window.focus();
       inputEl.focus();
       inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
       break;
