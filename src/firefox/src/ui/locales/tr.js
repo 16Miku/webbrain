@@ -308,6 +308,11 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (isteğe bağlı)',
   'st.provider.field.supports_vision': 'Model görme yeteneğini destekliyor (çok kipli)',
+  'st.provider.field.vision_auto': 'Otomatik (Ollama’dan)',
+  'st.provider.field.vision_force_on': 'Zorla açık',
+  'st.provider.field.vision_detected_vision': 'Otomatik algılandı: Görsel',
+  'st.provider.field.vision_detected_text': 'Otomatik algılandı: Yalnızca metin',
+  'st.provider.field.vision_pending': 'Otomatik algılama bir sonraki isteğin öncesinde çalışır.',
   'st.provider.field.compact_prompt': 'Kompakt prompt (bazı korumaları kaldırır — yalnızca 8B\'den küçük modellerde açın)',
   'st.provider.field.model_loaded_hint': 'yüklenmiş modeli kullanmak için boş bırak',
 

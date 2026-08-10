@@ -269,6 +269,11 @@ export default {
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',
   'st.provider.field.supports_vision': 'モデルは画像認識（マルチモーダル）対応',
+  'st.provider.field.vision_auto': '自動（Ollama から）',
+  'st.provider.field.vision_force_on': '強制的にオン',
+  'st.provider.field.vision_detected_vision': '自動検出：画像対応',
+  'st.provider.field.vision_detected_text': '自動検出：テキストのみ',
+  'st.provider.field.vision_pending': '自動検出は次のリクエストの前に実行されます。',
   'st.provider.field.compact_prompt': 'コンパクト prompt（一部のガードレールを省略 — 8B 未満のモデルでのみ有効化）',
   'st.provider.field.model_loaded_hint': '空欄にすると読み込み済みモデルを使用',
 

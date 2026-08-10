@@ -269,6 +269,11 @@ export default {
   'st.provider.field.model': 'โมเดล',
   'st.provider.field.model_optional': 'โมเดล (ไม่บังคับ)',
   'st.provider.field.supports_vision': 'โมเดลรองรับการมองเห็น (มัลติโมดัล)',
+  'st.provider.field.vision_auto': 'อัตโนมัติ (จาก Ollama)',
+  'st.provider.field.vision_force_on': 'บังคับเปิด',
+  'st.provider.field.vision_detected_vision': 'ตรวจพบอัตโนมัติ: รองรับภาพ',
+  'st.provider.field.vision_detected_text': 'ตรวจพบอัตโนมัติ: ข้อความเท่านั้น',
+  'st.provider.field.vision_pending': 'การตรวจหาอัตโนมัติจะทำงานก่อนคำขอถัดไป',
   'st.provider.field.compact_prompt': 'Prompt แบบกระชับ (ละเว้นกฎความปลอดภัยบางอย่าง — เปิดเฉพาะสำหรับโมเดลต่ำกว่า 8B)',
   'st.provider.field.model_loaded_hint': 'เว้นว่างเพื่อใช้โมเดลที่โหลดไว้',
 

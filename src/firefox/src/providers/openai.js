@@ -6,6 +6,7 @@ import {
   supportsOpenAIAskStreaming,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
+import { canonicalizeOllamaBaseUrl } from './context-windows.js';
 
 const OPENAI_RESPONSES_MIN_MAX_OUTPUT_TOKENS = 16;
 const KIMI_CURRENT_TOOL_REASONING_MODELS = new Set([
@@ -88,6 +89,23 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   get supportsVision() {
+    const providerName = String(this.config.providerName || '').toLowerCase();
+    if (providerName === 'ollama' && this.config.visionMode != null) {
+      const mode = ['auto', 'on', 'off'].includes(this.config.visionMode)
+        ? this.config.visionMode
+        : 'auto';
+      if (mode === 'on') return true;
+      if (mode === 'off') return false;
+      const detection = this.config.visionDetection;
+      const model = String(this.config.model || '').trim().toLowerCase();
+      const baseUrl = canonicalizeOllamaBaseUrl(this.config.baseUrl);
+      const detectedModel = String(detection?.model || '').trim().toLowerCase();
+      const detectedBaseUrl = canonicalizeOllamaBaseUrl(detection?.baseUrl);
+      return !!model && !!baseUrl
+        && model === detectedModel
+        && baseUrl === detectedBaseUrl
+        && detection?.supportsVision === true;
+    }
     // Explicit user opt-in always wins (used by LM Studio and any custom
     // OpenAI-compatible endpoint where the loaded model varies).
     if (this.config.supportsVision != null) return !!this.config.supportsVision;

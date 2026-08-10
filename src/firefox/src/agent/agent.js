@@ -17466,9 +17466,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (const att of attachments) {
       if (att.kind === 'image') {
         if (!provider?.supportsVision) {
+          const ollamaHint = String(provider?.config?.providerName || '').toLowerCase() === 'ollama'
+            ? ' If Ollama metadata is unavailable or incorrect, set its Vision capability to Force on in Settings.'
+            : '';
           return {
             ok: false,
-            error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.`,
+            error: `The active provider (${provider?.name || 'unknown'}) does not support image attachments. Switch to a vision-capable model (e.g. Claude 3+, GPT-4o) or remove the attached image and try again.${ollamaHint}`,
           };
         }
         let modelSourceDataUrl = att.dataUrl;
@@ -17589,6 +17592,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
+
+    // Resolve Ollama's model-bound vision capability before enrichment can
+    // capture pixels or attachment validation can inspect supportsVision.
+    // Metadata failures are deliberately non-fatal and leave auto mode
+    // text-only for this turn.
+    try { await this.providerManager.prepareActiveProviderCapabilities?.(); } catch {}
 
     const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
     // A source-bound shortcut neither needs nor permits an internal
@@ -18423,6 +18432,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
+
+    // Keep the streaming path aligned with the non-streaming entrypoint.
+    try { await this.providerManager.prepareActiveProviderCapabilities?.(); } catch {}
 
     const selectionOnly = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
     // Do not expose unrelated history to an internal compaction request for a

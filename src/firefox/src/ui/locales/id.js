@@ -269,6 +269,11 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opsional)',
   'st.provider.field.supports_vision': 'Model mendukung visi (multimodal)',
+  'st.provider.field.vision_auto': 'Otomatis (dari Ollama)',
+  'st.provider.field.vision_force_on': 'Paksa aktif',
+  'st.provider.field.vision_detected_vision': 'Terdeteksi otomatis: Vision',
+  'st.provider.field.vision_detected_text': 'Terdeteksi otomatis: Teks saja',
+  'st.provider.field.vision_pending': 'Deteksi otomatis berjalan sebelum permintaan berikutnya.',
   'st.provider.field.compact_prompt': 'Prompt ringkas (menghilangkan beberapa pengaman — aktifkan hanya untuk model di bawah 8B)',
   'st.provider.field.model_loaded_hint': 'kosongkan untuk menggunakan model yang sudah dimuat',
 

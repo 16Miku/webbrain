@@ -54,6 +54,7 @@ llama-server -m your-model.gguf --port 8080
 ollama serve
 # Then set base URL to http://localhost:11434/v1 in settings
 # Or run: ollama launch webbrain --model <model>
+# Vision defaults to Auto and is detected from Ollama /api/show metadata
 
 # Or using Jan, vLLM, SGLang, or LocalAI (OpenAI-compatible)
 # Jan: http://localhost:1337/v1
