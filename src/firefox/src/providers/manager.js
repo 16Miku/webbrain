@@ -6,13 +6,16 @@ import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
+import { fetchWithTimeout } from './fetch-timeout.js';
 import {
+  canonicalizeOllamaBaseUrl,
   lmStudioContextWindowIsLive,
   parseLlamaCppPropsContextWindow,
   parseLocalAiModelConfigContextWindow,
   parseLmStudioModelsContextWindow,
   parseOllamaPsContextWindow,
   parseOllamaShowContextWindow,
+  parseOllamaShowVisionSupport,
   parseOpenAiModelListContextWindow,
   shouldApplyDetectedContextWindow,
 } from './context-windows.js';
@@ -31,6 +34,8 @@ const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
 const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
+const OLLAMA_VISION_MODES = new Set(['auto', 'on', 'off']);
+const OLLAMA_VISION_METADATA_TIMEOUT_MS = 3000;
 
 /**
  * Manages LLM provider instances and persists configuration.
@@ -39,6 +44,7 @@ export class ProviderManager {
   constructor() {
     this.providers = new Map();
     this.activeProviderId = null;
+    this._ollamaVisionChecks = new Map();
   }
 
   /**
@@ -55,6 +61,11 @@ export class ProviderManager {
    */
   async load() {
     const data = await browser.storage.local.get(['providers', 'activeProvider', WEBBRAIN_DEVICE_GUID_KEY, HELP_IMPROVE_WEBBRAIN_KEY]);
+    const rawStoredOllama = data.providers?.ollama;
+    const ollamaVisionConfigMigrated = !!rawStoredOllama && (
+      !OLLAMA_VISION_MODES.has(rawStoredOllama.visionMode)
+      || Object.hasOwn(rawStoredOllama, 'supportsVision')
+    );
     const hadLegacyClaudeSubscription = Object.hasOwn(data.providers || {}, 'claude_subscription');
     const stored = this._migrateStoredProviderConfigs(data.providers || {});
     const legacyActiveProviderId = ['webbrain', 'openai_subscription'].includes(data.activeProvider)
@@ -62,7 +73,7 @@ export class ProviderManager {
       : data.activeProvider;
     const defaults = this._defaultConfigs();
     const configs = {};
-    let providerStateMigrated = false;
+    let providerStateMigrated = ollamaVisionConfigMigrated;
     for (const [id, config] of Object.entries(defaults)) {
       const storedConfig = stored[id];
       const hasConfiguredMarker = !!storedConfig && Object.hasOwn(storedConfig, 'configured');
@@ -182,7 +193,8 @@ export class ProviderManager {
         contextWindow: 16384,
         apiKey: 'ollama',
         supportsAskStreaming: true,
-        supportsVision: true,
+        visionMode: 'auto',
+        visionDetection: null,
         enabled: true,
       },
       lmstudio: {
@@ -563,6 +575,16 @@ export class ProviderManager {
         model: OPENROUTER_DEFAULT_MODEL,
       };
     }
+    if (migrated.ollama) {
+      const legacySupportsVision = migrated.ollama.supportsVision;
+      migrated.ollama = {
+        ...migrated.ollama,
+        visionMode: OLLAMA_VISION_MODES.has(migrated.ollama.visionMode)
+          ? migrated.ollama.visionMode
+          : (legacySupportsVision === false ? 'off' : 'auto'),
+      };
+      delete migrated.ollama.supportsVision;
+    }
     // Existing installs stored omitToolsWhenImagesPresent:true for WebBrain
     // Cloud, which suppressed native tools on every screenshot turn and broke
     // tool calling. Force it off so the saved config picks up the new default.
@@ -648,6 +670,12 @@ export class ProviderManager {
         'vertex_anthropic',
       ].includes(config.type),
     };
+    if (id === 'ollama') {
+      normalizedConfig.visionMode = OLLAMA_VISION_MODES.has(normalizedConfig.visionMode)
+        ? normalizedConfig.visionMode
+        : 'auto';
+      delete normalizedConfig.supportsVision;
+    }
     switch (normalizedConfig.type) {
       case 'llamacpp':
         return new LlamaCppProvider(normalizedConfig);
@@ -677,6 +705,102 @@ export class ProviderManager {
       throw new Error(`No active provider: ${this.activeProviderId}`);
     }
     return provider;
+  }
+
+  _ollamaVisionIdentity(config) {
+    const model = String(config?.model || '').trim();
+    const baseUrl = canonicalizeOllamaBaseUrl(config?.baseUrl);
+    if (!model || !baseUrl) return null;
+    return {
+      model,
+      baseUrl,
+      key: `${baseUrl}\n${model.toLowerCase()}`,
+    };
+  }
+
+  async _fetchOllamaVisionSupport(provider, identity) {
+    const root = identity.baseUrl.replace(/\/v1$/, '');
+    const controller = new AbortController();
+    const request = (async () => {
+      try {
+        const res = await fetchWithTimeout(`${root}/api/show`, {
+          method: 'POST',
+          headers: { ...this._modelListHeaders(provider), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: identity.model }),
+          timeoutMs: OLLAMA_VISION_METADATA_TIMEOUT_MS,
+          signal: controller.signal,
+        });
+        if (!res.ok) return { ok: false, status: res.status };
+        const supportsVision = parseOllamaShowVisionSupport(await res.json());
+        if (supportsVision == null) return { ok: false, malformed: true };
+        return { ok: true, supportsVision };
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    })();
+    let timeoutId;
+    const timeout = new Promise((resolve) => {
+      timeoutId = setTimeout(() => {
+        controller.abort(new DOMException('Ollama vision metadata timed out', 'TimeoutError'));
+        resolve({ ok: false, timeout: true });
+      }, OLLAMA_VISION_METADATA_TIMEOUT_MS);
+    });
+    try {
+      // The shared fetch wrapper bounds time-to-headers. This outer race also
+      // covers a server that sends headers and then stalls while JSON is read.
+      return await Promise.race([request, timeout]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async ensureOllamaVisionCapability(id = 'ollama') {
+    const provider = this.providers.get(id);
+    if (!provider) return { ok: false, skipped: true };
+    const mode = OLLAMA_VISION_MODES.has(provider.config.visionMode)
+      ? provider.config.visionMode
+      : 'auto';
+    if (mode !== 'auto') return { ok: true, skipped: true, supportsVision: mode === 'on' };
+    const identity = this._ollamaVisionIdentity(provider.config);
+    if (!identity) return { ok: false, skipped: true };
+
+    let pending = this._ollamaVisionChecks.get(identity.key);
+    if (!pending) {
+      pending = this._fetchOllamaVisionSupport(provider, identity);
+      this._ollamaVisionChecks.set(identity.key, pending);
+    }
+    const result = await pending;
+    const current = this.providers.get(id);
+    const currentIdentity = this._ollamaVisionIdentity(current?.config);
+    if (!current || current.config.visionMode !== 'auto' || currentIdentity?.key !== identity.key) {
+      return { ...result, stale: true };
+    }
+
+    if (!result.ok) {
+      if (current.config.visionDetection) {
+        const { visionDetection: _ignored, ...withoutDetection } = current.config;
+        this.providers.set(id, this._createProvider(id, withoutDetection));
+      }
+      return result;
+    }
+
+    const detection = {
+      model: identity.model,
+      baseUrl: identity.baseUrl,
+      supportsVision: result.supportsVision,
+      source: 'ollama_show',
+    };
+    const existing = current.config.visionDetection;
+    if (JSON.stringify(existing) !== JSON.stringify(detection)) {
+      this.providers.set(id, this._createProvider(id, { ...current.config, visionDetection: detection }));
+      await this.save();
+    }
+    return { ok: true, supportsVision: result.supportsVision, detection };
+  }
+
+  async prepareActiveProviderCapabilities() {
+    if (this.activeProviderId !== 'ollama') return { ok: true, skipped: true };
+    return this.ensureOllamaVisionCapability('ollama');
   }
 
   /**
@@ -732,6 +856,15 @@ export class ProviderManager {
       ...this._storedDefaultOverride(current, config),
       configured: id !== WEBBRAIN_CLOUD_PROVIDER_ID && (markConfigured || current.configured === true),
     };
+    if (id === 'ollama') {
+      merged.visionMode = OLLAMA_VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
+      delete merged.supportsVision;
+      const currentIdentity = this._ollamaVisionIdentity(current);
+      const nextIdentity = this._ollamaVisionIdentity(merged);
+      if (currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
+        merged.visionDetection = null;
+      }
+    }
     this.providers.set(id, this._createProvider(id, merged));
     await this.save();
   }

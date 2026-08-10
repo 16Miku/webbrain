@@ -38,7 +38,7 @@ class BaseLLMProvider {
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Oui |
 | `llamacpp` | `llamacpp` | local | (modèle chargé) | Oui (activé par défaut) |
-| `ollama` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
+| `ollama` | `openai` | local | (modèle chargé) | Auto via `/api/show` |
 | `lmstudio` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `jan` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `vllm` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
@@ -125,7 +125,10 @@ serveur local a été démarré avec authentification :
 - **SGLang** : `http://localhost:30000/v1` — le serveur compatible OpenAI de SGLang
 - **LocalAI** : `http://localhost:8080/v1` — le serveur compatible OpenAI de LocalAI
 
-Les sept ont `supportsVision: true` par défaut car la plupart des modèles chargés localement en 2026 sont multimodaux.
+Ollama utilise par défaut `visionMode: "auto"` et vérifie le modèle sélectionné
+avec les métadonnées natives de `/api/show` avant de joindre des images. Les
+autres fournisseurs locaux conservent leur comportement explicite
+`supportsVision` existant.
 
 #### Relais de lancement Ollama (préversion)
 
@@ -178,7 +181,8 @@ Le mode Ask ignore le niveau du fournisseur et reste en lecture seule. Le mode A
 | Compatible OpenAI | Regex sur le nom du modèle (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
 | Anthropic | Patterns `claude-(3\|sonnet-4\|opus-4)` |
 | llama.cpp | Interrupteur explicite `supportsVision` dans la configuration |
-| Ollama / LM Studio / Jan / vLLM / SGLang / LocalAI | Interrupteur explicite `supportsVision` dans la configuration (via le fournisseur OpenAI) |
+| Ollama | Champ `capabilities` de `POST /api/show`, avec repli historique sur `projector_info` / les métadonnées `.vision.` ; réglage Auto / Forcer l'activation / Désactivé |
+| LM Studio / Jan / vLLM / SGLang / LocalAI | Interrupteur explicite `supportsVision` dans la configuration (via le fournisseur OpenAI) |
 
 ### Conversion Anthropic
 
@@ -282,4 +286,11 @@ myprovider: {
 },
 ```
 
-La vision est auto-détectée via une regex sur le nom du modèle. Si le fournisseur a un ensemble connu de modèles de vision, ajoutez-les à la regex dans `openai.js`. Définissez `supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.
+La vision est normalement auto-détectée via une regex sur le nom du modèle.
+Ollama fait exception : son mode Auto utilise les métadonnées natives de
+`/api/show` et échoue de manière fermée vers le mode texte seul si elles ne
+peuvent pas être vérifiées. Si un autre fournisseur a un ensemble connu de
+modèles de vision, ajoutez-les à la regex dans `openai.js`. Définissez
+`supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui
+acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false
+lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.

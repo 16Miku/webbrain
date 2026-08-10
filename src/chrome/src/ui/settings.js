@@ -50,6 +50,7 @@ import {
 } from './provider-icons.js';
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
+import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
@@ -308,6 +309,17 @@ const providerCompatibilityJsonDrafts = new Map();
 let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
+
+if (globalThis.chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    const next = changes.providers?.newValue?.ollama;
+    if (area !== 'local' || !next || !providersData.ollama) return;
+    // Capability detection runs in the background after a user turn starts.
+    // Refresh only its result so unrelated unsaved provider drafts stay put.
+    providersData.ollama.visionDetection = next.visionDetection || null;
+    refreshOllamaVisionStatus();
+  });
+}
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
@@ -1959,6 +1971,50 @@ const PROMPT_TIER_FIELD = {
   ],
 };
 
+const OLLAMA_VISION_MODE_FIELD = {
+  key: 'visionMode',
+  labelKey: 'st.provider.field.supports_vision',
+  type: 'select',
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+
+function ollamaVisionDetectionMatches(config, detection = config?.visionDetection) {
+  const model = String(config?.model || '').trim().toLowerCase();
+  const detectedModel = String(detection?.model || '').trim().toLowerCase();
+  const baseUrl = canonicalizeOllamaBaseUrl(config?.baseUrl);
+  return detection?.source === 'ollama_show'
+    && !!model
+    && !!baseUrl
+    && model === detectedModel
+    && baseUrl === canonicalizeOllamaBaseUrl(detection?.baseUrl);
+}
+
+function ollamaVisionStatusKey(config) {
+  if (!ollamaVisionDetectionMatches(config)) return 'st.provider.field.vision_pending';
+  return config.visionDetection.supportsVision
+    ? 'st.provider.field.vision_detected_vision'
+    : 'st.provider.field.vision_detected_text';
+}
+
+function refreshOllamaVisionStatus() {
+  const hint = document.querySelector('[data-ollama-vision-status]');
+  if (!hint) return;
+  const mode = document.querySelector('select[data-provider="ollama"][data-key="visionMode"]')?.value || 'auto';
+  hint.hidden = mode !== 'auto';
+  if (hint.hidden) return;
+  const config = {
+    ...providersData.ollama,
+    visionMode: mode,
+    model: document.querySelector('input[data-provider="ollama"][data-key="model"]')?.value,
+    baseUrl: document.querySelector('input[data-provider="ollama"][data-key="baseUrl"]')?.value,
+  };
+  hint.textContent = t(ollamaVisionStatusKey(config));
+}
+
 const CONTEXT_WINDOW_FIELD = {
   key: 'contextWindow',
   labelKey: 'st.provider.field.context_window',
@@ -2261,7 +2317,7 @@ function renderProviders() {
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.6:35b-a3b' },
         CONTEXT_WINDOW_FIELD,
-        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        OLLAMA_VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
@@ -2618,6 +2674,9 @@ function renderProviders() {
             <select data-provider="${id}" data-key="${field.key}" data-type="select">${optionsHTML}</select>
           </div>
         `;
+        if (id === 'ollama' && field.key === 'visionMode') {
+          fieldsHTML += `<div class="field-hint" data-ollama-vision-status${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(ollamaVisionStatusKey(config)))}</div>`;
+        }
       } else if (field.type === 'checkbox') {
         const isChecked = !!config[field.key];
         const checked = isChecked ? 'checked' : '';
@@ -2790,8 +2849,10 @@ function renderProviders() {
         input.value = sel.value;
       }
       refreshProviderCompatibilitySummary(providerId);
+      if (providerId === 'ollama') refreshOllamaVisionStatus();
     });
   });
+  document.querySelector('select[data-provider="ollama"][data-key="visionMode"]')?.addEventListener('change', refreshOllamaVisionStatus);
   document.querySelectorAll('.provider-compatibility select[data-provider], .provider-compatibility textarea[data-provider]').forEach((input) => {
     const eventName = input.tagName === 'TEXTAREA' ? 'input' : 'change';
     input.addEventListener(eventName, () => {
@@ -2802,7 +2863,10 @@ function renderProviders() {
     });
   });
   document.querySelectorAll('input[data-key="model"], input[data-key="baseUrl"]').forEach((input) => {
-    input.addEventListener('input', () => refreshProviderCompatibilitySummary(input.dataset.provider));
+    input.addEventListener('input', () => {
+      refreshProviderCompatibilitySummary(input.dataset.provider);
+      if (input.dataset.provider === 'ollama') refreshOllamaVisionStatus();
+    });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
     button.addEventListener('click', () => {
@@ -3010,6 +3074,7 @@ function applyProviderBaseUrl(id, baseUrl) {
   if (providersData[id]) providersData[id].baseUrl = baseUrl;
   const input = document.querySelector(`input[data-provider="${id}"][data-key="baseUrl"]`);
   if (input && input.value !== baseUrl) input.value = baseUrl;
+  if (id === 'ollama') refreshOllamaVisionStatus();
 }
 
 function applyProviderContextWindow(id, contextWindow) {
@@ -3130,10 +3195,18 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
   }
   providerCompatibilityJsonDrafts.delete(id);
   if (providersData[id]) {
+    const priorVisionDetection = providersData[id].visionDetection;
     Object.assign(providersData[id], config);
+    if (id === 'ollama' && (
+      providersData[id].visionMode !== 'auto'
+      || !ollamaVisionDetectionMatches(providersData[id], priorVisionDetection)
+    )) {
+      providersData[id].visionDetection = null;
+    }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
   refreshProviderCardStatus(id);
+  if (id === 'ollama') refreshOllamaVisionStatus();
 
   if (showFlash) {
     if (apiKeyWarning) {

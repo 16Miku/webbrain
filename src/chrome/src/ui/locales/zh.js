@@ -277,6 +277,11 @@ export default {
   'st.provider.field.model': '模型',
   'st.provider.field.model_optional': '模型（可选）',
   'st.provider.field.supports_vision': '模型支持视觉（多模态）',
+  'st.provider.field.vision_auto': '自动（来自 Ollama）',
+  'st.provider.field.vision_force_on': '强制开启',
+  'st.provider.field.vision_detected_vision': '自动检测：支持视觉',
+  'st.provider.field.vision_detected_text': '自动检测：仅文本',
+  'st.provider.field.vision_pending': '自动检测会在下次请求前运行。',
   'st.provider.field.compact_prompt': '精简提示（移除部分安全护栏 — 仅在 8B 以下模型上启用）',
   'st.provider.field.model_loaded_hint': '留空则使用已加载的模型',
 

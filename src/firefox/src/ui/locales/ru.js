@@ -269,6 +269,11 @@ export default {
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необязательно)',
   'st.provider.field.supports_vision': 'Модель поддерживает зрение (мультимодальная)',
+  'st.provider.field.vision_auto': 'Автоматически (из Ollama)',
+  'st.provider.field.vision_force_on': 'Принудительно включить',
+  'st.provider.field.vision_detected_vision': 'Определено автоматически: Поддержка изображений',
+  'st.provider.field.vision_detected_text': 'Определено автоматически: Только текст',
+  'st.provider.field.vision_pending': 'Автоопределение выполняется перед следующим запросом.',
   'st.provider.field.compact_prompt': 'Компактный prompt (отключает некоторые ограничения — включайте только для моделей меньше 8B)',
   'st.provider.field.model_loaded_hint': 'оставьте пустым, чтобы использовать загруженную модель',
 

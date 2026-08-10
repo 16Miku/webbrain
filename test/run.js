@@ -733,11 +733,13 @@ const ProviderCatalogFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/provider-catalog.js').replace(/\\/g, '/')
 );
 const {
+  canonicalizeOllamaBaseUrl: canonicalizeOllamaBaseUrlCh,
   inferContextWindow: inferContextWindowCh,
   normalizeDetectedContextWindow: normalizeDetectedContextWindowCh,
   shouldApplyDetectedContextWindow: shouldApplyDetectedContextWindowCh,
   parseLlamaCppPropsContextWindow: parseLlamaCppPropsContextWindowCh,
   parseOllamaShowContextWindow: parseOllamaShowContextWindowCh,
+  parseOllamaShowVisionSupport: parseOllamaShowVisionSupportCh,
   parseOllamaPsContextWindow: parseOllamaPsContextWindowCh,
   parseOllamaNumCtx: parseOllamaNumCtxCh,
   parseLmStudioModelsContextWindow: parseLmStudioModelsContextWindowCh,
@@ -748,11 +750,13 @@ const {
   'file://' + path.join(ROOT, 'src/chrome/src/providers/context-windows.js').replace(/\\/g, '/')
 );
 const {
+  canonicalizeOllamaBaseUrl: canonicalizeOllamaBaseUrlFx,
   inferContextWindow: inferContextWindowFx,
   normalizeDetectedContextWindow: normalizeDetectedContextWindowFx,
   shouldApplyDetectedContextWindow: shouldApplyDetectedContextWindowFx,
   parseLlamaCppPropsContextWindow: parseLlamaCppPropsContextWindowFx,
   parseOllamaShowContextWindow: parseOllamaShowContextWindowFx,
+  parseOllamaShowVisionSupport: parseOllamaShowVisionSupportFx,
   parseOllamaPsContextWindow: parseOllamaPsContextWindowFx,
   parseOllamaNumCtx: parseOllamaNumCtxFx,
   parseLmStudioModelsContextWindow: parseLmStudioModelsContextWindowFx,
@@ -21474,6 +21478,65 @@ test('chrome fetch fallback resolves null-body proxy statuses without hanging', 
   }
 });
 
+test('chrome fetch fallback aborts an active offscreen response body', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  let disconnects = 0;
+  console.warn = () => {};
+  globalThis.fetch = async () => {
+    throw new TypeError('Failed to fetch');
+  };
+  globalThis.chrome = {
+    offscreen: {
+      async hasDocument() { return true; },
+    },
+    runtime: {
+      connect() {
+        const messageListeners = [];
+        return {
+          onMessage: { addListener: (fn) => messageListeners.push(fn) },
+          onDisconnect: { addListener() {} },
+          postMessage() {
+            queueMicrotask(() => {
+              messageListeners.forEach((fn) => fn({
+                type: 'headers',
+                ok: true,
+                status: 200,
+                contentType: 'application/json',
+                hasBody: true,
+              }));
+            });
+          },
+          disconnect() { disconnects += 1; },
+        };
+      },
+    },
+  };
+
+  try {
+    const fetchUrl = 'file://' + path.join(ROOT, 'src/chrome/src/providers/fetch-with-fallback.js').replace(/\\/g, '/') + `?abort=${Date.now()}`;
+    const { fetchWithFallback } = await import(fetchUrl);
+    const controller = new AbortController();
+    const response = await fetchWithFallback('http://127.0.0.1:11434/api/show', {
+      method: 'POST',
+      body: '{}',
+      timeoutMs: 12345,
+      signal: controller.signal,
+    });
+    const body = response.text();
+    controller.abort(new DOMException('metadata deadline', 'TimeoutError'));
+    await assert.rejects(body, /metadata deadline/);
+    assert.equal(disconnects, 1, 'aborting after headers should disconnect the offscreen streaming port');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    console.warn = previousWarn;
+  }
+});
+
 test('chrome offscreen stream marks null response bodies and completes without a reader', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;
@@ -24094,6 +24157,67 @@ test('settings exposes a Cloudflare account ID field before the base URL templat
       /cloudflare:\s*\{[\s\S]*?\{\s*key: 'accountId', label: 'Cloudflare Account ID', type: 'text'[\s\S]*?\{\s*key: 'baseUrl'[\s\S]*?\{account_id\}/,
       `${label}: Cloudflare settings should collect accountId before the baseUrl template`,
     );
+  }
+});
+
+test('Ollama settings use tri-state vision capability with mirrored preflight wiring', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const manager = fs.readFileSync(path.join(ROOT, prefix, 'src/providers/manager.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const handoff = fs.readFileSync(path.join(ROOT, prefix, 'src/ollama-handoff.js'), 'utf8');
+    const ollamaFields = settings.slice(settings.indexOf('ollama: {'), settings.indexOf('lmstudio: {'));
+
+    assert.match(ollamaFields, /OLLAMA_VISION_MODE_FIELD/, `${label}: Ollama should expose the tri-state vision field`);
+    assert.doesNotMatch(ollamaFields, /key: 'supportsVision'.*checkbox/, `${label}: Ollama should no longer expose the legacy boolean checkbox`);
+    assert.match(settings, /value: 'auto'[\s\S]*value: 'on'[\s\S]*value: 'off'/, `${label}: vision selector should expose auto, force-on, and off`);
+    for (const key of ['vision_detected_vision', 'vision_detected_text', 'vision_pending']) {
+      assert.ok(settings.includes(key), `${label}: auto detection status should include ${key}`);
+    }
+    assert.match(settings, /data-ollama-vision-status/, `${label}: the status should remain addressable when Auto is not initially selected`);
+    assert.match(settings, /select\[data-provider="ollama"\]\[data-key="visionMode"\][\s\S]*?addEventListener\('change', refreshOllamaVisionStatus\)/,
+      `${label}: changing the override should update status visibility immediately`);
+    assert.match(settings, /input\[data-key="model"\][\s\S]*refreshOllamaVisionStatus\(\)/,
+      `${label}: editing the model or endpoint should invalidate the displayed detection`);
+    assert.match(settings, /changes\.providers\?\.newValue\?\.ollama[\s\S]*visionDetection[\s\S]*refreshOllamaVisionStatus\(\)/,
+      `${label}: background detection storage updates should refresh an open Settings page`);
+    assert.match(manager, /visionMode: 'auto'[\s\S]*visionDetection: null/, `${label}: Ollama defaults should be auto and unresolved`);
+    assert.doesNotMatch(handoff, /supportsVision:\s*true/, `${label}: launch handoff must not force vision`);
+    assert.match(handoff, /visionMode:\s*'auto'/, `${label}: launch handoff should request metadata detection`);
+
+    const firstPreflight = agent.indexOf('prepareActiveProviderCapabilities?.()');
+    const firstEnrichment = agent.indexOf('this._enrichUserMessageWithCurrentPage(', firstPreflight);
+    assert.ok(firstPreflight >= 0 && firstEnrichment > firstPreflight, `${label}: capability preflight must run before first-turn enrichment`);
+  }
+});
+
+test('Ollama vision settings copy is translated and mirrored in every locale', async () => {
+  const localeCodes = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const keys = [
+    'st.provider.field.vision_auto',
+    'st.provider.field.vision_force_on',
+    'st.provider.field.vision_detected_vision',
+    'st.provider.field.vision_detected_text',
+    'st.provider.field.vision_pending',
+  ];
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+
+  for (const locale of localeCodes) {
+    const chromeLocale = (await import(pathToFileURL(path.join(ROOT, `src/chrome/src/ui/locales/${locale}.js`)).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
+    for (const key of keys) {
+      assert.equal(firefoxLocale[key], chromeLocale[key], `${locale}: ${key} should match across browsers`);
+      assert.ok(chromeLocale[key]?.trim(), `${locale}: ${key} should not be empty`);
+      if (locale !== 'en') {
+        assert.notEqual(chromeLocale[key], english[key], `${locale}: ${key} should not fall back to English`);
+      }
+    }
   }
 });
 
@@ -37477,6 +37601,7 @@ test('local context-window detection parsers: local provider metadata', () => {
       shouldApply: shouldApplyDetectedContextWindowCh,
       llama: parseLlamaCppPropsContextWindowCh,
       ollamaShow: parseOllamaShowContextWindowCh,
+      ollamaVision: parseOllamaShowVisionSupportCh,
       ollamaPs: parseOllamaPsContextWindowCh,
       ollamaNumCtx: parseOllamaNumCtxCh,
       lmstudio: parseLmStudioModelsContextWindowCh,
@@ -37489,6 +37614,7 @@ test('local context-window detection parsers: local provider metadata', () => {
       shouldApply: shouldApplyDetectedContextWindowFx,
       llama: parseLlamaCppPropsContextWindowFx,
       ollamaShow: parseOllamaShowContextWindowFx,
+      ollamaVision: parseOllamaShowVisionSupportFx,
       ollamaPs: parseOllamaPsContextWindowFx,
       ollamaNumCtx: parseOllamaNumCtxFx,
       lmstudio: parseLmStudioModelsContextWindowFx,
@@ -37535,6 +37661,15 @@ test('local context-window detection parsers: local provider metadata', () => {
       parameters: 'num_ctx 8192',
     }), 8192);
     assert.equal(p.ollamaShow({}), null);
+    assert.equal(p.ollamaVision({ capabilities: ['completion'] }), false);
+    assert.equal(p.ollamaVision({ capabilities: ['completion', 'vision'] }), true);
+    assert.equal(p.ollamaVision({ capabilities: ['VISION'] }), true);
+    assert.equal(p.ollamaVision({ capabilities: ['completion'], projector_info: { legacy: true } }), false);
+    assert.equal(p.ollamaVision({ projector_info: { 'clip.embedding_length': 1024 } }), true);
+    assert.equal(p.ollamaVision({ model_info: { 'gemma3.vision.image_size': 896 } }), true);
+    assert.equal(p.ollamaVision({ model_info: { 'qwen2.context_length': 32768 } }), false);
+    assert.equal(p.ollamaVision({}), false);
+    assert.equal(p.ollamaVision(null), null);
 
     assert.equal(p.ollamaPs({
       models: [
@@ -37652,7 +37787,8 @@ test('Ollama launch handoff normalizes safe loopback /v1 provider config', () =>
       model: 'qwen3:8b',
       contextWindow: 131072,
       apiKey: 'ollama',
-      supportsVision: true,
+      visionMode: 'auto',
+      visionDetection: null,
       promptTier: 'mid',
       enabled: true,
     });
@@ -37687,6 +37823,317 @@ test('Ollama launch handoff rejects unsafe base URLs and clamps context', () => 
       contextWindow: '2048',
     });
     assert.equal(small.contextWindow, 4096);
+  }
+});
+
+test('Ollama vision identity normalizes hosts without folding case-sensitive URL paths', () => {
+  for (const [label, canonicalize, PM] of [
+    ['chrome', canonicalizeOllamaBaseUrlCh, ProviderManagerCh],
+    ['firefox', canonicalizeOllamaBaseUrlFx, ProviderManagerFx],
+  ]) {
+    assert.equal(
+      canonicalize('HTTP://LOCALHOST:11434/Proxy/v1/'),
+      'http://localhost:11434/Proxy/v1',
+      `${label}: scheme/host and a trailing slash should be canonicalized`,
+    );
+    assert.notEqual(
+      canonicalize('http://localhost:11434/Proxy/v1'),
+      canonicalize('http://localhost:11434/proxy/v1'),
+      `${label}: proxy path case must remain part of endpoint identity`,
+    );
+
+    const manager = new PM();
+    const upperPath = manager._ollamaVisionIdentity({
+      model: 'same-model',
+      baseUrl: 'HTTP://LOCALHOST:11434/Proxy/v1/',
+    });
+    const normalizedHost = manager._ollamaVisionIdentity({
+      model: 'SAME-MODEL',
+      baseUrl: 'http://localhost:11434/Proxy/v1',
+    });
+    const lowerPath = manager._ollamaVisionIdentity({
+      model: 'same-model',
+      baseUrl: 'http://localhost:11434/proxy/v1',
+    });
+    assert.equal(upperPath.key, normalizedHost.key, `${label}: equivalent host spelling should share a detection`);
+    assert.notEqual(upperPath.key, lowerPath.key, `${label}: case-distinct paths must not share a detection`);
+
+    const defaults = manager._defaultConfigs();
+    const provider = manager._createProvider('ollama', {
+      ...defaults.ollama,
+      baseUrl: lowerPath.baseUrl,
+      model: lowerPath.model,
+      visionDetection: {
+        model: upperPath.model,
+        baseUrl: upperPath.baseUrl,
+        supportsVision: true,
+        source: 'ollama_show',
+      },
+    });
+    assert.equal(provider.supportsVision, false, `${label}: a detection from a case-distinct path must fail closed`);
+  }
+});
+
+test('Ollama vision auto-detection is model-bound, single-flight, and overrideable', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, AgentClass, runtimeKey] of [
+      ['chrome', ProviderManagerCh, AgentCh, 'chrome'],
+      ['firefox', ProviderManagerFx, AgentFx, 'browser'],
+    ]) {
+      const writes = [];
+      globalThis[runtimeKey] = {
+        storage: {
+          local: {
+            get: async () => ({}),
+            set: async (patch) => { writes.push(patch); },
+          },
+          onChanged: { addListener() {} },
+        },
+        tabs: {
+          get: async () => ({ url: 'https://example.test/', title: 'Example' }),
+        },
+      };
+
+      let fetchCalls = 0;
+      globalThis.fetch = async (url, init = {}) => {
+        fetchCalls += 1;
+        assert.match(String(url), /\/api\/show$/, `${label}: detection should use Ollama's native show endpoint`);
+        const body = JSON.parse(init.body);
+        assert.equal(Object.hasOwn(body, 'model'), true, `${label}: show request should use the current model field`);
+        const capabilities = body.model === 'gemma3:4b'
+          ? ['completion', 'vision']
+          : ['completion'];
+        return new Response(JSON.stringify({ capabilities }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      const mgr = new PM();
+      const defaults = mgr._defaultConfigs();
+      mgr.providers.set('ollama', mgr._createProvider('ollama', {
+        ...defaults.ollama,
+        model: 'qwen2.5:3b',
+        configured: true,
+      }));
+      mgr.activeProviderId = 'ollama';
+
+      const [first, second] = await Promise.all([
+        mgr.prepareActiveProviderCapabilities(),
+        mgr.prepareActiveProviderCapabilities(),
+      ]);
+      assert.equal(first.ok, true, `${label}: text-only metadata detection should succeed`);
+      assert.equal(second.ok, true, `${label}: shared detection should succeed for all waiters`);
+      assert.equal(fetchCalls, 1, `${label}: concurrent checks should share one metadata request`);
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: qwen2.5 without vision metadata must be text-only`);
+      assert.deepEqual(mgr.getActive().config.visionDetection, {
+        model: 'qwen2.5:3b',
+        baseUrl: 'http://localhost:11434/v1',
+        supportsVision: false,
+        source: 'ollama_show',
+      });
+      const agent = new AgentClass(mgr);
+      let screenshots = 0;
+      agent._captureBudgetedAutoScreenshot = async () => {
+        screenshots += 1;
+        return { dataUrl: 'data:image/png;base64,AA==', width: 100, height: 100, coordAligned: true };
+      };
+      const textOnlyEnriched = await agent._enrichUserMessageWithCurrentPage(7, [], 'alo');
+      assert.equal(typeof textOnlyEnriched.content, 'string', `${label}: text-only Ollama should keep the first Ask request textual`);
+      assert.equal(screenshots, 0, `${label}: text-only Ollama should not capture an initial model-facing screenshot`);
+      const prunedHistory = agent._pruneOldImages([{
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } }],
+      }], mgr.getActive());
+      assert.equal(prunedHistory[0].content.some((block) => block?.type === 'image_url'), false,
+        `${label}: historical screenshots should be removed for auto-detected text-only Ollama`);
+      const rejectedAttachment = await agent._applyAttachments(
+        { role: 'user', content: 'describe this' },
+        [{ kind: 'image', dataUrl: 'data:image/png;base64,AA==', name: 'explicit.png' }],
+        mgr.getActive(),
+      );
+      assert.equal(rejectedAttachment.ok, false, `${label}: an explicit image should be rejected, not silently dropped`);
+      assert.match(rejectedAttachment.error, /Force on/, `${label}: Ollama rejection should explain the override`);
+
+      await mgr.updateProvider('ollama', { model: 'gemma3:4b' });
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: changing models should invalidate old detection immediately`);
+      const vision = await mgr.prepareActiveProviderCapabilities();
+      assert.equal(vision.supportsVision, true, `${label}: explicit Ollama vision capability should be honored`);
+      assert.equal(mgr.getActive().supportsVision, true, `${label}: matching vision detection should reach the provider`);
+      assert.equal(fetchCalls, 2, `${label}: a new model should get its own metadata request`);
+      const visionEnriched = await agent._enrichUserMessageWithCurrentPage(7, [], 'what is here?');
+      assert.ok(Array.isArray(visionEnriched.content), `${label}: vision-capable Ollama should retain multimodal enrichment`);
+      assert.equal(visionEnriched.content.some((block) => block?.type === 'image_url'), true, `${label}: vision-capable Ollama should receive the screenshot`);
+      assert.equal(screenshots, 1, `${label}: vision-capable Ollama should capture exactly one initial screenshot`);
+
+      await mgr.updateProvider('ollama', { visionMode: 'off' });
+      assert.equal((await mgr.prepareActiveProviderCapabilities()).skipped, true, `${label}: off override should skip metadata`);
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: off override should win`);
+      await mgr.updateProvider('ollama', { visionMode: 'on' });
+      assert.equal((await mgr.prepareActiveProviderCapabilities()).skipped, true, `${label}: on override should skip metadata`);
+      assert.equal(mgr.getActive().supportsVision, true, `${label}: on override should win`);
+      assert.equal(fetchCalls, 2, `${label}: manual overrides should not call Ollama metadata`);
+      assert.ok(writes.length >= 3, `${label}: detection and settings changes should be persisted`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Ollama vision detection fails closed and ignores stale responses', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      globalThis[runtimeKey] = {
+        storage: {
+          local: { get: async () => ({}), set: async () => {} },
+          onChanged: { addListener() {} },
+        },
+      };
+      let releaseFirst;
+      let fetchCalls = 0;
+      globalThis.fetch = async (_url, init = {}) => {
+        fetchCalls += 1;
+        const model = JSON.parse(init.body).model;
+        if (model === 'old-model') {
+          await new Promise((resolve) => { releaseFirst = resolve; });
+          return new Response(JSON.stringify({ capabilities: ['completion', 'vision'] }), { status: 200 });
+        }
+        if (model === 'unreachable-model') return new Response('missing', { status: 404 });
+        if (model === 'malformed-model') return new Response('{not-json', { status: 200 });
+        if (model === 'timeout-model') throw new DOMException('The operation was aborted', 'AbortError');
+        return new Response(JSON.stringify({ capabilities: ['completion'] }), { status: 200 });
+      };
+
+      const mgr = new PM();
+      const defaults = mgr._defaultConfigs();
+      mgr.providers.set('ollama', mgr._createProvider('ollama', {
+        ...defaults.ollama,
+        model: 'old-model',
+        configured: true,
+      }));
+      mgr.activeProviderId = 'ollama';
+
+      const staleCheck = mgr.prepareActiveProviderCapabilities();
+      await Promise.resolve();
+      await mgr.updateProvider('ollama', { model: 'new-model' });
+      releaseFirst();
+      const stale = await staleCheck;
+      assert.equal(stale.stale, true, `${label}: a late response should be marked stale`);
+      assert.equal(mgr.getActive().config.visionDetection, null, `${label}: a stale response must not update the new model`);
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: the new model should stay fail-closed until checked`);
+
+      await mgr.updateProvider('ollama', { model: 'unreachable-model' });
+      const unavailable = await mgr.prepareActiveProviderCapabilities();
+      assert.equal(unavailable.ok, false, `${label}: HTTP metadata failure should be non-authoritative`);
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: metadata failure should fail closed`);
+      assert.equal(mgr.getActive().config.visionDetection, null, `${label}: metadata failure must not persist text-only detection`);
+      await mgr.prepareActiveProviderCapabilities();
+      assert.equal(fetchCalls, 2, `${label}: a failed key should still be checked only once per worker lifetime`);
+
+      await mgr.updateProvider('ollama', { model: 'malformed-model' });
+      const malformed = await mgr.prepareActiveProviderCapabilities();
+      assert.equal(malformed.ok, false, `${label}: malformed JSON should fail closed`);
+      assert.equal(mgr.getActive().config.visionDetection, null, `${label}: malformed JSON must not persist a false result`);
+
+      await mgr.updateProvider('ollama', { model: 'timeout-model' });
+      const timedOut = await mgr.prepareActiveProviderCapabilities();
+      assert.equal(timedOut.ok, false, `${label}: a metadata timeout should fail closed`);
+      assert.equal(mgr.getActive().supportsVision, false, `${label}: a timed-out turn must remain text-only`);
+      assert.equal(fetchCalls, 4, `${label}: each distinct model should receive one metadata request`);
+
+      const managerSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/providers/manager.js`), 'utf8');
+      assert.match(managerSource, /OLLAMA_VISION_METADATA_TIMEOUT_MS\s*=\s*3000/,
+        `${label}: Ollama metadata should use a three-second timeout`);
+      assert.match(managerSource, /timeoutMs:\s*OLLAMA_VISION_METADATA_TIMEOUT_MS/,
+        `${label}: the metadata request should apply the bounded timeout`);
+      assert.match(managerSource, /Promise\.race\(\[request, timeout\]\)/,
+        `${label}: the three-second bound should include response JSON parsing`);
+      assert.match(managerSource, /signal:\s*controller\.signal/,
+        `${label}: metadata fetch should receive the timeout controller signal`);
+      assert.match(managerSource, /controller\.abort\(/,
+        `${label}: the outer metadata timeout should abort the losing request`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Ollama vision metadata timeout aborts stalled response bodies', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const abortedModels = new Set();
+
+  try {
+    const runtime = {
+      storage: {
+        local: { get: async () => ({}), set: async () => {} },
+        onChanged: { addListener() {} },
+      },
+    };
+    globalThis.chrome = runtime;
+    globalThis.browser = runtime;
+    globalThis.fetch = async (_url, init = {}) => {
+      const model = JSON.parse(init.body).model;
+      let streamController;
+      const stream = new ReadableStream({
+        start(controller) { streamController = controller; },
+      });
+      init.signal.addEventListener('abort', () => {
+        abortedModels.add(model);
+        try { streamController.error(init.signal.reason); } catch {}
+      }, { once: true });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+
+    const checks = [
+      ['chrome', ProviderManagerCh, 'stalled-chrome'],
+      ['firefox', ProviderManagerFx, 'stalled-firefox'],
+    ].map(async ([label, PM, model]) => {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('ollama', manager._createProvider('ollama', {
+        ...defaults.ollama,
+        model,
+        configured: true,
+      }));
+      manager.activeProviderId = 'ollama';
+      const result = await manager.prepareActiveProviderCapabilities();
+      assert.equal(result.ok, false, `${label}: a stalled body should fail closed`);
+      assert.equal(manager.getActive().supportsVision, false, `${label}: a stalled body must not enable screenshots`);
+    });
+
+    await Promise.all(checks);
+    assert.deepEqual(
+      [...abortedModels].sort(),
+      ['stalled-chrome', 'stalled-firefox'],
+      'both browser paths should abort their stalled body when the metadata deadline wins',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -38638,6 +39085,11 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       assert.equal(storageData.providers.openai.configured, true, `${label}: inferred configured state should be persisted`);
 
       const defaults = mgr._defaultConfigs();
+      const {
+        visionMode: _defaultOllamaVisionMode,
+        visionDetection: _defaultOllamaVisionDetection,
+        ...legacyOllamaDefaults
+      } = defaults.ollama;
       assert.equal(mgr._hasStoredProviderCredentials(defaults.ollama, { ...defaults.ollama }), false, `${label}: untouched default snapshot has no user credentials`);
       assert.equal(mgr._hasStoredProviderCredentials(defaults.ollama, { ...defaults.ollama, model: 'historical-default-model' }), false, `${label}: model drift is not a credential signal`);
       assert.equal(mgr._hasStoredProviderCredentials(defaults.lmstudio, { ...defaults.lmstudio, apiKey: 'historical-local-placeholder' }), false, `${label}: changed local dummy keys are not credential signals`);
@@ -38648,7 +39100,7 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
         activeProvider: 'webbrain_cloud',
         providers: {
           ollama: {
-            ...defaults.ollama,
+            ...legacyOllamaDefaults,
             model: 'historical-ollama-default',
             supportsVision: false,
           },
@@ -38663,7 +39115,36 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       const historicalSnapshotManager = new PM();
       await historicalSnapshotManager.load();
       assert.equal(historicalSnapshotManager.providers.get('ollama')?.config.configured, false, `${label}: historical Ollama defaults should not become configured`);
+      assert.equal(historicalSnapshotManager.providers.get('ollama')?.config.visionMode, 'off', `${label}: an explicit legacy vision=false should migrate to off`);
+      assert.equal(historicalSnapshotManager.providers.get('ollama')?.supportsVision, false, `${label}: migrated off mode should remain text-only`);
+      assert.equal(Object.hasOwn(historicalSnapshotStorage.providers.ollama, 'supportsVision'), false, `${label}: legacy vision boolean should be removed from storage`);
       assert.equal(historicalSnapshotManager.providers.get('openai')?.config.configured, false, `${label}: historical OpenAI defaults should not become configured`);
+
+      const legacyVisionOnStorage = {
+        webbrainDeviceGuid: validGuid,
+        activeProvider: 'webbrain_cloud',
+        providers: {
+          ollama: { ...legacyOllamaDefaults, supportsVision: true },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(legacyVisionOnStorage);
+      const legacyVisionOnManager = new PM();
+      await legacyVisionOnManager.load();
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.config.visionMode, 'auto', `${label}: legacy vision=true should migrate to auto detection`);
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.supportsVision, false, `${label}: auto mode should fail closed before metadata detection`);
+
+      const legacyVisionMissingStorage = {
+        webbrainDeviceGuid: validGuid,
+        activeProvider: 'webbrain_cloud',
+        providers: { ollama: { ...legacyOllamaDefaults } },
+      };
+      globalThis[runtimeKey] = makeRuntime(legacyVisionMissingStorage);
+      const legacyVisionMissingManager = new PM();
+      await legacyVisionMissingManager.load();
+      assert.equal(legacyVisionMissingManager.providers.get('ollama')?.config.visionMode, 'auto',
+        `${label}: a missing legacy vision field should migrate to auto detection`);
+      assert.equal(legacyVisionMissingStorage.providers.ollama.visionMode, 'auto',
+        `${label}: missing legacy vision state should be persisted in the new shape`);
 
       const legacyActiveStorage = {
         webbrainDeviceGuid: validGuid,
