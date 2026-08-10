@@ -77,6 +77,11 @@ ollama serve
 # LocalAI: http://localhost:8080/v1
 ```
 
+For llama.cpp, LM Studio, and LocalAI, Vision defaults to **Auto**. WebBrain
+reads the selected model's server metadata before a turn and sends screenshots
+only when image input is reported. Settings also offers **Force on** and
+**Off** overrides; metadata failures remain text-only for that turn.
+
 ### Use it
 
 Click the WebBrain icon → the side panel opens. Type a message like:

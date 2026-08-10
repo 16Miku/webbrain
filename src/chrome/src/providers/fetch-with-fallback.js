@@ -95,9 +95,12 @@ export async function fetchWithFallback(url, options = {}) {
   try {
     const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
+    // Keep the caller signal linked after headers arrive: aborting the fetch
+    // must also cancel a response body that stalls while the caller reads it.
     return res;
   } catch (directError) {
     clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortDirectFromCaller);
 
     if (callerSignal?.aborted) {
       throw callerSignal.reason instanceof Error
@@ -114,15 +117,12 @@ export async function fetchWithFallback(url, options = {}) {
         `Check the URL/credentials and that the server is responding.`
       );
     }
-    // Preserve the previous no-fallback behavior for fetches aborted by the
-    // browser or another lower layer for reasons unrelated to our timer.
     if (directError.name === 'AbortError') throw directError;
 
     // Network error (Failed to fetch) — try offscreen proxy
     console.warn(
       `[WebBrain] Direct fetch to ${url} failed (${directError.message}), trying offscreen proxy...`
     );
-    callerSignal?.removeEventListener('abort', abortDirectFromCaller);
 
     try {
       await ensureOffscreen();
@@ -239,6 +239,7 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
         // used to leave the caller hanging forever with no active timeout.
         if (msg.hasBody === false || [204, 205, 304].includes(msg.status)) {
           streamController = null;
+          cleanupCallerSignal();
           try {
             resolve(new Response(null, responseInit));
           } catch (e) {
@@ -288,6 +289,7 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
       } else if (msg?.type === 'done') {
         const sc = streamController;
         streamController = null;
+        cleanupCallerSignal();
         try { sc.close(); } catch {}
         try { port.disconnect(); } catch {}
       }

@@ -7,6 +7,7 @@ import {
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { canonicalizeOllamaBaseUrl } from './context-windows.js';
+import { AUTO_VISION_PROVIDER_IDS, configuredVisionSupport } from './vision-capabilities.js';
 
 const OPENAI_RESPONSES_MIN_MAX_OUTPUT_TOKENS = 16;
 const KIMI_CURRENT_TOOL_REASONING_MODELS = new Set([
@@ -105,6 +106,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         && model === detectedModel
         && baseUrl === detectedBaseUrl
         && detection?.supportsVision === true;
+    }
+    if (AUTO_VISION_PROVIDER_IDS.has(providerName)) {
+      return configuredVisionSupport(providerName, this.config);
     }
     // Explicit user opt-in always wins (used by LM Studio and any custom
     // OpenAI-compatible endpoint where the loaded model varies).

@@ -1,5 +1,6 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithFallback } from './fetch-with-fallback.js';
+import { configuredVisionSupport } from './vision-capabilities.js';
 
 /**
  * Provider for local llama.cpp server (OpenAI-compatible API on localhost).
@@ -29,9 +30,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
   }
 
   get supportsVision() {
-    // Local models vary — some llama.cpp / Qwen2-VL / Gemma 3 / LLaVA builds
-    // are multimodal, others are text-only. The user opts in via settings.
-    return !!this.config.supportsVision;
+    return configuredVisionSupport('llamacpp', this.config);
   }
 
   get useCompactPrompt() {

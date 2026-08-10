@@ -37,13 +37,13 @@ class BaseLLMProvider {
 | ID Fournisseur | Type | Catégorie | Modèle par défaut | Vision |
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Oui |
-| `llamacpp` | `llamacpp` | local | (modèle chargé) | Oui (activé par défaut) |
-| `ollama` | `openai` | local | (modèle chargé) | Auto via `/api/show` |
-| `lmstudio` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
+| `llamacpp` | `llamacpp` | local | (modèle chargé) | Métadonnées auto / surcharge |
+| `ollama` | `openai` | local | (modèle chargé) | Auto via `/api/show` / surcharge |
+| `lmstudio` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `jan` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `vllm` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `sglang` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
-| `localai` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
+| `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
@@ -125,10 +125,15 @@ serveur local a été démarré avec authentification :
 - **SGLang** : `http://localhost:30000/v1` — le serveur compatible OpenAI de SGLang
 - **LocalAI** : `http://localhost:8080/v1` — le serveur compatible OpenAI de LocalAI
 
-Ollama utilise par défaut `visionMode: "auto"` et vérifie le modèle sélectionné
-avec les métadonnées natives de `/api/show` avant de joindre des images. Les
-autres fournisseurs locaux conservent leur comportement explicite
-`supportsVision` existant.
+Ollama, llama.cpp, LM Studio et LocalAI utilisent `visionMode: auto` par défaut.
+WebBrain lit les métadonnées natives du modèle sélectionné avant l'enrichissement et
+n'envoie des captures que si le serveur déclare explicitement l'entrée image.
+Une détection indisponible ou malformée reste en texte seul pour ce tour et
+sera retentée plus tard. Si le champ Modèle est vide, la capacité du modèle
+chargé est revérifiée à chaque tour afin de suivre les changements côté serveur.
+Les réglages proposent Automatique, Forcer
+l'activation et Désactivé ; les autres fournisseurs locaux conservent leur
+interrupteur explicite actuel.
 
 #### Relais de lancement Ollama (préversion)
 
@@ -180,9 +185,16 @@ Le mode Ask ignore le niveau du fournisseur et reste en lecture seule. Le mode A
 |---|---|
 | Compatible OpenAI | Regex sur le nom du modèle (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
 | Anthropic | Patterns `claude-(3\|sonnet-4\|opus-4)` |
-| llama.cpp | Interrupteur explicite `supportsVision` dans la configuration |
-| Ollama | Champ `capabilities` de `POST /api/show`, avec repli historique sur `projector_info` / les métadonnées `.vision.` ; réglage Auto / Forcer l'activation / Désactivé |
-| LM Studio / Jan / vLLM / SGLang / LocalAI | Interrupteur explicite `supportsVision` dans la configuration (via le fournisseur OpenAI) |
+| Ollama | `POST /api/show` `capabilities`, avec replis historiques `projector_info` / `.vision.` |
+| llama.cpp | `GET /props` → `modalities.vision`, avec Automatique / Forcer / Désactivé |
+| LM Studio | `GET /api/v1/models` → `capabilities.vision`, puis ancien `/api/v0/models` `type` |
+| LocalAI | `GET /v1/models/capabilities` → `input_modalities` / `capabilities` |
+| Jan / vLLM / SGLang | Interrupteur explicite `supportsVision` dans la configuration (via le fournisseur OpenAI) |
+
+La détection est liée au fournisseur, au modèle exact et à l'URL de base. Les
+requêtes simultanées sont regroupées et une réponse tardive d'une ancienne
+configuration ne peut pas modifier la configuration actuelle. Un fournisseur
+de vision dédié conserve le routage séparé existant.
 
 ### Conversion Anthropic
 
@@ -286,11 +298,4 @@ myprovider: {
 },
 ```
 
-La vision est normalement auto-détectée via une regex sur le nom du modèle.
-Ollama fait exception : son mode Auto utilise les métadonnées natives de
-`/api/show` et échoue de manière fermée vers le mode texte seul si elles ne
-peuvent pas être vérifiées. Si un autre fournisseur a un ensemble connu de
-modèles de vision, ajoutez-les à la regex dans `openai.js`. Définissez
-`supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui
-acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false
-lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.
+La vision est auto-détectée via une regex sur le nom du modèle. Si le fournisseur a un ensemble connu de modèles de vision, ajoutez-les à la regex dans `openai.js`. Définissez `supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.

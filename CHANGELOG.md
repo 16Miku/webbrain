@@ -8,6 +8,7 @@ This changelog was generated from the repository Git history and release tags. V
 
 ### Changed
 - Updated the LM Studio plugin for the current browser-delegation protocol.
+- Added model-bound vision capability detection for llama.cpp, LM Studio, and LocalAI, with Auto / Force on / Off settings and fail-closed Chrome/Firefox request routing.
 
 ### Fixed
 - Hid empty assistant placeholders until response content is ready to render.

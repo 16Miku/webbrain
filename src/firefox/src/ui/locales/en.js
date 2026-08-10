@@ -715,7 +715,7 @@ export default {
   'st.provider.field.model_optional': 'Model (optional)',
   'st.provider.field.context_window': 'Context window (tokens)',
   'st.provider.field.supports_vision': 'Model supports vision (multimodal)',
-  'st.provider.field.vision_auto': 'Auto (from Ollama)',
+  'st.provider.field.vision_auto': 'Auto',
   'st.provider.field.vision_force_on': 'Force on',
   'st.provider.field.vision_detected_vision': 'Auto-detected: Vision',
   'st.provider.field.vision_detected_text': 'Auto-detected: Text only',
