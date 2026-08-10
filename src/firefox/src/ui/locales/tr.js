@@ -256,6 +256,8 @@ export default {
   'st.display.verbose.desc': 'Tüm araç çağrı ayrıntılarını, argümanları ve ham JSON sonuçlarını gösterir. Daha temiz bir sohbet deneyimi için varsayılan olarak kapalıdır.',
   'st.display.selection_shortcut.label': 'Seçim kısayolu',
   'st.display.selection_shortcut.desc': 'Bir sayfada metin seçtiğinizde WebBrain düğmesini gösterir. Bu seçenek kapalıyken yerel sağ tıklama eylemi kullanılmaya devam eder.',
+  'st.display.auto_group_tabs.label': 'WebBrain sekmelerini grupla',
+  'st.display.auto_group_tabs.desc': 'Araç çubuğundan, bağlam menüsünden veya aracı tarafından açılan sekmeleri otomatik olarak WebBrain adlı bir tarayıcı sekme grubuna yerleştirir. Bu ayarı kapatmak mevcut grupları değiştirmez.',
   'st.display.screenshot.label': 'Ekran görüntüsü yedeği',
   'st.display.screenshot.desc': 'DOM okuması başarısız olduğunda ya da yetersiz içerik döndürdüğünde sayfanın bir ekran görüntüsünü alır. Görme yeteneğine sahip bir model gerektirir.',
   'st.display.site_adapters.label': 'Site uyarlayıcıları',

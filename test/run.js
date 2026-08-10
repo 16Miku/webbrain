@@ -545,6 +545,12 @@ const CloudflareChallengeCh = await import(
 const CloudflareChallengeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
 );
+function detectCaptchaChallengeInPage(gate, options = null) {
+  return gate.detectChallengeDialogInPage({
+    ...gate.captchaChallengeMatcherOptions(),
+    ...(options || {}),
+  });
+}
 const ToolCallParserCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js').replace(/\\/g, '/')
 );
@@ -677,6 +683,14 @@ const { bumpSemver, rewriteVersionInJsonText, rewriteVersionByAnchor, isReleaseB
 );
 const { normalizeChangelogBody, buildChangelogSection, insertChangelogEntry } = await import(
   'file://' + path.join(ROOT, 'scripts/update-changelog.mjs').replace(/\\/g, '/')
+);
+const {
+  collectCouponFollowDomains,
+  extractCouponFollowDomains,
+  normalizeCouponDomain,
+  renderCouponDomainModule,
+} = await import(
+  'file://' + path.join(ROOT, 'scripts/update-coupon-domains.mjs').replace(/\\/g, '/')
 );
 const {
   assertMatchingArchiveVersion,
@@ -3802,6 +3816,55 @@ test('matches Taobao shopping surfaces and includes Chinese marketplace guidance
   assert.match(adapter?.notes || '', /explicit confirmation/);
   assert.match(adapter?.notes || '', /待付款/);
   assert.match(adapter?.notes || '', /订单编号/);
+  assert.equal(firefoxAdapter?.notes, adapter?.notes);
+});
+
+test('matches Pinduoduo consumer surfaces and includes marketplace and group-buying guidance', () => {
+  const trustedUrls = [
+    'https://pinduoduo.com/',
+    'https://www.pinduoduo.com/home/help/',
+    'https://yangkeduo.com/',
+    'https://www.yangkeduo.com/home/download/',
+    'https://mobile.yangkeduo.com/',
+    'https://mobile.yangkeduo.com/relative_goods.html?__rp_name=search_view&shade_words=%E8%80%B3%E6%9C%BA',
+    'https://mobile.yangkeduo.com/search_result.html?search_key=%E6%89%8B%E6%9C%BA%E5%A3%B3',
+    'https://mobile.yangkeduo.com/goods.html?goods_id=722689895611',
+    'https://mobile.yangkeduo.com/login.html?from=https%3A%2F%2Fmobile.yangkeduo.com%2Fgoods.html%3Fgoods_id%3D722689895611',
+  ];
+  for (const url of trustedUrls) {
+    assert.equal(getActiveAdapter(url)?.name, 'pinduoduo');
+    assert.equal(getActiveAdapterFx(url)?.name, 'pinduoduo');
+  }
+
+  const rejectedUrls = [
+    'https://mms.pinduoduo.com/',
+    'https://ipp.pinduoduo.com/cpp/rule-center',
+    'https://api.pinduoduo.com/',
+    'https://pinduoduo.com.phishing.example/',
+    'https://mobile.yangkeduo.com.phishing.example/goods.html',
+    'https://mobile.yangkeduo.com@phishing.example/goods.html',
+    'https://example.com/?next=https://mobile.yangkeduo.com/goods.html',
+  ];
+  for (const url of rejectedUrls) {
+    assert.notEqual(getActiveAdapter(url)?.name, 'pinduoduo');
+    assert.notEqual(getActiveAdapterFx(url)?.name, 'pinduoduo');
+  }
+
+  const adapter = getActiveAdapter('https://mobile.yangkeduo.com/goods.html?goods_id=722689895611');
+  const firefoxAdapter = getActiveAdapterFx('https://www.pinduoduo.com/home/help/');
+  assert.match(adapter?.notes || '', /2026-08/);
+  assert.match(adapter?.notes || '', /www\.pinduoduo\.com.*not the searchable catalog.*mobile\.yangkeduo\.com/s);
+  assert.match(adapter?.notes || '', /用手机浏览器扫码在拼多多App打开/);
+  assert.match(adapter?.notes || '', /relative_goods\.html.*search_result\.html.*goods\.html.*login\.html\?from=/s);
+  assert.match(adapter?.notes || '', /手机登录.*扫码登录.*验证码/s);
+  assert.match(adapter?.notes || '', /"商品".*"搜索".*"推荐".*personalized/s);
+  assert.match(adapter?.notes || '', /"已拼".*"总售".*"本店已拼".*"全店总售"/s);
+  assert.match(adapter?.notes || '', /退货包运费.*极速退款.*假一赔十.*正品发票/s);
+  assert.match(adapter?.notes || '', /拼单.*多人团.*单独购买/s);
+  assert.match(adapter?.notes || '', /without a cart review step.*explicit confirmation/s);
+  assert.match(adapter?.notes || '', /商品详情.*客服.*订单详情.*联系卖家/s);
+  assert.match(adapter?.notes || '', /order number.*待成团.*待付款/s);
+  assert.equal((adapter?.notes || '').trim().split('\n').filter((line) => line.startsWith('- ')).length, 8);
   assert.equal(firefoxAdapter?.notes, adapter?.notes);
 });
 
@@ -7616,9 +7679,9 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
     assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure, { allowGenericFailure: true })?.label,
-      'Email verification failed',
-      `${build}: active CAPTCHA could not retain a renamed failure dialog`,
+      gate.detectChallengeDialog(genericFailure),
+      null,
+      `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
     assert.equal(
       gate.detectChallengeDialog('dialog "CAPTCHA verification failed" [ref_7]')?.label,
@@ -8111,6 +8174,34 @@ test('backgrounds wire Cloudflare detection to narrow response and platform filt
   }
 });
 
+test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+  assert.equal(
+    CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    'Chrome and Firefox exported different CAPTCHA matcher sources',
+  );
+  for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
+    assert.deepEqual(
+      gate.captchaChallengeMatcherOptions(),
+      { challengeLabelPatternSource: gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE },
+      `${build}: serialized matcher options diverged from the module matcher`,
+    );
+    const sourceCopies = [
+      'captcha-gate.js',
+      'captcha-frame-runtime.js',
+      'captcha-solver.js',
+      'agent.js',
+    ].reduce((count, file) => {
+      const source = fs.readFileSync(
+        path.join(ROOT, `src/${build}/src/agent/${file}`),
+        'utf8',
+      );
+      return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
+    }, 0);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
+  }
+});
+
 test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fail closed', async () => {
   for (const [build, gate, AgentClass] of [
     ['chrome', CaptchaGateCh, AgentCh],
@@ -8135,7 +8226,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     for (const dialog of hiddenCases) {
       await withCaptchaFakePage(build, [dialog], async () => {
-        assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: inactive dialog armed the mutation preflight`);
+        assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
         const observation = await agent._observeCaptchaChallenge(
           1,
@@ -8178,22 +8269,25 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, visibilityOverrideNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: visible descendant under visibility-hidden ancestor was suppressed`,
       );
       const runtime = await import(pathToFileURL(
         path.join(ROOT, `src/${build}/src/agent/captcha-frame-runtime.js`),
       ).href);
-      const detected = runtime.detectCaptchaCandidatesInPage({
-        window: {
-          location: globalThis.location,
-          innerWidth: globalThis.innerWidth,
-          innerHeight: globalThis.innerHeight,
-          getComputedStyle: globalThis.getComputedStyle,
+      const detected = runtime.detectCaptchaCandidatesInPage(
+        {
+          window: {
+            location: globalThis.location,
+            innerWidth: globalThis.innerWidth,
+            innerHeight: globalThis.innerHeight,
+            getComputedStyle: globalThis.getComputedStyle,
+          },
+          document: globalThis.document,
         },
-        document: globalThis.document,
-      });
+        gate.captchaChallengeMatcherOptions(),
+      );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
       );
@@ -8206,21 +8300,21 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Verify you are a human' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'Verify you are a human', `${build}: article-bearing challenge dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'reCAPTCHA' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage()?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
+      assert.equal(detectCaptchaChallengeInPage(gate)?.label, 'reCAPTCHA', `${build}: branded reCAPTCHA dialog was missed`);
     });
     await withCaptchaFakePage(build, [
       captchaEl('div', { role: 'dialog', innerText: 'Email verification failed' }),
     ], async () => {
-      assert.equal(gate.detectChallengeDialogInPage(), null, `${build}: generic application failure armed preflight`);
+      assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: generic application failure armed preflight`);
       assert.equal(
-        gate.detectChallengeDialogInPage({ allowGenericFailure: true })?.label,
-        'Email verification failed',
-        `${build}: active-gate failure context was ignored`,
+        detectCaptchaChallengeInPage(gate),
+        null,
+        `${build}: active-gate context promoted a generic failure to CAPTCHA evidence`,
       );
     });
 
@@ -8245,7 +8339,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
     ];
     await withCaptchaFakePage(build, hiddenStageNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: hidden CAPTCHA stage labelled the visible modal as a challenge`,
       );
@@ -8279,7 +8373,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     ];
     await withCaptchaFakePage(build, shadowDialogNodes, async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage()?.label,
+        detectCaptchaChallengeInPage(gate)?.label,
         'Security verification',
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
@@ -8387,7 +8481,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       assert.equal(
-        gate.detectChallengeDialogInPage(),
+        detectCaptchaChallengeInPage(gate),
         null,
         `${build}: shadow dialog under a hidden host armed the preflight`,
       );
@@ -8503,7 +8597,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('one CAPTCHA solve remains gated until a root read confirms clearance', async () => {
+test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -8520,6 +8614,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       status: 'solve_required',
       publicGate: {
         status: 'solve_required',
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8562,7 +8657,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       new Set(['solve_captcha']),
       2,
     );
-    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a root-read turn`);
+    assert.deepEqual(retry, { action: 'continue' }, `${label}: repeat solve block should request a verification turn`);
     assert.deepEqual(executed, ['solve_captcha'], `${label}: second paid solve dispatched`);
     assert.match(String(retryMessages[0]?.content), /do not submit, dismiss, or call solve_captcha again/i);
 
@@ -8577,7 +8672,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       { filter: 'visible' },
     );
     assert.equal(firstPersistent.gate?.status, 'verification_pending', `${label}: changed challenge key reset the attempted solve`);
-    assert.equal(firstPersistent.gate?.verificationRetryRequired, true, `${label}: bounded verification retry was not requested`);
+    assert.equal(firstPersistent.gate?.verificationRetryRequired, undefined, `${label}: regex miss entered the legacy text retry ladder`);
     assert.equal(agent._captchaGateStates.get(tabId)?.key, 'https://example.test/signup\nsecurity verification', `${label}: changed challenge key replaced the attempted-solve identity`);
     const persistent = await agent._observeCaptchaChallenge(
       tabId,
@@ -8585,8 +8680,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       changedChallengeResult,
       { filter: 'visible' },
     );
-    assert.equal(persistent.gate?.status, 'manual_required', `${label}: dialog surviving the bounded retry offered another solve`);
-    assert.equal(persistent.gate?.solveFailedToClearChallenge, true, `${label}: persistent-dialog reason missing`);
+    assert.equal(persistent.gate?.status, 'verification_pending', `${label}: generic failure text overrode the frame-backed gate`);
+    assert.equal(persistent.gate?.solveFailedToClearChallenge, undefined, `${label}: generic failure text created a CAPTCHA failure reason`);
     const changedManual = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8596,17 +8691,17 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(changedManual.gate?.status, 'cleared', `${label}: unrelated post-CAPTCHA dialog kept the failed solve gated`);
-    assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: unrelated post-CAPTCHA dialog left a persisted gate`);
+    assert.equal(changedManual.gate?.status, 'verification_pending', `${label}: unrelated dialog text cleared the frame-backed gate`);
+    assert.equal(agent._captchaGateStates.has(tabId), true, `${label}: unrelated dialog text discarded the frame-backed gate`);
 
     const confirmationAgent = new AgentClass({});
     confirmationAgent._captchaGateStates.set(tabId, {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
-      verificationAttempts: 0,
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         challengeDialog: { label: 'Security verification' },
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
@@ -8621,8 +8716,8 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       },
       { filter: 'visible' },
     );
-    assert.equal(confirmation.gate?.status, 'cleared', `${label}: non-challenge confirmation dialog kept the solved CAPTCHA gated`);
-    assert.equal(confirmationAgent._captchaGateStates.has(tabId), false, `${label}: confirmation dialog leaked a cleared CAPTCHA gate`);
+    assert.equal(confirmation.gate?.status, 'verification_pending', `${label}: confirmation copy cleared the frame-backed gate`);
+    assert.equal(confirmationAgent._captchaGateStates.has(tabId), true, `${label}: confirmation copy discarded the frame-backed gate`);
 
     const clearedAgent = new AgentClass({});
     clearedAgent._captchaGateStates.set(tabId, {
@@ -8631,6 +8726,7 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       publicGate: {
         status: 'verification_pending',
         solveAttempted: true,
+        languageNeutralFrameTrigger: true,
         diagnostics: { vendors: ['recaptcha'], frames: [] },
       },
     });
@@ -8644,12 +8740,12 @@ test('one CAPTCHA solve remains gated until a root read confirms clearance', asy
       clearedResult,
       {},
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: absent root dialog did not clear gate`);
-    assert.equal(clearedAgent._captchaGateStates.has(tabId), false, `${label}: verified gate state leaked`);
+    assert.equal(cleared.gate?.status, 'verification_pending', `${label}: absent English dialog cleared the frame-backed gate`);
+    assert.equal(clearedAgent._captchaGateStates.has(tabId), true, `${label}: regex miss discarded the frame-backed gate`);
   }
 });
 
-test('CAPTCHA gate survives user continuations and only a complete dialog-capable root read clears it', async () => {
+test('manual CAPTCHA gate survives user continuations until page inspection confirms completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8823 : 8824;
     const agent = new AgentClass({});
@@ -8665,6 +8761,11 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
     };
     agent._captchaGateStates.set(tabId, state);
     agent.conversations.set(tabId, [{ role: 'system', content: 'test' }]);
+    let challengePresent = true;
+    agent._detectChallengeDialogBeforeMutation = async () => ({
+      challenge: challengePresent ? { label: 'Security verification' } : null,
+      inspectionComplete: true,
+    });
 
     agent._clearRunLoopState(tabId);
     assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: run continuation discarded the unresolved gate`);
@@ -8693,6 +8794,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
       assert.equal(agent._captchaGateStates.get(tabId)?.status, 'manual_required', `${label}: ${description} cleared the unresolved gate`);
     }
 
+    challengePresent = false;
     const cleared = await agent._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -8700,9 +8802,10 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
         pageContent: 'main [ref_1]\n heading "Welcome" [ref_2]',
         pageUrl: 'https://example.test/signup',
       },
-      { filter: 'visible' },
+      { filter: 'interactive', ref_id: 'ref_1', page: 2, maxDepth: 3 },
     );
-    assert.equal(cleared.gate?.status, 'cleared', `${label}: complete visible root read did not clear the gate`);
+    assert.equal(cleared.gate?.status, 'cleared', `${label}: completed manual challenge did not clear after direct page inspection`);
+    assert.equal(cleared.gate?.clearedByManualCompletion, true, `${label}: manual completion reason missing`);
     assert.equal(agent._captchaGateStates.has(tabId), false, `${label}: cleared gate remained active`);
 
     agent._captchaGateStates.set(tabId, state);
@@ -8711,7 +8814,7 @@ test('CAPTCHA gate survives user continuations and only a complete dialog-capabl
   }
 });
 
-test('pending and token-cleared CAPTCHA gates hydrate after a background worker restart', async () => {
+test('pending, legacy-cleared, and token-cleared CAPTCHA gates hydrate safely after restart', async () => {
   for (const [label, AgentClass, apiName] of [
     ['chrome', AgentCh, 'chrome'],
     ['firefox', AgentFx, 'browser'],
@@ -8722,10 +8825,45 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
     const clearedTabId = tabId + 10;
     const clearedAgent = new AgentClass({});
     const clearedKey = clearedAgent._convKey(clearedTabId);
-    const captchaGateState = {
+    const legacyClearedTabId = tabId + 20;
+    const legacyClearedAgent = new AgentClass({});
+    const legacyClearedKey = legacyClearedAgent._convKey(legacyClearedTabId);
+    const persistedCaptchaGateState = {
       key: 'https://example.test/signup\nsecurity verification',
       status: 'verification_pending',
       verificationAttempts: 1,
+      verificationFrameReadRequired: true,
+      publicGate: {
+        status: 'verification_pending',
+        verificationRetryRequired: true,
+        verificationReadRequired: true,
+        solveFailedToClearChallenge: true,
+        challengeDialog: { label: 'Security verification' },
+        diagnostics: { vendors: ['recaptcha'], frames: [] },
+      },
+    };
+    const persistedLegacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'cleared',
+      publicGate: {
+        status: 'cleared',
+        solveAttempted: true,
+        clearedByReadOnlyVerification: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const legacyClearedState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'manual_required',
+      publicGate: {
+        status: 'manual_required',
+        solveAttempted: true,
+        challengeDialog: { label: 'Security verification' },
+      },
+    };
+    const captchaGateState = {
+      key: 'https://example.test/signup\nsecurity verification',
+      status: 'verification_pending',
       publicGate: {
         status: 'verification_pending',
         challengeDialog: { label: 'Security verification' },
@@ -8758,12 +8896,17 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
             [key]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
-              captchaGateState,
+              captchaGateState: persistedCaptchaGateState,
             },
             [clearedKey]: {
               messages: [{ role: 'system', content: 'test' }],
               mode: 'act',
               captchaGateState: clearedCaptchaGateState,
+            },
+            [legacyClearedKey]: {
+              messages: [{ role: 'system', content: 'test' }],
+              mode: 'act',
+              captchaGateState: persistedLegacyClearedState,
             },
           }),
         },
@@ -8777,6 +8920,12 @@ test('pending and token-cleared CAPTCHA gates hydrate after a background worker 
         clearedAgent._captchaGateStates.get(clearedTabId),
         clearedCaptchaGateState,
         `${label}: worker restart lost the token-clearance recheck marker`,
+      );
+      await legacyClearedAgent._hydrate(legacyClearedTabId);
+      assert.deepEqual(
+        legacyClearedAgent._captchaGateStates.get(legacyClearedTabId),
+        legacyClearedState,
+        `${label}: worker restart trusted legacy read-only clearance`,
       );
     } finally {
       globalThis[apiName] = previousApi;
@@ -10827,6 +10976,32 @@ test('minor release installs dependencies and validates rebuilt archives before 
   }
 });
 
+test('patch release updates the changelog and validates rebuilt archives before pushing', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/main.yml'), 'utf8');
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /- name: Install dependencies\s+run: npm ci/);
+  assert.match(workflow, /git log --no-merges[\s\S]*?> \.release\/changelog-body\.md/);
+  assert.match(workflow, /node scripts\/update-changelog\.mjs[\s\S]*?--notes-file \.release\/changelog-body\.md/);
+  assert.match(workflow, /git add[^\n]*CHANGELOG\.md/);
+
+  const orderedSteps = [
+    'Build patch release notes',
+    'Bump patch version',
+    'Update changelog',
+    'Commit release metadata',
+    'Rebuild distribution zips',
+    'Test',
+    'Push release commits',
+    'Create GitHub Release',
+  ];
+  let previousIndex = -1;
+  for (const stepName of orderedSteps) {
+    const stepIndex = workflow.indexOf(`- name: ${stepName}`);
+    assert.ok(stepIndex > previousIndex, `${stepName} must follow ${orderedSteps[orderedSteps.indexOf(stepName) - 1] || 'workflow setup'}`);
+    previousIndex = stepIndex;
+  }
+});
+
 test('repository changelog retains complete, non-empty release history', () => {
   const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
   const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -11112,6 +11287,239 @@ for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActio
     assert.ok(actions.some((action) => action.id === 'compare-price'));
   });
 }
+
+for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+  test(`coupon recommendation targets verified commerce contexts in ${label}`, () => {
+    const positiveCases = [
+      {
+        name: 'recognized product page',
+        pageInfo: {
+          url: 'https://www.amazon.com/dp/B000000',
+          title: 'Wireless headphones',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+      {
+        name: 'cart route without an exposed coupon field',
+        pageInfo: {
+          url: 'https://www.walmart.com/cart',
+          title: 'Cart',
+          description: 'Subtotal $42.00',
+        },
+      },
+      {
+        name: 'checkout with a merchant promo field',
+        pageInfo: {
+          url: 'https://checkout.ebay.com/',
+          title: 'Checkout',
+          forms: [{ inputs: [{ type: 'text', name: 'redemptionCode', placeholder: 'Coupon or promo code' }] }],
+        },
+      },
+      {
+        name: 'Shopee Cambodia product detail page',
+        pageInfo: {
+          url: 'https://www.shopeekh.com/kh-en/detail/123',
+          title: 'Wireless headphones',
+          description: 'US$20.00',
+        },
+      },
+      {
+        name: 'generated coupon-directory merchant subdomain',
+        pageInfo: {
+          url: 'https://shop.academy.com/product/running-shoes',
+          title: 'Running shoes',
+          description: 'In stock - $79.99',
+        },
+      },
+    ];
+
+    for (const { name, pageInfo } of positiveCases) {
+      const actions = buildRecommendedActions(pageInfo, { max: 8 });
+      const coupon = actions.find((action) => action.id === 'find-coupons');
+      assert.ok(coupon, `${label}: missing coupon action for ${name}`);
+      assert.ok(buildRecommendedActions(pageInfo).some((action) => action.id === 'find-coupons'), `${label}: default action limit hid coupons for ${name}`);
+      assert.equal(coupon.label, 'Find coupon codes');
+      assert.equal(coupon.mode, 'act');
+      assert.equal(coupon.runOptions?.id, 'find-coupons');
+      assert.equal(coupon.runOptions?.skipPlanner, true);
+      assert.equal(coupon.runOptions?.autoExecute, true);
+      assert.equal(coupon.runOptions?.tool, 'get_accessibility_tree');
+      assert.deepEqual(coupon.runOptions?.args, { filter: 'visible', maxDepth: 12 });
+      const compareIndex = actions.findIndex((action) => action.id === 'compare-price');
+      if (compareIndex >= 0) {
+        assert.ok(actions.indexOf(coupon) < compareIndex, `${label}: coupon action should not be truncated behind compare-price`);
+      }
+    }
+  });
+
+  test(`coupon recommendation rejects ambiguous and lookalike pages in ${label}`, () => {
+    const negativeCases = [
+      {
+        name: 'generic storefront homepage',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          links: [{ text: 'Cart', href: '/gp/cart/view.html' }, { text: 'Today\'s deals', href: '/deals' }],
+        },
+      },
+      {
+        name: 'storefront tracking form with a hidden discount field',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          forms: [{ inputs: [{ type: 'hidden', name: 'discount_tracking' }] }],
+        },
+      },
+      {
+        name: 'storefront marketing form with promo metadata',
+        pageInfo: {
+          url: 'https://www.amazon.com/',
+          title: 'Amazon.com',
+          forms: [{ inputs: [{ type: 'text', name: 'promoNewsletter', placeholder: 'Get promotions by email' }] }],
+        },
+      },
+      {
+        name: 'gift-card redemption field',
+        pageInfo: {
+          url: 'https://www.target.com/account/giftcards',
+          title: 'Redeem a gift card',
+          forms: [{ inputs: [{ type: 'text', id: 'gift_code', placeholder: 'Gift code' }] }],
+        },
+      },
+      {
+        name: 'shopping-cart help article',
+        pageInfo: {
+          url: 'https://www.amazon.com/gp/help/customer/display.html',
+          title: 'Shopping Cart Help',
+          description: 'Learn how the cart works and review common questions.',
+        },
+      },
+      {
+        name: 'empty cart with product recommendations',
+        pageInfo: {
+          url: 'https://www.walmart.com/cart',
+          title: 'Your cart is empty',
+          text: 'Your cart is empty. Recommended products starting at $19.99.',
+        },
+      },
+      {
+        name: 'product-shaped help route with only a global cart link',
+        pageInfo: {
+          url: 'https://www.amazon.com/product/help',
+          title: 'Product Help',
+          description: 'Learn about product support.',
+          links: [{ text: 'Cart', href: '/gp/cart/view.html' }],
+        },
+      },
+      {
+        name: 'lookalike commerce domain',
+        pageInfo: {
+          url: 'https://amazon.com.evil.test/dp/B000000',
+          title: 'Product',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+      {
+        name: 'unknown merchant with coupon-shaped input',
+        pageInfo: {
+          url: 'https://shop.example.com/checkout',
+          title: 'Checkout',
+          forms: [{ inputs: [{ type: 'text', name: 'coupon', placeholder: 'Promo code' }] }],
+        },
+      },
+      {
+        name: 'malformed URL',
+        pageInfo: {
+          url: 'not a URL',
+          title: 'Product',
+          description: 'Price $19.99 Add to Cart',
+        },
+      },
+    ];
+
+    for (const { name, pageInfo } of negativeCases) {
+      const actions = buildRecommendedActions(pageInfo, { max: 8 });
+      assert.equal(actions.some((action) => action.id === 'find-coupons'), false, `${label}: false coupon action for ${name}`);
+    }
+  });
+
+  test(`coupon recommendation pins verification and checkout safety in ${label}`, () => {
+    const actions = buildRecommendedActions({
+      url: 'https://www.target.com/cart',
+      title: 'Cart',
+      description: 'Subtotal $75.00',
+      forms: [{ inputs: [{ type: 'text', id: 'promo-code', placeholder: 'Promo code' }] }],
+    }, { max: 8 });
+    const coupon = actions.find((action) => action.id === 'find-coupons');
+    assert.ok(coupon);
+    const contract = [coupon.prompt, coupon.runOptions?.summary, ...(coupon.runOptions?.steps || [])].join(' ');
+    assert.match(contract, /at most five external candidate codes/i);
+    assert.match(contract, /unverified candidates/i);
+    assert.match(contract, /merchant explicitly accepts/i);
+    assert.match(contract, /payable total or explicit discount/i);
+    assert.match(contract, /preserve the existing coupon/i);
+    assert.match(contract, /gift card.*store credit.*loyalty rewards/i);
+    assert.match(contract, /never place the order/i);
+    assert.match(contract, /never .*enter or change.*payment/i);
+    assert.match(contract, /never .*join.*membership or subscription/i);
+    assert.match(contract, /affiliate redirects/i);
+    assert.match(contract, /captcha.*rate limit/i);
+  });
+}
+
+test('coupon-domain generator extracts only normalized CouponFollow merchant routes', () => {
+  const html = `
+    <a href="https://couponfollow.com/site/Example.COM">Example</a>
+    <a href="/site/shop.example.co.uk?campaign=directory">UK shop</a>
+    <a href="https://couponfollow.com/site/example.com">duplicate</a>
+    <a href="https://couponfollow.com/site/browse/a/all">directory</a>
+    <a href="https://couponfollow.com/site/not_a_domain">invalid</a>
+    <a href="https://couponfollow.com.evil.test/site/evil.test">lookalike</a>
+  `;
+  assert.deepEqual(extractCouponFollowDomains(html), ['example.com', 'shop.example.co.uk']);
+  assert.equal(normalizeCouponDomain('HTTPS://WWW.Example.COM/path'), 'example.com');
+  assert.equal(normalizeCouponDomain('localhost'), null);
+  assert.equal(normalizeCouponDomain('co.uk'), null);
+});
+
+test('coupon-domain generator renders deterministic mirrored extension data', () => {
+  const generated = renderCouponDomainModule(['z.example', 'a.example', 'z.example'], {
+    sources: ['https://couponfollow.com/site/browse/a/all'],
+  });
+  assert.ok(generated.indexOf("'a.example'") < generated.indexOf("'z.example'"));
+  assert.equal((generated.match(/'z\.example'/g) || []).length, 1);
+  assert.match(generated, /Generated by `npm run update:coupon-domains`/);
+
+  const chromeData = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/coupon-domains.js'), 'utf8');
+  const firefoxData = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/coupon-domains.js'), 'utf8');
+  assert.equal(chromeData, firefoxData);
+  assert.match(chromeData, /export const COUPON_MERCHANT_DOMAINS = new Set/);
+  assert.ok((chromeData.match(/^  '[^']+',$/gm) || []).length >= 3700);
+});
+
+test('coupon-domain generator bounds its fixed source set and fails closed on empty indexes', async () => {
+  const requested = [];
+  const domains = await collectCouponFollowDomains({
+    concurrency: 3,
+    fetchImpl: async (url) => {
+      requested.push(url);
+      const index = new URL(url).pathname.split('/').at(-2);
+      return new Response(`<a href="/site/shop-${index}.example">merchant</a>`, {
+        headers: { 'content-type': 'text/html' },
+      });
+    },
+  });
+  assert.equal(requested.length, 27);
+  assert.equal(new Set(requested).size, 27);
+  assert.ok(domains.includes('shop-a.example'));
+
+  await assert.rejects(
+    collectCouponFollowDomains({
+      fetchImpl: async () => new Response('<html><body>No merchant links</body></html>'),
+    }),
+    /contained no merchant domains/,
+  );
+});
 
 test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go plans', () => {
   const expectedTweetSteps = (exactPost) => [
@@ -22065,6 +22473,49 @@ test('Settings > General configures WebBrain download subdirectory with system-d
       assert.match(network, /filenameInConfiguredDownloadDirectory\(browser,[\s\S]*?browser\.downloads\.download/g, 'firefox: network downloads should resolve the configured path before starting');
       assert.match(agent, /filenameInConfiguredDownloadDirectory\(browser, filename\)[\s\S]*?browser\.downloads\.download/, 'firefox: visible-media downloads should resolve the configured path');
       assert.match(capture, /filenameInConfiguredDownloadDirectory\(api, filename\)[\s\S]*?api\.downloads\.download/, 'firefox: run captures should resolve the configured path');
+    }
+  }
+});
+
+test('automatic WebBrain tab grouping has a portable user opt-out', async () => {
+  const chromePreferencePath = path.join(ROOT, 'src/chrome/src/tab-group-preference.js');
+  const firefoxPreferencePath = path.join(ROOT, 'src/firefox/src/tab-group-preference.js');
+  const chromePreferenceSource = fs.readFileSync(chromePreferencePath, 'utf8');
+  const firefoxPreferenceSource = fs.readFileSync(firefoxPreferencePath, 'utf8');
+  assert.equal(firefoxPreferenceSource, chromePreferenceSource, 'tab-group preference helpers should stay mirrored');
+
+  const preference = await import(pathToFileURL(chromePreferencePath).href);
+  assert.equal(preference.AUTO_GROUP_TABS_KEY, 'autoGroupTabs');
+  assert.equal(await preference.shouldAutoGroupTabs(null), true, 'missing storage should preserve the existing default');
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({}) }), true, 'unset preference should keep grouping enabled');
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({ autoGroupTabs: true }) }), true);
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => ({ autoGroupTabs: false }) }), false);
+  assert.equal(await preference.shouldAutoGroupTabs({ get: async () => { throw new Error('storage unavailable'); } }), true, 'storage failures should preserve existing behavior');
+
+  for (const [label, prefix, runtime] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const configModule = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
+
+    assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: General should expose an accessible default-on toggle`);
+    assert.match(html, /data-i18n="st\.display\.auto_group_tabs\.label"[\s\S]*?data-i18n="st\.display\.auto_group_tabs\.desc"/, `${label}: tab-group setting should be localized`);
+    assert.match(settings, /autoGroupTabsToggle\.checked = stored\[AUTO_GROUP_TABS_KEY\] !== false/, `${label}: unset storage should hydrate as enabled`);
+    assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[AUTO_GROUP_TABS_KEY\\]: autoGroupTabsToggle\\.checked \\}\\)`), `${label}: changes should persist immediately`);
+    assert.match(background, new RegExp(`if \\(!await shouldAutoGroupTabs\\(${runtime}\\.storage\\.local\\)\\) return -1;`), `${label}: toolbar, context-menu, and install grouping should honor the opt-out`);
+    assert.match(agent, new RegExp(`if \\(!await shouldAutoGroupTabs\\(${runtime}\\.storage\\.local\\)\\) return -1;`), `${label}: agent-created tabs should honor the opt-out`);
+    assert.equal(configModule.DEFAULT_CONFIG_SETTINGS.autoGroupTabs, true, `${label}: portable config should preserve the existing default`);
+    assert.ok(configModule.CONFIG_STORAGE_KEYS.includes('autoGroupTabs'), `${label}: config export/import should include the preference`);
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      assert.ok(locale['st.display.auto_group_tabs.label']?.trim(), `${label}/${filename}: missing tab-group label`);
+      assert.ok(locale['st.display.auto_group_tabs.desc']?.trim(), `${label}/${filename}: missing tab-group description`);
     }
   }
 });
@@ -60738,6 +61189,80 @@ test('planner gate: trusted WebBrain social promotion actions skip planner and p
   });
 });
 
+test('planner gate: coupon fast path accepts only its read-only preflight', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, [label, AgentClass, buildRecommendedActions]] of [
+      ['chrome', AgentCh, buildRecommendedActionsCh],
+      ['firefox', AgentFx, buildRecommendedActionsFx],
+    ].entries()) {
+      const tabId = 9250 + index;
+      const agent = new AgentClass({ getActive: () => ({}) });
+      const coupon = buildRecommendedActions({
+        url: 'https://www.walmart.com/cart',
+        title: 'Cart',
+        description: 'Subtotal $42.00',
+      }, { max: 8 }).find((action) => action.id === 'find-coupons');
+      assert.ok(coupon?.runOptions, `${label}: coupon ready plan missing`);
+
+      assert.deepEqual(
+        agent._recommendedActionFastPathPlan({ recommendedAction: coupon.runOptions }),
+        {
+          id: 'find-coupons',
+          tool: 'get_accessibility_tree',
+          summary: coupon.runOptions.summary,
+          steps: coupon.runOptions.steps,
+        },
+        `${label}: valid coupon plan should skip a redundant planner call`,
+      );
+      assert.equal(
+        agent._recommendedActionFastPathPlan({ recommendedAction: { ...coupon.runOptions, tool: 'navigate' } }),
+        null,
+        `${label}: coupon fast path must reject a forged immediate tool`,
+      );
+      assert.equal(
+        agent._recommendedActionFastPathPlan({ recommendedAction: { ...coupon.runOptions, skipPlanner: false } }),
+        null,
+        `${label}: coupon fast path must require the first-party skip marker`,
+      );
+      assert.equal(
+        AgentClass.RECOMMENDED_ACTION_FIRST_TOOLS['find-coupons']?.has('get_accessibility_tree'),
+        true,
+        `${label}: coupon preflight tool should be allowlisted`,
+      );
+
+      agent.setPlanBeforeActMode('strict');
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      let plannerCalls = 0;
+      agent._runPlannerGate = async () => {
+        plannerCalls += 1;
+        throw new Error('coupon recommended action should not call the planner');
+      };
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        agent.conversations.get(tabId),
+        { role: 'user', content: coupon.prompt },
+        () => {},
+        'act',
+        null,
+        null,
+        null,
+        { recommendedAction: coupon.runOptions },
+      );
+      assert.equal(outcome.proceed, true, `${label}: coupon ready plan should proceed`);
+      assert.equal(plannerCalls, 0, `${label}: coupon ready plan should bypass planner`);
+      const scratchpadIndex = agent._findScratchpadIndex(agent.conversations.get(tabId));
+      assert.ok(scratchpadIndex >= 0, `${label}: coupon ready plan should be pinned`);
+      const scratchpad = agent._extractScratchpadBody(agent.conversations.get(tabId)[scratchpadIndex].content);
+      assert.match(scratchpad, /pinned by recommended action/i);
+      assert.match(scratchpad, /at most five external candidate codes/i);
+      assert.match(scratchpad, /Never place the order/i);
+      assert.match(scratchpad, /payment details/i);
+      assert.match(scratchpad, /membership or subscription/i);
+    }
+  });
+});
+
 test('recommended action first tools are allowlisted and sanitized', () => {
   for (const [label, AgentClass, prefix] of [['chrome', AgentCh, 'src/chrome'], ['firefox', AgentFx, 'src/firefox']]) {
     const agent = new AgentClass({ getActive: () => ({}) });
@@ -67551,8 +68076,16 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
     });
 
+    const unrelatedVisibleResponseField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-background',
+      name: 'g-recaptcha-response',
+    });
     const unrelatedVisibleNodes = [
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' }),
+      captchaEl(
+        'div',
+        { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' },
+        [unrelatedVisibleResponseField],
+      ),
       captchaEl('div', {
         role: 'dialog',
         innerText: 'Security verification\nUse your passkey',
@@ -67569,6 +68102,20 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       });
       assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated visible reCAPTCHA was selected for a passkey dialog`);
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: visible-only candidate did not fail closed`);
+      unrelatedVisibleResponseField.value = 'background-widget-token';
+      const tokenUpdate = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
+      }, { filter: 'interactive' });
+      assert.equal(
+        tokenUpdate.gate?.status,
+        'manual_required',
+        `${build}: unrelated widget token cleared the passkey dialog gate`,
+      );
+      assert.equal(
+        tokenUpdate.gate?.clearedByResponseToken,
+        undefined,
+        `${build}: unrelated widget token was reported as gate clearance`,
+      );
     });
 
     const arkoseNodes = [
@@ -67883,9 +68430,10 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       );
       assert.equal(
         stillActive.gate?.status,
-        'verification_pending',
-        `${build}: token cleared the gate while its active frame remained visible`,
+        'manual_required',
+        `${build}: active challenge after the one solve did not fail closed`,
       );
+      assert.equal(stillActive.gate?.activeChallengeAfterSolve, true, `${build}: active post-solve challenge reason missing`);
       assert.equal(
         stillActive.gate?.clearedByResponseToken,
         undefined,
@@ -67928,12 +68476,35 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
         `${build}: preflight discarded the token-clearance recheck marker`,
       );
 
-      activeFrame.hidden = false;
-      const rearmed = await agent._captchaMutationPreflight(1, 'click_ax');
+      responseField.value = '';
+      const tokenMissing = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(
-        rearmed?.status,
-        'solve_required',
-        `${build}: reappearing challenge frame did not re-arm after token rejection`,
+        tokenMissing?.status,
+        'verification_pending',
+        `${build}: a missing correlated token left stale clearance fail-open`,
+      );
+      assert.equal(
+        tokenMissing?.clearedByResponseToken,
+        undefined,
+        `${build}: missing-token downgrade retained the stale clearance reason`,
+      );
+      assert.equal(
+        agent._captchaGateStates.get(1)?.publicGate?.responseTokenPresent,
+        undefined,
+        `${build}: missing-token downgrade retained the stale token-presence flag`,
+      );
+
+      activeFrame.hidden = false;
+      const rearmed = await agent._observeCaptchaChallenge(
+        1,
+        'get_accessibility_tree',
+        { pageContent: 'dialog "Security verification" [ref_1]' },
+        { filter: 'visible' },
+      );
+      assert.equal(
+        rearmed.gate?.status,
+        'manual_required',
+        `${build}: reappearing challenge frame allowed another paid solve after token rejection`,
       );
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: re-armed gate was not persisted`);
     });
@@ -68017,7 +68588,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       agent._currentUrl = async () => 'https://example.test/signup';
       agent._captchaGateStates.set(3, {
         key: 'https://example.test/signup\nsecurity verification',
-        status: 'verification_pending',
+        status: 'manual_required',
         captchaCandidateIdentity: {
           frameId: 0,
           framePathIndexes: [],
@@ -68030,8 +68601,8 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
           alsoResponseFieldIndex: 0,
         },
         publicGate: {
-          status: 'verification_pending',
-          solveAttempted: true,
+          status: 'manual_required',
+          solverDisabled: true,
           challengeDialog: { label: 'Security verification' },
         },
       });
@@ -68044,7 +68615,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
       assert.equal(
         compatibilityToken.gate?.clearedByResponseToken,
         true,
-        `${build}: hCaptcha compatibility token did not clear its exact gate`,
+        `${build}: hCaptcha compatibility token did not clear its exact manual gate`,
       );
     });
   }
@@ -68183,7 +68754,6 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
       agent._captchaGateStates.set(1, {
         key: 'https://example.test/signup\nsecurity verification',
         status: 'verification_pending',
-        verificationAttempts: 0,
         challengeFrameId: 7,
         challengeFrameUrl: 'https://challenge.example.test/verify',
         publicGate: {
@@ -68216,7 +68786,7 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         { filter: 'visible' },
       );
       assert.equal(childUninspectable.gate?.status, 'verification_pending', `${build}: inaccessible challenge frame cleared the gate`);
-      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, true, `${build}: inaccessible frame did not fail closed`);
+      assert.equal(childUninspectable.gate?.verificationFrameReadRequired, undefined, `${build}: inaccessible frame recreated legacy read state`);
 
       childInspectionFails = false;
       childChallengeVisible = false;
@@ -68229,8 +68799,8 @@ test('challenge-dialog preflight honors ancestor iframe visibility across extens
         },
         { filter: 'visible' },
       );
-      assert.equal(childCleared.gate?.status, 'cleared', `${build}: cleared child frame kept CAPTCHA gate active`);
-      assert.equal(agent._captchaGateStates.has(1), false, `${build}: cleared child-frame gate remained persisted`);
+      assert.equal(childCleared.gate?.status, 'verification_pending', `${build}: absent child dialog independently cleared an uncorrelated gate`);
+      assert.equal(agent._captchaGateStates.has(1), true, `${build}: inconclusive child-frame gate was discarded`);
     } finally {
       globalThis.chrome = previousChrome;
       globalThis.browser = previousBrowser;

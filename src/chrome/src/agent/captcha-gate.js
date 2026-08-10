@@ -1,16 +1,14 @@
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 
-const CHALLENGE_DIALOG_RE = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
-const CHALLENGE_FAILURE_RE = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
-const CHALLENGE_CONTEXT_RE = /\b(?:(?:re|h|fun)?captcha|human|robot|challenge)\b/i;
+export const CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE = String.raw`\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b`;
+const CHALLENGE_DIALOG_RE = new RegExp(CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE, 'i');
 
-function matchesChallengeLabel(value, allowGenericFailure = false) {
-  const text = String(value || '');
-  return CHALLENGE_DIALOG_RE.test(text)
-    || (
-      CHALLENGE_FAILURE_RE.test(text)
-      && (allowGenericFailure || CHALLENGE_CONTEXT_RE.test(text))
-    );
+export function captchaChallengeMatcherOptions() {
+  return { challengeLabelPatternSource: CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE };
+}
+
+function matchesChallengeLabel(value) {
+  return CHALLENGE_DIALOG_RE.test(String(value || ''));
 }
 
 function normalizeChallengeLabel(value) {
@@ -47,8 +45,7 @@ function parseSerializedTreeLabel(line) {
   return '';
 }
 
-export function detectChallengeDialog(pageContent, options = null) {
-  const allowGenericFailure = options?.allowGenericFailure === true;
+export function detectChallengeDialog(pageContent) {
   const lines = String(pageContent || '').split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -56,7 +53,7 @@ export function detectChallengeDialog(pageContent, options = null) {
     if (!dialogMatch) continue;
     const dialogIndent = dialogMatch[1].length;
     const ownLabel = parseSerializedTreeLabel(line);
-    if (ownLabel && matchesChallengeLabel(ownLabel, allowGenericFailure)) {
+    if (ownLabel && matchesChallengeLabel(ownLabel)) {
       return {
         label: ownLabel,
         normalizedLabel: normalizeChallengeLabel(ownLabel),
@@ -68,7 +65,7 @@ export function detectChallengeDialog(pageContent, options = null) {
       const childIndent = childLine.match(/^\s*/)?.[0].length || 0;
       if (childIndent <= dialogIndent) break;
       const childLabel = parseSerializedTreeLabel(childLine);
-      if (!childLabel || !matchesChallengeLabel(childLabel, allowGenericFailure)) continue;
+      if (!childLabel || !matchesChallengeLabel(childLabel)) continue;
       return {
         label: childLabel,
         normalizedLabel: normalizeChallengeLabel(childLabel),
@@ -82,7 +79,6 @@ export function detectChallengeDialog(pageContent, options = null) {
 // model-authored mutations. Keep this function self-contained.
 export function detectChallengeDialogInPage(options = null) {
   const includeFrameContext = options?.includeFrameContext === true;
-  const allowGenericFailure = options?.allowGenericFailure === true;
   const pageWindow = typeof window !== 'undefined' ? window : null;
   const pageLocation = pageWindow?.location
     || (typeof location !== 'undefined' ? location : null);
@@ -96,16 +92,13 @@ export function detectChallengeDialogInPage(options = null) {
       ? { challenge: null, frameContext: { frameUrl, frameName, childFrames: [] } }
       : null;
   }
-  const challengeRe = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
-  const challengeFailureRe = /\b(?:verification (?:failed|error|unsuccessful|expired|timed out)|could not verify|unable to verify)\b/i;
-  const challengeContextRe = /\b(?:(?:re|h|fun)?captcha|human|robot|challenge)\b/i;
+  let challengeRe = null;
+  try {
+    const source = String(options?.challengeLabelPatternSource || '');
+    if (source) challengeRe = new RegExp(source, 'i');
+  } catch {}
   const matchesChallenge = value => {
-    const text = String(value || '');
-    return challengeRe.test(text)
-      || (
-        challengeFailureRe.test(text)
-        && (allowGenericFailure || challengeContextRe.test(text))
-      );
+    return challengeRe?.test(String(value || '')) === true;
   };
   const visible = (element) => {
     try {

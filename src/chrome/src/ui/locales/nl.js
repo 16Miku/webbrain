@@ -515,6 +515,8 @@ export default {
   'st.display.verbose.desc': 'Toon volledige toolaanroepdetails, argumenten en onbewerkte JSON-resultaten...',
   'st.display.selection_shortcut.label': 'Selectiesneltoets',
   'st.display.selection_shortcut.desc': 'Toon een WebBrain-knop wanneer u tekst selecteert op een pagina...',
+  'st.display.auto_group_tabs.label': 'WebBrain-tabbladen groeperen',
+  'st.display.auto_group_tabs.desc': 'Plaats tabbladen die via de werkbalk, het contextmenu of door de agent worden geopend automatisch in een browsertabgroep met de naam WebBrain. Uitschakelen verandert bestaande groepen niet.',
   'st.display.screenshot.label': 'Schermafbeelding als terugval',
   'st.display.screenshot.desc': 'Maak een schermafbeelding van de pagina wanneer DOM-lezen mislukt...',
   'st.display.site_adapters.label': 'Site-adapters',
