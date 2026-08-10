@@ -7870,6 +7870,29 @@ browser.runtime.onMessage.addListener((msg) => {
   acceptContextMenuPrompt(msg.prompt || msg);
 });
 
+// --- Keyboard shortcut commands from background script ---
+// Firefox browser.commands custom shortcuts fire in the background script
+// (browser.commands.onCommand). The background forwards them as runtime messages
+// so the side panel can perform the actual mode switch / input focus.
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.type !== 'command') return;
+  switch (msg.command) {
+    case 'switch-to-ask':
+      if (!isProcessing) setMode('ask');
+      break;
+    case 'switch-to-act':
+      if (!isProcessing) ensureActMode();
+      break;
+    case 'switch-to-dev':
+      if (!isProcessing) ensureDevMode();
+      break;
+    case 'focus-input':
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      break;
+  }
+});
+
 browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'sidepanel'
       || msg.action !== 'tab_chat_handoff_request'

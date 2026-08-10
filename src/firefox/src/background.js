@@ -2890,3 +2890,16 @@ async function handleMessage(msg, sender) {
       throw new Error(`Unknown action: ${msg.action}`);
   }
 }
+
+// --- Keyboard shortcuts (browser.commands) ---
+// Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
+// to work. Custom commands fire here in the background script; we forward them to
+// the side panel where the actual mode switching / input focus logic lives.
+browser.commands.onCommand.addListener((command) => {
+  // _execute_sidebar_action is handled natively by Firefox — no need to forward
+  if (command === '_execute_sidebar_action') return;
+
+  browser.runtime.sendMessage({ type: 'command', command }).catch(() => {
+    // Side panel may not be open — this is expected and harmless
+  });
+});
