@@ -49,6 +49,7 @@ import {
   sniffProviderIdFromBaseUrl,
 } from './provider-icons.js';
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
+import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
@@ -61,6 +62,7 @@ const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
+const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
 const screenshotToggle = document.getElementById('toggle-screenshot-fallback');
 const maxStepsRange = document.getElementById('range-max-steps');
@@ -403,12 +405,13 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
+  if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
   screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
   if (isUnlimitedMaxAgentSteps(stored.maxAgentSteps)) {
@@ -985,6 +988,10 @@ verboseToggle.addEventListener('change', async () => {
 
 selectionShortcutToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ selectionShortcutEnabled: selectionShortcutToggle.checked }).catch(() => {});
+});
+
+autoGroupTabsToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ [AUTO_GROUP_TABS_KEY]: autoGroupTabsToggle.checked }).catch(() => {});
 });
 
 helpImproveToggle?.addEventListener('change', async () => {
