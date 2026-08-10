@@ -3836,20 +3836,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { gate: guardedGate, loopCheck: { kind: 'none' } };
       }
     }
+    const correlatedCaptchaCandidateIdentity =
+      activeGate?.publicGate?.candidateNotCorrelated === true
+        ? null
+        : activeGate?.captchaCandidateIdentity;
     let postSolveTokenState = null;
     if (
       ['verification_pending', 'manual_required', 'cleared'].includes(activeGate?.status)
-      && activeGate.captchaCandidateIdentity
+      && correlatedCaptchaCandidateIdentity
     ) {
       await inspectCaptchaFrames();
       if (!detectionFailed && detection && typeof detection === 'object') {
         postSolveTokenState = captchaPostSolveTokenState(
           detection,
-          activeGate.captchaCandidateIdentity,
+          correlatedCaptchaCandidateIdentity,
         );
       }
     }
-    const directCaptchaEvidence = !!activeGate?.captchaCandidateIdentity
+    const directCaptchaEvidence = !!correlatedCaptchaCandidateIdentity
       || activeGate?.publicGate?.languageNeutralFrameTrigger === true;
     const loopCheck = challenge || (authoritativeRootRead && !directCaptchaEvidence)
       ? this._checkVerificationChallengeLoop(tabId, {
@@ -4025,7 +4029,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
       ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
     };
-    const captchaCandidateIdentity = captchaGateCandidateIdentity(detection?.selected);
+    const captchaCandidateIdentity = selectedCorrelated
+      ? captchaGateCandidateIdentity(detection?.selected)
+      : null;
     this._captchaGateStates.set(tabId, {
       key,
       status: publicGate.status,

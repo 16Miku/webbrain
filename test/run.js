@@ -67102,8 +67102,16 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: missing candidate/dialog correlation diagnostic`);
     });
 
+    const unrelatedVisibleResponseField = captchaEl('textarea', {
+      id: 'g-recaptcha-response-background',
+      name: 'g-recaptcha-response',
+    });
     const unrelatedVisibleNodes = [
-      captchaEl('div', { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' }),
+      captchaEl(
+        'div',
+        { class: 'g-recaptcha', 'data-sitekey': 'VISIBLE_BACKGROUND' },
+        [unrelatedVisibleResponseField],
+      ),
       captchaEl('div', {
         role: 'dialog',
         innerText: 'Security verification\nUse your passkey',
@@ -67120,6 +67128,20 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       });
       assert.equal(observed.gate?.status, 'manual_required', `${build}: unrelated visible reCAPTCHA was selected for a passkey dialog`);
       assert.equal(observed.gate?.candidateNotCorrelated, true, `${build}: visible-only candidate did not fail closed`);
+      unrelatedVisibleResponseField.value = 'background-widget-token';
+      const tokenUpdate = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
+      }, { filter: 'interactive' });
+      assert.equal(
+        tokenUpdate.gate?.status,
+        'manual_required',
+        `${build}: unrelated widget token cleared the passkey dialog gate`,
+      );
+      assert.equal(
+        tokenUpdate.gate?.clearedByResponseToken,
+        undefined,
+        `${build}: unrelated widget token was reported as gate clearance`,
+      );
     });
 
     const arkoseNodes = [
