@@ -28,7 +28,8 @@
     "release": "node scripts/bump-version.mjs --release"
   },
   "devDependencies": {
-    "playwright": "^1.48.0"
+    "playwright": "^1.48.0",
+    "tldts": "7.4.10"
   },
   "repository": {
     "type": "git",
