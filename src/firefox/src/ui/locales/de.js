@@ -651,7 +651,7 @@ export default {
   'st.provider.field.model_optional': 'Modell (optional)',
   'st.provider.field.context_window': 'Kontextfenster (Tokens)',
   'st.provider.field.supports_vision': 'Modell unterstützt Vision (multimodal)',
-  'st.provider.field.vision_auto': 'Automatisch (von Ollama)',
+  'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Erzwingen',
   'st.provider.field.vision_detected_vision': 'Automatisch erkannt: Bildverarbeitung',
   'st.provider.field.vision_detected_text': 'Automatisch erkannt: Nur Text',

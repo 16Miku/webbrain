@@ -37,13 +37,13 @@ class BaseLLMProvider {
 | 提供商 ID | 类型 | 类别 | 默认模型 | 视觉能力 |
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | 云端 | `webbrain-cloud 1.0` | 是 |
-| `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 是（默认开启） |
-| `ollama` | `openai` | 本地 | （已加载模型） | 通过 `/api/show` 自动检测 |
-| `lmstudio` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
+| `ollama` | `openai` | 本地 | （已加载模型） | 通过 `/api/show` 自动检测 / 覆盖 |
+| `lmstudio` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `jan` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `vllm` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `sglang` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
-| `localai` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
@@ -118,9 +118,11 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 - **SGLang**：`http://localhost:30000/v1` — SGLang 的 OpenAI 兼容服务器
 - **LocalAI**：`http://localhost:8080/v1` — LocalAI 的 OpenAI 兼容服务器
 
-Ollama 默认使用 `visionMode: "auto"`，并在附加图片前通过原生
-`/api/show` 元数据验证所选模型。其他本地提供商保持现有的显式
-`supportsVision` 行为。
+Ollama、llama.cpp、LM Studio 和 LocalAI 默认使用 `visionMode: auto`。WebBrain 在
+页面上下文增强前读取所选模型的原生服务器元数据，只有服务器明确报告支持图像输入时才
+发送截图。元数据请求失败或格式错误时，本回合按纯文本处理，之后会重试。设置中
+可选择自动、强制开启或关闭。模型字段为空时，每个用户回合都会重新检测当前加载
+模型的能力，以便服务端热切换立即生效；其他本地提供商保持现有的显式开关行为。
 
 #### Ollama 启动交接（预览）
 
@@ -170,9 +172,14 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 |---|---|
 | OpenAI 兼容 | 根据模型名称进行正则匹配（`gpt-4o`、`gpt-5`、`claude-3`、`claude-sonnet-4`、`gemini-2.0-flash` 等） |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` 模式 |
-| llama.cpp | 显式 `supportsVision` 配置开关 |
-| Ollama | `POST /api/show` 的 `capabilities` 字段，并兼容旧版 `projector_info` / `.vision.` 元数据；提供自动 / 强制开启 / 关闭设置 |
-| LM Studio / Jan / vLLM / SGLang / LocalAI | 显式 `supportsVision` 配置开关（通过 OpenAI 提供商） |
+| Ollama | `POST /api/show` 的 `capabilities`，并兼容旧版 `projector_info` / `.vision.` 元数据 |
+| llama.cpp | `GET /props` → `modalities.vision`，支持自动 / 强制开启 / 关闭 |
+| LM Studio | `GET /api/v1/models` → `capabilities.vision`；旧版本回退到 `/api/v0/models` 的 `type` |
+| LocalAI | `GET /v1/models/capabilities` → `input_modalities` / `capabilities` |
+| Jan / vLLM / SGLang | 显式 `supportsVision` 配置开关（通过 OpenAI 提供商） |
+
+检测结果按提供商、精确模型和规范化基础 URL 绑定。并发检测会合并为一次请求，旧
+配置的延迟响应不能修改当前设置。单独配置的视觉提供商继续使用现有的分流路径。
 
 ### Anthropic 转换
 
@@ -269,9 +276,4 @@ myprovider: {
 },
 ```
 
-视觉能力通常通过模型名称正则自动检测。Ollama 是例外：其自动模式使用
-原生 `/api/show` 元数据；无法验证元数据时会安全地回退为纯文本。如果其他
-提供商有已知的视觉模型集，请将它们添加到 `openai.js` 的正则表达式中。仅对
-接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置
-`supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回
-使用量时，请将其保持为 false。
+视觉能力通过模型名称正则自动检测。如果提供商有已知的视觉模型集，请将它们添加到 `openai.js` 的正则表达式中。仅对接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置 `supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回使用量时，请将其保持为 false。

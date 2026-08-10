@@ -269,7 +269,7 @@ export default {
   'st.provider.field.model': '模型',
   'st.provider.field.model_optional': '模型（可选）',
   'st.provider.field.supports_vision': '模型支持视觉（多模态）',
-  'st.provider.field.vision_auto': '自动（来自 Ollama）',
+  'st.provider.field.vision_auto': '自动',
   'st.provider.field.vision_force_on': '强制开启',
   'st.provider.field.vision_detected_vision': '自动检测：支持视觉',
   'st.provider.field.vision_detected_text': '自动检测：仅文本',

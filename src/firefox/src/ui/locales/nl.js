@@ -627,7 +627,7 @@ export default {
   'st.provider.field.model_optional': 'Model (optioneel)',
   'st.provider.field.context_window': 'Contextvenster (tokens)',
   'st.provider.field.supports_vision': 'Model ondersteunt visie (multimodaal)',
-  'st.provider.field.vision_auto': 'Automatisch (van Ollama)',
+  'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Geforceerd aan',
   'st.provider.field.vision_detected_vision': 'Automatisch gedetecteerd: Visie',
   'st.provider.field.vision_detected_text': 'Automatisch gedetecteerd: Alleen tekst',

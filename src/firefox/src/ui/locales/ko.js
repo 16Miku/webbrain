@@ -269,7 +269,7 @@ export default {
   'st.provider.field.model': '모델',
   'st.provider.field.model_optional': '모델 (선택)',
   'st.provider.field.supports_vision': '모델이 비전(멀티모달)을 지원합니다',
-  'st.provider.field.vision_auto': '자동(Ollama에서)',
+  'st.provider.field.vision_auto': '자동',
   'st.provider.field.vision_force_on': '강제로 켜기',
   'st.provider.field.vision_detected_vision': '자동 감지: 비전',
   'st.provider.field.vision_detected_text': '자동 감지: 텍스트 전용',

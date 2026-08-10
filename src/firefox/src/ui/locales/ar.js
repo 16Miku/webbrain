@@ -269,7 +269,7 @@ export default {
   'st.provider.field.model': 'النموذج',
   'st.provider.field.model_optional': 'النموذج (اختياري)',
   'st.provider.field.supports_vision': 'النموذج يدعم الرؤية (متعدّد الوسائط)',
-  'st.provider.field.vision_auto': 'تلقائي (من Ollama)',
+  'st.provider.field.vision_auto': 'تلقائي',
   'st.provider.field.vision_force_on': 'فرض التشغيل',
   'st.provider.field.vision_detected_vision': 'تم الاكتشاف تلقائيًا: يدعم الرؤية',
   'st.provider.field.vision_detected_text': 'تم الاكتشاف تلقائيًا: نص فقط',
