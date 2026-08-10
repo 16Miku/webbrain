@@ -25571,6 +25571,32 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const visionIdx = panel.indexOf("if (command.value === '/vision')");
     const visionBody = panel.slice(visionIdx, panel.indexOf('return text;', visionIdx));
     assert.match(visionBody, /sendToBackground\('get_providers'\);[\s\S]*?sendToBackground\('update_provider'[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?(?:addMessage\('system'|showComposerToast\()/, `${label}: /vision should not render a result into a different tab`);
+
+    const toggleStart = panel.indexOf('function toggledVisionProviderConfig(');
+    const toggleEnd = panel.indexOf('\n\n', toggleStart);
+    assert.ok(toggleStart >= 0 && toggleEnd > toggleStart, `${label}: /vision provider toggle helper should remain independently testable`);
+    const toggleVision = vm.runInNewContext(`(${panel.slice(toggleStart, toggleEnd)})`);
+    const autoTextOnly = toggleVision('ollama', {
+      visionMode: 'auto',
+      visionDetection: { supportsVision: false },
+      model: 'qwen2.5:3b',
+    });
+    assert.equal(autoTextOnly.enabled, true, `${label}: /vision should enable a text-only Ollama configuration`);
+    assert.equal(autoTextOnly.config.visionMode, 'on', `${label}: /vision should Force on Ollama instead of writing the removed boolean`);
+    assert.equal(Object.hasOwn(autoTextOnly.config, 'supportsVision'), false, `${label}: /vision should not restore Ollama's legacy supportsVision field`);
+    const autoVision = toggleVision('ollama', {
+      visionMode: 'auto',
+      visionDetection: { supportsVision: true },
+    });
+    assert.equal(autoVision.enabled, false, `${label}: /vision should disable auto-detected Ollama vision`);
+    assert.equal(autoVision.config.visionMode, 'off', `${label}: disabling Ollama vision should persist Off mode`);
+    const forcedOff = toggleVision('ollama', { visionMode: 'off' });
+    assert.equal(forcedOff.enabled, true, `${label}: /vision should re-enable an Ollama provider in Off mode`);
+    assert.equal(forcedOff.config.visionMode, 'on');
+    const regularProvider = toggleVision('openai', { supportsVision: false });
+    assert.equal(regularProvider.enabled, true, `${label}: /vision should preserve boolean toggles for non-Ollama providers`);
+    assert.equal(regularProvider.config.supportsVision, true);
+    assert.match(visionBody, /toggledVisionProviderConfig\(active, config\)[\s\S]*?config: toggled\.config[\s\S]*?toggled\.enabled/, `${label}: /vision should persist and report the provider-aware toggle result`);
   }
 });
 
