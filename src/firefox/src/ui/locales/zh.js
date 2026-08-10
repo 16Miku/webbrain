@@ -220,6 +220,8 @@ export default {
   'st.display.verbose.desc': '显示完整的工具调用详情、参数和原始 JSON 结果。默认关闭，以获得更清爽的聊天体验。',
   'st.display.selection_shortcut.label': '划词快捷操作',
   'st.display.selection_shortcut.desc': '在页面上选择文本时显示 WebBrain 按钮。关闭此选项后，原生右键操作仍然可用。',
+  'st.display.auto_group_tabs.label': '将 WebBrain 标签页分组',
+  'st.display.auto_group_tabs.desc': '自动将通过工具栏、右键菜单或代理打开的标签页放入名为 WebBrain 的浏览器标签组。关闭此选项不会更改现有标签组。',
   'st.display.screenshot.label': '截图备用',
   'st.display.screenshot.desc': '当 DOM 读取失败或内容不足时捕获页面截图。需要支持视觉的模型。',
   'st.display.site_adapters.label': '站点适配器',
