@@ -47,6 +47,7 @@ import {
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
+import { visionProviderKind } from '../providers/vision-capabilities.js';
 import {
   clearStagedScreenshots,
   loadStagedScreenshots,
@@ -7091,7 +7092,7 @@ function toggledVisionProviderConfig(providerId, config) {
     const { supportsVision: _legacy, ...withoutLegacy } = config;
     return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
   }
-  if (['llamacpp', 'lmstudio', 'localai'].includes(providerId)) {
+  if (visionProviderKind(providerId, config)) {
     const visionEnabled = config.visionMode === 'on'
       || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
     const enabled = !visionEnabled;
