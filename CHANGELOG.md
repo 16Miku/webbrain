@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.1.0] - 2026-08-11
+
+### Fixed
+- Required complete communication-thread requests to read every page or expanded message before finishing, with multilingual intent handling and deterministic recovery across Chrome and Firefox.
+- Restored compact tool-step **Details** controls after side-panel transcripts reload, including synchronized accessible expanded state in both browser builds.
+
+### Tests
+- Added mirrored coverage for complete-thread classification and pagination, premature-completion guards, bounded read windows, trace metadata, and restored compact detail toggles.
+
 ## [27.1.5] - 2026-08-08
 
 ### Changed
