@@ -23877,10 +23877,13 @@ test('settings Providers tab has a search box beside provider filters', () => {
     const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
 
     assert.match(html, /\.provider-filter-pills \{[\s\S]*?display: flex;[\s\S]*?gap: 12px;/, `${label}: provider filters should sit in their own row group`);
-    assert.match(html, /\.provider-search \{[\s\S]*?flex: 0 1 240px;[\s\S]*?margin: 0 0 0 auto;/, `${label}: provider search should sit to the right of filters`);
+    assert.match(html, /\.provider-search \{[\s\S]*?flex: 0 1 200px;[\s\S]*?min-width: 160px;[\s\S]*?margin: 0 0 0 auto;/, `${label}: provider search should leave room for all provider filters`);
     assert.match(locale, /'st\.providers\.search\.placeholder': 'Search providers'/, `${label}: provider search placeholder should be localized`);
     assert.match(locale, /'st\.providers\.search\.empty': 'No providers match this search and filter\.'/, `${label}: provider search empty state should be localized`);
     assert.match(settings, /let providerSearchQuery = '';/, `${label}: provider search query should be session state`);
+    assert.match(settings, /\['all','active','local','cloud','router'\]\.includes\(stored\.providerFilter\)/, `${label}: stored provider filters should accept active`);
+    assert.match(settings, /\{ key: 'all',[\s\S]*?\{ key: 'active', labelKey: 'st\.providers\.active' \},[\s\S]*?\{ key: 'local'/, `${label}: Active should appear between All and Local`);
+    assert.match(settings, /if \(providerFilter === 'active' && !isConfigured\) continue;[\s\S]*?providerFilter !== 'active'[\s\S]*?!isSelected/, `${label}: Active should be strict while category filters keep the selected provider visible`);
     assert.match(settings, /function providerSearchTextForEntry\(id, config, fieldDefs\) \{[\s\S]*?field\.labelKey \? t\(field\.labelKey\) : field\.label,[\s\S]*?config\.model,[\s\S]*?config\.baseUrl,[\s\S]*?\}/, `${label}: provider search should index labels, models, and URLs`);
     assert.match(settings, /function providerSearchRank\(id, config, query\) \{[\s\S]*?name === query[\s\S]*?name\.startsWith\(query\)[\s\S]*?name\.includes\(query\)[\s\S]*?\}/, `${label}: exact provider names should rank above prefix and substring matches`);
     assert.match(settings, /if \(providerQuery\) \{[\s\S]*?rank: providerSearchRank\(entry\[0\], entry\[1\], providerQuery\),[\s\S]*?\.sort\(\(a, b\) => a\.rank - b\.rank \|\| a\.index - b\.index\)[\s\S]*?\}/, `${label}: provider search should sort matches by relevance while preserving the original order for ties`);
@@ -25046,6 +25049,8 @@ test('provider picker exposes only WebBrain Cloud, configured providers, and Mor
 
     assert.match(settings, /const isConfigured = id !== 'webbrain_cloud' && config\.configured === true/, `${label}: Settings should derive Active from configured state`);
     assert.match(settings, /const isSelected = id === activeProviderId/, `${label}: Settings should derive Selected independently`);
+    assert.match(settings, /function refreshActiveProviderFilterCount\(\) \{[\s\S]*?Object\.entries\(providersData\)[\s\S]*?providerIsActive\(id, config\)[\s\S]*?\.provider-filter-pill\[data-filter="active"\] \.provider-filter-count[\s\S]*?countEl\.textContent = String\(count\);[\s\S]*?\}/, `${label}: Active filter count should derive from current configured state`);
+    assert.match(settings, /function refreshProviderCardStatus\(id\) \{\s*\/\/[\s\S]*?refreshActiveProviderFilterCount\(\);\s*const card = document\.querySelector/, `${label}: provider saves should refresh Active count before any missing-card return`);
     assert.match(settings, /st\.providers\.select_for_chat/, `${label}: Settings should use Select for chat terminology`);
     assert.match(settings, /await saveProvider\(id, \{ showFlash: false \}\);[\s\S]*?set_active_provider/, `${label}: selecting for chat should persist configuration first`);
     assert.match(settingsHtml, /\.provider-card\.selected \{ border-color: var\(--accent\); \}/, `${label}: selected card should retain the visual highlight`);
@@ -40810,8 +40815,13 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     assert.match(settings, /AI Gateway ID \(optional; @cf defaults to default\)/, `${label}: Cloudflare gateway field missing`);
     assert.match(
       settings,
-      /const filterCounts = Object\.values\(providersData\)\.reduce\(/,
+      /const filterCounts = Object\.entries\(providersData\)\.reduce\(/,
       `${label}: provider filter counts must be derived from live provider data`,
+    );
+    assert.match(
+      settings,
+      /if \(providerIsActive\(id, config\)\) counts\.active \+= 1;/,
+      `${label}: active provider count must include only configured providers`,
     );
     assert.match(
       settings,
