@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EXL3: Best Quantization for Local AI on Blackwell Lite — WebBrain Blog</title>
+  <meta name="description" content="EXL3 (turboderp&#39;s QTIP-derived trellis format) is the best low-bit quantization for local AI on Blackwell lite hardware. Now it runs ~3x faster through SparkInfer, the vLLM fork — including on odd GPU counts and DGX Spark.">
+  <meta name="keywords" content="EXL3, quantization, SparkInfer, vLLM, ExLlamaV3, Blackwell, DGX Spark, RTX 5090, trellis, QTIP, local LLM, MoE, tensor parallel">
+  <meta property="og:title" content="EXL3 is the best quantization schema for local AI right now">
+  <meta property="og:description" content="QTIP-derived trellis quant, native in the SparkInfer vLLM fork: ~3x ExLlamaV3 throughput, fractional bpw, odd-card TP, DGX Spark support. Plus turboderp&#39;s EXL3 model cards.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/exl3-sparkinfer-blackwell-lite">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="EXL3 is the best quantization schema for local AI right now">
+  <meta name="twitter:description" content="SparkInfer + EXL3 = ~3x ExLlamaV3 speeds on Blackwell lite (DGX Spark / 5090 / PRO 4000 / 5000 / 6000). Works with odd card counts. trellis &gt; everything at low bpw.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/exl3-sparkinfer-blackwell-lite">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "EXL3 is the best quantization format for local AI right now — especially on Blackwell lite",
+  "description": "EXL3 (turboderp's QTIP-derived trellis format) is the best low-bit quantization for local AI on Blackwell lite hardware. Now it runs ~3x faster through SparkInfer, the vLLM fork — including on odd GPU counts and DGX Spark.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-18",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/exl3-sparkinfer-blackwell-lite"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 18, 2026 &middot; 6 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>EXL3 is the best quantization format for local AI right now — especially on Blackwell lite</h1>
+    <p class="lede">We've spent the last few months running local models every way you can — GGUF, EXL2, NVFP4, IQ quants, you name it — and the verdict is getting clear: EXL3 from turboderp is the best quantization schema for local AI right now, and the gap is widest on Blackwell lite hardware (DGX Spark, RTX 5090, RTX PRO 4000/5000/6000). What changed recently is that it's no longer stuck in one engine: SparkInfer, the vLLM fork, integrated it natively and now renders EXL3 checkpoints at roughly 3x the throughput we were getting on ExLlamaV3.</p>
+<h2 id="why-exl3-beats-everything-else-at-low-bitrates">Why EXL3 beats everything else at low bitrates</h2>
+<p>EXL3 is a streamlined variant of <strong>QTIP</strong> from Cornell RelaxML. Where GGUF i-quants and EXL2 use per-block rounding tricks, EXL3 encodes high-dimensional weight vectors into <em>optimal tail-biting trellis structures</em> using procedural codebooks and a fused Viterbi kernel. Practically that means two things:</p>
+<ol><li><strong>More quality per bit.</strong> At 3–4 bpw, EXL3 keeps models coherent where older formats start falling apart. Turboderp's repo has Llama-3.1-70B-EXL3 coherent at <strong>1.6 bpw</strong> — with a 3 bpw head and a 4096-token cache that's the whole 70B under 16 GB of VRAM.</li><li><strong>Fractional bitrates.</strong> <code>convert.py -b 4.25</code> — you target a bitrate that fills your cards exactly. No more "4-bit is 2 GB short, 5-bit doesn't fit."</li></ol>
+<p>The conversion economics are a big part of the story too. The README compares against <strong>AQLM</strong>: quantizing a 70B with AQLM takes ~720 GPU-hours on an A100 (about $850 at the time). EXL3 computes Hessians on the fly with the fused Viterbi kernel and does the whole conversion in a <strong>single step</strong> — a couple of minutes for small models, a few hours for 70B+, on a single RTX 4090. That's why the format actually has a library of pre-quantized models instead of a couple of showcase repos.</p>
+<p>Unlike EXL2 (which renamed tensors to fit a Llama-shaped world), EXL3 keeps the original HF file structure, which is exactly what made it possible to drop into a real serving engine.</p>
+<h2 id="sparkinfer-exl3-escaped-exllama-s-singleuser-sandbox">SparkInfer: EXL3 escaped ExLlama's single-user sandbox</h2>
+<p>ExLlamaV3 itself got a massive speedup this year — the v1.0.0 kernels roughly doubled throughput (Qwen3.6-27B: 29 → 50 tok/s, Qwen3.5-0.8B: 268 → 444 tok/s). With DFlash draft support it hits 140+ tok/s on a single RTX PRO 6000 on agentic/coding traces.</p>
+<p>But ExLlama is a single-process library — bad concurrency, awkward for serving. That's why the SparkInfer integration matters. <strong>SparkInfer is a Blackwell-native fork of vLLM</strong> (from the Local Inference Lab / Bittensor crowd) with its own CUDA kernel set ("B12X"). It targets exactly the consumer/edge Blackwell family — <code>sm_120</code> (RTX 50-series) and <code>sm_121</code> (DGX Spark), explicitly <em>not</em> datacenter. And its EXL3 Trellis backend (<a href="https://github.com/local-inference-lab/vllm/pull/139" target="_blank" rel="noopener">vLLM PR #139</a> + <a href="https://github.com/local-inference-lab/b12x/pull/49" target="_blank" rel="noopener">SparkInfer PR #49</a>) loads native EXL3 checkpoints — rank-sliced GLM/DeepSeek MoE payloads included — with <strong>no repacking or requantization</strong>. You just launch with <code>--quantization exl3</code>.</p>
+<p>The result, from our rig (4x RTX PRO 6000, TP4, CUDA 13.2, MTP speculative decoding):</p>
+<div class="callout">
+<ul>
+        <li><strong>GLM-5.2 EXL3 at 3.0–3.5 bpw</strong> — ~48.9 tok/s single stream on the first integrations, <strong>121 tok/s single stream with MTP3</strong> on the current SparkInfer release, 297 tok/s at C4, 436 tok/s aggregate at C8</li>
+        <li>8K prefill: ~3,200–3,700 tok/s</li>
+        <li>251K-token context with fp8/NVFP4 KV on four cards, KV staying far smaller than a GGUF build of the same model</li>
+</ul>
+</div>
+<p>That's roughly <strong>3x</strong> the sustained throughput we were getting from the same EXL3 checkpoints under ExLlamaV3. The wins come from the Blackwell-native kernels themselves — SparkInfer claims +86% decode over llama.cpp on an RTX 5090 (512 tok/s at 128 context on Qwen3.6-35B-A3B) — plus vLLM-grade batching on top of a format that was previously single-stream-only.</p>
+<h2 id="blackwell-lite-is-the-natural-home-for-exl3">Blackwell lite is the natural home for EXL3</h2>
+<p>"Blackwell lite" is the sm<em>120/sm</em>121 family — the GPUs that sit on your desk rather than in a rack:</p>
+<ul><li><strong>RTX 5090</strong> (32 GB) — the 128-context decode king; SparkInfer measured 512 tok/s there</li><li><strong>RTX PRO 4000 / 5000 / 6000 Blackwell</strong> — 40/96 GB workstations; the PRO 6000 is the sweet spot for DGX-class models at home without the DGX noise</li><li><strong>DGX Spark (GB10)</strong> — 128 GB unified memory, sm_121. EXL3 is what makes DeepSeek-grade MoE models actually fit on one: the DeepSeek V4 Flash EXL3 build fuels a 262K-token, fully resident 284B MoE on a <em>single</em> Spark (~38–49 tok/s, ~1,055 tok/s prefill)</li></ul>
+<p>Beefy datacenter GPUs barely matter here — these are exactly the machines where the format's quality-per-bit shows up as fitting vs. not fitting.</p>
+<h2 id="odd-card-counts-finally-work">Odd card counts finally work</h2>
+<p>Stock vLLM tensor parallel requires the model's head counts to divide evenly by the GPU count, and <code>--tensor-parallel-size 3</code> is unsupported on many models. ExLlamaV3's flexible tensor- and expert-parallel splits handled odd setups from day one (per-layer, per-expert placement with per-layer parallelism limits), and SparkInfer inherits that flexibility with vLLM's scheduler on top.</p>
+<p>Our 3-GPU box (5090 + two PRO 4000s — yes, really) runs smoothly. There are public logs of <strong>GLM-5.2 (753B) served TP=3 across three DGX Sparks</strong> at 15–16 tok/s decode with 215K context — a model size that is simply out of reach on any even-count config you could afford. Mixed card sizes work too, since EXL3's rank-sliced checkpoints don't care about uniform VRAM; you parallelize experts and channels, not memory pools.</p>
+<h2 id="turboderp-s-model-cards-are-worth-a-click">turboderp's model cards are worth a click</h2>
+<p>Turboderp's <a href="https://huggingface.co/turboderp" target="_blank" rel="noopener">Hugging Face account</a> now hosts <strong>148 models</strong>, with a maintained <a href="https://hf.co/collections/turboderp/exl3-models" target="_blank" rel="noopener">EXL3 models collection</a>. The cards there are unusually good: each one documents bpw variants, KV-cache options, and which runtime actually tested them. Current standouts:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Why it's interesting</th></tr></thead><tbody><tr><td><a href="https://huggingface.co/turboderp/Qwen3.6-27B-exl3" target="_blank" rel="noopener">Qwen3.6-27B-exl3</a></td><td>The community workhorse (~574 downloads). At 4.15 bpw it's turbocharged by DFlash speculative decoding — 177+ tok/s on coding traces, single PRO 6000.</td></tr><tr><td><a href="https://huggingface.co/turboderp/DeepSeek-V4-Flash-0731-exl3" target="_blank" rel="noopener">DeepSeek-V4-Flash-0731-exl3</a></td><td>284B / 216 experts at ~3 bpw. Fits a DGX Spark; the card includes the Spark profiles.</td></tr><tr><td><a href="https://huggingface.co/turboderp/Laguna-XS-2.1-exl3" target="_blank" rel="noopener">Laguna-XS-2.1-exl3</a></td><td>The small thinking model done right — what we run on WebBrain's local path for cheap agentic tasks.</td></tr><tr><td><a href="https://huggingface.co/turboderp/Laguna-S-2.1-exl3" target="_blank" rel="noopener">Laguna-S-2.1-exl3</a></td><td>Sibling of the above, more capacity per VRAM.</td></tr><tr><td><a href="https://huggingface.co/turboderp/gpt-oss-120b-exl3" target="_blank" rel="noopener">gpt-oss-120b-exl3</a></td><td>OpenAI's open MoE, ~3 bpw; 120B in the double-digit GB range.</td></tr><tr><td><a href="https://huggingface.co/turboderp/Mistral-Small-4-119B-2603-exl3" target="_blank" rel="noopener">Mistral-Small-4-119B-2603-exl3</a></td><td>Same weight class, different trade-offs; good for 3×24GB rigs.</td></tr><tr><td><a href="https://huggingface.co/turboderp/Muse-Glimmer-30B-exl3" target="_blank" rel="noopener">Muse-Glimmer-30B-exl3</a> / assistant variant</td><td>Brand new (hours old) — the 30B creative model in native EXL3.</td></tr><tr><td><a href="https://huggingface.co/turboderp/IQuest-Coder-V1-40B-Instruct-exl3" target="_blank" rel="noopener">IQuest-Coder-V1-40B-Instruct-exl3</a></td><td>Coder-specialized; excellent ~2.5–3 bpw coding quality per GB.</td></tr></tbody></table></div>
+<h2 id="how-to-actually-run-it">How to actually run it</h2>
+<ul><li><strong>Single user, one GPU:</strong> stick with ExLlamaV3 + <a href="https://github.com/theroyallab/tabbyAPI/" target="_blank" rel="noopener">TabbyAPI</a> — install, point at a model dir, done.</li><li><strong>Serving / multi-user / multi-GPU:</strong> use the SparkInfer vLLM fork. Expect a source build (CUDA 13.x for Blackwell), then <code>--quantization exl3</code>, set <code>--tensor-parallel-size</code> to your card count (odd is fine), add <code>--kv-cache-dtype fp8</code> on workstations or NVFP4 on GB10.</li><li><strong>DGX Spark:</strong> follow a pinned recipe (e.g. the <a href="https://github.com/0xSero/deepseek-v4-flash-0731-spark-sparkinfer" target="_blank" rel="noopener">DeepSeek V4 Flash + SparkInfer one</a>) — the sm_121 attention path and EXL3 loading come pre-wired, and the KV-cache settings matter more than on x86.</li></ul>
+<h2 id="bottom-line">Bottom line</h2>
+<p>GGUF is still the safe default if you need CPU/Apple/AMD portability, and NVFP4 has its place on datacenter Blackwell. But if you own the machine, the cards are NVIDIA, and you care about <strong>quality per bit per dollar</strong>, EXL3 is the format and Blackwell lite + SparkInfer is the stack right now. ~3x over ExLlamaV3 on the same files, real serving concurrency, odd card counts welcome, and a first-party library of already-converted models. That's the best local-AI setup I know of today.</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain is MIT-licensed and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>
