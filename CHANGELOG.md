@@ -4,6 +4,14 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.1.4] - 2026-08-11
+
+### Changed
+- version up
+- fix: harden runtime mode recovery and trace diagnostics
+- Apply suggestions from code review
+- fix: localize Cloud Sync settings
+
 ## [28.1.2] - 2026-08-11
 
 ### Changed
