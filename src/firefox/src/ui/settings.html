@@ -1598,25 +1598,25 @@
 
   <section class="tab-panel" data-panel="memory" role="tabpanel">
     <div class="provider-card" id="profile-sync-card">
-      <h3 style="margin:0 0 12px;font-size:14px;font-weight:600;">Encrypted Cloud Sync</h3>
-      <div class="profile-sync-lede"><strong>WebBrain Cloud members only.</strong> Sync memories, profile autofill, and API-key provider settings across devices. Everything is encrypted with your sync password before upload. WebBrain cannot read or recover it. Chat history and OAuth sign-ins are not synced.</div>
+      <h3 data-i18n="st.sync.title" style="margin:0 0 12px;font-size:14px;font-weight:600;"></h3>
+      <div class="profile-sync-lede" data-i18n-html="st.sync.lede_html"></div>
       <div id="profile-sync-status" class="profile-sync-status"></div>
-      <div class="field profile-sync-stage" id="profile-sync-email-field"><label>WebBrain Cloud email</label><input type="email" id="profile-sync-email" autocomplete="email"></div>
-      <div class="field profile-sync-stage" id="profile-sync-password-field"><label>Sync password for encryption (12+ characters)</label><input type="password" id="profile-sync-password" autocomplete="new-password" minlength="12"></div>
-      <div class="field profile-sync-stage" id="profile-sync-confirm-field"><label>Confirm sync password</label><input type="password" id="profile-sync-confirm" autocomplete="new-password" minlength="12"></div>
+      <div class="field profile-sync-stage" id="profile-sync-email-field"><label data-i18n="st.sync.email.label"></label><input type="email" id="profile-sync-email" autocomplete="email"></div>
+      <div class="field profile-sync-stage" id="profile-sync-password-field"><label data-i18n="st.sync.password.label"></label><input type="password" id="profile-sync-password" autocomplete="new-password" minlength="12"></div>
+      <div class="field profile-sync-stage" id="profile-sync-confirm-field"><label data-i18n="st.sync.confirm.label"></label><input type="password" id="profile-sync-confirm" autocomplete="new-password" minlength="12"></div>
       <div class="btn-row profile-sync-actions">
-        <button class="btn-primary" id="btn-profile-sync-auth">Send sign-in link</button>
-        <button class="btn-primary" id="btn-profile-sync-enable">Turn on encrypted sync</button>
-        <button class="btn-primary" id="btn-profile-sync-unlock">Unlock encrypted sync</button>
-        <button class="btn-secondary" id="btn-profile-sync-now">Sync now</button>
+        <button class="btn-primary" id="btn-profile-sync-auth" data-i18n="st.sync.action.auth"></button>
+        <button class="btn-primary" id="btn-profile-sync-enable" data-i18n="st.sync.action.enable"></button>
+        <button class="btn-primary" id="btn-profile-sync-unlock" data-i18n="st.sync.action.unlock"></button>
+        <button class="btn-secondary" id="btn-profile-sync-now" data-i18n="st.sync.action.now"></button>
       </div>
       <details class="profile-sync-advanced" id="profile-sync-advanced">
-        <summary>Advanced</summary>
+        <summary data-i18n="st.display.advanced"></summary>
         <div class="btn-row">
-          <button class="btn-secondary" id="btn-profile-sync-lock">Lock</button>
-          <button class="btn-secondary" id="btn-profile-sync-change">Change sync password</button>
-          <button class="btn-secondary" id="btn-profile-sync-disable">Turn off sync on this device</button>
-          <button class="btn-secondary" id="btn-profile-sync-reset">Replace cloud copy with this device</button>
+          <button class="btn-secondary" id="btn-profile-sync-lock" data-i18n="st.sync.action.lock"></button>
+          <button class="btn-secondary" id="btn-profile-sync-change" data-i18n="st.sync.action.change_password"></button>
+          <button class="btn-secondary" id="btn-profile-sync-disable" data-i18n="st.sync.action.disable"></button>
+          <button class="btn-secondary" id="btn-profile-sync-reset" data-i18n="st.sync.action.reset"></button>
         </div>
       </details>
       <div class="test-result" id="test-profile-sync"></div>
