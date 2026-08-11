@@ -116,7 +116,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     try { data = await res.json(); } catch {
       throw new Error(`${this.name} returned invalid JSON in chat response.`);
     }
-    const message = data.choices?.[0]?.message;
+    const message = this._chatCompletionMessage(data);
     return {
       content: message?.content || '',
       reasoningContent: message?.reasoning_content || message?.reasoning || '',

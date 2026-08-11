@@ -3,6 +3,7 @@ import {
   addConfiguredMaxTokens,
   mapProviderMessages,
   mergeProviderRequestBody,
+  openAiCompatiblePayloadError,
 } from './provider-compatibility.js';
 
 /**
@@ -64,6 +65,16 @@ export class BaseLLMProvider {
     return messages.some((msg) => Array.isArray(msg?.content) && msg.content.some((block) => {
       return block && (block.type === 'image_url' || block.type === 'image');
     }));
+  }
+
+  _chatCompletionMessage(payload, label = this.name) {
+    const apiError = openAiCompatiblePayloadError(payload);
+    if (apiError) throw new Error(`${label} error: ${apiError}`);
+    const message = payload?.choices?.[0]?.message;
+    if (!message || typeof message !== 'object') {
+      throw new Error(`${label} returned no completion choice.`);
+    }
+    return message;
   }
 
   /**

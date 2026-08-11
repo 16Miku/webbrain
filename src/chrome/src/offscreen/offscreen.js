@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const res = await fetch(msg.url, {
         method: msg.method || 'POST',
         headers: msg.headers || {},
-        body: msg.body || undefined,
+        body: requestBodyFromMessage(msg),
       });
 
       const text = await res.text();
@@ -38,6 +38,111 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // keep sendResponse channel open for async
 });
 
+function requestBodyFromMessage(msg) {
+  if (msg?.bodyType) {
+    throw new Error(`offscreen proxy received unsupported buffered body type: ${msg.bodyType}`);
+  }
+  return msg?.body || undefined;
+}
+
+const fetchProxyFormDataStartupCleanup = (async () => {
+  try {
+    const storageRoot = await navigator.storage.getDirectory();
+    const dir = await storageRoot.getDirectoryHandle('fetch-proxy-form-data', { create: true });
+    for await (const filename of dir.keys()) {
+      try { await dir.removeEntry(filename); } catch {}
+    }
+    return dir;
+  } catch {
+    return null;
+  }
+})();
+
+function fetchProxyBase64Bytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function createFetchProxyFormDataState(entries) {
+  if (!Array.isArray(entries)) {
+    throw new Error('offscreen proxy received invalid FormData entries');
+  }
+  const dir = await fetchProxyFormDataStartupCleanup;
+  if (!dir) throw new Error('offscreen proxy could not open FormData staging storage');
+  const token = crypto.randomUUID();
+  const blobFiles = new Map();
+  let cleaned = false;
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const staged of blobFiles.values()) {
+      if (!staged.closed) {
+        try { await staged.writable.abort(); } catch {}
+      }
+      try { await dir.removeEntry(staged.stagedFilename); } catch {}
+    }
+  };
+
+  try {
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      const entry = entries[entryIndex];
+      if (!entry || typeof entry.name !== 'string') {
+        throw new Error('offscreen proxy received an invalid FormData field');
+      }
+      if (entry.kind === 'text') continue;
+      if (entry.kind !== 'blob') {
+        throw new Error(`offscreen proxy received an unsupported FormData field: ${entry.name}`);
+      }
+      const stagedFilename = `${token}-${entryIndex}.part`;
+      const handle = await dir.getFileHandle(stagedFilename, { create: true });
+      const writable = await handle.createWritable();
+      blobFiles.set(entryIndex, { handle, writable, stagedFilename, closed: false });
+    }
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  return {
+    async write(entryIndex, value) {
+      const staged = blobFiles.get(entryIndex);
+      if (!staged || staged.closed || typeof value !== 'string') {
+        throw new Error(`offscreen proxy received an invalid FormData chunk for entry ${entryIndex}`);
+      }
+      await staged.writable.write(fetchProxyBase64Bytes(value));
+    },
+    async finish() {
+      for (const staged of blobFiles.values()) {
+        await staged.writable.close();
+        staged.closed = true;
+      }
+      const form = new FormData();
+      for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+        const entry = entries[entryIndex];
+        if (entry.kind === 'text') {
+          form.append(entry.name, String(entry.value ?? ''));
+          continue;
+        }
+        const staged = blobFiles.get(entryIndex);
+        const file = await staged.handle.getFile();
+        const blob = new Blob([file], {
+          type: typeof entry.type === 'string' && entry.type
+            ? entry.type
+            : 'application/octet-stream',
+        });
+        form.append(entry.name, blob, typeof entry.filename === 'string' && entry.filename
+          ? entry.filename
+          : 'blob');
+      }
+      return form;
+    },
+    cleanup,
+  };
+}
+
 // Streaming variant of the fetch proxy, over a long-lived port. The
 // buffered onMessage path above can only respond after the ENTIRE body
 // has been consumed, so any caller-side timeout covers time-to-last-byte
@@ -47,15 +152,28 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // as they arrive so SSE streams stay incremental and unbounded in length.
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'offscreen-fetch-stream') return;
-  port.onMessage.addListener(async (msg) => {
-    if (!msg?.url) return;
-    const post = (m) => { try { port.postMessage(m); } catch {} };
+  let formDataState = null;
+  let pendingRequest = null;
+  let requestRunning = false;
+  let fetchController = null;
+  const cleanupFormData = async () => {
+    const state = formDataState;
+    formDataState = null;
+    pendingRequest = null;
+    if (state) await state.cleanup();
+  };
+  const post = (m) => { try { port.postMessage(m); } catch {} };
+  const relayFetch = async (msg, body) => {
+    requestRunning = true;
+    fetchController = new AbortController();
     try {
       const res = await fetch(msg.url, {
         method: msg.method || 'POST',
         headers: msg.headers || {},
-        body: msg.body || undefined,
+        body,
+        signal: fetchController.signal,
       });
+      await cleanupFormData();
       post({
         type: 'headers',
         ok: res.ok,
@@ -80,7 +198,51 @@ chrome.runtime.onConnect.addListener((port) => {
       if (tail) post({ type: 'chunk', text: tail });
       post({ type: 'done' });
     } catch (e) {
+      await cleanupFormData();
+      post({ type: 'error', error: e?.message || String(e) });
+    } finally {
+      fetchController = null;
+    }
+  };
+
+  port.onMessage.addListener(async (msg) => {
+    try {
+      if (msg?.type === 'form-data-chunk') {
+        if (!formDataState || requestRunning) {
+          throw new Error('offscreen proxy received a FormData chunk without an active upload');
+        }
+        await formDataState.write(msg.entryIndex, msg.value);
+        post({
+          type: 'form-data-chunk-ack',
+          entryIndex: msg.entryIndex,
+          sequence: msg.sequence,
+        });
+        return;
+      }
+      if (msg?.type === 'form-data-complete') {
+        if (!formDataState || !pendingRequest || requestRunning) {
+          throw new Error('offscreen proxy received FormData completion without an active upload');
+        }
+        const request = pendingRequest;
+        const body = await formDataState.finish();
+        await relayFetch(request, body);
+        return;
+      }
+      if (!msg?.url || requestRunning || pendingRequest) return;
+      if (msg.bodyType === 'form-data-chunked') {
+        pendingRequest = msg;
+        formDataState = await createFetchProxyFormDataState(msg.formDataEntries);
+        post({ type: 'form-data-ready' });
+        return;
+      }
+      await relayFetch(msg, requestBodyFromMessage(msg));
+    } catch (e) {
+      await cleanupFormData();
       post({ type: 'error', error: e?.message || String(e) });
     }
+  });
+  port.onDisconnect?.addListener(() => {
+    try { fetchController?.abort(); } catch {}
+    cleanupFormData().catch(() => {});
   });
 });

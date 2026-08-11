@@ -41,6 +41,53 @@ function clean(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+/**
+ * Normalize an OpenAI-compatible API base without rewriting provider-specific
+ * paths. Bare origins such as LM Studio's http://127.0.0.1:1234 need /v1;
+ * explicit paths such as /api/v1 or /compatible-mode/v1 are already complete.
+ */
+export function normalizeOpenAICompatibleBaseUrl(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    if ((url.protocol === 'http:' || url.protocol === 'https:')
+        && url.pathname === '/'
+        && !url.search
+        && !url.hash) {
+      return `${trimmed}/v1`;
+    }
+  } catch { /* preserve validation behavior at the eventual request site */ }
+  return trimmed;
+}
+
+export function openAiCompatiblePayloadError(payload, maxLength = 500) {
+  const error = payload?.error;
+  if (!error) return '';
+  const detail = typeof error === 'string'
+    ? error
+    : String(error.message || error.detail || JSON.stringify(error));
+  return detail.slice(0, maxLength);
+}
+
+export function visionGenerationOptions(maxTokens = 800, { reasoningControl = true } = {}) {
+  const extraBody = {};
+  if (reasoningControl) {
+    // LM Studio 0.4.8+ honors these fields for Chat Completions. They prevent
+    // Qwen vision models from spending the entire output budget in a hidden
+    // reasoning channel and leaving no caption for the browser agent.
+    extraBody.reasoning_effort = 'none';
+    extraBody.reasoning_tokens = 0;
+    extraBody.chat_template_kwargs = { enable_thinking: false };
+  }
+  return { maxTokens, temperature: 0, extraBody };
+}
+
+export function unsupportedVisionGenerationControl(error) {
+  const message = String(error?.message || error || '');
+  return /reasoning_effort|reasoning_tokens|chat_template_kwargs|enable_thinking/i.test(message);
+}
+
 function isDirectDeepSeekConfig(config = {}) {
   const providerName = clean(config.providerName);
   if (providerName === 'deepseek') return true;
