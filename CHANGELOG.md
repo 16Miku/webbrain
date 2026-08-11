@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.2.0] - 2026-08-11
+
+### Changed
+- Localized the selection shortcut and native context-menu items across all 23 supported interface languages in Chrome and Firefox, including action names, translation targets, status messages, right-to-left layout, and live language changes.
+- Localized shortcut-generated prompts so responses follow the active interface language without exposing model-only language instructions in the visible conversation.
+
+### Fixed
+- Smoothed the effects of bounded run memory by showing a replay-gap notice only once per run, even as acknowledged event boundaries advance, while continuing to restore completed output after side-panel reconnects.
+
 ## [28.1.5] - 2026-08-11
 
 ### Changed
