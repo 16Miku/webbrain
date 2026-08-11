@@ -552,7 +552,7 @@ export default {
   'st.display.auto_screenshot.state_change': 'Bei Zustandsänderung (Standard)',
   'st.display.auto_screenshot.every_step': 'Bei jedem Schritt',
   'st.display.tracing.label': 'Traces aufzeichnen (zum Modellvergleich)',
-  'st.display.tracing.desc_html': 'Speichert jeden Durchlauf in der lokalen IndexedDB, damit Sie Modelle seitenweise inspizieren und vergleichen können.',
+  'st.display.tracing.desc_html': 'Speichert jeden Durchlauf in der lokalen IndexedDB, damit Sie Modelle seitenweise inspizieren und vergleichen können. <a href="traces.html" target="_blank" style="color:var(--accent);">Traces öffnen →</a>',
   'st.display.cost_session_limit.label': 'Cloud-Kosten-Sitzungskontingent',
   'st.display.cost_session_limit.desc': 'Stoppt Cloud- und OpenRouter-Durchläufe vor einem weiteren kostenpflichtigen Modellaufruf, wenn diese Sitzung das Kostenkontingent erreicht.',
   'st.display.cost_total_limit.label': 'Cloud-Kosten-Gesamtkontingent',
