@@ -38,6 +38,11 @@ import {
   normalizeSelectionAction,
   createContextMenuStorage,
 } from './context-menu-storage.js';
+import {
+  getSelectionShortcutLocalization,
+  normalizeSelectionShortcutLocale,
+  selectionTranslationLanguageLabel,
+} from './selection-shortcut-i18n.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
@@ -151,6 +156,12 @@ const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+let selectionShortcutLocale = 'en';
+const selectionShortcutLocaleReady = browser.storage.local.get({ wbLocale: 'en' })
+  .then((stored) => {
+    selectionShortcutLocale = normalizeSelectionShortcutLocale(stored?.wbLocale);
+  })
+  .catch(() => {});
 
 function getContextMenuApi() {
   return browser.contextMenus || browser.menus || null;
@@ -177,9 +188,12 @@ const tabChatHandoff = createTabChatHandoffCoordinator(browser.storage.session, 
   },
 });
 
-function createContextMenus() {
+async function createContextMenus() {
+  await selectionShortcutLocaleReady;
   const api = getContextMenuApi();
   if (!api?.create) return;
+  const localization = getSelectionShortcutLocalization(selectionShortcutLocale);
+  const strings = localization.strings;
 
   const createItem = (item) => {
     try {
@@ -199,32 +213,36 @@ function createContextMenus() {
   const create = () => {
     createItem({
       id: CONTEXT_MENU_ASK_SELECTION_ID,
-      title: 'Ask WebBrain about this',
+      title: strings.askSelection,
       contexts: ['selection'],
     });
-    createItem({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open sidebar to chat', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.openChat, contexts: ['selection'] });
     createItem({ id: 'webbrain-selection-separator-1', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    for (const [action, title] of [
-      ['summarize', 'Summarize'],
-      ['explain', 'Explain'],
-      ['quiz', 'Quiz me'],
-      ['proofread', 'Proofread'],
-      ['humanize', 'Humanize'],
+    for (const [action, key] of [
+      ['summarize', 'summarize'],
+      ['explain', 'explain'],
+      ['quiz', 'quiz'],
+      ['proofread', 'proofread'],
+      ['humanize', 'humanize'],
     ]) {
-      createItem({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title, contexts: ['selection'] });
+      createItem({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings[key], contexts: ['selection'] });
     }
-    createItem({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.translateTo, contexts: ['selection'] });
     for (const [code, title] of Object.entries(SELECTION_TRANSLATION_LANGUAGES)) {
-      createItem({ id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`, parentId: CONTEXT_MENU_TRANSLATE_ID, title, contexts: ['selection'] });
+      createItem({
+        id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`,
+        parentId: CONTEXT_MENU_TRANSLATE_ID,
+        title: selectionTranslationLanguageLabel(code, localization.locale) || title,
+        contexts: ['selection'],
+      });
     }
     createItem({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Ask about this', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
   };
 
   try {
-    Promise.resolve(api.removeAll())
-      .catch(() => {})
-      .then(create);
+    await Promise.resolve(api.removeAll()).catch(() => {});
+    create();
   } catch {
     create();
   }
@@ -572,6 +590,13 @@ async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operatio
   });
 }
 
+function notifyUserMemoryCreated() {
+  browser.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'user_memory_created',
+  }).catch(() => {});
+}
+
 function scheduleUserMemoryExtractionDrain(delayMs = USER_MEMORY_EXTRACTION_DELAY_MS) {
   if (userMemoryExtractionTimer) clearTimeout(userMemoryExtractionTimer);
   userMemoryExtractionTimer = setTimeout(() => {
@@ -664,7 +689,10 @@ async function drainUserMemoryExtractionQueue() {
         });
         const operations = parseUserMemoryExtractionResult(result?.content || '');
         const applied = await applyUserMemoryExtractionOperationsToCurrentStore(job.id, operations);
-        if (applied.changed) await syncAgentUserMemoryFromStorage();
+        if (applied.changed) {
+          await syncAgentUserMemoryFromStorage();
+          if (applied.created) notifyUserMemoryCreated();
+        }
       } catch (error) {
         if (agent._isCostAllowanceError?.(error)) {
           await removeUserMemoryExtractionJob(job.id);
@@ -863,7 +891,7 @@ function showFirstInstallGuide(details) {
 // Initialize on install
 browser.runtime.onInstalled.addListener(async (details) => {
   showFirstInstallGuide(details);
-  createContextMenus();
+  await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
   await loadClarifyTimeout();
@@ -873,14 +901,18 @@ browser.runtime.onInstalled.addListener(async (details) => {
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
 
-browser.runtime.onStartup?.addListener?.(() => {
-  createContextMenus();
+browser.runtime.onStartup?.addListener?.(async () => {
+  await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
 });
 
 // Listen for setting changes
 browser.storage.onChanged.addListener((changes) => {
+  if (changes.wbLocale) {
+    selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
+    createContextMenus().catch(() => {});
+  }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
   if (changes.maxAgentSteps) {
@@ -1135,10 +1167,10 @@ async function handleContextMenuAsk(info, tab) {
   let text = '';
   let selectionAction = '';
   if (menuItemId === CONTEXT_MENU_GENERIC_ASK_ID) {
-    text = buildContextMenuPrompt(info.selectionText);
+    text = buildContextMenuPrompt(info.selectionText, selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_ACTION_PREFIX)) {
     selectionAction = normalizeSelectionAction(menuItemId.slice(CONTEXT_MENU_ACTION_PREFIX.length));
-    text = buildSelectionPrompt(info.selectionText, selectionAction);
+    text = buildSelectionPrompt(info.selectionText, selectionAction, '', selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_TRANSLATE_PREFIX)) {
     selectionAction = 'translate';
     text = buildSelectionPrompt(info.selectionText, 'translate', '', menuItemId.slice(CONTEXT_MENU_TRANSLATE_PREFIX.length));
@@ -1165,6 +1197,11 @@ async function handleContextMenuAsk(info, tab) {
 
 getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
+});
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION') return;
+  sendResponse({ ok: true, ...getSelectionShortcutLocalization(msg.locale) });
 });
 
 // Firefox does not treat a click in an injected page UI as an authorized

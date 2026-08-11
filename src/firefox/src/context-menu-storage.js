@@ -49,6 +49,13 @@ export const SELECTION_TRANSLATION_LANGUAGES = Object.freeze({
   tl: 'Filipino',
   pl: 'Polish',
   he: 'Hebrew',
+  hi: 'Hindi',
+  pt: 'Portuguese',
+  vi: 'Vietnamese',
+  bn: 'Bengali',
+  fa: 'Persian',
+  nl: 'Dutch',
+  de: 'German',
 });
 
 const SELECTION_UNTRUSTED_PREAMBLE =
@@ -57,6 +64,22 @@ const SELECTION_SOURCE_GROUNDING =
   'Use only the text inside the selection block as source material for this action. Do not substitute the screenshot, page title, surrounding page content, or earlier conversation. If the selection is insufficient, say so and ask the user to select more text.';
 const CUSTOM_QUESTION_PREFIX = 'Please answer this user question about the selected text:\n';
 const GENERIC_CONTEXT_MENU_INSTRUCTION = 'Please answer about this selected text from the current page.';
+
+function responseLanguageInstruction(language) {
+  const languageCode = String(language || '').trim().toLowerCase();
+  const responseLanguage = Object.prototype.hasOwnProperty.call(SELECTION_TRANSLATION_LANGUAGES, languageCode)
+    ? SELECTION_TRANSLATION_LANGUAGES[languageCode]
+    : '';
+  return responseLanguage ? ` Respond in ${responseLanguage}.` : '';
+}
+
+function stripResponseLanguageInstruction(instruction) {
+  for (const responseLanguage of Object.values(SELECTION_TRANSLATION_LANGUAGES)) {
+    const suffix = ` Respond in ${responseLanguage}.`;
+    if (instruction.endsWith(suffix)) return instruction.slice(0, -suffix.length);
+  }
+  return instruction;
+}
 // Match only prompts we generate: exact preamble + ctx- nonce box at the end.
 // Legacy history may end at the store's exact truncation marker before the
 // closing boundary. Do not rewrite arbitrary text that merely mentions these.
@@ -108,8 +131,9 @@ export function formatSelectionPromptForDisplay(promptText) {
 
   if (instruction.startsWith(CUSTOM_QUESTION_PREFIX)) {
     instruction = instruction.slice(CUSTOM_QUESTION_PREFIX.length).trim();
-  } else if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) {
-    instruction = '';
+  } else {
+    instruction = stripResponseLanguageInstruction(instruction);
+    if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) instruction = '';
   }
 
   const selectedBlock = `Selected text:\n${selection}`;
@@ -132,13 +156,15 @@ export function buildSelectionPrompt(selectionText, action, question = '', langu
       : '';
     if (!targetLanguage) return '';
     instruction = `Translate this selected text into ${targetLanguage}. Preserve its meaning, tone, and formatting. Return only the translation unless a short note is necessary to resolve ambiguity.`;
+  } else if (instruction) {
+    instruction += responseLanguageInstruction(language);
   }
   if (!instruction) return '';
   return wrapSelectedPageText(selectionText, instruction);
 }
 
-export function buildContextMenuPrompt(selectionText) {
-  return wrapSelectedPageText(selectionText, GENERIC_CONTEXT_MENU_INSTRUCTION);
+export function buildContextMenuPrompt(selectionText, language = '') {
+  return wrapSelectedPageText(selectionText, GENERIC_CONTEXT_MENU_INSTRUCTION + responseLanguageInstruction(language));
 }
 
 const CONTEXT_MENU_PENDING_PREFIX = 'contextMenuPrompt:';

@@ -19,6 +19,10 @@ import path from 'node:path';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
+import {
+  SELECTION_SHORTCUT_LOCALES,
+  getSelectionShortcutLocalization,
+} from '../../src/chrome/src/selection-shortcut-i18n.js';
 import { registerRichTextToolbarFixtures } from './rich-text-toolbar.mjs';
 
 
@@ -45,6 +49,9 @@ const firefoxFilePickerGuardPageJsPath = path.join(root, 'src', 'firefox', 'src'
 const selectionShortcutJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
 const firefoxSelectionShortcutJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'selection-shortcut.js');
 const smdJsPath = path.join(root, 'src', 'chrome', 'src', 'agent', 'social-media-downloader.js');
+const selectionShortcutLocalizations = Object.fromEntries(
+  SELECTION_SHORTCUT_LOCALES.map((locale) => [locale, getSelectionShortcutLocalization(locale)]),
+);
 
 function fixtureUrl(name) {
   return 'file://' + path.join(__dirname, name);
@@ -288,11 +295,16 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
   await page.addScriptTag({ content: `
     window.__selectionMessages = [];
     window.__selectionStorage = { selectionShortcutEnabled: ${enabled ? 'true' : 'false'}, wbLocale: '${locale}' };
+    window.__selectionLocalizations = ${JSON.stringify(selectionShortcutLocalizations)};
     window.__selectionRuntimeListeners = [];
     window.__selectionStorageListeners = [];
     window.chrome = {
       runtime: {
         sendMessage: async (message) => {
+          if (message.type === 'WB_SELECTION_SHORTCUT_LOCALIZATION') {
+            const locale = String(message.locale || 'en').toLowerCase().split('-')[0];
+            return { ok: true, ...(window.__selectionLocalizations[locale] || window.__selectionLocalizations.en) };
+          }
           window.__selectionMessages.push(message);
           return { ok: true, queued: true, requiresManualOpen: ${requiresManualOpen ? 'true' : 'false'} };
         },
@@ -589,6 +601,28 @@ for (const [label, sourcePath, manualOpen] of [
   ['Chrome', selectionShortcutJsPath, false],
   ['Firefox', firefoxSelectionShortcutJsPath, true],
 ]) {
+  test(`${label}: selection shortcut localizes labels, direction, and fixed-action language`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
+    const localized = await selectFixtureText(page);
+    if (localized.summarizeLabel !== '总结' || localized.explainLabel !== '解释' || localized.quizLabel !== '测验我' || localized.direction !== 'ltr') {
+      throw new Error(`Chinese shortcut localization mismatch: ${JSON.stringify(localized)}`);
+    }
+
+    await page.evaluate(() => window.__webbrainSelectionShortcut.submitPreset('explain'));
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
+    if (submitted.action !== 'explain' || submitted.language !== 'zh') {
+      throw new Error(`fixed action did not carry the Chinese interface language: ${JSON.stringify(submitted)}`);
+    }
+
+    await page.evaluate(() => window.__setSelectionShortcutLocale('ar'));
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().direction === 'rtl');
+    const rtl = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (rtl.summarizeLabel !== 'تلخيص') {
+      throw new Error(`live Arabic localization mismatch: ${JSON.stringify(rtl)}`);
+    }
+  });
+
   test(`${label}: selection shortcut clamps to the viewport and supports keyboard dismissal`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     const state = await selectFixtureText(page);
@@ -720,6 +754,9 @@ for (const [label, sourcePath, manualOpen] of [
     if (result.messages.length !== 1) throw new Error(`expected exactly one submission, got ${result.messages.length}`);
     if (result.messages[0].action !== 'summarize' || !/Editable selection text/.test(result.messages[0].selectionText)) {
       throw new Error(`unexpected selection request: ${JSON.stringify(result.messages[0])}`);
+    }
+    if (result.messages[0].language !== 'en') {
+      throw new Error(`fixed action did not carry the interface language: ${JSON.stringify(result.messages[0])}`);
     }
     if (result.state.shortcutVisible || result.state.popupVisible) {
       throw new Error(`surface should dismiss before delivery: ${JSON.stringify(result.state)}`);

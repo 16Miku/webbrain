@@ -508,6 +508,20 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/context-menu-storage.js').replace(/\\/g, '/')
 );
+const {
+  SELECTION_SHORTCUT_LOCALES: SELECTION_SHORTCUT_LOCALES_CH,
+  getSelectionShortcutLocalization: getSelectionShortcutLocalizationCh,
+  normalizeSelectionShortcutLocale: normalizeSelectionShortcutLocaleCh,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/selection-shortcut-i18n.js').replace(/\\/g, '/')
+);
+const {
+  SELECTION_SHORTCUT_LOCALES: SELECTION_SHORTCUT_LOCALES_FX,
+  getSelectionShortcutLocalization: getSelectionShortcutLocalizationFx,
+  normalizeSelectionShortcutLocale: normalizeSelectionShortcutLocaleFx,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/selection-shortcut-i18n.js').replace(/\\/g, '/')
+);
 const { createContextMenuPromptHandler: createContextMenuPromptHandlerCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/context-menu-prompts.js').replace(/\\/g, '/')
 );
@@ -2479,6 +2493,7 @@ test('user memory extraction applies only high-confidence safe operations', () =
     assert.equal(parsed.length, 3, `${label}: parser should drop none operations`);
     const applied = memory.applyUserMemoryExtractionOperations(base, parsed, { now: 200, threshold: 0.85 });
     assert.equal(applied.changed, true, `${label}: high-confidence update should apply`);
+    assert.equal(applied.created, false, `${label}: updates should not report a newly formed memory`);
     assert.equal(applied.store.records.length, 1, `${label}: low-confidence and sensitive adds should not apply`);
     assert.equal(applied.store.records[0].text, 'Prefer concise explanations.', `${label}: update text`);
     assert.equal(applied.store.records[0].kind, 'workflow_preference', `${label}: update kind`);
@@ -2487,6 +2502,17 @@ test('user memory extraction applies only high-confidence safe operations', () =
       { op: 'archive', id: 'm1', text: '', kind: 'preference', confidence: 0.9 },
     ], { now: 300 });
     assert.equal(memory.activeUserMemoryRecords(archived.store).length, 0, `${label}: archive op should remove active memory`);
+    assert.equal(archived.created, false, `${label}: archive should not report a newly formed memory`);
+
+    const created = memory.applyUserMemoryExtractionOperations(base, [
+      { op: 'add', text: 'Use numbered implementation steps.', kind: 'workflow_preference', confidence: 0.95 },
+    ], { now: 400 });
+    assert.equal(created.created, true, `${label}: a new add should report a newly formed memory`);
+    const deduped = memory.applyUserMemoryExtractionOperations(created.store, [
+      { op: 'add', text: 'Use numbered implementation steps.', kind: 'workflow_preference', confidence: 0.96 },
+    ], { now: 500 });
+    assert.equal(deduped.changed, true, `${label}: duplicate adds may refresh the existing record`);
+    assert.equal(deduped.created, false, `${label}: duplicate adds should not report a newly formed memory`);
 
     const extractionMessages = memory.buildUserMemoryExtractionMessages({
       userText: 'Remember that I prefer terse replies.',
@@ -2519,6 +2545,7 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
   ]) {
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const sidepanelCss = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/en.js'), 'utf8');
@@ -2570,6 +2597,8 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(background, /agent\._isCostAllowanceError\?\.\(error\)/, `${label}: extraction cost limit should be silent`);
     assert.match(background, /async function markUserMemoryExtractionJobFailed\(jobId\)[\s\S]*attempts: attempts \+ 1/, `${label}: extraction jobs should retry once`);
     assert.match(background, /await markUserMemoryExtractionJobFailed\(job\.id\);\s*scheduleUserMemoryExtractionDrain\(USER_MEMORY_EXTRACTION_RETRY_DELAY_MS\);\s*return;/, `${label}: retryable extraction failures should reschedule the drain with a backoff delay`);
+    assert.match(background, /function notifyUserMemoryCreated\(\)[\s\S]*target: 'sidepanel',[\s\S]*action: 'user_memory_created'/, `${label}: background should publish a sidepanel cue for newly formed memory`);
+    assert.match(background, /if \(applied\.changed\) \{\s*await syncAgentUserMemoryFromStorage\(\);\s*if \(applied\.created\) notifyUserMemoryCreated\(\);/, `${label}: the visual cue should only follow a persisted new memory`);
 
     assert.match(sidepanel, /usage: '\/memory \[--add <text> \| --forget <id>\]'/, `${label}: canonical /memory usage missing`);
     assert.match(sidepanel, /value: '--add'[\s\S]*?action: 'add'[\s\S]*?takesRemainder: true/, `${label}: /memory --add metadata missing`);
@@ -2583,6 +2612,10 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(sidepanel, /command\.value === '\/memory' && action === 'forget'[\s\S]*?await forgetUserMemory\(payload, tabId\)/, `${label}: /memory --forget handler missing`);
     assert.match(sidepanel, /card\.dataset\.memorySource = scheduledJobId[\s\S]*'scheduled_clarification'[\s\S]*'form_confirmation'[\s\S]*'clarification_response'/, `${label}: clarify cards should tag memory source`);
     assert.match(sidepanel, /clarifyPayload\.memorySource = card\.dataset\.memorySource/, `${label}: clarify responses should include memory source metadata`);
+    assert.match(sidepanel, /msg\.action !== 'user_memory_created'[\s\S]*document\.visibilityState === 'hidden'[\s\S]*showComposerToast\(t\('sp\.memory\.remembered'\), \{ duration: 3200, effect: 'memory' \}\)/, `${label}: visible sidepanels should show the localized memory cue`);
+    assert.match(sidepanel, /function showComposerToast\(message, \{ duration = 2600, effect = '' \} = \{\}\)[\s\S]*toast\.classList\.add\('memory-update-cue'\)/, `${label}: composer toast should support the memory effect`);
+    assert.match(sidepanelCss, /\.composer-toast\.memory-update-cue-enter[\s\S]*@keyframes memory-update-cue-enter/, `${label}: memory cue animation missing`);
+    assert.match(sidepanelCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.composer-toast\.memory-update-cue-enter \{[\s\S]*?animation: none;/, `${label}: memory cue should respect reduced motion`);
 
     for (const id of ['toggle-user-memory-enabled', 'toggle-user-memory-auto', 'toggle-user-memory-form', 'input-user-memory-max-chars', 'user-memory-list', 'btn-export-user-memory', 'btn-clear-user-memory', 'user-memory-import-text', 'btn-import-user-memory']) {
       assert.match(settingsHtml, new RegExp(`id="${id}"`), `${label}: settings HTML missing ${id}`);
@@ -26950,6 +26983,10 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
       assert.match(prompt, /<untrusted_page_content id="ctx-[^"]+">\nselected page words\n<\/untrusted_page_content>/, `${label}: ${action} should wrap only the page selection`);
     }
 
+    const localizedPreset = buildSelectionPrompt('这里有 Electron 和 Tauri', 'explain', '', 'zh');
+    assert.match(localizedPreset, /^Explain this selected text in plain language\. Respond in Chinese\./, `${label}: fixed selection actions should request the interface language`);
+    assert.ok(localizedPreset.indexOf('Respond in Chinese.') < localizedPreset.indexOf('<untrusted_page_content'), `${label}: trusted response-language guidance must stay outside the page-data boundary`);
+
     const custom = buildSelectionPrompt('page data', 'custom', 'What does this imply?');
     assert.ok(custom.startsWith('Please answer this user question about the selected text:\nWhat does this imply?'), `${label}: custom question should stay outside the page-data boundary`);
     assert.ok(custom.indexOf('What does this imply?') < custom.indexOf('<untrusted_page_content'), `${label}: custom question should precede the untrusted selection`);
@@ -26961,6 +26998,7 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
     const translated = buildSelectionPrompt('Merhaba dünya', 'translate', '', 'en');
     assert.ok(translated.startsWith('Translate this selected text into English.'), `${label}: translate should resolve an allowlisted target language`);
     assert.match(translated, /<untrusted_page_content id="ctx-[^"]+">\nMerhaba dünya\n<\/untrusted_page_content>/, `${label}: translated source text should remain inside the untrusted boundary`);
+    assert.match(buildSelectionPrompt('Hallo Welt', 'translate', '', 'de'), /^Translate this selected text into German\./, `${label}: every interface locale should be an available one-click translation target`);
     assert.equal(buildSelectionPrompt('page data', 'translate', '', 'klingon'), '', `${label}: unsupported translation languages should be rejected`);
     assert.equal(buildSelectionPrompt('page data', 'translate', '', '__proto__'), '', `${label}: inherited language keys should not bypass the language allowlist`);
 
@@ -26970,6 +27008,49 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
 
     const native = buildContextMenuPrompt('native fallback');
     assert.ok(native.startsWith('Please answer about this selected text from the current page.'), `${label}: native context-menu wording should remain compatible`);
+    const localizedNative = buildContextMenuPrompt('中文原生菜单', 'zh');
+    assert.match(localizedNative, /^Please answer about this selected text from the current page\. Respond in Chinese\./, `${label}: native generic selection requests should follow the interface language`);
+  }
+});
+
+test('selection shortcut localizations cover every interface locale with browser parity', () => {
+  const expectedLocales = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const expectedKeys = [
+    'askAbout', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
+    'humanize', 'openChat', 'proofread', 'quiz', 'sendFailed', 'sendQuestion',
+    'sentManual', 'summarize', 'translate', 'translateTo',
+  ];
+
+  for (const [label, locales, getLocalization, normalizeLocale] of [
+    ['chrome', SELECTION_SHORTCUT_LOCALES_CH, getSelectionShortcutLocalizationCh, normalizeSelectionShortcutLocaleCh],
+    ['firefox', SELECTION_SHORTCUT_LOCALES_FX, getSelectionShortcutLocalizationFx, normalizeSelectionShortcutLocaleFx],
+  ]) {
+    assert.deepEqual([...locales].sort(), expectedLocales, `${label}: every supported interface locale should have shortcut strings`);
+    for (const locale of locales) {
+      const localization = getLocalization(locale);
+      assert.equal(localization.locale, locale, `${label}: ${locale} should resolve without falling back`);
+      assert.deepEqual(Object.keys(localization.strings).sort(), expectedKeys, `${label}: ${locale} should expose the complete selection surface vocabulary`);
+      assert.equal(Object.values(localization.strings).every((value) => typeof value === 'string' && value.trim()), true, `${label}: ${locale} strings should all be non-empty`);
+    }
+    const chinese = getLocalization('zh-CN');
+    assert.equal(chinese.locale, 'zh', `${label}: regional Chinese should resolve to the bundled Chinese locale`);
+    assert.equal(chinese.strings.summarize, '总结', `${label}: the Chinese shortcut should localize Summarize`);
+    assert.equal(chinese.strings.explain, '解释', `${label}: the Chinese shortcut should localize Explain`);
+    assert.equal(chinese.strings.quiz, '测验我', `${label}: the Chinese shortcut should localize Quiz me`);
+    assert.equal(chinese.dir, 'ltr', `${label}: Chinese should retain left-to-right layout`);
+    assert.equal(getLocalization('ar').dir, 'rtl', `${label}: Arabic should use right-to-left layout`);
+    assert.equal(normalizeLocale('unknown-locale'), 'en', `${label}: unknown locales should fall back to English`);
+  }
+
+  for (const locale of expectedLocales) {
+    assert.deepEqual(
+      getSelectionShortcutLocalizationCh(locale),
+      getSelectionShortcutLocalizationFx(locale),
+      `${locale}: Chrome and Firefox localization payloads should stay identical`,
+    );
   }
 });
 
@@ -27686,6 +27767,13 @@ test('selection prompt display formatter hides untrusted wrappers from the chat 
       `${label}: generic context-menu prompts should collapse to just the selection`,
     );
 
+    const localizedGeneric = buildContextMenuPrompt('localized native fallback', 'zh');
+    assert.equal(
+      formatSelectionPromptForDisplay(localizedGeneric),
+      'Selected text:\nlocalized native fallback',
+      `${label}: localized generic context-menu prompts should hide the model-only response-language instruction`,
+    );
+
     assert.equal(
       formatSelectionPromptForDisplay('Just a normal typed question'),
       'Just a normal typed question',
@@ -27764,7 +27852,10 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /const LOCALE_STORAGE_KEY = 'wbLocale';/, `${label}: content script should use the plugin interface language`);
     assert.match(content, /data-action="translate">Translate<\/button>/, `${label}: floating popup should expose one-click Translate`);
     assert.doesNotMatch(content, /class="language-select"|class="translate-view"/, `${label}: floating Translate should not open a second screen`);
-    assert.match(content, /button\.dataset\.action === 'translate'\) submitSelection\('translate', '', interfaceLanguage\)/, `${label}: floating Translate should submit directly in the plugin language`);
+    assert.match(content, /submitSelection\(button\.dataset\.action, '', interfaceLanguage\)/, `${label}: every floating preset should submit directly in the plugin language`);
+    assert.match(content, /const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';/, `${label}: floating shortcuts should request their labels from the extension background`);
+    assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
+    assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?button\.textContent = strings\[action\];/, `${label}: localization should update direction and visible labels on the existing surface`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
     assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
@@ -27789,13 +27880,17 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const panelSource = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const agentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
-    assert.match(background, /title: 'Ask WebBrain about this'[\s\S]*?parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open (side panel|sidebar) to chat'/, `${label}: native Ask item should become an action submenu`);
-    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to'/, `${label}: native submenu should include Translate to`);
+    assert.match(background, /title: strings\.askSelection[\s\S]*?parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings\.openChat/, `${label}: native Ask item and chat action should use the active localization`);
+    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings\.translateTo/, `${label}: native Translate submenu should use the active localization`);
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
+    assert.match(background, /selectionTranslationLanguageLabel\(code, localization\.locale\) \|\| title/, `${label}: native translation targets should use localized language names with an English fallback`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
     assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
     assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\?\s*\{\s*sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,/, `${label}: only allowlisted grounding should reach agent run options`);
-    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'Humanize'\]/, `${label}: native submenu should include Humanize`);
+    assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'humanize'\]/, `${label}: native submenu should include localized Humanize`);
+    assert.match(background, /changes\.wbLocale[\s\S]*?selectionShortcutLocale = normalizeSelectionShortcutLocale\(changes\.wbLocale\.newValue\);[\s\S]*?createContextMenus\(\)\.catch/, `${label}: changing the interface locale should rebuild native context menus`);
+    assert.match(background, /buildSelectionPrompt\(info\.selectionText, selectionAction, '', selectionShortcutLocale\)/, `${label}: native fixed actions should request the interface response language`);
+    assert.match(background, /msg\?\.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION'[\s\S]*?getSelectionShortcutLocalization\(msg\.locale\)/, `${label}: the background should serve a validated localization bundle to the classic content script`);
     assert.match(background, /selectionAction = normalizeSelectionAction\(menuItemId\.slice\(CONTEXT_MENU_ACTION_PREFIX\.length\)\)/, `${label}: native action ids should be normalized before travelling with the prompt`);
     assert.match(background, /normalizeSelectionAction\(msg\.selectionAction\)\s*\?\s*\{ selectionAction: normalizeSelectionAction\(msg\.selectionAction\) \}/, `${label}: only a normalized shortcut action should reach agent run options`);
     assert.match(content, /data-action="humanize">Humanize<\/button>/, `${label}: floating popup should expose one-click Humanize`);
