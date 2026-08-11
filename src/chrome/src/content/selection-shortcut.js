@@ -111,6 +111,7 @@
   function applyLocalization() {
     if (!localization || !shadow) return;
     const strings = localization.strings;
+host.lang = localization.locale;
     host.dir = localization.dir;
     shortcut.setAttribute('aria-label', strings.askSelection);
     shortcut.title = strings.askSelection;
