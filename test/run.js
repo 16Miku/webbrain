@@ -22261,15 +22261,52 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
   }
 });
 
-test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds FormData', async () => {
+test('chrome fetch fallback chunks multipart blobs through disk-backed offscreen staging', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;
   const previousWarn = console.warn;
-  let proxiedRequest = null;
+  const previousNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let initialRequest = null;
   let connectListener = null;
+  const sentToOffscreen = [];
+  const stagedFiles = new Map();
   console.warn = () => {};
 
   try {
+    const stagedDir = {
+      async *keys() { yield* stagedFiles.keys(); },
+      async removeEntry(filename) { stagedFiles.delete(filename); },
+      async getFileHandle(filename, { create = false } = {}) {
+        if (create && !stagedFiles.has(filename)) {
+          stagedFiles.set(filename, { parts: [], closed: false });
+        }
+        const staged = stagedFiles.get(filename);
+        if (!staged) throw new Error('staged file not found');
+        return {
+          async createWritable() {
+            return {
+              async write(chunk) { staged.parts.push(new Uint8Array(chunk)); },
+              async close() { staged.closed = true; },
+              async abort() {
+                staged.parts = [];
+                staged.closed = true;
+              },
+            };
+          },
+          async getFile() { return new Blob(staged.parts); },
+        };
+      },
+    };
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        storage: {
+          async getDirectory() {
+            return { async getDirectoryHandle() { return stagedDir; } };
+          },
+        },
+      },
+    });
     globalThis.fetch = async () => {
       throw new TypeError('Failed to fetch');
     };
@@ -22287,7 +22324,7 @@ test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds F
     assert.equal(typeof connectListener, 'function');
 
     globalThis.fetch = async (url, options) => {
-      if (!proxiedRequest) {
+      if (!initialRequest) {
         throw new TypeError('Failed to fetch');
       }
       assert.equal(String(url), 'http://127.0.0.1:1234/v1/audio/transcriptions');
@@ -22297,7 +22334,10 @@ test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds F
       assert.ok(file instanceof Blob);
       assert.equal(file.name, 'probe.wav');
       assert.equal(file.type, 'audio/wav');
-      assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [82, 73, 70, 70]);
+      const received = new Uint8Array(await file.arrayBuffer());
+      assert.equal(received.byteLength, 600_000);
+      assert.deepEqual([...received.subarray(0, 4)], [82, 73, 70, 70]);
+      assert.equal(received[received.length - 1], 255);
       return new Response(JSON.stringify({ text: '' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -22320,7 +22360,8 @@ test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds F
         onMessage: { addListener(fn) { callerMessageListeners.push(fn); } },
         onDisconnect: { addListener(fn) { callerDisconnectListeners.push(fn); } },
         postMessage(msg) {
-          proxiedRequest = msg;
+          sentToOffscreen.push(msg);
+          if (msg.url) initialRequest = msg;
           queueMicrotask(() => offscreenRequestListeners.forEach((fn) => fn(msg)));
         },
         disconnect() {
@@ -22331,8 +22372,11 @@ test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds F
 
     const fetchUrl = 'file://' + path.join(ROOT, 'src/chrome/src/providers/fetch-with-fallback.js').replace(/\\/g, '/') + `?multipart=${Date.now()}`;
     const { fetchWithFallback } = await import(fetchUrl);
+    const fileBytes = new Uint8Array(600_000);
+    fileBytes.set([82, 73, 70, 70]);
+    fileBytes[fileBytes.length - 1] = 255;
     const form = new FormData();
-    form.append('file', new Blob([Uint8Array.from([82, 73, 70, 70])], { type: 'audio/wav' }), 'probe.wav');
+    form.append('file', new Blob([fileBytes], { type: 'audio/wav' }), 'probe.wav');
     form.append('model', 'whisper-local');
     const response = await fetchWithFallback('http://127.0.0.1:1234/v1/audio/transcriptions', {
       method: 'POST',
@@ -22342,17 +22386,27 @@ test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds F
 
     assert.equal(response.status, 200);
     assert.equal(await response.text(), '{"text":""}');
-    assert.equal(proxiedRequest.bodyType, 'form-data');
-    assert.equal(proxiedRequest.body, undefined);
-    assert.deepEqual(proxiedRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
+    assert.equal(initialRequest.bodyType, 'form-data-chunked');
+    assert.equal(initialRequest.body, undefined);
+    assert.deepEqual(initialRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
       { name: 'file', kind: 'blob' },
       { name: 'model', kind: 'text' },
     ]);
+    assert.equal(Object.hasOwn(initialRequest.formDataEntries[0], 'value'), false);
+    const chunkMessages = sentToOffscreen.filter(({ type }) => type === 'form-data-chunk');
+    assert.equal(chunkMessages.length, 3, '600KB upload should be split into bounded 256KiB chunks');
+    assert.equal(sentToOffscreen.at(-1)?.type, 'form-data-complete');
+    assert.equal(stagedFiles.size, 0, 'offscreen staging files should be removed after request upload');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
+    if (previousNavigatorDescriptor) {
+      Object.defineProperty(globalThis, 'navigator', previousNavigatorDescriptor);
+    } else {
+      delete globalThis.navigator;
+    }
     console.warn = previousWarn;
   }
 });
@@ -74678,6 +74732,7 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
   const originalWarn = console.warn;
   let directAttempts = 0;
   let proxiedRequest = null;
+  const bodyChunkMessages = [];
   console.warn = () => {};
   try {
     globalThis.fetch = async () => {
@@ -74707,9 +74762,23 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
             onMessage: { addListener(fn) { messageListeners.push(fn); } },
             onDisconnect: { addListener(fn) { disconnectListeners.push(fn); } },
             postMessage(msg) {
-              proxiedRequest = msg;
-              queueMicrotask(() => {
-                const emit = message => messageListeners.forEach(fn => fn(message));
+              const emit = message => messageListeners.forEach(fn => fn(message));
+              if (msg.url) {
+                proxiedRequest = msg;
+                queueMicrotask(() => emit({ type: 'form-data-ready' }));
+                return;
+              }
+              if (msg.type === 'form-data-chunk') {
+                bodyChunkMessages.push(msg);
+                queueMicrotask(() => emit({
+                  type: 'form-data-chunk-ack',
+                  entryIndex: msg.entryIndex,
+                  sequence: msg.sequence,
+                }));
+                return;
+              }
+              if (msg.type === 'form-data-complete') {
+                queueMicrotask(() => {
                 emit({
                   type: 'headers',
                   ok: true,
@@ -74719,7 +74788,8 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
                 });
                 emit({ type: 'chunk', text: '{"text":"fallback transcript"}' });
                 emit({ type: 'done' });
-              });
+                });
+              }
             },
             disconnect() { disconnectListeners.forEach(fn => fn()); },
           };
@@ -74737,7 +74807,8 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
     assert.equal(result.text, 'fallback transcript');
     assert.equal(directAttempts, 1);
     assert.equal(proxiedRequest.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
-    assert.equal(proxiedRequest.bodyType, 'form-data');
+    assert.equal(proxiedRequest.bodyType, 'form-data-chunked');
+    assert.equal(bodyChunkMessages.length, 1);
     assert.deepEqual(proxiedRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
       { name: 'file', kind: 'blob' },
       { name: 'model', kind: 'text' },
