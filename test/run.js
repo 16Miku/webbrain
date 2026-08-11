@@ -2467,6 +2467,7 @@ test('user memory extraction applies only high-confidence safe operations', () =
     assert.equal(parsed.length, 3, `${label}: parser should drop none operations`);
     const applied = memory.applyUserMemoryExtractionOperations(base, parsed, { now: 200, threshold: 0.85 });
     assert.equal(applied.changed, true, `${label}: high-confidence update should apply`);
+    assert.equal(applied.created, false, `${label}: updates should not report a newly formed memory`);
     assert.equal(applied.store.records.length, 1, `${label}: low-confidence and sensitive adds should not apply`);
     assert.equal(applied.store.records[0].text, 'Prefer concise explanations.', `${label}: update text`);
     assert.equal(applied.store.records[0].kind, 'workflow_preference', `${label}: update kind`);
@@ -2475,6 +2476,17 @@ test('user memory extraction applies only high-confidence safe operations', () =
       { op: 'archive', id: 'm1', text: '', kind: 'preference', confidence: 0.9 },
     ], { now: 300 });
     assert.equal(memory.activeUserMemoryRecords(archived.store).length, 0, `${label}: archive op should remove active memory`);
+    assert.equal(archived.created, false, `${label}: archive should not report a newly formed memory`);
+
+    const created = memory.applyUserMemoryExtractionOperations(base, [
+      { op: 'add', text: 'Use numbered implementation steps.', kind: 'workflow_preference', confidence: 0.95 },
+    ], { now: 400 });
+    assert.equal(created.created, true, `${label}: a new add should report a newly formed memory`);
+    const deduped = memory.applyUserMemoryExtractionOperations(created.store, [
+      { op: 'add', text: 'Use numbered implementation steps.', kind: 'workflow_preference', confidence: 0.96 },
+    ], { now: 500 });
+    assert.equal(deduped.changed, true, `${label}: duplicate adds may refresh the existing record`);
+    assert.equal(deduped.created, false, `${label}: duplicate adds should not report a newly formed memory`);
 
     const extractionMessages = memory.buildUserMemoryExtractionMessages({
       userText: 'Remember that I prefer terse replies.',
@@ -2507,6 +2519,7 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
   ]) {
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const sidepanelCss = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/en.js'), 'utf8');
@@ -2558,6 +2571,8 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(background, /agent\._isCostAllowanceError\?\.\(error\)/, `${label}: extraction cost limit should be silent`);
     assert.match(background, /async function markUserMemoryExtractionJobFailed\(jobId\)[\s\S]*attempts: attempts \+ 1/, `${label}: extraction jobs should retry once`);
     assert.match(background, /await markUserMemoryExtractionJobFailed\(job\.id\);\s*scheduleUserMemoryExtractionDrain\(USER_MEMORY_EXTRACTION_RETRY_DELAY_MS\);\s*return;/, `${label}: retryable extraction failures should reschedule the drain with a backoff delay`);
+    assert.match(background, /function notifyUserMemoryCreated\(\)[\s\S]*target: 'sidepanel',[\s\S]*action: 'user_memory_created'/, `${label}: background should publish a sidepanel cue for newly formed memory`);
+    assert.match(background, /if \(applied\.changed\) \{\s*await syncAgentUserMemoryFromStorage\(\);\s*if \(applied\.created\) notifyUserMemoryCreated\(\);/, `${label}: the visual cue should only follow a persisted new memory`);
 
     assert.match(sidepanel, /usage: '\/memory \[--add <text> \| --forget <id>\]'/, `${label}: canonical /memory usage missing`);
     assert.match(sidepanel, /value: '--add'[\s\S]*?action: 'add'[\s\S]*?takesRemainder: true/, `${label}: /memory --add metadata missing`);
@@ -2571,6 +2586,10 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(sidepanel, /command\.value === '\/memory' && action === 'forget'[\s\S]*?await forgetUserMemory\(payload, tabId\)/, `${label}: /memory --forget handler missing`);
     assert.match(sidepanel, /card\.dataset\.memorySource = scheduledJobId[\s\S]*'scheduled_clarification'[\s\S]*'form_confirmation'[\s\S]*'clarification_response'/, `${label}: clarify cards should tag memory source`);
     assert.match(sidepanel, /clarifyPayload\.memorySource = card\.dataset\.memorySource/, `${label}: clarify responses should include memory source metadata`);
+    assert.match(sidepanel, /msg\.action !== 'user_memory_created'[\s\S]*document\.visibilityState === 'hidden'[\s\S]*showComposerToast\(t\('sp\.memory\.remembered'\), \{ duration: 3200, effect: 'memory' \}\)/, `${label}: visible sidepanels should show the localized memory cue`);
+    assert.match(sidepanel, /function showComposerToast\(message, \{ duration = 2600, effect = '' \} = \{\}\)[\s\S]*toast\.classList\.add\('memory-update-cue'\)/, `${label}: composer toast should support the memory effect`);
+    assert.match(sidepanelCss, /\.composer-toast\.memory-update-cue-enter[\s\S]*@keyframes memory-update-cue-enter/, `${label}: memory cue animation missing`);
+    assert.match(sidepanelCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.composer-toast\.memory-update-cue-enter \{[\s\S]*?animation: none;/, `${label}: memory cue should respect reduced motion`);
 
     for (const id of ['toggle-user-memory-enabled', 'toggle-user-memory-auto', 'toggle-user-memory-form', 'input-user-memory-max-chars', 'user-memory-list', 'btn-export-user-memory', 'btn-clear-user-memory', 'user-memory-import-text', 'btn-import-user-memory']) {
       assert.match(settingsHtml, new RegExp(`id="${id}"`), `${label}: settings HTML missing ${id}`);
