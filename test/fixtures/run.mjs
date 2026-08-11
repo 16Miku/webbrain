@@ -879,6 +879,66 @@ test('accessibility tree (Firefox): existing Gmail compose exposes the selected 
   if (firefoxTree !== chromeGmailComposeTree) throw new Error('Chrome/Firefox Gmail compose trees differ');
 });
 
+const longConversationFixture = `<!doctype html>
+  <main aria-label="Project conversation">
+    ${Array.from({ length: 90 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      return `<article aria-label="Message ${number} from Sender ${number}: project status, decisions, owners, dates, risks, dependencies, and requested follow-up"></article>`;
+    }).join('')}
+  </main>`;
+
+let chromeLongConversationPages = [];
+
+async function readAllConversationTreePages(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, longConversationFixture, sourcePath);
+  const pages = [];
+  let args = { filter: 'all' };
+  for (let guard = 0; guard < 20; guard += 1) {
+    const result = await page.evaluate(current => window.__generateAccessibilityTree(
+      current.filter,
+      current.maxDepth,
+      current.maxChars,
+      null,
+      current.page,
+    ), args);
+    if (JSON.stringify(result).length > 8000) {
+      throw new Error(`${label}: structured accessibility page exceeded the model-facing tool cap`);
+    }
+    pages.push(result);
+    if (!result.hasMore) break;
+    const expected = {
+      filter: 'all',
+      maxDepth: 15,
+      maxChars: 6000,
+      page: pages.length + 1,
+    };
+    if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
+      throw new Error(`${label}: continuation args drifted: ${JSON.stringify(result.continuationArgs)}`);
+    }
+    args = result.continuationArgs;
+  }
+
+  if (pages.length < 2) throw new Error(`${label}: long conversation was not paged`);
+  if (pages.at(-1)?.hasMore !== false || pages.at(-1)?.continuationArgs !== null) {
+    throw new Error(`${label}: final conversation page retained a stale continuation`);
+  }
+  const combined = pages.map(result => result.pageContent).join('\n');
+  if (!combined.includes('Message 001 from Sender 001')) throw new Error(`${label}: first message missing after paging`);
+  if (!combined.includes('Message 090 from Sender 090')) throw new Error(`${label}: last message missing after paging`);
+  return pages.map(result => normalizeTreeRefs(result.pageContent));
+}
+
+test('accessibility tree (Chrome): a long conversation pages through its final message', async (page) => {
+  chromeLongConversationPages = await readAllConversationTreePages(page, accessibilityTreeJsPath, 'chrome');
+});
+
+test('accessibility tree (Firefox): long-conversation paging keeps Chrome parity', async (page) => {
+  const firefoxPages = await readAllConversationTreePages(page, firefoxAccessibilityTreeJsPath, 'firefox');
+  if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeLongConversationPages)) {
+    throw new Error('Chrome/Firefox long-conversation pages differ');
+  }
+});
+
 const richEditorVariantsFixture = `<!doctype html>
   <style>
     body { margin: 0; font: 16px sans-serif; }

@@ -144,6 +144,10 @@ function visibleTreeArgs(maxDepth = 10) {
   return { filter: 'visible', maxDepth };
 }
 
+function completeTreeArgs(maxDepth = 15) {
+  return { filter: 'all', maxDepth };
+}
+
 function couponRunOptions() {
   return {
     id: 'find-coupons',
@@ -380,25 +384,25 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
     addUnique(actions, {
       id: 'summarize-thread',
       label: 'Summarize this thread',
-      prompt: 'Use get_accessibility_tree with filter:"visible" first to read the currently open email or message thread. Summarize key points, decisions, and unanswered questions.',
+      prompt: 'Use get_accessibility_tree with filter:"all" and follow every returned continuationArgs until hasMore:false to read the complete email or message thread. Summarize key points, decisions, and unanswered questions.',
       runOptions: firstToolRunOptions(
         'summarize-thread',
         'get_accessibility_tree',
-        visibleTreeArgs(12),
-        'Read the visible conversation thread before summarizing it.',
-        ['Call get_accessibility_tree with filter:"visible" and maxDepth:12.', 'Summarize the thread from the returned page data.'],
+        completeTreeArgs(15),
+        'Read the complete conversation thread before summarizing it.',
+        ['Call get_accessibility_tree with filter:"all" and maxDepth:15.', 'Follow every continuationArgs until hasMore:false.', 'Summarize the complete thread from the returned page data.'],
       ),
     });
     addUnique(actions, {
       id: 'find-followups',
       label: 'Find follow-ups',
-      prompt: 'Use get_accessibility_tree with filter:"visible" first to read the current conversation. Extract action items, deadlines, people to follow up with, and open questions.',
+      prompt: 'Use get_accessibility_tree with filter:"all" and follow every returned continuationArgs until hasMore:false to read the complete conversation. Extract action items, deadlines, people to follow up with, and open questions.',
       runOptions: firstToolRunOptions(
         'find-followups',
         'get_accessibility_tree',
-        visibleTreeArgs(12),
-        'Read the visible conversation thread before extracting follow-ups.',
-        ['Call get_accessibility_tree with filter:"visible" and maxDepth:12.', 'Extract follow-ups from the returned page data.'],
+        completeTreeArgs(15),
+        'Read the complete conversation thread before extracting follow-ups.',
+        ['Call get_accessibility_tree with filter:"all" and maxDepth:15.', 'Follow every continuationArgs until hasMore:false.', 'Extract follow-ups from the complete thread data.'],
       ),
     });
   }

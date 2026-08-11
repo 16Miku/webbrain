@@ -4,6 +4,7 @@ import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSAT
 import { formatErrorMessage } from '../error-format.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
+import { createReadCompletenessState, isCommunicationThreadContext, readCompletenessBlock, recordReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
 import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
@@ -634,6 +635,8 @@ export class Agent extends LoopDetector {
     this._focusEmulatedTabs = new Set();
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
     this._completionRunCounter = 0;
+    this.readCompletenessStates = new Map(); // tabId -> run-scoped whole-thread read coverage
+    this._readCompletenessRunCounter = 0;
     this.scheduler = null;
     this.scheduledRunPolicies = new Map(); // tabId -> { requireConsequentialConfirmation, autoApprovePlanReview }
   }
@@ -652,6 +655,36 @@ export class Agent extends LoopDetector {
     if (!state) return;
     if (runToken && state.runToken !== runToken) return;
     this.completionInvariants.delete(tabId);
+  }
+
+  async _beginReadCompleteness(tabId, userMessage, runOptions = {}) {
+    this._readCompletenessRunCounter += 1;
+    const token = `read_${tabId}_${Date.now()}_${this._readCompletenessRunCounter}`;
+    const pageUrl = await this._currentUrl(tabId);
+    const adapterName = getActiveAdapter(pageUrl)?.name || '';
+    const communicationThread = isCommunicationThreadContext(pageUrl, adapterName);
+    const required = requiresCompleteThreadRead(userMessage, runOptions, { communicationThread });
+    this.readCompletenessStates.set(tabId, createReadCompletenessState(token, required));
+    return token;
+  }
+
+  _clearReadCompleteness(tabId, runToken = '') {
+    const state = this.readCompletenessStates.get(tabId);
+    if (!state) return;
+    if (runToken && state.runToken !== runToken) return;
+    this.readCompletenessStates.delete(tabId);
+  }
+
+  _recordReadCompleteness(tabId, toolName, args, result) {
+    const state = this.readCompletenessStates.get(tabId);
+    if (!state) return null;
+    const next = recordReadCompleteness(state, toolName, args, result);
+    this.readCompletenessStates.set(tabId, next);
+    return next;
+  }
+
+  _readCompletenessBlock(tabId) {
+    return readCompletenessBlock(this.readCompletenessStates.get(tabId));
   }
 
   _completionTextSignalsSuccess(value, { allowBare = false } = {}) {
@@ -3022,8 +3055,12 @@ export class Agent extends LoopDetector {
       next.page = Number(next.page.trim());
       repaired = true;
     }
+    if (typeof next.maxChars === 'number' && Number.isFinite(next.maxChars) && next.maxChars > 6000) {
+      next.maxChars = 6000;
+      repaired = true;
+    }
     const note = repaired
-      ? '[TOOL ARGUMENT REPAIR: Repaired get_accessibility_tree arguments by separating filter/page from a malformed local-model string. Continue with explicit JSON like get_accessibility_tree({filter:"visible", page:2}).]'
+      ? '[TOOL ARGUMENT REPAIR: Normalized get_accessibility_tree arguments into a valid model-visible page request. Continue with explicit JSON like get_accessibility_tree({filter:"visible", page:2, maxChars:6000}).]'
       : '';
     return { args: next, repaired, note };
   }
@@ -5432,6 +5469,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'continue' };
         }
 
+        const readBlock = this._readCompletenessBlock(tabId);
+        if (readBlock) {
+          const blockedResult = {
+            success: false,
+            blockedDone: true,
+            readCompleteness: true,
+            error: readBlock,
+          };
+          onUpdate('tool_call', { name: fnName, args: fnArgs });
+          onUpdate('tool_result', { name: fnName, result: blockedResult });
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify(blockedResult),
+          });
+          const runId = this.currentRunId.get(tabId);
+          if (runId) {
+            trace.recordToolCall(runId, step, {
+              name: fnName, args: fnArgs, result: blockedResult, latencyMs: 0,
+            });
+          }
+          onUpdate('warning', { message: 'Whole-thread answer blocked until every read page is covered.' });
+          this._appendSyntheticToolResults(
+            tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: complete the whole-thread read before answering' })
+          );
+          this._persist(tabId);
+          return { action: 'continue' };
+        }
+
         const doneOutcome = fnName === 'done_json'
           ? 'success'
           : normalizeDoneOutcome(fnArgs?.outcome);
@@ -5552,6 +5619,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
       const completionStateAfterTool = this._recordCompletionToolResult(tabId, fnName, fnArgs, toolResult);
+      this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
       // Keep binary attachments out of updates, traces, and persisted tool
       // result text. They are delivered through dedicated message channels.
       let attachedImage = null;
@@ -5966,7 +6034,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (argRepairNotice) {
         resultContent += '\n' + argRepairNotice;
-        onUpdate('warning', { message: 'Repaired malformed tool arguments.' });
+        onUpdate('warning', { message: 'Normalized accessibility-tree arguments.' });
       }
       if (mastodonObserved?.instruction) {
         resultContent += '\n' + mastodonObserved.instruction;
@@ -8856,7 +8924,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const out = {};
       if (['all', 'visible', 'interactive'].includes(input.filter)) out.filter = input.filter;
       if (Number.isFinite(input.maxDepth)) out.maxDepth = Math.max(1, Math.min(20, Math.trunc(input.maxDepth)));
-      if (Number.isFinite(input.maxChars)) out.maxChars = Math.max(1000, Math.min(60000, Math.trunc(input.maxChars)));
+      if (Number.isFinite(input.maxChars)) out.maxChars = Math.max(1000, Math.min(6000, Math.trunc(input.maxChars)));
       return out;
     }
     if (tool === 'read_youtube_transcript') {
@@ -11948,6 +12016,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._resetRichTextToolbarAudit(tabId);
     this.recentNavUrls.delete(tabId);
     this.completionInvariants.delete(tabId);
+    this.readCompletenessStates.delete(tabId);
     this._captchaGateStates.delete(tabId);
     if (preserveRunGuard) {
       this._activeCloudflareManagedChallengeGate(tabId);
@@ -22496,6 +22565,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
+    const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
@@ -22524,6 +22594,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
+      this._clearReadCompleteness(tabId, readCompletenessRunToken);
     }
   }
 
@@ -23397,11 +23468,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const progressFinalBlock = this._plainFinalProgressBlock(tabId);
       const completionFinalBlock = this._completionPlainFinalBlock(tabId);
-      const plainFinalBlocks = [progressFinalBlock, completionFinalBlock].filter(Boolean);
+      const readFinalBlock = this._readCompletenessBlock(tabId);
+      const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
       if (plainFinalBlocks.length) {
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
         messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
-        onUpdate('warning', { message: completionFinalBlock ? 'Runtime completion invariant requires an explicit done outcome.' : 'Progress ledger has unresolved rows; continuing.' });
+        onUpdate('warning', { message: readFinalBlock
+          ? 'Whole-thread answer blocked until every read page is covered.'
+          : completionFinalBlock
+            ? 'Runtime completion invariant requires an explicit done outcome.'
+            : 'Progress ledger has unresolved rows; continuing.' });
         this._persist(tabId);
         continue;
       }
@@ -23498,6 +23574,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this._continuationExecutionEvidence.delete(tabId);
     this._clickAxCdpFallbacks.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
+    const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     const previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
@@ -23526,6 +23603,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearRunLoopState(tabId);
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
+      this._clearReadCompleteness(tabId, readCompletenessRunToken);
     }
   }
 
@@ -23958,12 +24036,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // treating other plain terminal text as unverified.
         const progressFinalBlock = this._plainFinalProgressBlock(tabId);
         const completionFinalBlock = this._completionPlainFinalBlock(tabId);
-        const plainFinalBlocks = [progressFinalBlock, completionFinalBlock].filter(Boolean);
+        const readFinalBlock = this._readCompletenessBlock(tabId);
+        const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
         if (plainFinalBlocks.length) {
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
           messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
-          if (completionFinalBlock) onUpdate('text', { content: '', replace: true });
-          onUpdate('warning', { message: completionFinalBlock ? 'Runtime completion invariant requires an explicit done outcome.' : 'Progress ledger has unresolved rows; continuing.' });
+          if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
+          onUpdate('warning', { message: readFinalBlock
+            ? 'Whole-thread answer blocked until every read page is covered.'
+            : completionFinalBlock
+              ? 'Runtime completion invariant requires an explicit done outcome.'
+              : 'Progress ledger has unresolved rows; continuing.' });
           this._persist(tabId);
           continue;
         }
