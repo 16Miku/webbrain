@@ -72,6 +72,14 @@ function responseLanguageInstruction(language) {
     : '';
   return responseLanguage ? ` Respond in ${responseLanguage}.` : '';
 }
+
+function stripResponseLanguageInstruction(instruction) {
+  for (const responseLanguage of Object.values(SELECTION_TRANSLATION_LANGUAGES)) {
+    const suffix = ` Respond in ${responseLanguage}.`;
+    if (instruction.endsWith(suffix)) return instruction.slice(0, -suffix.length);
+  }
+  return instruction;
+}
 // Match only prompts we generate: exact preamble + ctx- nonce box at the end.
 // Legacy history may end at the store's exact truncation marker before the
 // closing boundary. Do not rewrite arbitrary text that merely mentions these.
@@ -123,8 +131,9 @@ export function formatSelectionPromptForDisplay(promptText) {
 
   if (instruction.startsWith(CUSTOM_QUESTION_PREFIX)) {
     instruction = instruction.slice(CUSTOM_QUESTION_PREFIX.length).trim();
-  } else if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) {
-    instruction = '';
+  } else {
+    instruction = stripResponseLanguageInstruction(instruction);
+    if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) instruction = '';
   }
 
   const selectedBlock = `Selected text:\n${selection}`;

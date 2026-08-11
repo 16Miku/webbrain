@@ -27748,6 +27748,13 @@ test('selection prompt display formatter hides untrusted wrappers from the chat 
       `${label}: generic context-menu prompts should collapse to just the selection`,
     );
 
+    const localizedGeneric = buildContextMenuPrompt('localized native fallback', 'zh');
+    assert.equal(
+      formatSelectionPromptForDisplay(localizedGeneric),
+      'Selected text:\nlocalized native fallback',
+      `${label}: localized generic context-menu prompts should hide the model-only response-language instruction`,
+    );
+
     assert.equal(
       formatSelectionPromptForDisplay('Just a normal typed question'),
       'Just a normal typed question',
