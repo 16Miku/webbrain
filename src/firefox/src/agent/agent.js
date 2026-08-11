@@ -97,7 +97,7 @@ import {
   workflowUrlMatches,
 } from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
-import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
+import { buildTrustedRuntimeContext, replaceTrustedRuntimeMode, stripTrustedRuntimeContext } from './runtime-context.js';
 import {
   isSelectionProseAction,
   normalizeSelectionAction,
@@ -7155,7 +7155,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Dynamic trusted state belongs in the per-turn user context, not the
     // cache-stable system prompt. The same enriched message is passed to the
     // planner gate and the main agent loop, so neither has to guess the clock.
-    let contextLine = `${buildTrustedRuntimeContext()}\n\n`;
+    let contextLine = `${buildTrustedRuntimeContext({
+      runtimeMode: this._effectiveRunMode(tabId),
+    })}\n\n`;
 
     let url = '', title = '';
     if (!selectionOnly) {
@@ -8307,6 +8309,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (messages[0]?.role === 'system') {
       messages[0].content = this._buildSystemPrompt('ask', tabId);
     }
+    const currentUser = [...messages].reverse().find(message => (
+      message?.role === 'user'
+      && this._messageText(message.content).includes('[Trusted runtime context')
+    ));
+    if (typeof currentUser?.content === 'string') {
+      currentUser.content = replaceTrustedRuntimeMode(currentUser.content, 'ask');
+    } else if (Array.isArray(currentUser?.content)) {
+      currentUser.content = currentUser.content.map(block => (
+        typeof block?.text === 'string'
+          ? { ...block, text: replaceTrustedRuntimeMode(block.text, 'ask') }
+          : block
+      ));
+    }
     this._persist(tabId);
     return 'ask';
   }
@@ -8492,6 +8507,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             toolsCount: 0,
             ...Agent._traceMediaCounts(messages),
             phase: 'read_scope',
+          }, {
+            messages,
+            tools: [],
+            runtimeMode: this._effectiveRunMode(tabId),
           });
         } catch {}
       }
@@ -8521,6 +8540,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let readScope = parseReadScopeFromContent(result.content);
       if (!readScope) {
         onUpdate('thinking', { step: 0, note: 'Checking conversation scope… retrying JSON output' });
+        const repairMessages = this._readScopeRepairMessages(messages);
         if (runId) {
           try {
             trace.recordLLMRequest(runId, 0, {
@@ -8530,13 +8550,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               toolsCount: 0,
               phase: 'read_scope',
               repair: true,
+            }, {
+              messages: repairMessages,
+              tools: [],
+              runtimeMode: this._effectiveRunMode(tabId),
             });
           } catch {}
         }
         const repairStartedAt = Date.now();
         result = await this._chatWithCostAllowance(
           provider,
-          this._readScopeRepairMessages(messages),
+          repairMessages,
           { ...this._plannerChatOptions(provider, true, true), temperature: 0 },
           costState,
           { tabId, generationName: 'read_scope' },
@@ -8619,6 +8643,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             toolsCount: 0,
             ...Agent._traceMediaCounts(plannerMessages),
             phase: 'intent',
+          }, {
+            messages: plannerMessages,
+            tools: [],
+            runtimeMode: this._effectiveRunMode(tabId),
           });
         } catch {}
       }
@@ -8764,6 +8792,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             toolsCount: 0,
             ...Agent._traceMediaCounts(plannerMessages),
             phase: 'planner',
+          }, {
+            messages: plannerMessages,
+            tools: [],
+            runtimeMode: this._effectiveRunMode(tabId),
           });
         } catch {}
       }
@@ -9219,6 +9251,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolsCount: Array.isArray(tools) ? tools.length : 0,
           ...Agent._traceMediaCounts(prunedMessages),
           phase,
+        }, {
+          messages: prunedMessages,
+          tools: Array.isArray(tools) ? tools : [],
+          runtimeMode: this._effectiveRunMode(tabId),
         });
       } catch {}
     }
@@ -12591,6 +12627,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
       recoveryAttempted: false,
+      runtimeModeCorrectionAttempted: false,
       staleCancellationRecoveryAttempted: false,
     };
     this._planExecutionGuards.set(tabId, state);
@@ -12787,8 +12824,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && String(object.mode || '').toLowerCase() !== 'inactive';
       if (plannerShape || policyShape) return state.allowsPlannerShapedResult !== true;
     }
-    const runtimeModeContradiction = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b|\b(?:currently|still|now)\s+(?:running\s+)?in\s+ask\s+mode\b/i.test(text);
-    if (runtimeModeContradiction) return true;
+    if (this._isRuntimeModeContradictionTerminal(text)) return true;
     // "Next, I will …" / "I plan to …" is agent-continue language and is always
     // invalid as a terminal. Bare "I will …" is evidence-gated so drafted reply
     // text can finish after a real task tool without a planner exemption flag.
@@ -12804,11 +12840,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return false;
   }
 
+  _isRuntimeModeContradictionTerminal(content) {
+    return /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b|\b(?:currently|still|now)\s+(?:running\s+)?in\s+ask\s+mode\b/i.test(String(content || ''));
+  }
+
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
     if (!viaDone && this._isSafetyRefusalTerminal(content)) return null;
     const terminalFailure = viaDone && (outcome === 'partial' || outcome === 'failed');
+    const runtimeModeContradiction = this._isRuntimeModeContradictionTerminal(content);
     // A structured failure may naturally say "I will need credentials".
     // Ignore only that prose-promise heuristic; explicit planner/policy shapes
     // and plan headings remain invalid even for failed/partial done calls.
@@ -12828,6 +12869,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const invalidPlainFinal = !viaDone;
     const invalidDone = viaDone && (looksPlanOnly || missingEvidence);
     if (!invalidPlainFinal && !invalidDone) return null;
+    if (runtimeModeContradiction
+        && !missingRequiredSchedulingTool
+        && !state.runtimeModeCorrectionAttempted) {
+      state.recoveryAttempted = true;
+      state.runtimeModeCorrectionAttempted = true;
+      return {
+        retry: true,
+        retryAssistantContent: null,
+        nudge: '[RUNTIME MODE CORRECTION: The trusted runtime for this run is Act/Dev, not Ask mode. Page-changing tools are available. Continue the authorized task with the permitted tools now. If a required value is missing, call clarify without modifying that field. If a genuine blocker remains, call done with outcome partial or failed and explain that blocker without claiming the run is in Ask mode.]',
+      };
+    }
     if (!state.recoveryAttempted) {
       state.recoveryAttempted = true;
       state.staleCancellationRecoveryAttempted = staleCancellation;
@@ -12850,6 +12902,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const hasSuccessfulToolEvidence = state.successfulTaskToolCalls > 0;
+    const hasSuccessfulConsequentialEvidence = state.successfulConsequentialToolCalls > 0;
     if (staleCancellation && state.staleCancellationRecoveryAttempted) {
       return {
         failure: hasSuccessfulToolEvidence
@@ -12858,9 +12911,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         status: 'plan_only_output',
       };
     }
+    if (runtimeModeContradiction) {
+      return {
+        failure: hasSuccessfulConsequentialEvidence
+          ? 'The model still claimed Ask mode after a runtime-mode correction even though this was an Act/Dev run. Some consequential tools may already have completed, but final completion was not verified. Inspect the current page before retrying to avoid duplicate side effects.'
+          : hasSuccessfulToolEvidence
+          ? 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. Only read-only task evidence was recorded; no consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
+          : 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. No successful page action was verified, and nothing was verified as changed, submitted, or sent.',
+        status: 'plan_only_output',
+      };
+    }
     return {
-      failure: hasSuccessfulToolEvidence
+      failure: hasSuccessfulConsequentialEvidence
         ? 'Some task tools completed, but I could not verify a valid completion after the recovery attempt. Please inspect the current page before retrying to avoid duplicate side effects.'
+        : hasSuccessfulToolEvidence
+        ? 'Some read-only task tools completed, but I could not verify the requested action after the recovery attempt. No consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
         : 'I could not verify any requested page action after the recovery attempt, so I stopped without claiming completion. No successful action was verified, and nothing was verified as submitted or sent.',
       status: 'plan_only_output',
     };
@@ -18365,6 +18430,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             messageCount: prunedMessages.length,
             toolsCount: (chatOpts.tools || []).length,
             ...Agent._traceMediaCounts(prunedMessages),
+          }, {
+            messages: prunedMessages,
+            tools: chatOpts.tools || [],
+            runtimeMode: mode,
           });
           try {
             if (shouldOrderInteractiveAskTrace) queueAskStreamingTraceWrite(writeRequestTrace);
