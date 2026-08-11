@@ -412,7 +412,7 @@ function boundedMaxAgentSteps(value) {
 
 // Filter + collapse state for the providers panel. See chrome/settings.js
 // for the rationale.
-let providerFilter = 'all';     // 'all' | 'local' | 'cloud' | 'router'
+let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set();
 let customSkills = [];
@@ -429,7 +429,7 @@ async function init() {
 
   // Load display settings
   const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
-  if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
+  if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
@@ -2413,7 +2413,8 @@ function renderProviders() {
     const fieldDefs = providerConfigs[id]?.fields || [];
 
     const category = config.category || 'cloud';
-    if (providerFilter !== 'all' && category !== providerFilter && !isSelected) continue;
+    if (providerFilter === 'active' && !isConfigured) continue;
+    if (providerFilter !== 'all' && providerFilter !== 'active' && category !== providerFilter && !isSelected) continue;
     if (providerQuery && !providerSearchTextForEntry(id, config, fieldDefs).includes(providerQuery)) continue;
     visibleCount++;
 
@@ -2679,22 +2680,25 @@ function renderProviderFilterBar() {
   // they track text color (including the active accent state).
   const filterIcons = {
     all: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+    active: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>',
     local: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>',
     cloud: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
     router: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>',
   };
   const filters = [
     { key: 'all',    labelKey: 'st.providers.filter.all' },
+    { key: 'active', labelKey: 'st.providers.active' },
     { key: 'local',  labelKey: 'st.providers.filter.local' },
     { key: 'cloud',  labelKey: 'st.providers.filter.cloud' },
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
-  const filterCounts = Object.values(providersData).reduce((counts, config) => {
+  const filterCounts = Object.entries(providersData).reduce((counts, [id, config]) => {
     counts.all += 1;
+    if (providerIsActive(id, config)) counts.active += 1;
     const category = config.category || 'cloud';
     if (Object.hasOwn(counts, category) && category !== 'all') counts[category] += 1;
     return counts;
-  }, { all: 0, local: 0, cloud: 0, router: 0 });
+  }, { all: 0, active: 0, local: 0, cloud: 0, router: 0 });
   for (const f of filters) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -2805,6 +2809,18 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   card.appendChild(header);
   if (expanded) card.appendChild(body);
   return card;
+}
+
+function providerIsActive(id, config) {
+  return id !== 'webbrain_cloud' && config?.configured === true;
+}
+
+function refreshActiveProviderFilterCount() {
+  const count = Object.entries(providersData)
+    .filter(([id, config]) => providerIsActive(id, config))
+    .length;
+  const countEl = document.querySelector('.provider-filter-pill[data-filter="active"] .provider-filter-count');
+  if (countEl) countEl.textContent = String(count);
 }
 
 function setProviderLoadModelsStatus(id, message, color = 'var(--text2)') {
@@ -2972,9 +2988,12 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 }
 
 function refreshProviderCardStatus(id) {
+  // Saving a provider marks it configured without rebuilding the list. Keep
+  // the Active pill in sync even if the card disappeared during the request.
+  refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;
-  const isConfigured = id !== 'webbrain_cloud' && providersData[id]?.configured === true;
+  const isConfigured = providerIsActive(id, providersData[id]);
   const isSelected = id === activeProviderId;
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
