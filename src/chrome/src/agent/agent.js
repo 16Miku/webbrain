@@ -4257,9 +4257,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const accessFailure = this._isChromeProtectedGalleryAccessFailure(name, result);
     if (!accessFailure.failed) {
       // get_frames is browser metadata, not page access, so its success must
-      // not launder a prior failed DOM read. A successful content-backed tool
-      // does prove the page is reachable and resets the candidate counter.
-      if (result?.success === true && isChromeProtectedPageDomTool(name) && name !== 'get_frames') {
+      // not launder a prior failed DOM read. Successful DOM or URL content
+      // access does prove the page is reachable and resets the candidate counter.
+      const successfulContentAccess = result?.success === true && (
+        CHROME_WEB_STORE_URL_READ_TOOLS.has(name)
+        || (isChromeProtectedPageDomTool(name) && name !== 'get_frames')
+      );
+      if (successfulContentAccess) {
         this._chromeProtectedGalleryStates.delete(tabId);
       }
       return result;

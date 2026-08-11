@@ -62596,6 +62596,40 @@ test('Chrome Web Store gallery access promotes after bounded failures and uses a
       missingTree,
     );
     assert.equal(afterHealthyRead.protectedPageAttempt, 1, 'a healthy DOM read should reset the candidate counter');
+
+    for (const urlReadTool of ['fetch_url', 'research_url', 'read_page_source']) {
+      const urlResetAgent = new AgentCh({
+        getActive: () => ({ supportsVision: false }),
+        getVisionProvider: async () => null,
+      });
+      urlResetAgent.currentRunId.set(tabId, `gallery-url-reset-${urlReadTool}`);
+      const failedUrlRead = await urlResetAgent._maybePromoteChromeProtectedGalleryResult(
+        tabId,
+        urlReadTool,
+        { url: reviews },
+        { success: false, url: reviews, error: `${urlReadTool} failed: Failed to fetch` },
+      );
+      assert.equal(failedUrlRead.protectedPageAttempt, 1, `${urlReadTool}: failed URL read should start suspicion`);
+      const healthyUrlRead = await urlResetAgent._maybePromoteChromeProtectedGalleryResult(
+        tabId,
+        urlReadTool,
+        { url: reviews },
+        { success: true, url: reviews, text: 'Readable page content' },
+      );
+      assert.equal(healthyUrlRead.success, true, `${urlReadTool}: successful URL read should remain usable`);
+      const afterHealthyUrlRead = await urlResetAgent._maybePromoteChromeProtectedGalleryResult(
+        tabId,
+        'read_page',
+        {},
+        missingTree,
+      );
+      assert.equal(
+        afterHealthyUrlRead.protectedPageAttempt,
+        1,
+        `${urlReadTool}: successful URL read should reset the candidate counter`,
+      );
+    }
+
     tabUrl = 'https://example.com/';
     await resetAgent._maybePromoteChromeProtectedGalleryResult(
       tabId,
