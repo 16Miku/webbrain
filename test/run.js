@@ -23540,25 +23540,32 @@ test('settings organizes General Basic and Advanced controls while keeping profi
     assert.match(displayPanel, /id="general-search-empty" hidden/, `${label}: General search should include an empty-result state`);
     assert.match(html, /\.general-search-hidden \{ display: none !important; \}/, `${label}: General search should force-hide filtered rows/cards`);
 
-    const basicTopIds = [
+    const basicIds = [
+      'select-language',
       'select-auto-screenshot',
-      'toggle-tracing',
       'input-cost-session-limit',
       'input-cost-total-limit',
-      'select-language',
     ];
-    const basicTopIndexes = basicTopIds.map((id) => displayPanel.indexOf(`id="${id}"`));
-    basicTopIndexes.forEach((index, position) => {
-      assert.notEqual(index, -1, `${label}: ${basicTopIds[position]} should remain in General`);
-      assert.ok(index < advancedStart, `${label}: ${basicTopIds[position]} should stay in Basic`);
+    const basicIndexes = basicIds.map((id) => displayPanel.indexOf(`id="${id}"`));
+    basicIndexes.forEach((index, position) => {
+      assert.notEqual(index, -1, `${label}: ${basicIds[position]} should remain in General`);
+      assert.ok(index < advancedStart, `${label}: ${basicIds[position]} should stay in Basic`);
     });
+    const requestedTailIds = [
+      'range-request-timeout',
+      'select-auto-screenshot',
+      'input-cost-session-limit',
+      'input-cost-total-limit',
+      'toggle-help-improve',
+    ];
+    const requestedTailIndexes = requestedTailIds.map((id) => displayPanel.indexOf(`id="${id}"`));
     assert.ok(
-      searchStart < basicTopIndexes[0]
-        && basicTopIndexes.every((index, position) => position === 0 || basicTopIndexes[position - 1] < index),
-      `${label}: Auto-screenshot through total allowance should lead Basic in the requested order`,
+      requestedTailIndexes.every((index, position) => position === 0 || requestedTailIndexes[position - 1] < index),
+      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout and precede Help Improve WebBrain`,
     );
 
     for (const id of [
+      'toggle-tracing',
       'toggle-verbose',
       'toggle-scheduled-tasks',
       'toggle-scheduled-confirm',
