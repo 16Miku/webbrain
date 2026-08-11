@@ -2610,6 +2610,126 @@ test('set_field (chrome): trusted contenteditable input updates framework state 
   }
 });
 
+test('type_ax (chrome): Gmail-style empty blocks verify without masking text corruption', async (page) => {
+  await setup(page, 'trusted-click-fallback.html');
+  await page.evaluate(() => {
+    const editor = document.getElementById('editable-row');
+    editor.setAttribute('aria-label', 'Message Body');
+    editor.innerHTML = 'Hey Andrew,<div><br></div><div>Thank you!</div>';
+  });
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
+  const editorMatch = String(tree?.pageContent || '').match(/textbox "Message Body" \[(ref_\d+)\]/);
+  if (!editorMatch) throw new Error(`expected Gmail-style message body: ${tree?.pageContent}`);
+
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClient.attach,
+    sendCommand: cdpClient.sendCommand,
+  };
+  const session = await page.context().newCDPSession(page);
+  globalThis.chrome = {
+    tabs: {
+      async sendMessage(_tabId, message) {
+        return call(page, message.action, message.params || {});
+      },
+    },
+  };
+  try {
+    cdpClient.attach = async () => ({ tabId: 42, attached: true });
+    cdpClient.sendCommand = async (_tabId, method, params) => session.send(method, params);
+    const agent = new Agent({});
+    const appendText = '\n\nAre these good enough?';
+    const preflight = await call(page, 'type_ax', {
+      ref_id: editorMatch[1],
+      text: appendText,
+      clear: false,
+    });
+    const result = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'type_ax',
+      { ref_id: editorMatch[1], text: appendText, clear: false },
+      preflight,
+    );
+    const after = await page.evaluate(() => {
+      const editor = document.getElementById('editable-row');
+      return {
+        innerText: editor.innerText,
+        preservedPrefix: editor.innerHTML.startsWith('Hey Andrew,<div><br></div><div>Thank you!</div>'),
+        directBlankBlocks: Array.from(editor.children)
+          .filter(child => child.tagName === 'DIV' && child.innerHTML.toLowerCase() === '<br>').length,
+      };
+    });
+    if (
+      result?.success !== true
+      || result.verified !== true
+      || result.trusted !== true
+      || after.innerText !== 'Hey Andrew,\n\n\nThank you!\n\n\nAre these good enough?'
+      || after.preservedPrefix !== true
+      || after.directBlankBlocks !== 2
+    ) {
+      throw new Error(`Gmail-style block expansion should verify: ${JSON.stringify({ result, after })}`);
+    }
+
+    await page.evaluate(() => {
+      document.getElementById('editable-row').addEventListener('input', (event) => {
+        event.currentTarget.append(document.createTextNode('!'));
+      }, { once: true });
+    });
+    const corruptAppend = '\n\nOne more line.';
+    const corruptPreflight = await call(page, 'type_ax', {
+      ref_id: editorMatch[1],
+      text: corruptAppend,
+      clear: false,
+    });
+    const corruptResult = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'type_ax',
+      { ref_id: editorMatch[1], text: corruptAppend, clear: false },
+      corruptPreflight,
+    );
+    if (
+      corruptResult?.success !== false
+      || corruptResult.verified !== false
+      || corruptResult.dispatched !== true
+    ) {
+      throw new Error(`real rich-editor corruption must remain rejected: ${JSON.stringify(corruptResult)}`);
+    }
+  } finally {
+    cdpClient.attach = originals.attach;
+    cdpClient.sendCommand = originals.sendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+firefoxTest('type_ax (firefox engine): rich-editor verification rejects an added blank line', async (page) => {
+  await setupFirefoxHtml(page, `
+    <div id="editor" role="textbox" aria-label="Message Body" contenteditable="true"
+      style="width:400px;height:160px">Original</div>
+  `);
+  await page.evaluate(() => {
+    const editor = document.getElementById('editor');
+    window.__wb_ax_lookup = refId => refId === 'ref_editor' ? editor : null;
+    editor.addEventListener('input', () => {
+      editor.innerHTML = 'First<br><br><br>Second';
+    });
+  });
+  const result = await rawContentCall(page, 'type_ax', {
+    ref_id: 'ref_editor',
+    text: 'First\n\nSecond',
+    clear: true,
+  });
+  const actual = await page.locator('#editor').evaluate(editor => editor.innerText);
+  if (
+    result?.success !== false
+    || result.verified !== false
+    || result.dispatched !== true
+    || actual !== 'First\n\n\nSecond'
+  ) {
+    throw new Error(`Firefox must reject a page-added blank line: ${JSON.stringify({ result, actual })}`);
+  }
+});
+
 test('click_ax: Agent.executeTool keeps synthetic-first behavior and uses trusted CDP only for an ignored generic row', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 20000 });

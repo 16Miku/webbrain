@@ -47974,10 +47974,14 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     ['firefox', 'src/firefox/src/content/content.js'],
   ]) {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const helperStart = source.indexOf('function _setFieldValueMatches(');
+    const helperStart = source.indexOf(label === 'chrome'
+      ? 'function _contentEditableValueMatches('
+      : 'function _setFieldValueMatches(');
     const helperEnd = source.indexOf('\n\n  function _editableTextValue', helperStart);
     assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: exact-value helper should remain independently testable`);
-    const matches = vm.runInNewContext(`(${source.slice(helperStart, helperEnd)})`);
+    const matches = label === 'chrome'
+      ? vm.runInNewContext(`(() => { ${source.slice(helperStart, helperEnd)}; return _setFieldValueMatches; })()`)
+      : vm.runInNewContext(`(${source.slice(helperStart, helperEnd)})`);
 
     assert.equal(matches('Magnetic Locks', '', 'Magnetic Locks', true), true, `${label}: exact replacement should verify`);
     assert.equal(matches('Magnetic Locksg', '', 'Magnetic Locks', true), false, `${label}: trailing corruption must not verify`);
@@ -47985,8 +47989,34 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.equal(matches('old-new', 'old-', 'new', false), true, `${label}: exact append should verify`);
     assert.equal(matches('new', 'old-', 'new', false), false, `${label}: append verification must preserve prior content`);
     assert.equal(matches('first\nsecond', '', 'first\r\nsecond', true, true), true, `${label}: rich-editor CRLF should match rendered newlines`);
+    assert.equal(matches('first\n\n\nsecond', '', 'first\n\nsecond', true, true), label === 'chrome', `${label}: only Chromium should accept its empty-block readback expansion`);
+    assert.equal(matches('first\n\n\n\n\nsecond', '', 'first\n\n\nsecond', true, true), label === 'chrome', `${label}: only Chromium should accept multiple empty-block expansions`);
+    assert.equal(matches('\n\nfirst', '', '\nfirst', true, true), label === 'chrome', `${label}: only Chromium should accept a leading empty-block expansion`);
+    assert.equal(matches('first\n\n', '', 'first\n', true, true), label === 'chrome', `${label}: only Chromium should accept a trailing empty-block expansion`);
     assert.equal(matches('firstsecond', '', 'first\nsecond', true, true), false, `${label}: missing rich-editor newlines must still fail`);
+    assert.equal(matches('first\n\nsecond', '', 'first\nsecond', true, true), false, `${label}: an unexplained extra rich-editor newline must still fail`);
+    assert.equal(matches('first\n\n\n\nsecond', '', 'first\n\nsecond', true, true), false, `${label}: non-Chromium newline expansion must still fail`);
     assert.equal(matches('first\nsecond!', '', 'first\nsecond', true, true), false, `${label}: rich-editor normalization must not accept other corruption`);
+    assert.equal(
+      matches('first\n\n\nbody\n\n\nclosing', 'first\n\n\nbody', '\n\nclosing', false, true),
+      label === 'chrome',
+      `${label}: only Chromium append verification should accept expansion inside the new suffix`,
+    );
+    assert.equal(
+      matches('first\n\n\n\n\nbody\n\n\nclosing', 'first\n\n\nbody', '\n\nclosing', false, true),
+      false,
+      `${label}: append verification must reject expansion inside the preserved prefix`,
+    );
+    assert.equal(
+      matches('\n\n\n\nclosing', '', '\n\nclosing', false, true),
+      label === 'chrome',
+      `${label}: only Chromium should accept leading block expansion when appending to an empty editor`,
+    );
+    assert.equal(
+      matches('first\n\n\n\n\nclosing', 'first\n\n', '\n\nclosing', false, true),
+      label === 'chrome',
+      `${label}: only Chromium should accept suffix expansion after preserved trailing blocks`,
+    );
 
     const branchStart = source.indexOf("'set_field': async () => {");
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_resolve_rect':" : "'hover':", branchStart);
@@ -48044,7 +48074,9 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
   assert.match(agent, /_maybeFallbackFieldWithCdp[\s\S]*ax_prepare_field_for_trusted_type[\s\S]*Input\.insertText[\s\S]*ax_verify_field_value/, 'chrome: trusted field retry pipeline missing');
   assert.match(agent, /verification\.verified !== true[\s\S]*if \(toolName === 'set_field' && args\?\.submit === true\)/, 'chrome: submit must remain after trusted verification');
   assert.match(content, /'ax_prepare_field_for_trusted_type'[\s\S]*window\.__wb_ax_lookup\(ref_id\)[\s\S]*el\.select\(\)/, 'chrome: trusted retry must focus and select the ref-bound field');
-  assert.match(content, /'ax_verify_field_value'[\s\S]*_setFieldValueMatches\(actual, '', expected, true/, 'chrome: trusted retry must use exact settled verification');
+  assert.match(content, /selectionMode === 'end'[\s\S]*range\.collapse\(false\)/, 'chrome: trusted contenteditable appends must preserve the existing DOM');
+  assert.match(agent, /appendingContentEditable[\s\S]*args\?\.text[\s\S]*Input\.insertText/, 'chrome: trusted contenteditable appends must insert only the requested suffix');
+  assert.match(content, /'ax_verify_field_value'[\s\S]*expectedPrefix[\s\S]*_setFieldValueMatches\(/, 'chrome: trusted retry must verify replacements and appends against their exact settled scope');
   for (const toolName of ['type_ax', 'set_field']) {
     const branchStart = content.indexOf(`'${toolName}': async () => {`);
     const branchEnd = toolName === 'type_ax'
@@ -48067,11 +48099,13 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
     let verified = true;
     let contentEditable = false;
     let prepareCalls = 0;
+    const prepareSelectionModes = [];
     globalThis.chrome = {
       tabs: {
         async sendMessage(_tabId, message) {
           if (message.action === 'ax_prepare_field_for_trusted_type') {
             prepareCalls += 1;
+            prepareSelectionModes.push(message.params.selectionMode);
             return {
               success: true,
               fieldMeta: { type: contentEditable ? 'div' : 'text', contentEditable },
@@ -48128,6 +48162,7 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
     commands.length = 0;
     contentEditable = true;
     prepareCalls = 0;
+    prepareSelectionModes.length = 0;
     const recoveredEditor = await agent._maybeFallbackFieldWithCdp(
       42,
       'set_field',
@@ -48148,6 +48183,7 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
     assert.equal(recoveredEditor.noDispatch, undefined);
     assert.equal(recoveredEditor.trustedTypeRequired, undefined);
     assert.equal(prepareCalls, 2, 'contenteditable trusted focus must be followed by ref-bound reselection');
+    assert.deepEqual(prepareSelectionModes, ['all', 'all'], 'contenteditable replacement must select all on both preparations');
     assert.deepEqual(
       commands.map(command => command.method),
       [
@@ -48157,6 +48193,33 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
         'Input.insertText',
       ],
       'contenteditable recovery must use trusted focus followed by trusted text insertion',
+    );
+
+    commands.length = 0;
+    prepareCalls = 0;
+    prepareSelectionModes.length = 0;
+    const recoveredAppend = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'type_ax',
+      { ref_id: 'ref_editor', text: '\n\nclosing', clear: false },
+      {
+        success: false,
+        verified: false,
+        dispatched: false,
+        noDispatch: true,
+        trustedTypeRequired: true,
+        error: 'contenteditable requires trusted typing',
+        _expectedValue: 'existing\n\nclosing',
+      },
+    );
+    assert.equal(recoveredAppend.success, true);
+    assert.equal(recoveredAppend.verified, true);
+    assert.equal(prepareCalls, 2);
+    assert.deepEqual(prepareSelectionModes, ['end', 'end'], 'contenteditable append must collapse at the end on both preparations');
+    assert.deepEqual(
+      commands.filter(command => command.method === 'Input.insertText').map(command => command.params.text),
+      ['\n\nclosing'],
+      'contenteditable append must not retype the existing editor value',
     );
 
     commands.length = 0;
