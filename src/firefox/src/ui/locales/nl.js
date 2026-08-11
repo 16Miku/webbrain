@@ -534,7 +534,7 @@ export default {
   'st.display.auto_screenshot.state_change': 'Bij statustwijziging (standaard)',
   'st.display.auto_screenshot.every_step': 'Elke stap',
   'st.display.tracing.label': 'Traces opslaan (voor modelvergelijking)',
-  'st.display.tracing.desc_html': 'Sla elke uitvoering op in lokale IndexedDB...',
+  'st.display.tracing.desc_html': 'Sla elke uitvoering op in lokale IndexedDB... <a href="traces.html" target="_blank" style="color:var(--accent);">Traces openen →</a>',
   'st.display.cost_session_limit.label': 'Cloudkostensessietegoed',
   'st.display.cost_session_limit.desc': 'Stopt cloud- en OpenRouter-uitvoeringen voordat nog een betaald modelaanroep plaatsvindt...',
   'st.display.cost_total_limit.label': 'Cloudkostentotaaltegoed',
