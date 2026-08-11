@@ -120,10 +120,16 @@ the stored copies are not separately synced to WebBrain.
 When enabled (Settings → Display → "Record traces"), every agent run is written to an IndexedDB database (`webbrain_traces`):
 
 - **`runs` store**: model, provider, token totals, timestamps, user message, final content
-- **`events` store**: per-step LLM requests/responses, tool calls with args and results
+- **`events` store**: per-step LLM request provenance, model responses, and tool calls with args and results. Request provenance contains counts, controlled prompt/mode labels, and declared prompt/tool policy revisions; it neither duplicates nor fingerprints raw system prompts, message text, tool schemas, or tool names.
 - **`shots` store**: screenshot blobs
 
 The Traces page (`ui/traces.html`) reads from local IndexedDB only. Export produces a JSON blob saved to the user's Downloads folder. **No trace data ever leaves the browser.**
+
+Each run also records an allowlisted effective runtime snapshot (including mode
+and prompt tier). Trace Markdown surfaces that snapshot and the privacy-safe
+request provenance so mode/prompt mismatches can be diagnosed without exporting
+the full private prompt payload. Policy revisions change with controlled
+prompt/tool rules, not with private request content.
 
 ### Saved Workflows
 

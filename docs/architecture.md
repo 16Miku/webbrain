@@ -482,7 +482,24 @@ Background relays these via `chrome.runtime.sendMessage` to the side panel, whic
 
 The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
 
+The browser-owned per-turn runtime context includes the effective
+`runtime_mode` and whether mutation tools are enabled. This envelope is added
+once to the current user turn and is shared by the planner and executor, so
+page content or stale conversation history cannot redefine the live mode. For
+Act/Dev runs it also directs missing required values to `clarify` after useful
+inspection; planner guidance treats `done` as terminal, never as a way to ask
+for information needed to continue.
+
 Planner calls are traced with `phase: "planner"` when trace recording is enabled. They also use the cost allowance guard, abort checks, a JSON-repair retry, and Qwen/DeepSeek no-think handling. A failed repair cannot authorize actions: Try falls back to an Ask/read-only turn, while Strict stops.
+
+LLM-request trace events include privacy-safe prompt provenance: the controlled
+prompt variant, system-prompt and aggregate message character counts, message
+role counts, declared prompt/tool policy revisions, and structured checks
+comparing the system prompt and runtime envelope with the effective run mode.
+Raw system-prompt text, message text, tool schemas, and tool names are neither
+copied nor fingerprinted in request events. Policy revisions are bumped when
+controlled prompt templates or tool-exposure rules change; private request
+content does not affect them.
 
 Each new trace run records the manifest version that created it. `/export`
 Markdown records the exporting version, `/export --traces` records both the

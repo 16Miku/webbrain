@@ -691,9 +691,14 @@ in-progress Markdown after older delta events have been acknowledged.
 Off by default. Enabled via Settings → Display → "Record traces". When on, every agent run writes to an IndexedDB database (`webbrain-traces`):
 
 - `runs` store: one row per user message — model, provider, token totals, timestamps.
-- `events` store: one row per LLM request/response, tool call, screenshot. Rows are indexed by `(runId, seq)`.
+- `events` store: one row per LLM request/response, tool call, screenshot. LLM requests retain content-free prompt provenance (controlled variant, counts, declared prompt/tool policy revisions, and runtime-mode alignment), not fingerprints or raw system prompts, message text, tool schemas, or tool names. Policy revisions are bumped when controlled prompt templates or tool-exposure rules change; private request content does not affect them. Rows are indexed by `(runId, seq)`.
 
 The Traces page (`ui/traces.html`) lists runs and renders their event timelines. Exporting produces a JSON blob identical to the ones used in this session's debugging. Data never leaves the machine — this is why `unlimitedStorage` is requested (a multi-step run with screenshots is 1–10 MB).
+
+The browser-owned trusted runtime context also carries the effective mode once
+per run. Both planner and executor receive the same envelope. Act/Dev envelopes
+advertise mutation availability and route still-missing required inputs through
+`clarify`; `done` remains terminal.
 
 ---
 
