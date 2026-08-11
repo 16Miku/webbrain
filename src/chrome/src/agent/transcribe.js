@@ -31,6 +31,7 @@ import {
   normalizeOpenAICompatibleBaseUrl,
   openAiCompatiblePayloadError,
 } from '../providers/provider-compatibility.js';
+import { fetchWithFallback } from '../providers/fetch-with-fallback.js';
 
 // Provider id → default Whisper-style model name.
 const WHISPER_MODEL_BY_PROVIDER = {
@@ -173,7 +174,7 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
   const start = Date.now();
   let res;
   try {
-    res = await fetch(url, { method: 'POST', headers, body: form });
+    res = await fetchWithFallback(url, { method: 'POST', headers, body: form });
   } catch (e) {
     return { ok: false, error: `Transcription network error: ${e.message || e}` };
   }

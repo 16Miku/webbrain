@@ -74672,4 +74672,85 @@ test('transcription runtime normalizes a legacy bare override and surfaces HTTP-
   }
 });
 
+test('transcription runtime uses the Chrome offscreen fallback when direct fetch is blocked', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  let directAttempts = 0;
+  let proxiedRequest = null;
+  console.warn = () => {};
+  try {
+    globalThis.fetch = async () => {
+      directAttempts += 1;
+      throw new TypeError('Failed to fetch');
+    };
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async () => ({
+            transcriptionModel: {
+              baseUrl: 'http://127.0.0.1:1234',
+              model: 'whisper-local',
+              apiKey: '',
+            },
+          }),
+        },
+      },
+      offscreen: {
+        async hasDocument() { return true; },
+      },
+      runtime: {
+        connect() {
+          const messageListeners = [];
+          const disconnectListeners = [];
+          return {
+            onMessage: { addListener(fn) { messageListeners.push(fn); } },
+            onDisconnect: { addListener(fn) { disconnectListeners.push(fn); } },
+            postMessage(msg) {
+              proxiedRequest = msg;
+              queueMicrotask(() => {
+                const emit = message => messageListeners.forEach(fn => fn(message));
+                emit({
+                  type: 'headers',
+                  ok: true,
+                  status: 200,
+                  contentType: 'application/json',
+                  hasBody: true,
+                });
+                emit({ type: 'chunk', text: '{"text":"fallback transcript"}' });
+                emit({ type: 'done' });
+              });
+            },
+            disconnect() { disconnectListeners.forEach(fn => fn()); },
+          };
+        },
+      },
+    };
+
+    const result = await transcribeAudio(
+      new Map(),
+      new Blob(['audio'], { type: 'audio/webm' }),
+      { filename: 'recording.webm' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.text, 'fallback transcript');
+    assert.equal(directAttempts, 1);
+    assert.equal(proxiedRequest.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+    assert.equal(proxiedRequest.bodyType, 'form-data');
+    assert.deepEqual(proxiedRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
+      { name: 'file', kind: 'blob' },
+      { name: 'model', kind: 'text' },
+      { name: 'response_format', kind: 'text' },
+      { name: 'temperature', kind: 'text' },
+    ]);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
 await run();
