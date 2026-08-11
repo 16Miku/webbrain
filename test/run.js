@@ -74319,4 +74319,261 @@ test('run UI persistence compaction preserves acknowledged versus discarded boun
   }
 });
 
+test('dedicated multimodal endpoints normalize bare OpenAI-compatible origins', () => {
+  for (const [label, compat] of [
+    ['chrome', ProviderCompatibilityCh],
+    ['firefox', ProviderCompatibilityFx],
+  ]) {
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl(' http://127.0.0.1:1234/ '),
+      'http://127.0.0.1:1234/v1',
+      `${label}: bare LM Studio origin should gain /v1`,
+    );
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl('http://127.0.0.1:1234/v1/'),
+      'http://127.0.0.1:1234/v1',
+      `${label}: explicit /v1 should not be duplicated`,
+    );
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl('https://openrouter.ai/api/v1/'),
+      'https://openrouter.ai/api/v1',
+      `${label}: provider-specific API paths must be preserved`,
+    );
+
+    const controlled = compat.visionGenerationOptions(800);
+    assert.equal(controlled.maxTokens, 800);
+    assert.equal(controlled.extraBody.reasoning_effort, 'none');
+    assert.equal(controlled.extraBody.reasoning_tokens, 0);
+    assert.equal(controlled.extraBody.chat_template_kwargs.enable_thinking, false);
+    const legacy = compat.visionGenerationOptions(1600, { reasoningControl: false });
+    assert.equal(legacy.extraBody.reasoning_effort, undefined);
+    assert.equal(legacy.extraBody.reasoning_tokens, undefined);
+    assert.deepEqual(legacy.extraBody, {});
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter reasoning_tokens')), true);
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter chat_template_kwargs')), true);
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter response_format')), false);
+  }
+});
+
+test('OpenAI-compatible chat providers reject HTTP-200 error and non-completion payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  const providers = [
+    ...[OpenAIProviderCh, OpenAIProviderFx].map(Provider => new Provider({
+      providerName: 'vision',
+      baseUrl: 'https://example.test/v1',
+      model: 'vision-model',
+    })),
+    ...[LlamaCppProviderCh, LlamaCppProviderFx].map(Provider => new Provider({
+      baseUrl: 'https://example.test/v1',
+      model: 'local-model',
+    })),
+    ...[AzureOpenAIProviderCh, AzureOpenAIProviderFx].map(Provider => new Provider({
+      baseUrl: 'https://example.openai.azure.com',
+      model: 'deployment',
+      apiVersion: '2024-10-21',
+    })),
+  ];
+  try {
+    for (const provider of providers) {
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        error: { message: 'Unexpected endpoint or method.' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'Hi' }], { maxTokens: 5 }),
+        /Unexpected endpoint or method/,
+      );
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ object: 'list', data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'Hi' }], { maxTokens: 5 }),
+        /no completion choice/,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('dedicated vision descriptions suppress hidden reasoning and reuse one image for a bounded retry', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const vision = {
+      config: { model: 'qwen/qwen3.5-9b', baseUrl: 'http://127.0.0.1:1234/v1' },
+    };
+    const agent = new AgentClass({ getVisionProvider: async () => vision });
+    const calls = [];
+    agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      calls.push({ messages, options });
+      if (calls.length === 1) {
+        return {
+          content: '',
+          reasoningContent: 'The model used its output budget while thinking.',
+          raw: { choices: [{ finish_reason: 'length' }] },
+        };
+      }
+      return { content: '1) Page purpose: product reviews\n2) Visible content: review cards' };
+    };
+
+    const screenshot = 'data:image/png;base64,AA==';
+    const described = await agent._describeScreenshot(91, screenshot, 'protected_page');
+    assert.equal(described?.model, 'qwen/qwen3.5-9b', `${label}: retry should produce a usable description`);
+    assert.match(described?.text || '', /product reviews/);
+    assert.equal(calls.length, 2, `${label}: empty visible output should get one generation retry`);
+    assert.equal(calls[0].options.maxTokens, 800);
+    assert.equal(calls[1].options.maxTokens, 1600);
+    assert.equal(calls[0].options.extraBody.reasoning_effort, 'none');
+    assert.equal(calls[0].options.extraBody.reasoning_tokens, 0);
+    assert.equal(calls[1].messages[1].content[1].image_url.url, screenshot, `${label}: retry must reuse captured pixels`);
+  }
+});
+
+test('dedicated vision retries without unsupported LM Studio reasoning controls', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const vision = {
+      config: { model: 'strict-vision', baseUrl: 'https://vision.example/v1' },
+    };
+    const agent = new AgentClass({ getVisionProvider: async () => vision });
+    const optionsSeen = [];
+    agent._chatWithCostAllowance = async (_provider, _messages, options) => {
+      optionsSeen.push(options);
+      if (optionsSeen.length === 1) throw new Error('Unknown parameter: reasoning_effort');
+      return { content: '1) Page purpose: protected store listing' };
+    };
+
+    const described = await agent._describeScreenshot(92, 'data:image/png;base64,AA==');
+    assert.match(described?.text || '', /protected store listing/, `${label}: strict provider fallback failed`);
+    assert.equal(optionsSeen.length, 2);
+    assert.equal(optionsSeen[1].maxTokens, 1600);
+    assert.equal(optionsSeen[1].extraBody.reasoning_effort, undefined);
+    assert.equal(optionsSeen[1].extraBody.reasoning_tokens, undefined);
+    assert.deepEqual(optionsSeen[1].extraBody, {});
+  }
+});
+
+test('multimodal connection tests exercise image and audio routes instead of only model listing', async () => {
+  for (const [label, ProviderManager] of [
+    ['chrome', ProviderManagerCh],
+    ['firefox', ProviderManagerFx],
+  ]) {
+    const visionCalls = [];
+    const visionManager = new ProviderManager();
+    visionManager.getVisionProvider = async () => ({
+      model: 'qwen/qwen3.5-9b',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      chat: async (messages, options) => {
+        visionCalls.push({ messages, options });
+        return { content: 'WB7' };
+      },
+    });
+    const visionResult = await visionManager.testVisionProvider();
+    assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
+    assert.equal(visionCalls.length, 1);
+    assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+    assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+
+    visionManager.getVisionProvider = async () => ({
+      model: 'text-only-model',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      chat: async () => ({ content: 'I can respond without reading the image.' }),
+    });
+    const textOnlyResult = await visionManager.testVisionProvider();
+    assert.equal(textOnlyResult.ok, false, `${label}: a text-only response must not pass the vision probe`);
+    assert.match(textOnlyResult.error, /did not read the image probe correctly/);
+  }
+
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, ProviderManager] of [
+      ['chrome', ProviderManagerCh],
+      ['firefox', ProviderManagerFx],
+    ]) {
+      const storageApi = {
+        storage: {
+          local: {
+            get: async () => ({
+              transcriptionModel: {
+                baseUrl: 'http://127.0.0.1:1234',
+                model: 'whisper-local',
+                apiKey: '',
+              },
+            }),
+          },
+          onChanged: { addListener() {} },
+        },
+      };
+      globalThis.chrome = storageApi;
+      globalThis.browser = storageApi;
+      let request = null;
+      globalThis.fetch = async (url, options) => {
+        request = { url: String(url), options };
+        return new Response(JSON.stringify({ text: '' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      const result = await new ProviderManager().testTranscriptionProvider();
+      assert.equal(result.ok, true, `${label}: valid silent audio probe should pass`);
+      assert.equal(request.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+      assert.equal(request.options.method, 'POST');
+      assert.ok(request.options.body instanceof FormData);
+      assert.equal(request.options.body.get('model'), 'whisper-local');
+      assert.ok(request.options.body.get('file') instanceof Blob);
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        error: 'Unexpected endpoint or method.',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const rejected = await new ProviderManager().testTranscriptionProvider();
+      assert.equal(rejected.ok, false, `${label}: HTTP-200 endpoint errors must fail the connection test`);
+      assert.match(rejected.error, /Unexpected endpoint or method/);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('transcription runtime normalizes a legacy bare override and surfaces HTTP-200 provider errors', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async () => ({
+            transcriptionModel: {
+              baseUrl: 'http://127.0.0.1:1234',
+              model: 'whisper-local',
+              apiKey: '',
+            },
+          }),
+        },
+      },
+    };
+    let requestedUrl = '';
+    globalThis.fetch = async url => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ error: { message: 'Audio route unavailable.' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const result = await transcribeAudio(new Map(), new Blob(['audio'], { type: 'audio/webm' }));
+    assert.equal(requestedUrl, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Audio route unavailable/);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 await run();

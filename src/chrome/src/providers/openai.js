@@ -892,8 +892,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try { data = await res.json(); } catch {
       throw new Error(`${this.name} returned invalid JSON in chat response.`);
     }
-    const choice = data.choices?.[0];
-    const message = choice?.message;
+    const message = this._chatCompletionMessage(data);
 
     return {
       content: message?.content || '',
