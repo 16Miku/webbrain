@@ -9,6 +9,25 @@ import { sanitizeText } from './text-sanitize.js';
 
 const UNTRUSTED_PAGE_CONTENT_TAG_RE = /<\/?untrusted_page_content\b[^>]*>/gi;
 const REQUEST_KINDS = new Set(['execute', 'respond', 'plan_only', 'clarify']);
+const DOWNLOAD_PLAN_TOOLS = new Set([
+  'download_file',
+  'download_files',
+  'download_public_media',
+  'download_resource_from_page',
+  'download_social_media',
+]);
+
+function canonicalPlanRequiresDownload(summary, steps) {
+  if (steps.some(step => step.tools.some(tool => DOWNLOAD_PLAN_TOOLS.has(tool)))) return true;
+  // Canonical planner fields are required to be English. Match an explicit
+  // download action, but not a read-only request to find a download link. A
+  // bounded local-save phrase covers compact plans, whose steps omit tools.
+  const actionText = [summary, ...steps.map(step => step.action)].join('\n');
+  return actionText.split('\n').some(line => (
+    /(?:^|[.!?]\s*|\b(?:and|then|to)\s+)download(?:s|ed|ing)?\s+(?!(?:links?|urls?|buttons?|pages?|instructions?)\b)\S/i.test(line)
+    || /\b(?:sav(?:e|es|ed|ing)|stor(?:e|es|ed|ing))\b[^\n.!?]{0,120}\b(?:locally|to (?:the )?(?:downloads? folder|disk)|on (?:the )?(?:device|computer|disk))\b/i.test(line)
+  ));
+}
 
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
@@ -354,33 +373,48 @@ export function normalizePlan(obj, opts = {}) {
   const normalizedScheduling = tool === 'schedule_task' || tool === 'schedule_resume'
     ? { tool, hint: sanitizeText(scheduling.hint, 300) }
     : null;
+  const risks = Array.isArray(obj.risks)
+    ? obj.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
+    : [];
   const localizedInput = obj.localized && typeof obj.localized === 'object' ? obj.localized : {};
-  const localizedSteps = Array.isArray(localizedInput.steps)
+  const providedLocalizedSteps = Array.isArray(localizedInput.steps)
     ? localizedInput.steps.slice(0, 12).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
     })).filter((step) => step.action)
     : [];
   const localizedSummary = sanitizeText(localizedInput.summary, 400);
+  const localizedStepsById = new Map(providedLocalizedSteps.map(step => [step.id, step]));
+  const localizedSteps = steps.map(step => ({
+    id: step.id,
+    action: localizedStepsById.get(step.id)?.action
+      || step.action,
+  }));
+  const providedLocalizedRisks = Array.isArray(localizedInput.risks)
+    ? localizedInput.risks.slice(0, 6).map((risk) => sanitizeText(risk, 200))
+    : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   if (opts.requireIntent) {
-    if (!localizedSummary) return null;
-    if (requestKind !== 'clarify' && requestKind !== 'respond' && (steps.length === 0 || localizedSteps.length === 0)) return null;
+    if (requestKind === 'clarify' && !localizedSummary) return null;
+    if (requestKind !== 'clarify' && requestKind !== 'respond' && steps.length === 0) return null;
   }
   const localized = {
     locale: requestedLocale,
     summary: localizedSummary || summary,
     steps: localizedSteps,
-    risks: Array.isArray(localizedInput.risks)
-      ? localizedInput.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
-      : [],
+    risks: risks.map((risk, index) => providedLocalizedRisks[index] || risk),
   };
   const submissionBearingPlan = executablePlan || requestKind === 'clarify';
   const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
   const requiresStateChange = executablePlan
-    ? (!!obj.requires_state_change || requiresSubmission === true || !!normalizedScheduling)
+    ? (
+      !!obj.requires_state_change
+      || requiresSubmission === true
+      || !!normalizedScheduling
+      || canonicalPlanRequiresDownload(summary, steps)
+    )
     : false;
   return {
     request_kind: requestKind,
@@ -407,9 +441,7 @@ export function normalizePlan(obj, opts = {}) {
         : 'auto',
     },
     scheduling: executablePlan ? normalizedScheduling : null,
-    risks: Array.isArray(obj.risks)
-      ? obj.risks.map((r) => sanitizeText(r, 200)).filter(Boolean).slice(0, 6)
-      : [],
+    risks,
     localized,
     mode: 'act',
   };
