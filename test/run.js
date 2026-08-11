@@ -54544,6 +54544,56 @@ test('planner intent degrades to a localized read-only turn after one repair', a
   });
 });
 
+test('planner intent preserves Act and canonical execution fields when localized display fields are missing', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const agent = new AgentClass({ getActive: () => ({ name: 'intent-test', model: 'intent-test' }) });
+      let calls = 0;
+      let warning = '';
+      agent._chatWithCostAllowance = async () => {
+        calls += 1;
+        return {
+          content: JSON.stringify({
+            request_kind: 'execute',
+            requires_state_change: false,
+            requires_submission: false,
+            allows_planner_shaped_result: false,
+            allows_app_state_tool_evidence: true,
+            read_scope: 'visible_page',
+            summary: 'Find and download the video from the current X tweet page',
+            steps: [
+              { id: '1', action: 'Read the current page to find video elements or download links' },
+              { id: '2', action: 'Extract the direct video URL and download it' },
+            ],
+            memory: { use_progress_ledger: false, progress_action: null },
+            scheduling: null,
+            risks: ['The video source may need to be resolved before downloading'],
+          }),
+        };
+      };
+
+      const gate = await agent._runPlannerIntentGate(
+        8685 + index,
+        { role: 'user', content: 'download this video' },
+        (type, data) => { if (type === 'warning') warning = data?.message || ''; },
+        null,
+        null,
+        '',
+        { tabUrl: 'https://x.com/example/status/1', tabTitle: 'Example post' },
+        'act',
+        { locale: 'tr' },
+      );
+
+      assert.equal(calls, 1, `${AgentClass.name}: missing display localization triggered an unnecessary repair`);
+      assert.equal(gate.proceed, true, `${AgentClass.name}: recoverable localization blocked execution`);
+      assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: download intent was downgraded`);
+      assert.equal(gate.readOnlyFallback, undefined, `${AgentClass.name}: download plan fell back to Ask`);
+      assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: localization recovery changed canonical execution metadata`);
+      assert.equal(warning, '', `${AgentClass.name}: recoverable localization emitted a planner failure warning`);
+    }
+  });
+});
+
 test('planner intent keeps execution authorized for plan-and-act and negated approval waits', async () => {
   await withPlannerBrowserGlobals(async () => {
     const tasks = [
@@ -60599,6 +60649,68 @@ test('planner: parse and format structured plan', () => {
     assert.equal(clarifyBeforeSubmit?.requires_state_change, false, 'clarify must never authorize an immediate mutation');
     assert.equal(clarifyBeforeSubmit?.requires_submission, true, 'clarify must retain the eventual user-authorized submit intent');
     assert.equal(clarifyBeforeSubmit?.read_scope, 'none', 'clarify must never retain a page-read scope');
+  }
+});
+
+test('planner: canonical fields recover missing and partial localization without changing execution metadata', () => {
+  const tracePlan = JSON.stringify({
+    request_kind: 'execute',
+    requires_state_change: false,
+    requires_submission: false,
+    allows_planner_shaped_result: false,
+    allows_app_state_tool_evidence: true,
+    read_scope: 'visible_page',
+    summary: 'Find and download the video from the current X tweet page',
+    steps: [
+      { id: '1', action: 'Read the current page to find video elements or download links' },
+      { id: '2', action: 'Extract the direct video URL and download it' },
+    ],
+    memory: { use_progress_ledger: false, progress_action: null },
+    scheduling: null,
+    risks: ['The video source may need to be resolved before downloading'],
+  });
+
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    const plan = parse(tracePlan, { requireIntent: true, locale: 'tr' });
+    assert.ok(plan, `${label}: missing localized display fields invalidated canonical intent`);
+    assert.equal(plan.localized.locale, 'tr', `${label}: requested display locale was lost`);
+    assert.equal(plan.localized.summary, plan.summary, `${label}: canonical summary did not backfill localized display text`);
+    assert.deepEqual(
+      plan.localized.steps,
+      plan.steps.map(step => ({ id: step.id, action: step.action })),
+      `${label}: canonical steps did not backfill localized display text`,
+    );
+    assert.deepEqual(plan.localized.risks, plan.risks, `${label}: canonical risks did not backfill localized display text`);
+    assert.equal(plan.requires_state_change, false, `${label}: localization recovery changed canonical execution metadata`);
+
+    const partialLocalization = JSON.parse(tracePlan);
+    partialLocalization.risks = ['First canonical risk', 'Second canonical risk'];
+    partialLocalization.localized = {
+      locale: 'tr',
+      summary: 'Geçerli videoyu indir',
+      steps: [{ id: '2', action: 'Doğrudan video adresini çıkar ve indir' }],
+      risks: ['', 'İkinci risk'],
+    };
+    const partial = parse(JSON.stringify(partialLocalization), { requireIntent: true, locale: 'tr' });
+    assert.equal(partial?.localized.steps[0]?.action, partial?.steps[0]?.action, `${label}: missing localized step did not fall back by id`);
+    assert.equal(partial?.localized.steps[1]?.action, 'Doğrudan video adresini çıkar ve indir', `${label}: supplied localized step was discarded`);
+    assert.deepEqual(
+      partial?.localized.risks,
+      ['First canonical risk', 'İkinci risk'],
+      `${label}: localized risk holes shifted translations away from their canonical positions`,
+    );
+
+    const malformedClarification = parse(JSON.stringify({
+      request_kind: 'clarify',
+      requires_state_change: false,
+      requires_submission: false,
+      read_scope: 'none',
+      summary: 'Ask the user which account should receive the transfer.',
+      steps: [],
+      risks: [],
+    }), { requireIntent: true, locale: 'tr' });
+    assert.equal(malformedClarification, null, `${label}: clarification without the actual localized question bypassed repair`);
+
   }
 });
 

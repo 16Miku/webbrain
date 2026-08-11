@@ -10,6 +10,14 @@ import { sanitizeText } from './text-sanitize.js';
 const UNTRUSTED_PAGE_CONTENT_TAG_RE = /<\/?untrusted_page_content\b[^>]*>/gi;
 const REQUEST_KINDS = new Set(['execute', 'respond', 'plan_only', 'clarify']);
 
+function canonicalPlanRequiresDownload(_summary, _steps) {
+  // TODO(#2752): Derive download completion requirements from structured,
+  // language-neutral planner intent. Do not infer them from canonical prose;
+  // lookup framing such as "Find the URL to download the report" makes that
+  // heuristic ambiguous. Until then, preserve the planner-declared value.
+  return false;
+}
+
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
 // Keep response-only routing identical across the full Plan-before-Act planner
@@ -354,33 +362,48 @@ export function normalizePlan(obj, opts = {}) {
   const normalizedScheduling = tool === 'schedule_task' || tool === 'schedule_resume'
     ? { tool, hint: sanitizeText(scheduling.hint, 300) }
     : null;
+  const risks = Array.isArray(obj.risks)
+    ? obj.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
+    : [];
   const localizedInput = obj.localized && typeof obj.localized === 'object' ? obj.localized : {};
-  const localizedSteps = Array.isArray(localizedInput.steps)
+  const providedLocalizedSteps = Array.isArray(localizedInput.steps)
     ? localizedInput.steps.slice(0, 12).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
     })).filter((step) => step.action)
     : [];
   const localizedSummary = sanitizeText(localizedInput.summary, 400);
+  const localizedStepsById = new Map(providedLocalizedSteps.map(step => [step.id, step]));
+  const localizedSteps = steps.map(step => ({
+    id: step.id,
+    action: localizedStepsById.get(step.id)?.action
+      || step.action,
+  }));
+  const providedLocalizedRisks = Array.isArray(localizedInput.risks)
+    ? localizedInput.risks.slice(0, 6).map((risk) => sanitizeText(risk, 200))
+    : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   if (opts.requireIntent) {
-    if (!localizedSummary) return null;
-    if (requestKind !== 'clarify' && requestKind !== 'respond' && (steps.length === 0 || localizedSteps.length === 0)) return null;
+    if (requestKind === 'clarify' && !localizedSummary) return null;
+    if (requestKind !== 'clarify' && requestKind !== 'respond' && steps.length === 0) return null;
   }
   const localized = {
     locale: requestedLocale,
     summary: localizedSummary || summary,
     steps: localizedSteps,
-    risks: Array.isArray(localizedInput.risks)
-      ? localizedInput.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
-      : [],
+    risks: risks.map((risk, index) => providedLocalizedRisks[index] || risk),
   };
   const submissionBearingPlan = executablePlan || requestKind === 'clarify';
   const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
   const requiresStateChange = executablePlan
-    ? (!!obj.requires_state_change || requiresSubmission === true || !!normalizedScheduling)
+    ? (
+      !!obj.requires_state_change
+      || requiresSubmission === true
+      || !!normalizedScheduling
+      || canonicalPlanRequiresDownload(summary, steps)
+    )
     : false;
   return {
     request_kind: requestKind,
@@ -407,9 +430,7 @@ export function normalizePlan(obj, opts = {}) {
         : 'auto',
     },
     scheduling: executablePlan ? normalizedScheduling : null,
-    risks: Array.isArray(obj.risks)
-      ? obj.risks.map((r) => sanitizeText(r, 200)).filter(Boolean).slice(0, 6)
-      : [],
+    risks,
     localized,
     mode: 'act',
   };
