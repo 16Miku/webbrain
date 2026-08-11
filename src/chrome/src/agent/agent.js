@@ -69,6 +69,9 @@ import {
   buildPlannerMessages,
   buildPlannerIntentMessages,
   buildReadScopeMessages,
+  PLANNER_RESPONSE_JSON_SCHEMA,
+  PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
+  READ_SCOPE_RESPONSE_JSON_SCHEMA,
   parsePlanFromContent,
   parseReadScopeFromContent,
   formatPlanMarkdown,
@@ -78,6 +81,7 @@ import {
   messageContentToText,
   plannerClarificationForPage,
 } from './planner.js';
+import { plannerRequestBody } from '../providers/provider-compatibility.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
@@ -96,7 +100,7 @@ import {
   workflowUrlMatches,
 } from './workflows.js';
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
-import { buildTrustedRuntimeContext, replaceTrustedRuntimeMode, stripTrustedRuntimeContext } from './runtime-context.js';
+import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
 import {
   isSelectionProseAction,
   normalizeSelectionAction,
@@ -9197,12 +9201,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
     if (
-      gate?.readOnlyFallback === true
+      gate?.plannerFailedContinueAct === true
       && !sourceBoundRun
       && this._readCompletenessNeedsScopeClassification(tabId)
     ) {
       const readScopeOutcome = await this._runReadScopeClassifier(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo,
+        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, true,
       );
       if (!readScopeOutcome.proceed) {
         messages.push({ role: 'assistant', content: readScopeOutcome.message });
@@ -9253,8 +9257,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       proceed: true,
       requestKind: gate.requestKind || 'execute',
       responseOnly: gate.responseOnly === true,
-      readOnlyFallback: gate.readOnlyFallback === true,
-      requiresStateChange: gate.requiresStateChange === true,
+      plannerFailedContinueAct: gate.plannerFailedContinueAct === true,
+      requiresStateChange: typeof gate.requiresStateChange === 'boolean'
+        ? gate.requiresStateChange
+        : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
@@ -9264,19 +9270,82 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _plannerChatOptions(provider, retry = false, intentOnly = false) {
+  _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
     const opts = {
       temperature: retry ? 0.1 : 0.3,
       maxTokens: intentOnly ? 2048 : 4096,
     };
-    const providerName = String(provider?.config?.providerName || provider?.name || '').toLowerCase();
-    // vLLM/SGLang expose Qwen-style chat_template_kwargs; disabling thinking
-    // keeps planner calls from spending the whole output budget on hidden
-    // reasoning and returning empty final content.
-    if (providerName === 'vllm' || providerName === 'sglang') {
-      opts.extraBody = { chat_template_kwargs: { enable_thinking: false } };
+    if (!portable) {
+      const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
+      const schema = kind === 'read_scope'
+        ? READ_SCOPE_RESPONSE_JSON_SCHEMA
+        : (kind === 'intent' ? PLANNER_INTENT_RESPONSE_JSON_SCHEMA : PLANNER_RESPONSE_JSON_SCHEMA);
+      const plannerConfig = {
+        ...(provider?.config || {}),
+        providerName: provider?.config?.providerName || provider?.name || '',
+        model: provider?.config?.model || provider?.model || '',
+      };
+      const extraBody = plannerRequestBody(plannerConfig, {
+        schema,
+        schemaName: `webbrain_${kind}`,
+        includeResponseFormat: !retry,
+        disableThinking: true,
+      });
+      if (Object.keys(extraBody).length) opts.extraBody = extraBody;
     }
     return opts;
+  }
+
+  async _tracePlannerAttemptRequest(runId, step, provider, messages, phase, attempt, runtimeMode) {
+    if (!runId) return;
+    try {
+      await trace.recordLLMRequest(runId, step, {
+        providerClass: provider?.constructor?.name,
+        model: provider?.model,
+        messageCount: messages.length,
+        toolsCount: 0,
+        ...Agent._traceMediaCounts(messages),
+        phase,
+        attempt,
+        ...(attempt > 1 ? { repair: true } : {}),
+      }, {
+        messages,
+        tools: [],
+        runtimeMode,
+      });
+    } catch {}
+  }
+
+  async _tracePlannerAttemptResponse(runId, step, provider, result, phase, attempt, startedAt) {
+    if (!runId) return;
+    try {
+      await trace.recordLLMResponse(runId, step, {
+        content: result.content,
+        toolCalls: null,
+        usage: result.usage,
+        latencyMs: Date.now() - startedAt,
+        model: provider?.model,
+        phase,
+        attempt,
+        ...(attempt > 1 ? { repair: true } : {}),
+      });
+    } catch {}
+  }
+
+  async _tracePlannerAttemptFailure(runId, phase, attempt, error) {
+    if (!runId) return;
+    try {
+      const detail = sanitizePlannerText(
+        formatErrorMessage(error, { fallback: 'Unknown planner request error.' }),
+        500,
+        { collapseWhitespace: true },
+      );
+      await trace.recordNote(runId, 0, 'planner_attempt_failed', {
+        phase,
+        attempt,
+        failureKind: plannerRequestFailureKind(detail),
+      });
+    } catch {}
   }
 
   _plannerPrefersNoThinkPrompt(provider) {
@@ -9397,21 +9466,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _plannerIntentFailureMessage(runOptions = {}) {
     return sanitizePlannerText(
       runOptions?.intentFailureMessage
-        || 'The planner could not return valid structured output after one repair. Continuing this turn in read-only mode.',
+        || 'Planning failed after two attempts. Continuing in Act mode with normal safeguards.',
       500,
     );
   }
 
-  _plannerReadOnlyFallback(runOptions, onUpdate) {
+  _plannerActContinuation(runOptions, onUpdate, runId = null, reason = 'invalid_output') {
     const message = this._plannerIntentFailureMessage(runOptions);
-    onUpdate('warning', { message });
+    onUpdate('warning', {
+      code: 'planner_failed_continue_act',
+      message,
+      planningFailed: true,
+      continuingMode: 'act',
+    });
+    if (runId) {
+      try {
+        trace.recordNote(runId, 0, 'planner_failed_continue_act', {
+          attempts: 2,
+          continuingMode: 'act',
+          reason,
+        });
+      } catch {}
+    }
     return {
       proceed: true,
-      requestKind: 'respond',
+      requestKind: 'execute',
       responseOnly: false,
-      readOnlyFallback: true,
-      requiresStateChange: false,
-      requiresSubmission: false,
+      plannerFailedContinueAct: true,
+      // Planner failure means mutation intent is unknown, not read-only. Keep
+      // that uncertainty so the execution guard cannot accept a read as proof
+      // that a state-changing task completed successfully.
+      requiresStateChange: null,
+      requiresSubmission: null,
       progressLedgerPolicy: 'disabled',
       progressAction: null,
     };
@@ -9427,30 +9513,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _activatePlannerReadOnlyMode(tabId, messages) {
-    this._runModeOverrides.set(tabId, 'ask');
-    if (messages[0]?.role === 'system') {
-      messages[0].content = this._buildSystemPrompt('ask', tabId);
-    }
-    const currentUser = [...messages].reverse().find(message => (
-      message?.role === 'user'
-      && this._messageText(message.content).includes('[Trusted runtime context')
-    ));
-    if (typeof currentUser?.content === 'string') {
-      currentUser.content = replaceTrustedRuntimeMode(currentUser.content, 'ask');
-    } else if (Array.isArray(currentUser?.content)) {
-      currentUser.content = currentUser.content.map(block => (
-        typeof block?.text === 'string'
-          ? { ...block, text: replaceTrustedRuntimeMode(block.text, 'ask') }
-          : block
-      ));
-    }
-    this._persist(tabId);
-    return 'ask';
-  }
-
   _strictPlannerFailure(onUpdate) {
-    const message = 'Strict Planning could not produce valid structured output after one repair. No tools ran; retry the request or switch Plan before Act to Try.';
+    const message = 'Strict Planning could not produce valid structured output after two attempts. No tools ran; retry the request or switch Plan before Act to Try.';
     onUpdate('warning', { message });
     return {
       proceed: false,
@@ -9487,6 +9551,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind: 'respond',
       requiresStateChange: false,
       failureKind,
+    };
+  }
+
+  _plannerPostValidationFailure(error, onUpdate) {
+    const detail = sanitizePlannerText(
+      formatErrorMessage(error, { fallback: 'Unknown plan processing error.' }),
+      500,
+      { collapseWhitespace: true },
+    );
+    const detailSentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+    const message = `A valid plan was produced, but WebBrain could not safely finish plan review or prepare the plan for execution: ${detailSentence} No tools ran.`;
+    onUpdate('warning', {
+      code: 'planner_processing_failed',
+      message,
+    });
+    return {
+      proceed: false,
+      message,
+      reason: 'planner_error',
+      requestKind: 'respond',
+      requiresStateChange: null,
     };
   }
 
@@ -9610,7 +9695,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ];
   }
 
-  async _runReadScopeClassifier(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null) {
+  async _runReadScopeClassifier(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null, bestEffort = false) {
     if (!this._readCompletenessNeedsScopeClassification(tabId)) {
       return { proceed: true, readScope: null };
     }
@@ -9641,7 +9726,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let result = await this._chatWithCostAllowance(
         provider,
         messages,
-        { ...this._plannerChatOptions(provider, false, true), temperature: 0, maxTokens: 64 },
+        { ...this._plannerChatOptions(provider, false, true, 'read_scope'), temperature: 0, maxTokens: 64 },
         costState,
         { tabId, generationName: 'read_scope' },
       );
@@ -9684,7 +9769,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         result = await this._chatWithCostAllowance(
           provider,
           repairMessages,
-          { ...this._plannerChatOptions(provider, true, true), temperature: 0 },
+          { ...this._plannerChatOptions(provider, true, true, 'read_scope'), temperature: 0 },
           costState,
           { tabId, generationName: 'read_scope' },
         );
@@ -9704,11 +9789,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         readScope = parseReadScopeFromContent(result.content);
       }
       if (!readScope) {
-        return {
-          proceed: false,
-          message: 'WebBrain could not determine how much of the active conversation must be read. No page tools ran; retry the request.',
-          reason: 'read_scope_error',
-        };
+        if (bestEffort) {
+          readScope = 'complete_thread';
+          if (runId) {
+            try {
+              trace.recordNote(runId, 0, 'read_scope_classifier_failed_defaulted_complete_thread', {
+                attempts: 2,
+              });
+            } catch {}
+          }
+        } else {
+          return {
+            proceed: false,
+            message: 'WebBrain could not determine how much of the active conversation must be read. No page tools ran; retry the request.',
+            reason: 'read_scope_error',
+          };
+        }
       }
       this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: readScope });
       return { proceed: true, readScope };
@@ -9718,6 +9814,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (this._isCostAllowanceError(error)) {
         return { proceed: false, message: error.message, reason: 'cost_limit' };
+      }
+      if (bestEffort) {
+        this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: 'complete_thread' });
+        if (runId) {
+          try {
+            trace.recordNote(runId, 0, 'read_scope_classifier_failed_defaulted_complete_thread', {
+              requestError: true,
+            });
+          } catch {}
+        }
+        return { proceed: true, readScope: 'complete_thread', classificationFailed: true };
       }
       const detail = formatErrorMessage(error, { fallback: 'Unknown read-scope classifier error.' });
       return {
@@ -9756,57 +9863,68 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const plannerStep = 0;
     onUpdate('thinking', { step: plannerStep, note: 'Understanding request…' });
 
+    let hasValidPlannerResponse = false;
     try {
-      if (runId) {
-        try {
-          trace.recordLLMRequest(runId, plannerStep, {
-            providerClass: provider?.constructor?.name,
-            model: provider?.model,
-            messageCount: plannerMessages.length,
-            toolsCount: 0,
-            ...Agent._traceMediaCounts(plannerMessages),
-            phase: 'intent',
-          }, {
-            messages: plannerMessages,
-            tools: [],
-            runtimeMode: this._effectiveRunMode(tabId),
-          });
-        } catch {}
-      }
-      const startedAt = Date.now();
-      let result = await this._chatWithCostAllowance(
-        provider,
-        plannerMessages,
-        this._plannerChatOptions(provider, false, true),
-        costState,
-        { tabId, generationName: 'planner_intent' },
+      const runtimeMode = this._effectiveRunMode(tabId);
+      await this._tracePlannerAttemptRequest(
+        runId, plannerStep, provider, plannerMessages, 'intent', 1, runtimeMode,
       );
-      if (runId) {
-        try {
-          trace.recordLLMResponse(runId, plannerStep, {
-            content: result.content,
-            toolCalls: null,
-            usage: result.usage,
-            latencyMs: Date.now() - startedAt,
-            model: provider?.model,
-            phase: 'intent',
-          });
-        } catch {}
+      const startedAt = Date.now();
+      let result;
+      let plannerRepairUsed = false;
+      try {
+        result = await this._chatWithCostAllowance(
+          provider,
+          plannerMessages,
+          this._plannerChatOptions(provider, false, true),
+          costState,
+          { tabId, generationName: 'planner_intent' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'intent', 1, startedAt,
+        );
+      } catch (firstError) {
+        if (this._checkAbort(tabId) || this._isCostAllowanceError(firstError)) throw firstError;
+        plannerRepairUsed = true;
+        await this._tracePlannerAttemptFailure(runId, 'intent', 1, firstError);
+        onUpdate('thinking', { step: plannerStep, note: 'Understanding request… retrying with portable JSON options' });
+        const repairMessages = this._plannerRepairMessages(plannerMessages);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'intent', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
+        result = await this._chatWithCostAllowance(
+          provider,
+          repairMessages,
+          this._plannerChatOptions(provider, true, true, 'intent', true),
+          costState,
+          { tabId, generationName: 'planner_intent' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'intent', 2, repairStartedAt,
+        );
       }
       if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
 
-      let plannerRepairUsed = false;
       let consistencyRepairKind = null;
       let plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
-      if (!plan) {
+      if (!plan && !plannerRepairUsed) {
         plannerRepairUsed = true;
         onUpdate('thinking', { step: plannerStep, note: 'Understanding request… retrying JSON output' });
+        const repairMessages = this._plannerRepairMessages(plannerMessages);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'intent', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
         result = await this._chatWithCostAllowance(
           provider,
-          this._plannerRepairMessages(plannerMessages),
+          repairMessages,
           this._plannerChatOptions(provider, true, true),
           costState,
           { tabId, generationName: 'planner_intent' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'intent', 2, repairStartedAt,
         );
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
@@ -9817,12 +9935,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         plannerRepairUsed = true;
         consistencyRepairKind = consistencyIssue.kind;
         onUpdate('thinking', { step: plannerStep, note: 'Understanding request… rechecking tool-dependent intent' });
+        const repairMessages = this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'intent', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
         result = await this._chatWithCostAllowance(
           provider,
-          this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue),
+          repairMessages,
           this._plannerChatOptions(provider, true, true),
           costState,
           { tabId, generationName: 'planner_intent' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'intent', 2, repairStartedAt,
         );
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
@@ -9830,12 +9956,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!plan) {
         return recheckOnly
           ? this._plannerIntentRecheckFallback()
-          : this._plannerReadOnlyFallback(runOptions, onUpdate);
+          : this._plannerActContinuation(runOptions, onUpdate, runId, 'invalid_output');
       }
+      hasValidPlannerResponse = true;
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         return recheckOnly
           ? this._plannerIntentRecheckFallback()
-          : this._plannerReadOnlyFallback(runOptions, onUpdate);
+          : this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
       }
       if (plan.request_kind === 'respond') {
         return {
@@ -9874,7 +10001,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
       if (recheckOnly) return this._plannerIntentRecheckFallback();
-      return this._plannerRequestFailure(e, onUpdate, provider);
+      if (hasValidPlannerResponse) {
+        if (runId) {
+          try {
+            await trace.recordNote(runId, 0, 'planner_post_validation_failed', {
+              phase: 'intent',
+            });
+          } catch {}
+        }
+        return this._plannerPostValidationFailure(e, onUpdate);
+      }
+      await this._tracePlannerAttemptFailure(runId, 'intent', 2, e);
+      return this._plannerActContinuation(runOptions, onUpdate, runId, 'request_error');
     }
   }
 
@@ -9909,62 +10047,73 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     const plannerStep = 0;
 
+    let hasValidPlannerResponse = false;
     try {
-      if (runId) {
-        try {
-          trace.recordLLMRequest(runId, plannerStep, {
-            providerClass: provider?.constructor?.name,
-            model: provider?.model,
-            messageCount: plannerMessages.length,
-            toolsCount: 0,
-            ...Agent._traceMediaCounts(plannerMessages),
-            phase: 'planner',
-          }, {
-            messages: plannerMessages,
-            tools: [],
-            runtimeMode: this._effectiveRunMode(tabId),
-          });
-        } catch {}
-      }
-      const _llmStart = Date.now();
-      let result = await this._chatWithCostAllowance(
-        provider,
-        plannerMessages,
-        this._plannerChatOptions(provider),
-        costState,
-        { tabId, generationName: 'planner' },
+      const runtimeMode = this._effectiveRunMode(tabId);
+      await this._tracePlannerAttemptRequest(
+        runId, plannerStep, provider, plannerMessages, 'planner', 1, runtimeMode,
       );
-      if (runId) {
-        try {
-          trace.recordLLMResponse(runId, plannerStep, {
-            content: result.content,
-            toolCalls: null,
-            usage: result.usage,
-            latencyMs: Date.now() - _llmStart,
-            model: provider?.model,
-            phase: 'planner',
-          });
-        } catch {}
+      const startedAt = Date.now();
+      let result;
+      let plannerRepairUsed = false;
+      try {
+        result = await this._chatWithCostAllowance(
+          provider,
+          plannerMessages,
+          this._plannerChatOptions(provider),
+          costState,
+          { tabId, generationName: 'planner' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'planner', 1, startedAt,
+        );
+      } catch (firstError) {
+        if (this._checkAbort(tabId) || this._isCostAllowanceError(firstError)) throw firstError;
+        plannerRepairUsed = true;
+        await this._tracePlannerAttemptFailure(runId, 'planner', 1, firstError);
+        onUpdate('thinking', { step: plannerStep, note: 'Planning… retrying with portable JSON options' });
+        const repairMessages = this._plannerRepairMessages(plannerMessages);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
+        result = await this._chatWithCostAllowance(
+          provider,
+          repairMessages,
+          this._plannerChatOptions(provider, true, false, 'planner', true),
+          costState,
+          { tabId, generationName: 'planner' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
+        );
       }
       if (this._checkAbort(tabId)) {
         return { proceed: false, message: '[Stopped by user]' };
       }
-      let plannerRepairUsed = false;
       let consistencyRepairKind = null;
       let plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       // Retry whenever the first attempt yields no parseable plan — empty
       // output, thinking-only output, OR non-JSON prose ("Sure, here's the
       // plan…"). The repair prompt exists precisely to coerce JSON out of that
       // prose case, so it must not be gated on emptiness/reasoning. (#1)
-      if (!plan) {
+      if (!plan && !plannerRepairUsed) {
         plannerRepairUsed = true;
         onUpdate('thinking', { step: 0, note: 'Planning… retrying JSON output' });
+        const repairMessages = this._plannerRepairMessages(plannerMessages);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
         result = await this._chatWithCostAllowance(
           provider,
-          this._plannerRepairMessages(plannerMessages),
+          repairMessages,
           this._plannerChatOptions(provider, true),
           costState,
           { tabId, generationName: 'planner' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
         );
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
@@ -9975,12 +10124,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         plannerRepairUsed = true;
         consistencyRepairKind = consistencyIssue.kind;
         onUpdate('thinking', { step: 0, note: 'Planning… rechecking tool-dependent intent' });
+        const repairMessages = this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue);
+        await this._tracePlannerAttemptRequest(
+          runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
+        );
+        const repairStartedAt = Date.now();
         result = await this._chatWithCostAllowance(
           provider,
-          this._plannerIntentConsistencyRepairMessages(plannerMessages, consistencyIssue),
+          repairMessages,
           this._plannerChatOptions(provider, true),
           costState,
           { tabId, generationName: 'planner' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
         );
         plan = parsePlanFromContent(result.content, { requireIntent: true, locale });
       }
@@ -9993,12 +10150,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!plan) {
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
           ? this._strictPlannerFailure(onUpdate)
-          : this._plannerReadOnlyFallback(runOptions, onUpdate);
+          : this._plannerActContinuation(runOptions, onUpdate, runId, 'invalid_output');
       }
+      hasValidPlannerResponse = true;
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
           ? this._strictPlannerFailure(onUpdate)
-          : this._plannerReadOnlyFallback(runOptions, onUpdate);
+          : this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
       }
       if (this._shouldRecheckReadOnlyFollowUpIntent(plan, historyDigest, followUpContext)) {
         const intentGate = await this._runPlannerIntentGate(
@@ -10142,7 +10300,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isCostAllowanceError(e)) {
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
-      return this._plannerRequestFailure(e, onUpdate, provider);
+      if (hasValidPlannerResponse) {
+        if (runId) {
+          try {
+            await trace.recordNote(runId, 0, 'planner_post_validation_failed', {
+              phase: 'planner',
+            });
+          } catch {}
+        }
+        return this._plannerPostValidationFailure(e, onUpdate);
+      }
+      await this._tracePlannerAttemptFailure(runId, 'planner', 2, e);
+      return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
+        ? this._strictPlannerFailure(onUpdate)
+        : this._plannerActContinuation(runOptions, onUpdate, runId, 'request_error');
     }
   }
 
@@ -13894,7 +14065,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const enabled = this._isActionMode(mode)
       && runOptions?.cloudRun !== true
       && requestKind === 'execute';
-    const requiresStateChange = gateOutcome?.requiresStateChange === true;
+    const requiresStateChange = typeof gateOutcome?.requiresStateChange === 'boolean'
+      ? gateOutcome.requiresStateChange
+      : null;
     const requiresSubmission = typeof gateOutcome?.requiresSubmission === 'boolean'
       ? gateOutcome.requiresSubmission
       : null;
@@ -14023,9 +14196,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _executionEvidenceSatisfied(state) {
     if (!state) return false;
-    const taskEvidenceSatisfied = state.requiresStateChange
-      ? state.successfulConsequentialToolCalls > 0
-      : state.successfulTaskToolCalls > 0;
+    // Unknown mutation intent is conservative: observational evidence may be
+    // useful progress, but it cannot prove successful completion of a task the
+    // failed planner may have classified as state-changing.
+    const taskEvidenceSatisfied = state.requiresStateChange === false
+      ? state.successfulTaskToolCalls > 0
+      : state.successfulConsequentialToolCalls > 0;
     const schedulingEvidenceSatisfied = !state.requiredSchedulingTool
       || state.successfulRequiredSchedulingToolCalls > 0;
     return taskEvidenceSatisfied && schedulingEvidenceSatisfied;
@@ -14167,6 +14343,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !!state.requiredSchedulingTool
       && state.successfulRequiredSchedulingToolCalls === 0;
     const missingEvidence = !terminalFailure && !this._executionEvidenceSatisfied(state);
+    const unknownMutationIntent = state.requiresStateChange == null;
     // Every plain Act/Dev terminal gets one protocol recovery regardless of
     // its language. Successful completion and real blockers must both use
     // done; this avoids guessing intent from localized prose.
@@ -14196,6 +14373,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? '[PLAN EXECUTION BLOCK: No current user stop was received. The previous response echoed a stale local cancellation status from conversation history. That status is UI metadata, not an instruction or task result. Continue the active task with permitted tools. If complete or blocked, call done with an explicit outcome; do not repeat the cancellation status or return plain text.]'
           : missingRequiredSchedulingTool
           ? `[PLAN EXECUTION BLOCK: The approved plan requires a successful ${state.requiredSchedulingTool} call before this task can finish successfully. A one-time read, scroll, send, or other action does not create the scheduled work. Call ${state.requiredSchedulingTool} with the user's requested timing and verify success:true plus scheduled:true. If the schedule is unsupported or still lacks required timing, call done with outcome partial or failed and explain the exact limitation; do not claim it was scheduled.]`
+          : unknownMutationIntent
+          ? '[PLAN EXECUTION BLOCK: Planning failed, so the runtime could not determine whether this task requires a state change. Continue with normally permitted tools. A success outcome now requires a verified consequential tool call; if the useful result is read-only or no safe consequential action is needed, deliver that result with done outcome partial instead of claiming success. Do not invent or perform a mutation merely to satisfy this guard.]'
           : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',
       };
     }
@@ -23305,12 +23484,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return (finalResponse = gateOutcome.message || 'More information is required.');
     }
-    if (gateOutcome.readOnlyFallback === true) {
-      // The intent/planner model failed its JSON contract, not the user's
-      // request. Keep the turn useful without silently authorizing actions:
-      // switch this run to the ordinary Ask prompt and Ask tool catalog.
-      mode = this._activatePlannerReadOnlyMode(tabId, messages);
-    }
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
@@ -24120,11 +24293,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? 'cost_limit'
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return finish(gateOutcome.message || 'More information is required.', status);
-    }
-    if (gateOutcome.readOnlyFallback === true) {
-      // See processMessage: malformed planner output degrades only this turn
-      // to Ask/read-only instead of pretending the user's intent was unclear.
-      mode = this._activatePlannerReadOnlyMode(tabId, messages);
     }
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(

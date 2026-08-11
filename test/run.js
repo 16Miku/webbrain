@@ -5820,9 +5820,9 @@ test('Ask and managed cloud classify communication read scope across languages',
     fallbackAgent._currentUrl = async () => gmailUrl;
     fallbackAgent._runPlannerIntentGate = async () => ({
       proceed: true,
-      requestKind: 'respond',
-      readOnlyFallback: true,
-      requiresStateChange: false,
+      requestKind: 'execute',
+      plannerFailedContinueAct: true,
+      requiresStateChange: null,
     });
     fallbackAgent._chatWithCostAllowance = async () => ({ content: '{"read_scope":"complete_thread"}', usage: {} });
     await fallbackAgent._beginReadCompleteness(fallbackTabId, 'Bu konuşmayı özetle.', {});
@@ -5837,8 +5837,9 @@ test('Ask and managed cloud classify communication read scope across languages',
       { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
       { locale: 'tr' },
     );
-    assert.equal(fallbackOutcome.readOnlyFallback, true, `${browserLabel}: planner fallback marker was lost`);
-    assert.ok(fallbackAgent._readCompletenessBlock(fallbackTabId), `${browserLabel}: planner-to-Ask fallback skipped structured scope classification`);
+    assert.equal(fallbackOutcome.plannerFailedContinueAct, true, `${browserLabel}: planner continuation marker was lost`);
+    assert.equal(fallbackOutcome.requestKind, 'execute', `${browserLabel}: planner failure left Act execution`);
+    assert.ok(fallbackAgent._readCompletenessBlock(fallbackTabId), `${browserLabel}: Act continuation skipped structured scope classification`);
 
     const unrelatedTabId = 52790 + browserIndex;
     const unrelatedAgent = new AgentClass({ getActive: () => fallbackProvider, getVisionProvider: async () => null });
@@ -6033,6 +6034,37 @@ test('trace export: does not duplicate finalContent already rendered as the last
 
 test('trace export: chrome and firefox serializers are identical', () => {
   assert.equal(tracesToMarkdownFx(TRACE_RUNS).markdown, tracesToMarkdown(TRACE_RUNS).markdown);
+});
+
+test('trace export: records planner retry failures and Act continuation', () => {
+  const run = [{
+    run: { runId: 'planner-fallback', userMessage: 'Do the task', model: 'test', status: 'done' },
+    events: [
+      {
+        runId: 'planner-fallback',
+        seq: 1,
+        kind: 'note',
+        data: {
+          note: 'planner_attempt_failed',
+          extra: { phase: 'planner', attempt: 1, failureKind: 'provider' },
+        },
+      },
+      {
+        runId: 'planner-fallback',
+        seq: 2,
+        kind: 'note',
+        data: {
+          note: 'planner_failed_continue_act',
+          extra: { attempts: 2, continuingMode: 'act', reason: 'request_error' },
+        },
+      },
+    ],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(run);
+    assert.match(markdown, /planner attempt 1 failed · kind=provider/i, `${label}: retry failure missing`);
+    assert.match(markdown, /Planning failed after 2 attempts · continued in Act mode · reason=request_error/, `${label}: Act continuation missing`);
+  }
 });
 
 test('trace export: renders Ask streaming decisions and aggregate lifecycle metrics', () => {
@@ -43639,6 +43671,61 @@ test('provider compatibility maps reasoning, roles, token fields, and per-call o
       compat: { preset: 'openai', reasoningEffort: 'off' },
     }), { reasoning_effort: 'none' });
 
+    const plannerSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { request_kind: { type: 'string' } },
+      required: ['request_kind'],
+    };
+    assert.deepEqual(compat.plannerRequestBody({
+      providerName: 'openrouter',
+      model: 'deepseek/deepseek-v4',
+    }, { schema: plannerSchema }), {
+      reasoning: { enabled: false },
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'webbrain_planner', strict: true, schema: plannerSchema },
+      },
+    }, 'OpenRouter planner controls are protocol-based, not model-based');
+    assert.deepEqual(compat.plannerRequestBody({
+      providerName: 'deepseek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-v4',
+    }, { schema: plannerSchema }), {
+      thinking: { type: 'disabled' },
+      response_format: { type: 'json_object' },
+    }, 'direct DeepSeek uses its native thinking and JSON Object controls');
+    assert.deepEqual(compat.plannerRequestBody({
+      providerName: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.6-terra',
+    }, { schema: plannerSchema }), {
+      reasoning: { effort: 'minimal' },
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'webbrain_planner', strict: true, schema: plannerSchema },
+      },
+    }, 'official OpenAI Responses planners receive low-budget reasoning and strict JSON schema');
+    assert.equal(
+      compat.plannerRequestBody({
+        providerName: 'lmstudio',
+        category: 'local',
+        model: 'Qwen3.5-VL',
+      }, { schema: plannerSchema }).chat_template_kwargs?.enable_thinking,
+      false,
+      'Qwen-family local servers receive the chat-template thinking control',
+    );
+    assert.equal(compat.plannerRequestBody({
+      providerName: 'alibaba',
+      category: 'cloud',
+      model: 'qwen-plus',
+    }, { schema: plannerSchema }).chat_template_kwargs, undefined, 'hosted Qwen APIs do not receive local chat-template fields');
+    assert.deepEqual(compat.plannerRequestBody({
+      providerName: 'custom',
+      baseUrl: 'https://proxy.example/v1',
+      model: 'deepseek-v4',
+    }, { schema: plannerSchema }), {}, 'unknown compatible endpoints receive no speculative fields');
+
     // Partial nested extras must not clobber required nested fields.
     const nestedBase = {
       store: false,
@@ -54603,7 +54690,7 @@ test('full planner carries explicit app-state evidence authorization', async () 
   });
 });
 
-test('planner intent degrades to a localized read-only turn after one repair', async () => {
+test('planner intent stays in Act with a localized warning after two invalid attempts', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
       const agent = new AgentClass({ getActive: () => ({ name: 'intent-test', model: 'intent-test' }) });
@@ -54612,12 +54699,12 @@ test('planner intent degrades to a localized read-only turn after one repair', a
         calls += 1;
         return { content: 'not valid planner JSON' };
       };
-      const message = 'Planlayıcı bir onarımdan sonra geçerli yapılandırılmış çıktı döndüremedi. Bu tur salt okunur modda devam ediyor.';
-      let warning = '';
+      const message = 'Planlama iki denemeden sonra başarısız oldu. Normal güvenlik kontrolleriyle Act modunda devam ediliyor.';
+      let warning = null;
       const gate = await agent._runPlannerIntentGate(
         8680 + index,
         { role: 'user', content: 'Bunu hallet.' },
-        (type, data) => { if (type === 'warning') warning = data?.message || ''; },
+        (type, data) => { if (type === 'warning') warning = data || null; },
         null,
         null,
         '',
@@ -54625,16 +54712,19 @@ test('planner intent degrades to a localized read-only turn after one repair', a
         'act',
         { locale: 'tr', intentFailureMessage: message },
       );
-      assert.equal(calls, 2, `${AgentClass.name}: invalid intent should repair exactly once`);
+      assert.equal(calls, 2, `${AgentClass.name}: invalid intent should make exactly two attempts`);
       assert.equal(gate.proceed, true, `${AgentClass.name}: invalid planner JSON stopped an otherwise useful turn`);
-      assert.equal(gate.requestKind, 'respond', `${AgentClass.name}: fallback should not authorize execution`);
-      assert.equal(gate.readOnlyFallback, true, `${AgentClass.name}: fallback did not constrain the turn to Ask mode`);
-      assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: fallback authorized state changes`);
-      assert.equal(gate.responseOnly, false, `${AgentClass.name}: fallback should retain read-only browser tools`);
+      assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: planner failure left Act execution`);
+      assert.equal(gate.plannerFailedContinueAct, true, `${AgentClass.name}: Act continuation marker missing`);
+      assert.equal(gate.requiresStateChange, null, `${AgentClass.name}: unknown planner intent was collapsed to read-only`);
+      assert.equal(gate.requiresSubmission, null, `${AgentClass.name}: unknown planner intent invented submit authorization`);
+      assert.equal(gate.responseOnly, false, `${AgentClass.name}: fallback incorrectly became response-only`);
       assert.equal(gate.progressLedgerPolicy, 'disabled', `${AgentClass.name}: fallback should not create execution progress`);
       assert.equal(gate.progressAction, null, `${AgentClass.name}: fallback retained an execution action`);
       assert.equal(gate.message, undefined, `${AgentClass.name}: fallback leaked a fake clarification into chat`);
-      assert.equal(warning, message, `${AgentClass.name}: read-only fallback should use localized UI copy`);
+      assert.equal(warning?.code, 'planner_failed_continue_act', `${AgentClass.name}: toast warning code missing`);
+      assert.equal(warning?.continuingMode, 'act', `${AgentClass.name}: warning did not describe Act continuation`);
+      assert.equal(warning?.message, message, `${AgentClass.name}: Act continuation should use localized UI copy`);
     }
   });
 });
@@ -54682,7 +54772,7 @@ test('planner intent preserves Act and canonical execution fields when localized
       assert.equal(calls, 1, `${AgentClass.name}: missing display localization triggered an unnecessary repair`);
       assert.equal(gate.proceed, true, `${AgentClass.name}: recoverable localization blocked execution`);
       assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: download intent was downgraded`);
-      assert.equal(gate.readOnlyFallback, undefined, `${AgentClass.name}: download plan fell back to Ask`);
+      assert.equal(gate.plannerFailedContinueAct, undefined, `${AgentClass.name}: valid download plan was marked as a planner failure`);
       assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: localization recovery changed canonical execution metadata`);
       assert.equal(warning, '', `${AgentClass.name}: recoverable localization emitted a planner failure warning`);
     }
@@ -61606,7 +61696,7 @@ test('planner submit clarification does not cross page boundaries', async () => 
   });
 });
 
-test('planner falls back safely when repaired respond intent still lists tools', async () => {
+test('planner stays in Act when repaired respond intent still lists tools', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
       for (const [routeIndex, route] of ['intent', 'full'].entries()) {
@@ -61656,10 +61746,12 @@ test('planner falls back safely when repaired respond intent still lists tools',
             : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
 
           assert.equal(calls, 2, `${AgentClass.name}: ${route}/${scenarioLabel} exceeded the one-repair budget`);
-          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${scenarioLabel} did not enter the safe fallback`);
-          assert.equal(gate.readOnlyFallback, true, `${AgentClass.name}: ${route}/${scenarioLabel} accepted an unresolved intent`);
+          assert.equal(gate.proceed, true, `${AgentClass.name}: ${route}/${scenarioLabel} did not continue`);
+          assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: ${route}/${scenarioLabel} left Act execution`);
+          assert.equal(gate.plannerFailedContinueAct, true, `${AgentClass.name}: ${route}/${scenarioLabel} lost the planner-failure marker`);
           assert.notEqual(gate.responseOnly, true, `${AgentClass.name}: ${route}/${scenarioLabel} still routed tool-dependent work response-only`);
-          assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: ${route}/${scenarioLabel} fallback gained mutation authority`);
+          assert.equal(gate.requiresStateChange, null, `${AgentClass.name}: ${route}/${scenarioLabel} collapsed unknown mutation intent`);
+          assert.equal(gate.requiresSubmission, null, `${AgentClass.name}: ${route}/${scenarioLabel} invented submit authorization`);
         }
       }
     }
@@ -62160,7 +62252,7 @@ test('plan before act: try is default while explicit off is preserved', () => {
   ]) {
     const locale = fs.readFileSync(path.join(ROOT, file), 'utf8');
     assert.match(locale, /Try \(default\).*may reuse a recently approved plan for a short follow-up/, `${file} should describe try planning as the default with short-follow-up reuse`);
-    assert.match(locale, /Try falls back to a read-only turn if intent or planning remains invalid after one repair; Strict stops before tools/, `${file} should describe the safe read-only planner fallback`);
+    assert.match(locale, /Try retries once, then continues in Act with a warning if intent or planning is still invalid; Strict stops before tools/, `${file} should describe the two-attempt Act continuation`);
     assert.match(locale, /'st\.display\.plan_before_act\.try': 'Try planning \(default\)'/, `${file} should label try planning as default`);
     assert.match(locale, /'st\.display\.plan_before_act\.off': 'Off'/, `${file} should not label off as default`);
     assert.doesNotMatch(locale, /plan_before_act\.desc[^\n]*Off by default/, `${file} should not describe plan-before-act as off by default`);
@@ -62953,27 +63045,29 @@ test('planner gate: abort during planner call stops before review card', async (
   });
 });
 
-test('planner gate: try mode degrades to read-only when structured intent cannot be parsed', async () => {
+test('planner gate: try mode stays in Act when structured intent cannot be parsed', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
       const tabId = label === 'chrome' ? 9151 : 9152;
       const agent = new AgentClass({ getActive: () => ({}) });
       agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
       agent._chatWithCostAllowance = async () => ({ content: 'Here is my plan: not valid json at all' });
-      let warning = '';
+      let warning = null;
 
       const gate = await agent._runPlannerGate(
         tabId,
         { role: 'user', content: 'do something risky' },
-        (type, data) => { if (type === 'warning') warning = data?.message || ''; },
+        (type, data) => { if (type === 'warning') warning = data || null; },
         null,
       );
 
       assert.equal(gate.proceed, true, `${label} malformed planner output should not kill the user turn`);
-      assert.equal(gate.requestKind, 'respond', `${label} fallback should not authorize execution`);
-      assert.equal(gate.readOnlyFallback, true, `${label} fallback should switch the run to Ask tools`);
-      assert.equal(gate.requiresStateChange, false, `${label} fallback should prohibit state changes`);
-      assert.match(warning, /could not return valid structured output.*read-only mode/i, `${label} warning`);
+      assert.equal(gate.requestKind, 'execute', `${label} planner failure should preserve Act execution`);
+      assert.equal(gate.plannerFailedContinueAct, true, `${label} planner failure marker missing`);
+      assert.equal(gate.requiresStateChange, null, `${label} fallback should preserve unknown mutation intent`);
+      assert.equal(gate.requiresSubmission, null, `${label} fallback should not invent submit authorization`);
+      assert.equal(warning?.code, 'planner_failed_continue_act', `${label} warning code`);
+      assert.match(warning?.message || '', /planning failed.*two attempts.*Act mode/i, `${label} warning`);
     }
   });
 });
@@ -63002,16 +63096,56 @@ test('planner gate: strict mode fails closed when plan JSON cannot be parsed', a
   });
 });
 
-test('planner request errors stop accurately instead of masquerading as JSON repair failures', async () => {
+test('planner gate: errors after a valid plan never bypass required review', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
-      const tabId = label === 'chrome' ? 9155 : 9156;
-      const provider = { name: 'broken-provider', model: 'broken-model', config: {} };
-      const agent = new AgentClass({ getActive: () => provider });
+      const tabId = label === 'chrome' ? 9165 : 9166;
+      const agent = new AgentClass({ getActive: () => ({ name: 'planner-test', model: 'planner-test' }) });
+      agent.setPlanReviewSettings({ mode: 'always' });
       let calls = 0;
       agent._chatWithCostAllowance = async () => {
         calls += 1;
-        throw new Error('401 invalid API key');
+        return { content: plannerFixtureJson(), usage: {} };
+      };
+      agent._waitForPlanReview = async () => {
+        throw new Error('plan review channel unavailable');
+      };
+      let warning = null;
+
+      const gate = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Perform this task.' },
+        (type, data) => { if (type === 'warning') warning = data || null; },
+        null,
+      );
+
+      assert.equal(calls, 1, `${label}: post-validation failure retried the planner`);
+      assert.equal(gate.proceed, false, `${label}: plan review failure bypassed approval and entered Act`);
+      assert.equal(gate.reason, 'planner_error', `${label}: plan review failure lost its terminal reason`);
+      assert.equal(gate.plannerFailedContinueAct, undefined, `${label}: plan review failure was mislabeled as planner generation failure`);
+      assert.equal(warning?.code, 'planner_processing_failed', `${label}: plan review failure warning missing`);
+      assert.match(gate.message || '', /valid plan.*could not safely finish plan review/i, `${label}: plan review failure message is misleading`);
+    }
+  });
+});
+
+test('planner request errors get one portable retry before Act continuation', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const tabId = label === 'chrome' ? 9155 : 9156;
+      const provider = {
+        name: 'openrouter',
+        model: 'deepseek/deepseek-v4',
+        config: { providerName: 'openrouter', category: 'router', model: 'deepseek/deepseek-v4' },
+      };
+      const agent = new AgentClass({ getActive: () => provider });
+      let calls = 0;
+      const seenOptions = [];
+      agent._chatWithCostAllowance = async (_provider, _messages, options) => {
+        calls += 1;
+        seenOptions.push(options);
+        if (calls === 1) throw new Error('400 unsupported response_format');
+        return { content: plannerFixtureJson(), usage: {} };
       };
       let warning = null;
       const onUpdate = (type, data) => { if (type === 'warning') warning = data || null; };
@@ -63022,102 +63156,51 @@ test('planner request errors stop accurately instead of masquerading as JSON rep
         onUpdate,
         null,
       );
-      assert.equal(calls, 1, `${label}: intent request error should not trigger repair or main-agent fallback calls`);
-      assert.equal(intent.proceed, false, `${label}: intent request error unexpectedly continued`);
-      assert.equal(intent.reason, 'planner_error', `${label}: intent request error lost its planner status`);
-      assert.equal(intent.requestKind, 'respond', `${label}: provider failure was mislabeled as ambiguous intent`);
-      assert.equal(intent.readOnlyFallback, undefined, `${label}: provider failure was treated as invalid JSON`);
-      assert.match(intent.message || '', /Planner request failed.*401 invalid API key/i, `${label}: intent request error hid the provider failure`);
-      assert.match(intent.message || '', /No tools ran\.$/, `${label}: planner failure did not state that execution never began`);
-      assert.equal(intent.failureKind, 'auth', `${label}: 401 planner failure was not classified as an authentication problem`);
-      assert.equal(warning?.code, 'planner_request_failed', `${label}: planner request failure warning lacks a stable UI code`);
-      assert.equal(warning?.failureKind, 'auth', `${label}: planner request failure warning lost its authentication category`);
-      assert.equal(warning?.provider, 'broken-provider', `${label}: planner request failure warning lost its provider label`);
-      assert.equal(warning?.message, intent.message, `${label}: intent request warning diverged from the terminal error`);
+      assert.equal(calls, 2, `${label}: intent request error should retry exactly once`);
+      assert.equal(intent.proceed, true, `${label}: portable intent retry did not recover`);
+      assert.equal(intent.requestKind, 'execute', `${label}: recovered intent changed route`);
+      assert.equal(seenOptions[0].extraBody?.reasoning?.enabled, false, `${label}: first attempt missed OpenRouter thinking control`);
+      assert.equal(seenOptions[0].extraBody?.response_format?.type, 'json_schema', `${label}: first attempt missed structured output`);
+      assert.equal(seenOptions[1].extraBody, undefined, `${label}: portable retry retained provider-specific fields`);
+      assert.equal(warning, null, `${label}: recovered retry emitted a failure toast`);
 
       calls = 0;
+      seenOptions.length = 0;
       warning = null;
+      agent._chatWithCostAllowance = async (_provider, _messages, options) => {
+        calls += 1;
+        seenOptions.push(options);
+        throw new Error(calls === 1 ? '400 unsupported response_format' : '503 temporarily unavailable');
+      };
       const full = await agent._runPlannerGate(
         tabId,
         { role: 'user', content: 'Perform this task.' },
         onUpdate,
         null,
       );
-      assert.equal(calls, 1, `${label}: full planner request error should not trigger repair or main-agent fallback calls`);
-      assert.equal(full.proceed, false, `${label}: full planner request error unexpectedly continued`);
-      assert.equal(full.reason, 'planner_error', `${label}: full planner request error lost its planner status`);
-      assert.equal(full.readOnlyFallback, undefined, `${label}: full planner provider failure was treated as invalid JSON`);
-      assert.match(full.message || '', /Planner request failed.*401 invalid API key/i, `${label}: full planner request error hid the provider failure`);
-      assert.equal(warning?.message, full.message, `${label}: full planner warning diverged from the terminal error`);
-
-      agent._chatWithCostAllowance = async () => {
-        throw new Error('openrouter error 503: temporarily unavailable');
-      };
-      warning = null;
-      const transient = await agent._runPlannerGate(
-        tabId,
-        { role: 'user', content: 'Perform this task later.' },
-        onUpdate,
-        null,
-      );
-      assert.equal(transient.failureKind, 'transient', `${label}: 503 planner failure was not classified as transient`);
-      assert.equal(warning?.failureKind, 'transient', `${label}: transient category was not exposed to the sidepanel`);
-
-      // The category only reorders two always-present buttons, but it is the
-      // whole point of the card: an auth failure must lead with Providers and
-      // a dropped connection must lead with Retry. Classification runs on raw
-      // provider prose, so pin the shapes real providers actually emit —
-      // including the browser's own fetch failures, which is what a stopped
-      // local server looks like from inside the extension.
-      const classifications = [
-        ['Incorrect API key provided: sk-***. (status 401)', 'auth', 'parenthesized 401'],
-        ['Unauthorized', 'auth', 'status-free auth rejection'],
-        ['invalid_api_key: authentication failed', 'auth', 'textual auth rejection'],
-        ['TypeError: Failed to fetch', 'transient', 'Chrome transport failure'],
-        ['NetworkError when attempting to fetch resource.', 'transient', 'Firefox transport failure'],
-        ['The request timed out after 60000 ms', 'transient', 'timeout'],
-        ['ECONNREFUSED 127.0.0.1:11434', 'transient', 'unreachable local provider'],
-        ['Rate limit reached. Please try again (429)', 'transient', 'rate limit'],
-        ['Provider returned 400: max_tokens 512 is invalid', 'provider', 'rejected request carrying a 5xx-shaped number'],
-        ['This model requires 8192 context, got 500 tokens', 'provider', 'prose carrying a 5xx-shaped number'],
-        ['insufficient_quota: You exceeded your current quota', 'provider', 'billing failure'],
-      ];
-      for (const [detail, expected, why] of classifications) {
-        agent._chatWithCostAllowance = async () => { throw new Error(detail); };
-        warning = null;
-        const classified = await agent._runPlannerGate(
-          tabId,
-          { role: 'user', content: 'Classify this failure.' },
-          onUpdate,
-          null,
-        );
-        assert.equal(
-          classified.failureKind,
-          expected,
-          `${label}: ${why} ("${detail}") should recover as ${expected}`,
-        );
-        assert.equal(
-          warning?.failureKind,
-          expected,
-          `${label}: ${why} lost its category on the way to the sidepanel`,
-        );
-        assert.match(
-          classified.message || '',
-          /[.!?] No tools ran\.$/,
-          `${label}: ${why} produced a run-on failure message`,
-        );
-      }
+      assert.equal(calls, 2, `${label}: full planner request error should retry exactly once`);
+      assert.equal(full.proceed, true, `${label}: two planner request errors stopped Act`);
+      assert.equal(full.requestKind, 'execute', `${label}: planner request failure left Act`);
+      assert.equal(full.plannerFailedContinueAct, true, `${label}: planner request failure marker missing`);
+      assert.equal(full.requiresSubmission, null, `${label}: request failure invented submit authorization`);
+      assert.equal(seenOptions[1].extraBody, undefined, `${label}: second request was not portable`);
+      assert.equal(warning?.code, 'planner_failed_continue_act', `${label}: Act continuation toast code missing`);
+      assert.equal(warning?.continuingMode, 'act', `${label}: warning did not describe Act continuation`);
     }
   });
 });
 
-test('planner failure category survives the planner gate wrapper', async () => {
+test('planner Act-continuation marker survives the planner gate wrapper', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
       const tabId = label === 'chrome' ? 9157 : 9158;
       const provider = { name: 'broken-provider', model: 'broken-model', config: {} };
       const agent = new AgentClass({ getActive: () => provider });
-      agent._chatWithCostAllowance = async () => { throw new Error('401 invalid API key'); };
+      let calls = 0;
+      agent._chatWithCostAllowance = async () => {
+        calls += 1;
+        throw new Error('503 planner unavailable');
+      };
 
       const messages = [];
       const outcome = await agent._maybeRunPlannerGate(
@@ -63129,13 +63212,12 @@ test('planner failure category survives the planner gate wrapper', async () => {
         null,
         null,
       );
-      assert.equal(outcome.proceed, false, `${label}: planner failure unexpectedly continued into execution`);
-      assert.equal(outcome.reason, 'planner_error', `${label}: planner failure lost its planner status`);
-      assert.equal(
-        outcome.failureKind,
-        'auth',
-        `${label}: the gate wrapper dropped the failure category before any caller could read it`,
-      );
+      assert.equal(calls, 2, `${label}: gate wrapper did not preserve the two-attempt budget`);
+      assert.equal(outcome.proceed, true, `${label}: planner failure stopped Act execution`);
+      assert.equal(outcome.requestKind, 'execute', `${label}: gate wrapper left Act execution`);
+      assert.equal(outcome.plannerFailedContinueAct, true, `${label}: gate wrapper dropped the continuation marker`);
+      assert.equal(outcome.requiresStateChange, null, `${label}: wrapper collapsed unknown mutation intent`);
+      assert.equal(outcome.requiresSubmission, null, `${label}: wrapper invented submit authorization`);
     }
   });
 });
@@ -63184,6 +63266,11 @@ test('planner request failures expose provider settings and retry actions in bot
       /case 'warning':[\s\S]*?data\?\.code === 'planner_request_failed'[\s\S]*?const targetAssistantEl = eventAssistantEl \|\| currentAssistantEl;[\s\S]*?renderPlannerRequestFailure\(targetAssistantEl, data, retryPayload\);/,
       `${label}: live planner request failures bypass the actionable renderer`,
     );
+    assert.match(
+      panel,
+      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?showComposerToast\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\), \{ duration: 10000 \}\);/,
+      `${label}: planner-failed Act continuation does not show the requested toast`,
+    );
     assert.equal(
       (panel.match(/plannerRequestFailureUpdate\(res\?\.updates\)/g) || []).length >= 2,
       true,
@@ -63225,7 +63312,7 @@ test('planner request failures expose provider settings and retry actions in bot
   }
 });
 
-test('planner read-only fallback applies Ask mode to runtime guards without changing the selected mode', async () => {
+test('planner failure continuation preserves Act mode and runtime guards', async () => {
   for (const [label, AgentClass, file] of [
     ['chrome', AgentCh, 'src/chrome/src/agent/agent.js'],
     ['firefox', AgentFx, 'src/firefox/src/agent/agent.js'],
@@ -63244,20 +63331,44 @@ test('planner read-only fallback applies Ask mode to runtime guards without chan
     agent._recordCompletionToolResult(tabId, 'click', {}, { success: true, dispatched: true });
     assert.match(agent._completionPlainFinalBlock(tabId) || '', /RUNTIME COMPLETION BLOCK/, `${label}: action mode fixture did not arm completion debt`);
 
-    assert.equal(agent._activatePlannerReadOnlyMode(tabId, messages), 'ask');
-    assert.equal(agent._effectiveRunMode(tabId), 'ask', `${label}: fallback did not become the effective runtime mode`);
-    assert.match(messages[1].content, /runtime_mode=ask; mutation_tools_enabled=false/, `${label}: fallback left a contradictory Act runtime envelope`);
-    assert.doesNotMatch(messages[1].content, /runtime_mode=act/, `${label}: stale Act runtime state survived the fallback`);
-    assert.equal(agent.conversationModes.get(tabId), 'act', `${label}: fallback permanently changed the user's selected mode`);
-    assert.equal(agent._completionPlainFinalBlock(tabId), null, `${label}: Ask fallback still used action-mode completion guards`);
-    assert.equal(agent._completionDoneBlock(tabId, 'done', { outcome: 'success' }), null, `${label}: Ask fallback still blocked done as an action completion`);
-    const done = await agent.executeTool(tabId, 'done', { summary: 'Here is the requested answer.', outcome: 'success' });
-    assert.equal(done.done, true, `${label}: Ask fallback could not finish`);
-    assert.equal(done.verification, undefined, `${label}: Ask fallback still ran action-mode done verification`);
+    let warning = null;
+    const continuation = agent._plannerActContinuation({}, (type, data) => {
+      if (type === 'warning') warning = data;
+    });
+    assert.equal(continuation.proceed, true, `${label}: planner continuation stopped the run`);
+    assert.equal(continuation.requestKind, 'execute', `${label}: planner continuation left Act execution`);
+    assert.equal(continuation.plannerFailedContinueAct, true, `${label}: planner continuation marker missing`);
+    assert.equal(continuation.requiresStateChange, null, `${label}: planner failure was incorrectly treated as read-only`);
+    const executionGuard = agent._startPlanExecutionGuard(tabId, 'act', continuation, {});
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', { success: true });
+    assert.equal(executionGuard.successfulTaskToolCalls, 1, `${label}: read evidence fixture was not recorded`);
+    assert.equal(executionGuard.successfulConsequentialToolCalls, 0, `${label}: read evidence became consequential`);
+    assert.equal(agent._executionEvidenceSatisfied(executionGuard), false, `${label}: a read alone proved success with unknown mutation intent`);
+    const unknownIntentDecision = agent._planOnlyTerminalDecision(
+      tabId,
+      'The requested information was read.',
+      { viaDone: true, outcome: 'success' },
+    );
+    assert.equal(unknownIntentDecision?.retry, true, `${label}: unknown mutation intent did not trigger guarded recovery`);
+    assert.match(unknownIntentDecision?.nudge || '', /planning failed[\s\S]*success outcome[\s\S]*consequential[\s\S]*outcome partial/i, `${label}: guarded recovery did not explain how to deliver read-only progress`);
+    agent._markPlanExecutionToolCall(tabId, 'click', { success: true }, { consequential: true });
+    assert.equal(agent._executionEvidenceSatisfied(executionGuard), true, `${label}: consequential evidence could not satisfy the conservative fallback guard`);
+    assert.equal(agent._effectiveRunMode(tabId), 'act', `${label}: planner failure changed the effective runtime mode`);
+    assert.match(messages[1].content, /runtime_mode=act; mutation_tools_enabled=true/, `${label}: Act runtime envelope changed`);
+    assert.doesNotMatch(messages[1].content, /runtime_mode=ask/, `${label}: planner failure injected Ask runtime state`);
+    assert.equal(agent.conversationModes.get(tabId), 'act', `${label}: planner failure changed the user's selected mode`);
+    assert.match(agent._completionPlainFinalBlock(tabId) || '', /RUNTIME COMPLETION BLOCK/, `${label}: Act completion guards were disabled`);
+    assert.equal(
+      agent._completionDoneBlock(tabId, 'done', { outcome: 'success' })?.reason,
+      'verification_required',
+      `${label}: Act done verification was disabled`,
+    );
+    assert.equal(warning?.code, 'planner_failed_continue_act', `${label}: visible planner-failure warning missing`);
 
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    const consumers = source.match(/mode = this\._activatePlannerReadOnlyMode\(tabId, messages\)/g) || [];
-    assert.equal(consumers.length, 2, `${label}: streamed and non-streamed loops must both activate the runtime override`);
+    assert.doesNotMatch(source, /_activatePlannerReadOnlyMode/, `${label}: obsolete Ask fallback remains reachable`);
+    assert.doesNotMatch(source, /readOnlyFallback/, `${label}: obsolete read-only planner marker remains`);
+    agent._planExecutionGuards.delete(tabId);
     agent._runModeOverrides.delete(tabId);
     agent._clearCompletionInvariant(tabId, token);
   }
@@ -63305,7 +63416,56 @@ test('planner gate: retries reasoning-only planner responses for final JSON', as
       assert.match(seen[0].messages.find((m) => m.role === 'user').content, /^\/no_think/, `${label} should use no-think mode for Qwen-style planner models`);
       assert.equal(seen[0].options.maxTokens, 4096, `${label} should give the planner enough final-token budget`);
       assert.equal(seen[0].options.extraBody?.chat_template_kwargs?.enable_thinking, false, `${label} should disable vLLM/SGLang thinking`);
+      assert.equal(seen[0].options.extraBody?.response_format?.type, 'json_schema', `${label} should request structured planner output`);
       assert.match(seen[1].messages.at(-1).content, /\/no_think/, `${label} repair prompt should request no-think mode`);
+      assert.equal(seen[1].options.extraBody?.response_format, undefined, `${label} repair should drop the structured-output field`);
+      assert.equal(seen[1].options.extraBody?.chat_template_kwargs?.enable_thinking, false, `${label} invalid-output repair should still suppress local thinking`);
+    }
+  });
+});
+
+test('planner gate uses the active text provider even when a local vision sidecar is enabled', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const activeProvider = {
+        name: 'openrouter',
+        model: 'deepseek/deepseek-v4',
+        config: { providerName: 'openrouter', category: 'router', model: 'deepseek/deepseek-v4' },
+      };
+      const visionProvider = {
+        name: 'lmstudio',
+        model: 'qwen-vl',
+        config: { providerName: 'lmstudio', category: 'local', model: 'qwen-vl' },
+      };
+      let visionProviderCalls = 0;
+      const agent = new AgentClass({
+        getActive: () => activeProvider,
+        getVisionProvider: async () => {
+          visionProviderCalls += 1;
+          return visionProvider;
+        },
+      });
+      const tabId = 9175 + index;
+      agent.setScheduledRunPolicy(tabId, {
+        requireConsequentialConfirmation: false,
+        autoApprovePlanReview: true,
+      });
+      let plannerProvider = null;
+      agent._chatWithCostAllowance = async (provider) => {
+        plannerProvider = provider;
+        return { content: plannerFixtureJson(), usage: {} };
+      };
+
+      const gate = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Complete the task on this page.' },
+        () => {},
+        null,
+      );
+
+      assert.equal(gate.proceed, true, `${AgentClass.name}: planner did not proceed`);
+      assert.equal(plannerProvider, activeProvider, `${AgentClass.name}: vision sidecar replaced the active planner provider`);
+      assert.equal(visionProviderCalls, 0, `${AgentClass.name}: planner consulted the vision sidecar`);
     }
   });
 });

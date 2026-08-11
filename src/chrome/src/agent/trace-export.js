@@ -213,6 +213,15 @@ export function tracesToMarkdown(runsWithEvents, {
         const details = [oneLine(d.context), oneLine(d.model), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
           .filter(Boolean).join(' · ');
         md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}\n`;
+      } else if (ev.kind === 'note' && d.note === 'planner_attempt_failed') {
+        const attempt = Number(d.extra?.attempt) || 1;
+        const phase = oneLine(d.extra?.phase || 'planner');
+        const failureKind = oneLine(d.extra?.failureKind || 'provider');
+        md += `- ⚠️ ${phase} attempt ${attempt} failed · kind=${failureKind}\n`;
+      } else if (ev.kind === 'note' && d.note === 'planner_failed_continue_act') {
+        const attempts = Number(d.extra?.attempts) || 2;
+        const reason = oneLine(d.extra?.reason || 'invalid_output');
+        md += `- ⚠️ Planning failed after ${attempts} attempts · continued in Act mode · reason=${reason}\n`;
       } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
         md += `- ℹ️ ${oneLine(d.note)}\n`;
       }

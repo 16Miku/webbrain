@@ -10,6 +10,165 @@ import { sanitizeText } from './text-sanitize.js';
 const UNTRUSTED_PAGE_CONTENT_TAG_RE = /<\/?untrusted_page_content\b[^>]*>/gi;
 const REQUEST_KINDS = new Set(['execute', 'respond', 'plan_only', 'clarify']);
 
+const PLANNER_REQUEST_KIND_SCHEMA = {
+  type: 'string',
+  enum: ['execute', 'respond', 'plan_only', 'clarify'],
+};
+const PLANNER_READ_SCOPE_SCHEMA = {
+  type: 'string',
+  enum: ['complete_thread', 'current_message', 'visible_page', 'none'],
+};
+const PLANNER_SCHEDULING_SCHEMA = {
+  anyOf: [
+    { type: 'null' },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tool: { type: 'string', enum: ['schedule_task', 'schedule_resume'] },
+        hint: { type: 'string' },
+      },
+      required: ['tool', 'hint'],
+    },
+  ],
+};
+const PLANNER_LOCALIZED_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    locale: { type: 'string' },
+    summary: { type: 'string' },
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { id: { type: 'string' }, action: { type: 'string' } },
+        required: ['id', 'action'],
+      },
+    },
+    risks: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['locale', 'summary', 'steps', 'risks'],
+};
+
+export const PLANNER_RESPONSE_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    request_kind: PLANNER_REQUEST_KIND_SCHEMA,
+    requires_state_change: { type: 'boolean' },
+    requires_submission: { type: 'boolean' },
+    allows_planner_shaped_result: { type: 'boolean' },
+    allows_app_state_tool_evidence: { type: 'boolean' },
+    read_scope: PLANNER_READ_SCOPE_SCHEMA,
+    summary: { type: 'string' },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          action: { type: 'string' },
+          tools: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['id', 'action', 'tools'],
+      },
+    },
+    skill_ids: { type: 'array', items: { type: 'string' } },
+    memory: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        use_scratchpad: { type: 'boolean' },
+        scratchpad_notes: { type: 'array', items: { type: 'string' } },
+        use_progress_ledger: { type: 'boolean' },
+        progress_action: { type: ['string', 'null'] },
+      },
+      required: ['use_scratchpad', 'scratchpad_notes', 'use_progress_ledger', 'progress_action'],
+    },
+    scheduling: PLANNER_SCHEDULING_SCHEMA,
+    risks: { type: 'array', items: { type: 'string' } },
+    localized: PLANNER_LOCALIZED_SCHEMA,
+    mode: { type: 'string', const: 'act' },
+  },
+  required: [
+    'request_kind',
+    'requires_state_change',
+    'requires_submission',
+    'allows_planner_shaped_result',
+    'allows_app_state_tool_evidence',
+    'read_scope',
+    'summary',
+    'confidence',
+    'steps',
+    'skill_ids',
+    'memory',
+    'scheduling',
+    'risks',
+    'localized',
+    'mode',
+  ],
+};
+
+export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    request_kind: PLANNER_REQUEST_KIND_SCHEMA,
+    requires_state_change: { type: 'boolean' },
+    requires_submission: { type: 'boolean' },
+    allows_planner_shaped_result: { type: 'boolean' },
+    allows_app_state_tool_evidence: { type: 'boolean' },
+    read_scope: PLANNER_READ_SCOPE_SCHEMA,
+    summary: { type: 'string' },
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { id: { type: 'string' }, action: { type: 'string' } },
+        required: ['id', 'action'],
+      },
+    },
+    memory: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        use_progress_ledger: { type: 'boolean' },
+        progress_action: { type: ['string', 'null'] },
+      },
+      required: ['use_progress_ledger', 'progress_action'],
+    },
+    scheduling: PLANNER_SCHEDULING_SCHEMA,
+    risks: { type: 'array', items: { type: 'string' } },
+    localized: PLANNER_LOCALIZED_SCHEMA,
+  },
+  required: [
+    'request_kind',
+    'requires_state_change',
+    'requires_submission',
+    'allows_planner_shaped_result',
+    'allows_app_state_tool_evidence',
+    'read_scope',
+    'summary',
+    'steps',
+    'memory',
+    'scheduling',
+    'risks',
+    'localized',
+  ],
+};
+
+export const READ_SCOPE_RESPONSE_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { read_scope: PLANNER_READ_SCOPE_SCHEMA },
+  required: ['read_scope'],
+};
+
 function canonicalPlanRequiresDownload(_summary, _steps) {
   // TODO(#2752): Derive download completion requirements from structured,
   // language-neutral planner intent. Do not infer them from canonical prose;
