@@ -778,7 +778,7 @@
     return { elements: out, set: collected };
   }
 
-  function sliceTreePage(output, lines, chunkSize, page) {
+  function sliceTreePage(output, lines, chunkSize, page, continuationBase = {}) {
     const safePage = Math.max(1, Math.floor(Number(page) || 1));
     const chunks = [];
     let current = [];
@@ -840,8 +840,11 @@
     if (safePage > 1) {
       pageContent = `[tree page ${safePage}; ${omittedBefore} earlier nodes omitted]\n${pageContent}`;
     }
+    const continuationArgs = hasMore
+      ? { ...continuationBase, page: safePage + 1 }
+      : null;
     if (hasMore) {
-      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling to find a visible control, call get_accessibility_tree({filter:"visible", page:${safePage + 1}}) for the next chunk.]`;
+      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling or answering a whole-document question, call get_accessibility_tree(${JSON.stringify(continuationArgs)}) exactly for the next chunk.]`;
     }
 
     return {
@@ -850,6 +853,7 @@
       hasMore,
       page: safePage,
       nextPage: hasMore ? safePage + 1 : undefined,
+      continuationArgs,
       totalChars: output.length,
       chunkStart: chunk.charStart,
       chunkEnd: chunk.charEnd,
@@ -860,19 +864,26 @@
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
-      // Tighter defaults for the 'visible' / 'interactive' modes so small
-      // models don't drown in 18K-token Stripe trees. Callers can still
-      // override by passing explicit values.
+      // Bound every default tree, including `all`. The model-facing tool
+      // result is capped separately at ~8k chars; leaving `all` unlimited
+      // made that later generic limiter chop serialized JSON and discard the
+      // structured hasMore/nextPage contract. A 6k line-aware page fits below
+      // the outer cap while retaining deterministic continuation metadata.
       const defaultDepth = effFilter === 'all' ? 15 : 10;
       const defaultChars = effFilter === 'visible' ? 3000
                           : effFilter === 'interactive' ? 3500
-                          : null; // 'all' has no default cap (explicit only)
+                          : 6000;
       const opts = {
         filter: effFilter,
         maxDepth: maxDepth != null ? maxDepth : defaultDepth,
         refId: refId || null,
       };
       const effMaxChars = maxChars != null ? maxChars : defaultChars;
+      const continuationBase = {
+        filter: effFilter,
+        maxDepth: opts.maxDepth,
+        maxChars: effMaxChars,
+      };
       const viewport = { width: window.innerWidth, height: window.innerHeight };
       const lines = [];
 
@@ -990,7 +1001,7 @@
 
       const output = lines.join('\n');
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -1005,13 +1016,13 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport };
         }
-        const sliced = sliceTreePage(output, lines, effMaxChars, page);
+        const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
           let hint = `Tree was ${output.length} chars; auto-sliced to fit ${effMaxChars}. `;
           if (sliced.hasMore) {
-            hint += `Call again with page:${sliced.nextPage} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
+            hint += `Call again with the exact continuationArgs ${JSON.stringify(sliced.continuationArgs)} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
           }
           return {
             ...sliced,

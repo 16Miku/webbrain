@@ -618,6 +618,12 @@ const ReadPageWindowCh = await import(
 const ReadPageWindowFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/read-page-window.js').replace(/\\/g, '/')
 );
+const ReadCompletenessCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/read-completeness.js').replace(/\\/g, '/')
+);
+const ReadCompletenessFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/read-completeness.js').replace(/\\/g, '/')
+);
 const {
   buildGithubStargazerProgressItems,
   parseGithubStargazerFollowButtons,
@@ -5239,6 +5245,132 @@ test('read_page schema and prompts require nextOffset continuation in both brows
     assert.match(prompt, /continuationArgs[\s\S]*offset: nextOffset[\s\S]*includeChrome/, `${label}: Ask prompt does not preserve continuation options`);
     assert.match(prompt, /no_blocking_page_gate[\s\S]*NOT a paywall/i, `${label}: Ask prompt lacks the structural access distinction`);
     assert.doesNotMatch(prompt, /scroll the tab and re-read/i, `${label}: stale scroll-and-reread guidance survived`);
+  }
+});
+
+test('whole-thread reads require deterministic terminal page coverage in both browsers', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/read-completeness.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/read-completeness.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox whole-thread read guards drifted');
+
+  for (const [label, runtime] of [
+    ['chrome', ReadCompletenessCh],
+    ['firefox', ReadCompletenessFx],
+  ]) {
+    const communicationContext = { communicationThread: true };
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/FMfc123', 'gmail'), true, `${label}: Gmail thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);
+    assert.equal(runtime.requiresCompleteThreadRead('Summarize the whole thread', {}, communicationContext), true, `${label}: explicit whole-thread request was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Summarize this thread', {}, communicationContext), true, `${label}: ordinary thread-summary request was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('What are the follow-ups in this conversation?', {}, communicationContext), true, `${label}: thread follow-up extraction was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Have you really read it all?', {}, communicationContext), true, `${label}: completeness challenge was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Summarize this conversation we just had?'), false, `${label}: chat-only wording on an unrelated page was over-gated`);
+    assert.equal(runtime.requiresCompleteThreadRead('Summarize this', { recommendedAction: { id: 'summarize-thread' } }), true, `${label}: summarize-thread action was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Find the visible send button'), false, `${label}: ordinary UI read was over-gated`);
+
+    let state = runtime.createReadCompletenessState(`${label}-tree`, true);
+    assert.match(runtime.readCompletenessBlock(state), /First call get_accessibility_tree/);
+    state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { filter: 'visible' }, { pageContent: 'visible prefix' });
+    assert.equal(state.sawEligibleRead, false, `${label}: visible-only tree incorrectly satisfied a whole-thread read`);
+    state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { filter: 'all', maxDepth: 1 }, { pageContent: 'shallow root only' });
+    assert.equal(state.sawEligibleRead, false, `${label}: shallow tree incorrectly satisfied a whole-thread read`);
+    state = runtime.recordReadCompleteness(state, 'read_page', {}, {
+      text: 'visible prose', textOffset: 0, returnedLength: 13, originalLength: 13, hasMore: false, continuationArgs: null,
+    });
+    assert.equal(state.sawEligibleRead, false, `${label}: visible prose incorrectly satisfied a whole-thread read`);
+
+    const page2Args = { filter: 'all', maxDepth: 15, maxChars: 6000, page: 2 };
+    state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { filter: 'all' }, {
+      pageContent: 'tree page one',
+      page: 1,
+      totalChars: 15000,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: page2Args,
+    });
+    assert.deepEqual(state.continuationArgs, page2Args, `${label}: exact accessibility continuation was not retained`);
+    assert.match(runtime.readCompletenessBlock(state), /"page":2/, `${label}: recovery nudge omitted the exact next page`);
+
+    state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { ...page2Args, page: 3 }, {
+      pageContent: 'tree page three',
+      page: 3,
+      totalChars: 15000,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+    });
+    assert.ok(runtime.readCompletenessBlock(state), `${label}: a terminal page incorrectly hid the missing middle page`);
+
+    state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', page2Args, {
+      pageContent: 'tree page two',
+      page: 2,
+      totalChars: 15000,
+      hasMore: true,
+      truncated: true,
+      nextPage: 3,
+      continuationArgs: { ...page2Args, page: 3 },
+    });
+    assert.equal(runtime.readCompletenessBlock(state), null, `${label}: complete pages 1..3 remained blocked`);
+
+  }
+});
+
+test('whole-thread guard blocks done before an incomplete read can become a final answer', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 52701 : 52702;
+    const messages = [];
+    const updates = [];
+    const executed = [];
+    agent._persist = () => {};
+    agent.executeTool = async (_tabId, name) => {
+      executed.push(name);
+      return { done: true, value: 'incorrect partial summary' };
+    };
+    agent._currentUrl = async () => 'https://example.com/article';
+    await agent._beginReadCompleteness(tabId, 'Summarize this conversation we just had?', {});
+    assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: unrelated active page was over-gated by chat wording`);
+    agent._currentUrl = async () => 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    await agent._beginReadCompleteness(tabId, 'Summarize the whole thread', {});
+
+    const result = await agent._executeToolBatch(
+      tabId,
+      [{ id: 'premature_done', function: { name: 'done', arguments: '{"summary":"incorrect partial summary","outcome":"success"}' } }],
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { supportsVision: false },
+      null,
+      new Set(['done']),
+      1,
+    );
+
+    assert.deepEqual(result, { action: 'continue' }, `${label}: premature done did not request another read turn`);
+    assert.deepEqual(executed, [], `${label}: done executed before complete thread coverage`);
+    const blocked = JSON.parse(messages.find(message => message.tool_call_id === 'premature_done').content);
+    assert.equal(blocked.readCompleteness, true, `${label}: block lacks structured read-completeness evidence`);
+    assert.match(blocked.error, /COMPLETE THREAD READ REQUIRED/, `${label}: model did not receive the deterministic recovery nudge`);
+    assert.equal(updates.some(update => update.type === 'warning' && /Whole-thread answer blocked/.test(update.data?.message || '')), true, `${label}: user-facing block warning was not emitted`);
+  }
+});
+
+test('accessibility-tree schema and prompts preserve exact whole-document continuations', () => {
+  const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
+  const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
+  assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
+
+  for (const [label, getTools, prompt] of [
+    ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ASK_CH],
+    ['firefox', getToolsForModeFx, SYSTEM_PROMPT_ASK_FX],
+  ]) {
+    const tool = getTools('ask').find(item => item.function.name === 'get_accessibility_tree');
+    assert.match(tool?.function?.description || '', /exact returned `continuationArgs`[\s\S]*whole-page or whole-thread[\s\S]*hasMore:false/i, `${label}: tree tool lacks terminal continuation guidance`);
+    assert.match(tool?.function?.parameters?.properties?.page?.description || '', /any tree filter[\s\S]*exact continuationArgs/i, `${label}: page schema still limits paging to one filter`);
+    assert.equal(tool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: model-visible tree pages can exceed the structured result window`);
+    assert.match(tool?.function?.parameters?.properties?.maxChars?.description || '', /continuationArgs/i, `${label}: maxChars still describes an abort instead of structured paging`);
+    assert.match(prompt, /whole-page, whole-document, or whole-thread[\s\S]*hasMore:false/i, `${label}: Ask prompt permits partial whole-thread answers`);
   }
 });
 
@@ -12054,13 +12186,13 @@ test('read-only recommendations carry immediate first-tool run options', () => {
       { url: 'https://mail.google.com/mail/u/0/#inbox/FMfc123', title: 'Gmail - Thread', text: 'From Ada Subject Launch Reply' },
       'summarize-thread',
       'get_accessibility_tree',
-      { filter: 'visible', maxDepth: 12 },
+      { filter: 'all', maxDepth: 15 },
     ],
     [
       { url: 'https://x.com/messages/123-456', title: 'Messages / X', text: 'Direct message conversation' },
       'find-followups',
       'get_accessibility_tree',
-      { filter: 'visible', maxDepth: 12 },
+      { filter: 'all', maxDepth: 15 },
     ],
     [
       {
@@ -48997,6 +49129,9 @@ test('agent rejects invalid tool JSON and repairs narrow get_accessibility_tree 
     const repaired = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'visible\\", page:2' });
     assert.deepEqual(repaired.args, { filter: 'visible', page: 2 });
     assert.equal(repaired.repaired, true);
+    const oversized = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', maxDepth: 15, maxChars: 60000 });
+    assert.deepEqual(oversized.args, { filter: 'all', maxDepth: 15, maxChars: 6000 });
+    assert.equal(oversized.repaired, true);
 
     let executedArgs = null;
     const repairMessages = [];
@@ -49006,13 +49141,14 @@ test('agent rejects invalid tool JSON and repairs narrow get_accessibility_tree 
       return { success: true, pageContent: 'button "Follow alice" [ref_1]', url: 'https://github.com/o/r/stargazers' };
     };
     await agent._executeToolBatch(782, [
-      { id: 'repair_args', function: { name: 'get_accessibility_tree', arguments: JSON.stringify({ filter: 'visible\\", page:2' }) } },
+      { id: 'repair_args', function: { name: 'get_accessibility_tree', arguments: JSON.stringify({ filter: 'visible\\", page:2', maxChars: 60000 }) } },
     ], repairMessages, (type, payload) => {
       if (type === 'warning') warnings.push(payload.message);
     }, { supportsVision: false });
-    assert.deepEqual(executedArgs, { filter: 'visible', page: 2 });
+    assert.deepEqual(executedArgs, { filter: 'visible', page: 2, maxChars: 6000 });
+    assert.doesNotThrow(() => JSON.parse(agent._unwrapUntrusted(repairMessages[0].content)), 'normalized accessibility result should remain valid JSON');
     assert.match(repairMessages[0].content, /TOOL ARGUMENT REPAIR/);
-    assert.ok(warnings.includes('Repaired malformed tool arguments.'));
+    assert.ok(warnings.includes('Normalized accessibility-tree arguments.'));
   }
 });
 
@@ -62318,7 +62454,7 @@ test('recommended action first tools are allowlisted and sanitized', () => {
           args: { filter: 'visible', maxDepth: 99, maxChars: 999999, ref_id: 'ref_1' },
         },
       }, allowed),
-      { id: 'explain-page', tool: 'get_accessibility_tree', args: { filter: 'visible', maxDepth: 20, maxChars: 60000 } },
+      { id: 'explain-page', tool: 'get_accessibility_tree', args: { filter: 'visible', maxDepth: 20, maxChars: 6000 } },
       `${label}: accessibility tree args should be allowlisted and clamped`,
     );
 
