@@ -22299,6 +22299,156 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
   }
 });
 
+test('chrome fetch fallback chunks multipart blobs through disk-backed offscreen staging', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const previousNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let initialRequest = null;
+  let connectListener = null;
+  const sentToOffscreen = [];
+  const stagedFiles = new Map();
+  console.warn = () => {};
+
+  try {
+    const stagedDir = {
+      async *keys() { yield* stagedFiles.keys(); },
+      async removeEntry(filename) { stagedFiles.delete(filename); },
+      async getFileHandle(filename, { create = false } = {}) {
+        if (create && !stagedFiles.has(filename)) {
+          stagedFiles.set(filename, { parts: [], closed: false });
+        }
+        const staged = stagedFiles.get(filename);
+        if (!staged) throw new Error('staged file not found');
+        return {
+          async createWritable() {
+            return {
+              async write(chunk) { staged.parts.push(new Uint8Array(chunk)); },
+              async close() { staged.closed = true; },
+              async abort() {
+                staged.parts = [];
+                staged.closed = true;
+              },
+            };
+          },
+          async getFile() { return new Blob(staged.parts); },
+        };
+      },
+    };
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        storage: {
+          async getDirectory() {
+            return { async getDirectoryHandle() { return stagedDir; } };
+          },
+        },
+      },
+    });
+    globalThis.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    globalThis.chrome = {
+      offscreen: {
+        async hasDocument() { return true; },
+      },
+      runtime: {
+        onMessage: { addListener() {} },
+        onConnect: { addListener(fn) { connectListener = fn; } },
+      },
+    };
+    const offscreenUrl = 'file://' + path.join(ROOT, 'src/chrome/src/offscreen/offscreen.js').replace(/\\/g, '/') + `?multipart=${Date.now()}`;
+    await import(offscreenUrl);
+    assert.equal(typeof connectListener, 'function');
+
+    globalThis.fetch = async (url, options) => {
+      if (!initialRequest) {
+        throw new TypeError('Failed to fetch');
+      }
+      assert.equal(String(url), 'http://127.0.0.1:1234/v1/audio/transcriptions');
+      assert.ok(options.body instanceof FormData);
+      assert.equal(options.body.get('model'), 'whisper-local');
+      const file = options.body.get('file');
+      assert.ok(file instanceof Blob);
+      assert.equal(file.name, 'probe.wav');
+      assert.equal(file.type, 'audio/wav');
+      const received = new Uint8Array(await file.arrayBuffer());
+      assert.equal(received.byteLength, 600_000);
+      assert.deepEqual([...received.subarray(0, 4)], [82, 73, 70, 70]);
+      assert.equal(received[received.length - 1], 255);
+      return new Response(JSON.stringify({ text: '' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    globalThis.chrome.runtime.connect = () => {
+      const callerMessageListeners = [];
+      const callerDisconnectListeners = [];
+      const offscreenRequestListeners = [];
+      const portForOffscreen = {
+        name: 'offscreen-fetch-stream',
+        onMessage: { addListener(fn) { offscreenRequestListeners.push(fn); } },
+        postMessage(msg) {
+          queueMicrotask(() => callerMessageListeners.forEach((fn) => fn(msg)));
+        },
+      };
+      connectListener(portForOffscreen);
+      return {
+        onMessage: { addListener(fn) { callerMessageListeners.push(fn); } },
+        onDisconnect: { addListener(fn) { callerDisconnectListeners.push(fn); } },
+        postMessage(msg) {
+          sentToOffscreen.push(msg);
+          if (msg.url) initialRequest = msg;
+          queueMicrotask(() => offscreenRequestListeners.forEach((fn) => fn(msg)));
+        },
+        disconnect() {
+          callerDisconnectListeners.forEach((fn) => fn());
+        },
+      };
+    };
+
+    const fetchUrl = 'file://' + path.join(ROOT, 'src/chrome/src/providers/fetch-with-fallback.js').replace(/\\/g, '/') + `?multipart=${Date.now()}`;
+    const { fetchWithFallback } = await import(fetchUrl);
+    const fileBytes = new Uint8Array(600_000);
+    fileBytes.set([82, 73, 70, 70]);
+    fileBytes[fileBytes.length - 1] = 255;
+    const form = new FormData();
+    form.append('file', new Blob([fileBytes], { type: 'audio/wav' }), 'probe.wav');
+    form.append('model', 'whisper-local');
+    const response = await fetchWithFallback('http://127.0.0.1:1234/v1/audio/transcriptions', {
+      method: 'POST',
+      body: form,
+      timeoutMs: 12345,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '{"text":""}');
+    assert.equal(initialRequest.bodyType, 'form-data-chunked');
+    assert.equal(initialRequest.body, undefined);
+    assert.deepEqual(initialRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
+      { name: 'file', kind: 'blob' },
+      { name: 'model', kind: 'text' },
+    ]);
+    assert.equal(Object.hasOwn(initialRequest.formDataEntries[0], 'value'), false);
+    const chunkMessages = sentToOffscreen.filter(({ type }) => type === 'form-data-chunk');
+    assert.equal(chunkMessages.length, 3, '600KB upload should be split into bounded 256KiB chunks');
+    assert.equal(sentToOffscreen.at(-1)?.type, 'form-data-complete');
+    assert.equal(stagedFiles.size, 0, 'offscreen staging files should be removed after request upload');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousNavigatorDescriptor) {
+      Object.defineProperty(globalThis, 'navigator', previousNavigatorDescriptor);
+    } else {
+      delete globalThis.navigator;
+    }
+    console.warn = previousWarn;
+  }
+});
+
 test('chrome fetch fallback resolves null-body proxy statuses without hanging', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;
@@ -74354,6 +74504,361 @@ test('run UI persistence compaction preserves acknowledged versus discarded boun
     assert.ok(compact.discardedBeforeSeq > compact.ackedSeq, `${build}: genuine persisted eviction did not create a replay-gap boundary`);
     const acknowledgedOnly = { ackedSeq: 42, discardedBeforeSeq: 0, truncatedBeforeSeq: 42 };
     assert.equal(journal.runUiDiscardedBeforeSeq(acknowledgedOnly), 0, `${build}: acknowledged events became a false replay gap`);
+  }
+});
+
+test('dedicated multimodal endpoints normalize bare OpenAI-compatible origins', () => {
+  for (const [label, compat] of [
+    ['chrome', ProviderCompatibilityCh],
+    ['firefox', ProviderCompatibilityFx],
+  ]) {
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl(' http://127.0.0.1:1234/ '),
+      'http://127.0.0.1:1234/v1',
+      `${label}: bare LM Studio origin should gain /v1`,
+    );
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl('http://127.0.0.1:1234/v1/'),
+      'http://127.0.0.1:1234/v1',
+      `${label}: explicit /v1 should not be duplicated`,
+    );
+    assert.equal(
+      compat.normalizeOpenAICompatibleBaseUrl('https://openrouter.ai/api/v1/'),
+      'https://openrouter.ai/api/v1',
+      `${label}: provider-specific API paths must be preserved`,
+    );
+
+    const controlled = compat.visionGenerationOptions(800);
+    assert.equal(controlled.maxTokens, 800);
+    assert.equal(controlled.extraBody.reasoning_effort, 'none');
+    assert.equal(controlled.extraBody.reasoning_tokens, 0);
+    assert.equal(controlled.extraBody.chat_template_kwargs.enable_thinking, false);
+    const legacy = compat.visionGenerationOptions(1600, { reasoningControl: false });
+    assert.equal(legacy.extraBody.reasoning_effort, undefined);
+    assert.equal(legacy.extraBody.reasoning_tokens, undefined);
+    assert.deepEqual(legacy.extraBody, {});
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter reasoning_tokens')), true);
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter chat_template_kwargs')), true);
+    assert.equal(compat.unsupportedVisionGenerationControl(new Error('unknown parameter response_format')), false);
+  }
+});
+
+test('OpenAI-compatible chat providers reject HTTP-200 error and non-completion payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  const providers = [
+    ...[OpenAIProviderCh, OpenAIProviderFx].map(Provider => new Provider({
+      providerName: 'vision',
+      baseUrl: 'https://example.test/v1',
+      model: 'vision-model',
+    })),
+    ...[LlamaCppProviderCh, LlamaCppProviderFx].map(Provider => new Provider({
+      baseUrl: 'https://example.test/v1',
+      model: 'local-model',
+    })),
+    ...[AzureOpenAIProviderCh, AzureOpenAIProviderFx].map(Provider => new Provider({
+      baseUrl: 'https://example.openai.azure.com',
+      model: 'deployment',
+      apiVersion: '2024-10-21',
+    })),
+  ];
+  try {
+    for (const provider of providers) {
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        error: { message: 'Unexpected endpoint or method.' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'Hi' }], { maxTokens: 5 }),
+        /Unexpected endpoint or method/,
+      );
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ object: 'list', data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'Hi' }], { maxTokens: 5 }),
+        /no completion choice/,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('dedicated vision descriptions suppress hidden reasoning and reuse one image for a bounded retry', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const vision = {
+      config: { model: 'qwen/qwen3.5-9b', baseUrl: 'http://127.0.0.1:1234/v1' },
+    };
+    const agent = new AgentClass({ getVisionProvider: async () => vision });
+    const calls = [];
+    agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      calls.push({ messages, options });
+      if (calls.length === 1) {
+        return {
+          content: '',
+          reasoningContent: 'The model used its output budget while thinking.',
+          raw: { choices: [{ finish_reason: 'length' }] },
+        };
+      }
+      return { content: '1) Page purpose: product reviews\n2) Visible content: review cards' };
+    };
+
+    const screenshot = 'data:image/png;base64,AA==';
+    const described = await agent._describeScreenshot(91, screenshot, 'protected_page');
+    assert.equal(described?.model, 'qwen/qwen3.5-9b', `${label}: retry should produce a usable description`);
+    assert.match(described?.text || '', /product reviews/);
+    assert.equal(calls.length, 2, `${label}: empty visible output should get one generation retry`);
+    assert.equal(calls[0].options.maxTokens, 800);
+    assert.equal(calls[1].options.maxTokens, 1600);
+    assert.equal(calls[0].options.extraBody.reasoning_effort, 'none');
+    assert.equal(calls[0].options.extraBody.reasoning_tokens, 0);
+    assert.equal(calls[1].messages[1].content[1].image_url.url, screenshot, `${label}: retry must reuse captured pixels`);
+  }
+});
+
+test('dedicated vision retries without unsupported LM Studio reasoning controls', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const vision = {
+      config: { model: 'strict-vision', baseUrl: 'https://vision.example/v1' },
+    };
+    const agent = new AgentClass({ getVisionProvider: async () => vision });
+    const optionsSeen = [];
+    agent._chatWithCostAllowance = async (_provider, _messages, options) => {
+      optionsSeen.push(options);
+      if (optionsSeen.length === 1) throw new Error('Unknown parameter: reasoning_effort');
+      return { content: '1) Page purpose: protected store listing' };
+    };
+
+    const described = await agent._describeScreenshot(92, 'data:image/png;base64,AA==');
+    assert.match(described?.text || '', /protected store listing/, `${label}: strict provider fallback failed`);
+    assert.equal(optionsSeen.length, 2);
+    assert.equal(optionsSeen[1].maxTokens, 1600);
+    assert.equal(optionsSeen[1].extraBody.reasoning_effort, undefined);
+    assert.equal(optionsSeen[1].extraBody.reasoning_tokens, undefined);
+    assert.deepEqual(optionsSeen[1].extraBody, {});
+  }
+});
+
+test('multimodal connection tests exercise image and audio routes instead of only model listing', async () => {
+  for (const [label, ProviderManager] of [
+    ['chrome', ProviderManagerCh],
+    ['firefox', ProviderManagerFx],
+  ]) {
+    const visionCalls = [];
+    const visionManager = new ProviderManager();
+    visionManager.getVisionProvider = async () => ({
+      model: 'qwen/qwen3.5-9b',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      chat: async (messages, options) => {
+        visionCalls.push({ messages, options });
+        return { content: 'WB7' };
+      },
+    });
+    const visionResult = await visionManager.testVisionProvider();
+    assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
+    assert.equal(visionCalls.length, 1);
+    assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+    assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+
+    visionManager.getVisionProvider = async () => ({
+      model: 'text-only-model',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      chat: async () => ({ content: 'I can respond without reading the image.' }),
+    });
+    const textOnlyResult = await visionManager.testVisionProvider();
+    assert.equal(textOnlyResult.ok, false, `${label}: a text-only response must not pass the vision probe`);
+    assert.match(textOnlyResult.error, /did not read the image probe correctly/);
+  }
+
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, ProviderManager] of [
+      ['chrome', ProviderManagerCh],
+      ['firefox', ProviderManagerFx],
+    ]) {
+      const storageApi = {
+        storage: {
+          local: {
+            get: async () => ({
+              transcriptionModel: {
+                baseUrl: 'http://127.0.0.1:1234',
+                model: 'whisper-local',
+                apiKey: '',
+              },
+            }),
+          },
+          onChanged: { addListener() {} },
+        },
+      };
+      globalThis.chrome = storageApi;
+      globalThis.browser = storageApi;
+      let request = null;
+      globalThis.fetch = async (url, options) => {
+        request = { url: String(url), options };
+        return new Response(JSON.stringify({ text: '' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      const result = await new ProviderManager().testTranscriptionProvider();
+      assert.equal(result.ok, true, `${label}: valid silent audio probe should pass`);
+      assert.equal(request.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+      assert.equal(request.options.method, 'POST');
+      assert.ok(request.options.body instanceof FormData);
+      assert.equal(request.options.body.get('model'), 'whisper-local');
+      assert.ok(request.options.body.get('file') instanceof Blob);
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        error: 'Unexpected endpoint or method.',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const rejected = await new ProviderManager().testTranscriptionProvider();
+      assert.equal(rejected.ok, false, `${label}: HTTP-200 endpoint errors must fail the connection test`);
+      assert.match(rejected.error, /Unexpected endpoint or method/);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('transcription runtime normalizes a legacy bare override and surfaces HTTP-200 provider errors', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async () => ({
+            transcriptionModel: {
+              baseUrl: 'http://127.0.0.1:1234',
+              model: 'whisper-local',
+              apiKey: '',
+            },
+          }),
+        },
+      },
+    };
+    let requestedUrl = '';
+    globalThis.fetch = async url => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ error: { message: 'Audio route unavailable.' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const result = await transcribeAudio(new Map(), new Blob(['audio'], { type: 'audio/webm' }));
+    assert.equal(requestedUrl, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Audio route unavailable/);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('transcription runtime uses the Chrome offscreen fallback when direct fetch is blocked', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  let directAttempts = 0;
+  let proxiedRequest = null;
+  const bodyChunkMessages = [];
+  console.warn = () => {};
+  try {
+    globalThis.fetch = async () => {
+      directAttempts += 1;
+      throw new TypeError('Failed to fetch');
+    };
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async () => ({
+            transcriptionModel: {
+              baseUrl: 'http://127.0.0.1:1234',
+              model: 'whisper-local',
+              apiKey: '',
+            },
+          }),
+        },
+      },
+      offscreen: {
+        async hasDocument() { return true; },
+      },
+      runtime: {
+        connect() {
+          const messageListeners = [];
+          const disconnectListeners = [];
+          return {
+            onMessage: { addListener(fn) { messageListeners.push(fn); } },
+            onDisconnect: { addListener(fn) { disconnectListeners.push(fn); } },
+            postMessage(msg) {
+              const emit = message => messageListeners.forEach(fn => fn(message));
+              if (msg.url) {
+                proxiedRequest = msg;
+                queueMicrotask(() => emit({ type: 'form-data-ready' }));
+                return;
+              }
+              if (msg.type === 'form-data-chunk') {
+                bodyChunkMessages.push(msg);
+                queueMicrotask(() => emit({
+                  type: 'form-data-chunk-ack',
+                  entryIndex: msg.entryIndex,
+                  sequence: msg.sequence,
+                }));
+                return;
+              }
+              if (msg.type === 'form-data-complete') {
+                queueMicrotask(() => {
+                emit({
+                  type: 'headers',
+                  ok: true,
+                  status: 200,
+                  contentType: 'application/json',
+                  hasBody: true,
+                });
+                emit({ type: 'chunk', text: '{"text":"fallback transcript"}' });
+                emit({ type: 'done' });
+                });
+              }
+            },
+            disconnect() { disconnectListeners.forEach(fn => fn()); },
+          };
+        },
+      },
+    };
+
+    const result = await transcribeAudio(
+      new Map(),
+      new Blob(['audio'], { type: 'audio/webm' }),
+      { filename: 'recording.webm' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.text, 'fallback transcript');
+    assert.equal(directAttempts, 1);
+    assert.equal(proxiedRequest.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
+    assert.equal(proxiedRequest.bodyType, 'form-data-chunked');
+    assert.equal(bodyChunkMessages.length, 1);
+    assert.deepEqual(proxiedRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
+      { name: 'file', kind: 'blob' },
+      { name: 'model', kind: 'text' },
+      { name: 'response_format', kind: 'text' },
+      { name: 'temperature', kind: 'text' },
+    ]);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
   }
 });
 

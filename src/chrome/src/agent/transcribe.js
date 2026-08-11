@@ -27,6 +27,12 @@
  *   transcribe gracefully — the user still gets their .webm.
  */
 
+import {
+  normalizeOpenAICompatibleBaseUrl,
+  openAiCompatiblePayloadError,
+} from '../providers/provider-compatibility.js';
+import { fetchWithFallback } from '../providers/fetch-with-fallback.js';
+
 // Provider id → default Whisper-style model name.
 const WHISPER_MODEL_BY_PROVIDER = {
   openai: 'whisper-1',
@@ -97,7 +103,7 @@ async function readTranscriptionOverride() {
     if (!baseUrl || !model) return null; // partial → not an override
     return {
       id: 'transcription-override',
-      baseUrl,
+      baseUrl: normalizeOpenAICompatibleBaseUrl(baseUrl),
       apiKey: (cfg.apiKey || '').trim(),
       explicitModel: model,
     };
@@ -136,9 +142,11 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
   const model = opts.modelOverride || picked.explicitModel || WHISPER_MODEL_BY_PROVIDER[picked.id] || 'whisper-1';
   const filename = opts.filename || 'recording.webm';
 
-  // Whisper endpoint convention: /v1/audio/transcriptions. baseUrl already
-  // includes /v1 for every provider in our manager, so just append.
-  const url = picked.baseUrl.replace(/\/$/, '') + '/audio/transcriptions';
+  // Explicit overrides may be imported from an older version as a bare local
+  // origin. Normalize immediately before dispatch so they cannot silently hit
+  // a non-OpenAI root route.
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(picked.baseUrl);
+  const url = `${baseUrl}/audio/transcriptions`;
 
   // Re-tag the blob as audio/webm before upload. The recorder produces a
   // single WebM container with video + audio tracks, so its native MIME
@@ -166,7 +174,7 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
   const start = Date.now();
   let res;
   try {
-    res = await fetch(url, { method: 'POST', headers, body: form });
+    res = await fetchWithFallback(url, { method: 'POST', headers, body: form });
   } catch (e) {
     return { ok: false, error: `Transcription network error: ${e.message || e}` };
   }
@@ -213,6 +221,10 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
     body = await res.json();
   } catch (e) {
     return { ok: false, error: `Transcription: failed to parse response (${e.message}).` };
+  }
+  const payloadError = openAiCompatiblePayloadError(body);
+  if (payloadError) {
+    return { ok: false, error: `Transcription provider error: ${payloadError}` };
   }
   const text = (body.text || body.transcript || '').trim();
   if (!text) {

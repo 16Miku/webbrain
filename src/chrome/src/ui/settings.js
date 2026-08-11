@@ -34,6 +34,7 @@ import {
 } from '../agent/capsolver-config.js';
 import {
   detectedCompatibilityPreset,
+  normalizeOpenAICompatibleBaseUrl,
   normalizeProviderCompatibility,
   parseProviderExtraBodyJson,
   shouldUseOpenAIResponsesApi,
@@ -1471,7 +1472,7 @@ function flashVisionResult(className, text) {
 }
 
 btnSaveVision.addEventListener('click', async () => {
-  const baseUrl = visionBaseUrlInput.value.trim();
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
 
@@ -1484,11 +1485,12 @@ btnSaveVision.addEventListener('click', async () => {
   await chrome.storage.local.set({
     visionModel: { baseUrl, apiKey, model },
   });
+  visionBaseUrlInput.value = baseUrl;
   flashVisionResult('ok', t('st.vision.saved'));
 });
 
 btnTestVision.addEventListener('click', async () => {
-  const baseUrl = visionBaseUrlInput.value.trim();
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
 
@@ -1501,6 +1503,7 @@ btnTestVision.addEventListener('click', async () => {
   await chrome.storage.local.set({
     visionModel: { baseUrl, apiKey, model },
   });
+  visionBaseUrlInput.value = baseUrl;
 
   showVisionResult('', t('st.vision.testing'), 'var(--text2)');
 
@@ -1550,7 +1553,7 @@ function flashTranscriptionResult(className, text) {
 
 if (btnSaveTranscription) {
   btnSaveTranscription.addEventListener('click', async () => {
-    const baseUrl = transcriptionBaseUrlInput.value.trim();
+    const baseUrl = normalizeOpenAICompatibleBaseUrl(transcriptionBaseUrlInput.value);
     const apiKey = transcriptionApiKeyInput.value.trim();
     const model = transcriptionModelInput.value.trim();
 
@@ -1563,13 +1566,14 @@ if (btnSaveTranscription) {
     await chrome.storage.local.set({
       transcriptionModel: { baseUrl, apiKey, model },
     });
+    transcriptionBaseUrlInput.value = baseUrl;
     flashTranscriptionResult('ok', t('st.transcription.saved'));
   });
 }
 
 if (btnTestTranscription) {
   btnTestTranscription.addEventListener('click', async () => {
-    const baseUrl = transcriptionBaseUrlInput.value.trim();
+    const baseUrl = normalizeOpenAICompatibleBaseUrl(transcriptionBaseUrlInput.value);
     const apiKey = transcriptionApiKeyInput.value.trim();
     const model = transcriptionModelInput.value.trim();
 
@@ -1583,6 +1587,7 @@ if (btnTestTranscription) {
     await chrome.storage.local.set({
       transcriptionModel: { baseUrl, apiKey, model },
     });
+    transcriptionBaseUrlInput.value = baseUrl;
 
     showTranscriptionResult('', t('st.transcription.testing'), 'var(--text2)');
 
