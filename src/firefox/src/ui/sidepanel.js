@@ -8324,6 +8324,8 @@ function handleAgentUpdateMessage(msg) {
         const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
+      } else if (data?.code === 'planner_failed_continue_act') {
+        showComposerToast(data?.message || t('sp.plan.intent_unavailable'), { duration: 10000 });
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
