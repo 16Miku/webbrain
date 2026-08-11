@@ -8567,7 +8567,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...messages,
       {
         role: 'user',
-        content: '/no_think\nThe previous response was not a valid read-scope classification. Output exactly one JSON object with one allowed value: {"read_scope":"complete_thread"}, {"read_scope":"current_message"}, {"read_scope":"visible_page"}, or {"read_scope":"none"}. No prose, markdown, tool calls, or reasoning text.',
+        content: '/no_think\nThe previous attempt did not produce a valid read-scope classification. Output exactly one JSON object with one allowed value: {"read_scope":"complete_thread"}, {"read_scope":"current_message"}, {"read_scope":"visible_page"}, or {"read_scope":"none"}. No prose, markdown, tool calls, or reasoning text.',
       },
     ];
   }
@@ -8592,6 +8592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             toolsCount: 0,
             ...Agent._traceMediaCounts(messages),
             phase: 'read_scope',
+            attempt: 1,
           }, {
             messages,
             tools: [],
@@ -8600,14 +8601,41 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const startedAt = Date.now();
-      let result = await this._chatWithCostAllowance(
-        provider,
-        messages,
-        { ...this._plannerChatOptions(provider, false, true, 'read_scope'), temperature: 0, maxTokens: 64 },
-        costState,
-        { tabId, generationName: 'read_scope' },
-      );
-      if (runId) {
+      let result;
+      let repairUsed = false;
+      try {
+        result = await this._chatWithCostAllowance(
+          provider,
+          messages,
+          { ...this._plannerChatOptions(provider, false, true, 'read_scope'), temperature: 0, maxTokens: 64 },
+          costState,
+          { tabId, generationName: 'read_scope' },
+        );
+      } catch (firstError) {
+        if (this._checkAbort(tabId)) {
+          return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+        }
+        if (this._isCostAllowanceError(firstError)) throw firstError;
+        repairUsed = true;
+        await this._tracePlannerAttemptFailure(runId, 'read_scope', 1, firstError);
+        onUpdate('thinking', { step: 0, note: 'Checking conversation scope… retrying with portable JSON options' });
+        const repairMessages = this._readScopeRepairMessages(messages);
+        await this._tracePlannerAttemptRequest(
+          runId, 0, provider, repairMessages, 'read_scope', 2, this._effectiveRunMode(tabId),
+        );
+        const repairStartedAt = Date.now();
+        result = await this._chatWithCostAllowance(
+          provider,
+          repairMessages,
+          { ...this._plannerChatOptions(provider, true, true, 'read_scope', true), temperature: 0 },
+          costState,
+          { tabId, generationName: 'read_scope' },
+        );
+        await this._tracePlannerAttemptResponse(
+          runId, 0, provider, result, 'read_scope', 2, repairStartedAt,
+        );
+      }
+      if (runId && !repairUsed) {
         try {
           trace.recordLLMResponse(runId, 0, {
             content: result.content,
@@ -8616,6 +8644,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             latencyMs: Date.now() - startedAt,
             model: provider?.model,
             phase: 'read_scope',
+            attempt: 1,
           });
         } catch {}
       }
@@ -8623,7 +8652,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       let readScope = parseReadScopeFromContent(result.content);
-      if (!readScope) {
+      if (!readScope && !repairUsed) {
         onUpdate('thinking', { step: 0, note: 'Checking conversation scope… retrying JSON output' });
         const repairMessages = this._readScopeRepairMessages(messages);
         if (runId) {
@@ -8634,6 +8663,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               messageCount: messages.length + 1,
               toolsCount: 0,
               phase: 'read_scope',
+              attempt: 2,
               repair: true,
             }, {
               messages: repairMessages,
@@ -8659,6 +8689,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               latencyMs: Date.now() - repairStartedAt,
               model: provider?.model,
               phase: 'read_scope',
+              attempt: 2,
               repair: true,
             });
           } catch {}
@@ -8921,6 +8952,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const plannerStep = 0;
 
     let hasValidPlannerResponse = false;
+    let plannerRequestInFlight = false;
     try {
       const runtimeMode = this._effectiveRunMode(tabId);
       await this._tracePlannerAttemptRequest(
@@ -8930,6 +8962,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let result;
       let plannerRepairUsed = false;
       try {
+        plannerRequestInFlight = true;
         result = await this._chatWithCostAllowance(
           provider,
           plannerMessages,
@@ -8937,10 +8970,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           costState,
           { tabId, generationName: 'planner' },
         );
+        plannerRequestInFlight = false;
         await this._tracePlannerAttemptResponse(
           runId, plannerStep, provider, result, 'planner', 1, startedAt,
         );
       } catch (firstError) {
+        plannerRequestInFlight = false;
         if (this._checkAbort(tabId) || this._isCostAllowanceError(firstError)) throw firstError;
         plannerRepairUsed = true;
         await this._tracePlannerAttemptFailure(runId, 'planner', 1, firstError);
@@ -8950,6 +8985,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
         );
         const repairStartedAt = Date.now();
+        plannerRequestInFlight = true;
         result = await this._chatWithCostAllowance(
           provider,
           repairMessages,
@@ -8957,6 +8993,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           costState,
           { tabId, generationName: 'planner' },
         );
+        plannerRequestInFlight = false;
         await this._tracePlannerAttemptResponse(
           runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
         );
@@ -8978,6 +9015,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
         );
         const repairStartedAt = Date.now();
+        plannerRequestInFlight = true;
         result = await this._chatWithCostAllowance(
           provider,
           repairMessages,
@@ -8985,6 +9023,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           costState,
           { tabId, generationName: 'planner' },
         );
+        plannerRequestInFlight = false;
         await this._tracePlannerAttemptResponse(
           runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
         );
@@ -9002,6 +9041,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           runId, plannerStep, provider, repairMessages, 'planner', 2, runtimeMode,
         );
         const repairStartedAt = Date.now();
+        plannerRequestInFlight = true;
         result = await this._chatWithCostAllowance(
           provider,
           repairMessages,
@@ -9009,6 +9049,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           costState,
           { tabId, generationName: 'planner' },
         );
+        plannerRequestInFlight = false;
         await this._tracePlannerAttemptResponse(
           runId, plannerStep, provider, result, 'planner', 2, repairStartedAt,
         );
@@ -9185,7 +9226,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       await this._tracePlannerAttemptFailure(runId, 'planner', 2, e);
       return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
-        ? this._strictPlannerFailure(onUpdate)
+        ? (plannerRequestInFlight
+          ? this._plannerRequestFailure(e, onUpdate, provider)
+          : this._strictPlannerFailure(onUpdate))
         : this._plannerActContinuation(runOptions, onUpdate, runId, 'request_error');
     }
   }

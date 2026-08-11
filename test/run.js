@@ -5791,7 +5791,7 @@ test('Ask and managed cloud classify communication read scope across languages',
       repairCalls += 1;
       assert.equal(metadata?.generationName, 'read_scope', `${browserLabel}: scope repair changed generation accounting`);
       if (repairCalls === 1) return { content: 'I think the whole conversation is needed.', usage: {} };
-      assert.match(messages.at(-1)?.content || '', /previous response was not a valid read-scope classification/i, `${browserLabel}: repair prompt was not appended`);
+      assert.match(messages.at(-1)?.content || '', /previous attempt did not produce a valid read-scope classification/i, `${browserLabel}: repair prompt was not appended`);
       assert.equal(options.maxTokens, 2048, `${browserLabel}: repair retained the brittle 64-token ceiling`);
       return { content: '{"read_scope":"complete_thread"}', usage: {} };
     };
@@ -5810,6 +5810,46 @@ test('Ask and managed cloud classify communication read scope across languages',
     assert.equal(repairOutcome.proceed, true, `${browserLabel}: repaired scope classification did not proceed`);
     assert.equal(repairCalls, 2, `${browserLabel}: scope repair was not bounded to one retry`);
     assert.ok(repairAgent._readCompletenessBlock(repairTabId), `${browserLabel}: repaired complete-thread scope was not enforced`);
+
+    const requestRetryTabId = 52775 + browserIndex;
+    const requestRetryProvider = {
+      name: 'openrouter',
+      model: 'deepseek/deepseek-v4',
+      promptTier: 'full',
+      config: { providerName: 'openrouter', category: 'router', model: 'deepseek/deepseek-v4' },
+    };
+    const requestRetryAgent = new AgentClass({ getActive: () => requestRetryProvider, getVisionProvider: async () => null });
+    let requestRetryCalls = 0;
+    const requestRetryOptions = [];
+    requestRetryAgent._persist = () => {};
+    requestRetryAgent._persistSubmittedTurn = async () => {};
+    requestRetryAgent._currentUrl = async () => gmailUrl;
+    requestRetryAgent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' });
+    requestRetryAgent._chatWithCostAllowance = async (_provider, messages, options, _costState, metadata) => {
+      requestRetryCalls += 1;
+      requestRetryOptions.push(options);
+      assert.equal(metadata?.generationName, 'read_scope', `${browserLabel}: request retry changed generation accounting`);
+      if (requestRetryCalls === 1) throw new Error('400 unsupported response_format');
+      assert.match(messages.at(-1)?.content || '', /previous attempt did not produce a valid read-scope classification/i, `${browserLabel}: request retry prompt was not appended`);
+      return { content: '{"read_scope":"complete_thread"}', usage: {} };
+    };
+    await requestRetryAgent._beginReadCompleteness(requestRetryTabId, 'Bu konuşmayı özetle.', {});
+    const requestRetryOutcome = await requestRetryAgent._maybeRunPlannerGate(
+      requestRetryTabId,
+      [{ role: 'system', content: 'system' }],
+      { role: 'user', content: 'Bu konuşmayı özetle.' },
+      () => {},
+      'ask',
+      null,
+      null,
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      {},
+    );
+    assert.equal(requestRetryOutcome.proceed, true, `${browserLabel}: portable request retry did not recover scope classification`);
+    assert.equal(requestRetryCalls, 2, `${browserLabel}: read-scope request error should retry exactly once`);
+    assert.equal(requestRetryOptions[0].extraBody?.response_format?.type, 'json_schema', `${browserLabel}: first read-scope request missed structured output`);
+    assert.equal(requestRetryOptions[1].extraBody, undefined, `${browserLabel}: portable read-scope retry retained provider-specific fields`);
+    assert.ok(requestRetryAgent._readCompletenessBlock(requestRetryTabId), `${browserLabel}: request-retried complete-thread scope was not enforced`);
 
     const fallbackTabId = 52780 + browserIndex;
     const fallbackProvider = { name: `${browserLabel}-fallback-scope`, model: `${browserLabel}-fallback-scope`, promptTier: 'full' };
@@ -63186,6 +63226,32 @@ test('planner request errors get one portable retry before Act continuation', as
       assert.equal(seenOptions[1].extraBody, undefined, `${label}: second request was not portable`);
       assert.equal(warning?.code, 'planner_failed_continue_act', `${label}: Act continuation toast code missing`);
       assert.equal(warning?.continuingMode, 'act', `${label}: warning did not describe Act continuation`);
+
+      calls = 0;
+      seenOptions.length = 0;
+      warning = null;
+      agent.setPlanBeforeActMode('strict');
+      agent._chatWithCostAllowance = async (_provider, _messages, options) => {
+        calls += 1;
+        seenOptions.push(options);
+        throw new Error(calls === 1 ? '400 unsupported response_format' : '401 invalid API key');
+      };
+      const strict = await agent._runPlannerGate(
+        tabId,
+        { role: 'user', content: 'Perform this task.' },
+        onUpdate,
+        null,
+      );
+      assert.equal(calls, 2, `${label}: strict planner request error should retry exactly once`);
+      assert.equal(strict.proceed, false, `${label}: strict planner request exhaustion should stop before tools`);
+      assert.equal(strict.reason, 'planner_error', `${label}: strict request failure lost its terminal reason`);
+      assert.equal(strict.requestKind, 'respond', `${label}: strict request failure was mislabeled as invalid planner output`);
+      assert.equal(strict.failureKind, 'auth', `${label}: strict request failure lost provider/auth diagnostics`);
+      assert.equal(seenOptions[1].extraBody, undefined, `${label}: strict second request was not portable`);
+      assert.equal(warning?.code, 'planner_request_failed', `${label}: strict request diagnostics toast missing`);
+      assert.equal(warning?.failureKind, 'auth', `${label}: strict request diagnostics lost auth classification`);
+      assert.match(warning?.message || '', /401 invalid api key/i, `${label}: strict request diagnostics lost the provider error`);
+      assert.doesNotMatch(strict.message || '', /Strict Planning could not produce valid structured output/i, `${label}: request exhaustion was presented as invalid output`);
     }
   });
 });
