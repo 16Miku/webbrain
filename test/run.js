@@ -23507,7 +23507,7 @@ test('settings tabs validate saved and hash tab names without selector interpola
   }
 });
 
-test('settings moves profile and memory controls into Memory while CAPTCHA stays in General advanced', () => {
+test('settings organizes General Basic and Advanced controls while keeping profile and memory controls in Memory', () => {
   for (const [label, htmlRel] of [
     ['chrome', 'src/chrome/src/ui/settings.html'],
     ['firefox', 'src/firefox/src/ui/settings.html'],
@@ -23540,15 +23540,34 @@ test('settings moves profile and memory controls into Memory while CAPTCHA stays
     assert.match(displayPanel, /id="general-search-empty" hidden/, `${label}: General search should include an empty-result state`);
     assert.match(html, /\.general-search-hidden \{ display: none !important; \}/, `${label}: General search should force-hide filtered rows/cards`);
 
-    for (const id of [
-      'toggle-screenshot-fallback',
-      'range-clarify-timeout',
-      'toggle-site-adapters',
-      'toggle-api-mutation-observer',
+    const basicTopIds = [
       'select-auto-screenshot',
       'toggle-tracing',
       'input-cost-session-limit',
       'input-cost-total-limit',
+      'select-language',
+    ];
+    const basicTopIndexes = basicTopIds.map((id) => displayPanel.indexOf(`id="${id}"`));
+    basicTopIndexes.forEach((index, position) => {
+      assert.notEqual(index, -1, `${label}: ${basicTopIds[position]} should remain in General`);
+      assert.ok(index < advancedStart, `${label}: ${basicTopIds[position]} should stay in Basic`);
+    });
+    assert.ok(
+      searchStart < basicTopIndexes[0]
+        && basicTopIndexes.every((index, position) => position === 0 || basicTopIndexes[position - 1] < index),
+      `${label}: Auto-screenshot through total allowance should lead Basic in the requested order`,
+    );
+
+    for (const id of [
+      'toggle-verbose',
+      'toggle-scheduled-tasks',
+      'toggle-scheduled-confirm',
+      'toggle-notify-sound',
+      'toggle-completion-confetti',
+      'toggle-screenshot-fallback',
+      'range-clarify-timeout',
+      'toggle-site-adapters',
+      'toggle-api-mutation-observer',
       'toggle-strict-secret',
       'toggle-allow-local-network',
       'captcha-card',
@@ -23564,24 +23583,26 @@ test('settings moves profile and memory controls into Memory while CAPTCHA stays
     assert.equal(memoryPanel.indexOf('id="captcha-card"'), -1, `${label}: CAPTCHA should stay out of Memory`);
 
     for (const id of [
-      'select-language',
       'select-theme',
       'input-download-directory',
-      'toggle-verbose',
       'select-plan-before-act-mode',
-      'toggle-scheduled-tasks',
-      'toggle-scheduled-confirm',
-      'toggle-notify-sound',
-      'toggle-completion-confetti',
       'range-max-steps',
       'range-request-timeout',
-      'btn-open-traces',
-      'btn-open-history',
       'toggle-help-improve',
     ]) {
       const index = displayPanel.indexOf(`id="${id}"`);
       assert.notEqual(index, -1, `${label}: ${id} should remain visible in General`);
       assert.ok(index < advancedStart, `${label}: ${id} should stay outside Advanced`);
+    }
+
+    assert.equal(displayPanel.indexOf('id="btn-open-traces"'), -1, `${label}: redundant Open Traces setting should be removed`);
+    assert.equal(displayPanel.indexOf('id="btn-open-history"'), -1, `${label}: redundant Chat History setting should be removed`);
+    assert.match(displayPanel, /data-i18n-html="st\.display\.tracing\.desc_html"/, `${label}: Record traces should retain its inline Traces-page link`);
+    const localeDir = path.join(ROOT, path.dirname(htmlRel), 'locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const localeSource = fs.readFileSync(path.join(localeDir, filename), 'utf8');
+      const tracingDescription = localeSource.match(/["']st\.display\.tracing\.desc_html["']\s*:[^\n]+/)?.[0] || '';
+      assert.match(tracingDescription, /href=\\?["']traces\.html/, `${label}/${filename}: Record traces should link to the Traces page`);
     }
 
     assert.match(html, /\.advanced-settings \{[\s\S]*?margin: 22px 0 32px;[\s\S]*?padding: 16px 0 22px;[\s\S]*?border-bottom: 1px solid var\(--border\);/, `${label}: Advanced should have bottom padding and a clear lower boundary`);
@@ -23713,9 +23734,9 @@ test('Help Improve WebBrain is default-on, persisted, and reloads Cloud request 
 
     assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default in General`);
     const helpImproveIndex = html.indexOf('id="toggle-help-improve"');
-    const historyIndex = html.indexOf('id="btn-open-history"');
+    const requestTimeoutIndex = html.indexOf('id="range-request-timeout"');
     const advancedIndex = html.indexOf('<details class="advanced-settings">');
-    assert.ok(historyIndex > -1 && historyIndex < helpImproveIndex && helpImproveIndex < advancedIndex, `${label}: Help Improve should be the last visible General setting above Advanced`);
+    assert.ok(requestTimeoutIndex > -1 && requestTimeoutIndex < helpImproveIndex && helpImproveIndex < advancedIndex, `${label}: Help Improve should be the last visible General setting above Advanced`);
     assert.match(settings, /helpImproveToggle\.checked = stored\.helpImproveWebBrain !== false/, `${label}: missing default-on storage hydration`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
