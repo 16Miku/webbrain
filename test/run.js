@@ -28424,6 +28424,103 @@ test('compact clarification results settle the pending pre-card tool step', () =
   }
 });
 
+test('compact tool detail toggles are rebound after chat restore', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const bindStart = panel.indexOf('function bindCompactStepDetailsToggle(');
+    const rebindStart = panel.indexOf('function rebindCompactStepDetailsToggles(', bindStart);
+    const rebindEnd = panel.indexOf('function rebindContinueButtons(', rebindStart);
+    assert.ok(bindStart >= 0 && rebindStart > bindStart, `${label}: compact detail toggle binder missing`);
+    assert.ok(rebindEnd > rebindStart, `${label}: compact detail toggle rebind helper missing`);
+
+    const restoredControlsSource = panel.slice(
+      panel.indexOf('function rebindRestoredMessageControls('),
+      panel.indexOf('function getProviderPickerOptions(', panel.indexOf('function rebindRestoredMessageControls(')),
+    );
+    assert.match(
+      restoredControlsSource,
+      /rebindCompactStepDetailsToggles\(\);/,
+      `${label}: restored compact detail buttons should regain their click handlers`,
+    );
+    const appendSource = panel.slice(
+      panel.indexOf('function appendCompactStep('),
+      panel.indexOf('function markLastStepDone(', panel.indexOf('function appendCompactStep(')),
+    );
+    assert.match(
+      appendSource,
+      /bindCompactStepDetailsToggle\(toggle\);/,
+      `${label}: live compact detail buttons should use the same restorable binding`,
+    );
+
+    const makeToggle = () => {
+      const classes = new Set(['step-details']);
+      const details = {
+        classList: {
+          contains: (name) => classes.has(name),
+          toggle: (name) => {
+            if (classes.has(name)) {
+              classes.delete(name);
+              return false;
+            }
+            classes.add(name);
+            return true;
+          },
+        },
+      };
+      const step = { nextElementSibling: details };
+      const listeners = [];
+      const attributes = new Map();
+      const toggle = {
+        dataset: {},
+        closest: (selector) => selector === '.step-item' ? step : null,
+        setAttribute: (name, value) => attributes.set(name, value),
+        addEventListener: (type, listener) => {
+          if (type === 'click') listeners.push(listener);
+        },
+      };
+      return { toggle, classes, listeners, attributes };
+    };
+
+    const live = makeToggle();
+    const toggles = [live.toggle];
+    const runtime = vm.runInNewContext(
+      `(() => {
+        ${panel.slice(bindStart, rebindEnd)}
+        return { rebindCompactStepDetailsToggles };
+      })()`,
+      {
+        messagesEl: {
+          querySelectorAll: (selector) => {
+            assert.equal(selector, '.step-details-toggle');
+            return toggles;
+          },
+        },
+      },
+    );
+
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(live.listeners.length, 1, `${label}: live compact detail button should bind once`);
+    assert.equal(live.toggle.type, 'button', `${label}: compact detail button should not submit a surrounding form`);
+    let stopped = false;
+    live.listeners[0]({ stopPropagation: () => { stopped = true; } });
+    assert.equal(stopped, true, `${label}: compact detail click should stay within the tool row`);
+    assert.equal(live.classes.has('open'), true, `${label}: compact detail click should reveal the panel`);
+    assert.equal(live.attributes.get('aria-expanded'), 'true', `${label}: compact detail state should be accessible`);
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(live.listeners.length, 1, `${label}: repeated live rebinds should not duplicate handlers`);
+
+    const restored = makeToggle();
+    toggles[0] = restored.toggle;
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(restored.listeners.length, 1, `${label}: restored compact detail button should regain a handler`);
+    restored.listeners[0]({ stopPropagation: () => {} });
+    assert.equal(restored.classes.has('open'), true, `${label}: restored compact detail button should reveal the panel`);
+  }
+});
+
 test('all locales translate long-reply navigation labels', () => {
   const keys = [
     'sp.chat.follow_response',
