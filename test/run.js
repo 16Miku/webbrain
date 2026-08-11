@@ -5266,9 +5266,48 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(runtime.requiresCompleteThreadRead('Summarize this thread', {}, communicationContext), true, `${label}: ordinary thread-summary request was missed`);
     assert.equal(runtime.requiresCompleteThreadRead('What are the follow-ups in this conversation?', {}, communicationContext), true, `${label}: thread follow-up extraction was missed`);
     assert.equal(runtime.requiresCompleteThreadRead('Have you really read it all?', {}, communicationContext), true, `${label}: completeness challenge was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead("What's going on here?", {}, communicationContext), true, `${label}: vague page-relative thread read was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Can you explain this?', {}, communicationContext), true, `${label}: vague thread explanation was missed`);
+    assert.equal(runtime.requiresCompleteThreadRead('Explain this send button', {}, communicationContext), false, `${label}: element-specific explanation was over-gated`);
+    assert.equal(runtime.requiresCompleteThreadRead("What's going on here?"), false, `${label}: vague wording outside a communication thread was over-gated`);
     assert.equal(runtime.requiresCompleteThreadRead('Summarize this conversation we just had?'), false, `${label}: chat-only wording on an unrelated page was over-gated`);
     assert.equal(runtime.requiresCompleteThreadRead('Summarize this', { recommendedAction: { id: 'summarize-thread' } }), true, `${label}: summarize-thread action was missed`);
     assert.equal(runtime.requiresCompleteThreadRead('Find the visible send button'), false, `${label}: ordinary UI read was over-gated`);
+
+    const tracePlans = [
+      {
+        request_kind: 'execute',
+        summary: 'Read the open Gmail conversation and explain what it is about.',
+        steps: [{ action: 'Read the visible Gmail conversation and identify all messages in the thread.' }],
+      },
+      {
+        request_kind: 'execute',
+        summary: 'Review the open Gmail thread to assess whether his response timing has slowed.',
+        steps: [{ action: 'Identify the messages, senders, and timestamps.' }],
+      },
+      {
+        request_kind: 'execute',
+        summary: 'Re-read the open Gmail thread and correct the prior assessment.',
+        steps: [{ action: 'Review the message where he said it looked perfect.' }],
+      },
+    ];
+    for (const plan of tracePlans) {
+      assert.equal(runtime.plannerRequiresCompleteThreadRead(plan), true, `${label}: trace-derived planner intent did not require complete coverage`);
+      const planned = runtime.requirePlannerReadCompleteness(
+        runtime.createReadCompletenessState(`${label}-planned`, false, true),
+        plan,
+      );
+      assert.ok(runtime.readCompletenessBlock(planned), `${label}: semantic planner intent did not arm the guard`);
+    }
+    assert.equal(runtime.plannerRequiresCompleteThreadRead('### Steps\n1. Read the open Gmail conversation and identify all messages.'), true, `${label}: approved plan text lost whole-thread intent`);
+    assert.equal(runtime.plannerRequiresCompleteThreadRead('### Steps\n1. Read only the currently expanded message.'), false, `${label}: narrowed approved plan text retained stale whole-thread intent`);
+    const unrelatedPlan = { request_kind: 'execute', summary: 'Read the visible send button.', steps: [{ action: 'Find the compose control.' }] };
+    assert.equal(runtime.plannerRequiresCompleteThreadRead(unrelatedPlan), false, `${label}: ordinary UI plan was over-gated`);
+    const unrelatedPageState = runtime.requirePlannerReadCompleteness(
+      runtime.createReadCompletenessState(`${label}-unrelated`, false, false),
+      tracePlans[0],
+    );
+    assert.equal(runtime.readCompletenessBlock(unrelatedPageState), null, `${label}: thread plan armed outside a communication route`);
 
     let state = runtime.createReadCompletenessState(`${label}-tree`, true);
     assert.match(runtime.readCompletenessBlock(state), /First call get_accessibility_tree/);
@@ -5334,6 +5373,16 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
     await agent._beginReadCompleteness(tabId, 'Summarize this conversation we just had?', {});
     assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: unrelated active page was over-gated by chat wording`);
     agent._currentUrl = async () => 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    await agent._beginReadCompleteness(tabId, "what's going on here?", {});
+    assert.ok(agent._readCompletenessBlock(tabId), `${label}: vague page-relative thread read was not armed before the mode split`);
+    await agent._beginReadCompleteness(tabId, 'Do you agree with my take on his reply timing?', {});
+    assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: semantic-only wording should wait for planner intent`);
+    agent._armReadCompletenessFromPlan(tabId, {
+      request_kind: 'execute',
+      summary: 'Read the open Gmail conversation and explain what it is about.',
+      steps: [{ action: 'Read the visible Gmail conversation and identify all messages in the thread.' }],
+    });
+    assert.ok(agent._readCompletenessBlock(tabId), `${label}: planner did not arm the whole-thread guard for the reproduced trace`);
     await agent._beginReadCompleteness(tabId, 'Summarize the whole thread', {});
 
     const result = await agent._executeToolBatch(
@@ -5353,6 +5402,112 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
     assert.equal(blocked.readCompleteness, true, `${label}: block lacks structured read-completeness evidence`);
     assert.match(blocked.error, /COMPLETE THREAD READ REQUIRED/, `${label}: model did not receive the deterministic recovery nudge`);
     assert.equal(updates.some(update => update.type === 'warning' && /Whole-thread answer blocked/.test(update.data?.message || '')), true, `${label}: user-facing block warning was not emitted`);
+  }
+});
+
+test('planner and intent gates arm whole-thread coverage for trace-derived Gmail reads', async () => {
+  const plan = {
+    request_kind: 'execute',
+    requires_state_change: false,
+    requires_submission: false,
+    allows_planner_shaped_result: false,
+    allows_app_state_tool_evidence: false,
+    summary: 'Read the open Gmail conversation and explain what it is about.',
+    confidence: 0.96,
+    steps: [{ id: '1', action: 'Read the visible Gmail conversation and identify all messages in the thread.', tools: ['get_accessibility_tree'] }],
+    skill_ids: [],
+    memory: { use_scratchpad: false, scratchpad_notes: [], use_progress_ledger: false, progress_action: null },
+    scheduling: null,
+    risks: [],
+    localized: {
+      locale: 'en',
+      summary: 'Read the open Gmail conversation and explain what it is about.',
+      steps: [{ id: '1', action: 'Read the visible Gmail conversation and identify all messages in the thread.' }],
+      risks: [],
+    },
+    mode: 'act',
+  };
+  const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+  const semanticOnlyPrompt = 'Do you agree with my take on his reply timing?';
+
+  for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+    const provider = { name: `${label}-planner`, model: `${label}-planner`, promptTier: 'full' };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    agent._persist = () => {};
+    agent._currentUrl = async () => gmailUrl;
+    agent._chatWithCostAllowance = async () => ({ content: JSON.stringify(plan), usage: {} });
+
+    const intentTabId = 52710 + index;
+    await agent._beginReadCompleteness(intentTabId, semanticOnlyPrompt, {});
+    const intentGate = await agent._runPlannerIntentGate(
+      intentTabId,
+      { role: 'user', content: semanticOnlyPrompt },
+      () => {},
+      null,
+      null,
+      '',
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      'act',
+      { locale: 'en' },
+    );
+    assert.equal(intentGate.proceed, true, `${label}: semantic intent gate did not proceed`);
+    assert.ok(agent._readCompletenessBlock(intentTabId), `${label}: semantic intent gate did not arm whole-thread coverage`);
+
+    const recheckTabId = 52720 + index;
+    await agent._beginReadCompleteness(recheckTabId, semanticOnlyPrompt, {});
+    const recheckGate = await agent._runPlannerIntentGate(
+      recheckTabId,
+      { role: 'user', content: semanticOnlyPrompt },
+      () => {},
+      null,
+      null,
+      '',
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      'act',
+      { locale: 'en', plannerIntentRecheckOnly: true },
+    );
+    assert.equal(recheckGate.proceed, true, `${label}: nested semantic intent recheck did not proceed`);
+    assert.equal(agent._readCompletenessBlock(recheckTabId), null, `${label}: intermediate intent recheck armed whole-thread coverage before approval`);
+
+    const fullTabId = 52730 + index;
+    await agent._beginReadCompleteness(fullTabId, semanticOnlyPrompt, {});
+    const fullGate = await agent._runPlannerGate(
+      fullTabId,
+      { role: 'user', content: semanticOnlyPrompt },
+      () => {},
+      null,
+      null,
+      '',
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      'try',
+      'act',
+      { locale: 'en' },
+    );
+    assert.equal(fullGate.proceed, true, `${label}: full planner gate did not proceed`);
+    assert.ok(agent._readCompletenessBlock(fullTabId), `${label}: full planner gate did not arm whole-thread coverage`);
+
+    const editedTabId = 52740 + index;
+    agent.planReviewMode = 'always';
+    agent._waitForPlanReview = async () => ({
+      action: 'approve',
+      editedText: '### Summary\nInspect the selected message only.\n\n### Steps\n1. Read only the currently expanded message.',
+      markdownMode: 'compact',
+    });
+    await agent._beginReadCompleteness(editedTabId, semanticOnlyPrompt, {});
+    const editedGate = await agent._runPlannerGate(
+      editedTabId,
+      { role: 'user', content: semanticOnlyPrompt },
+      () => {},
+      null,
+      null,
+      '',
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      'try',
+      'act',
+      { locale: 'en' },
+    );
+    assert.equal(editedGate.proceed, true, `${label}: edited full planner gate did not proceed`);
+    assert.equal(agent._readCompletenessBlock(editedTabId), null, `${label}: stale planner object overrode the narrowed approved plan`);
   }
 });
 

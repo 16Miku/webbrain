@@ -4,7 +4,7 @@ import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSAT
 import { formatErrorMessage } from '../error-format.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
-import { createReadCompletenessState, isCommunicationThreadContext, readCompletenessBlock, recordReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
+import { createReadCompletenessState, isCommunicationThreadContext, readCompletenessBlock, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
 import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
@@ -664,7 +664,7 @@ export class Agent extends LoopDetector {
     const adapterName = getActiveAdapter(pageUrl)?.name || '';
     const communicationThread = isCommunicationThreadContext(pageUrl, adapterName);
     const required = requiresCompleteThreadRead(userMessage, runOptions, { communicationThread });
-    this.readCompletenessStates.set(tabId, createReadCompletenessState(token, required));
+    this.readCompletenessStates.set(tabId, createReadCompletenessState(token, required, communicationThread));
     return token;
   }
 
@@ -679,6 +679,14 @@ export class Agent extends LoopDetector {
     const state = this.readCompletenessStates.get(tabId);
     if (!state) return null;
     const next = recordReadCompleteness(state, toolName, args, result);
+    this.readCompletenessStates.set(tabId, next);
+    return next;
+  }
+
+  _armReadCompletenessFromPlan(tabId, plan) {
+    const state = this.readCompletenessStates.get(tabId);
+    if (!state) return null;
+    const next = requirePlannerReadCompleteness(state, plan);
     this.readCompletenessStates.set(tabId, next);
     return next;
   }
@@ -9547,6 +9555,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
         };
       }
+      if (!recheckOnly) this._armReadCompletenessFromPlan(tabId, plan);
       return {
         proceed: true,
         requestKind: 'execute',
@@ -9741,6 +9750,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('plan_auto_approved', { planId, confidence: plan.confidence });
         }
         const approvedScratchpadText = formatPlanScratchpad(plan, '', canonicalVerboseMarkdown);
+        this._armReadCompletenessFromPlan(tabId, plan);
         return {
           proceed: true,
           approvedScratchpadText,
@@ -9796,6 +9806,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? false
         : approvedSubmissionMetadata;
       const approvedScratchpadText = formatPlanScratchpad(plan, approvedText, canonicalVerboseMarkdown);
+      this._armReadCompletenessFromPlan(tabId, approvedText || plan);
       return {
         proceed: true,
         approvedScratchpadText,
