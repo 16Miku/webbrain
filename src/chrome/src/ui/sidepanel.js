@@ -4740,6 +4740,28 @@ function rebindCopyButtons() {
   });
 }
 
+function bindCompactStepDetailsToggle(toggle) {
+  if (!toggle || toggle.dataset.bound) return;
+  toggle.dataset.bound = 'true';
+  toggle.type = 'button';
+  const currentDetails = toggle.closest('.step-item')?.nextElementSibling;
+  toggle.setAttribute('aria-expanded', String(
+    !!currentDetails?.classList.contains('step-details')
+      && currentDetails.classList.contains('open'),
+  ));
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const details = toggle.closest('.step-item')?.nextElementSibling;
+    if (!details?.classList.contains('step-details')) return;
+    const open = details.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
+function rebindCompactStepDetailsToggles() {
+  messagesEl.querySelectorAll('.step-details-toggle').forEach(bindCompactStepDetailsToggle);
+}
+
 function rebindContinueButtons() {
   document.querySelectorAll('.continue-btn').forEach(btn => {
     if (btn.dataset.bound) return;
@@ -6022,6 +6044,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 function rebindRestoredMessageControls() {
   restoreStagedScreenshotAttachments();
   rebindCopyButtons();
+  rebindCompactStepDetailsToggles();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
   rebindPlanReviewRetryButtons();
@@ -9603,13 +9626,6 @@ function appendCompactStep(toolName, args) {
   const toggle = document.createElement('button');
   toggle.className = 'step-details-toggle';
   toggle.textContent = t('sp.step.details');
-  toggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const details = step.nextElementSibling;
-    if (details && details.classList.contains('step-details')) {
-      details.classList.toggle('open');
-    }
-  });
 
   step.appendChild(icon);
   step.appendChild(label);
@@ -9621,6 +9637,7 @@ function appendCompactStep(toolName, args) {
   details.className = 'step-details';
   details.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.input_label'))}</div><div class="detail-args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
   container.appendChild(details);
+  bindCompactStepDetailsToggle(toggle);
 }
 
 function markLastStepDone(toolName, result) {

@@ -4,7 +4,7 @@ import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSAT
 import { formatErrorMessage } from '../error-format.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
-import { createReadCompletenessState, isCommunicationThreadContext, readCompletenessBlock, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
+import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
 import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
@@ -68,7 +68,9 @@ import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHost
 import {
   buildPlannerMessages,
   buildPlannerIntentMessages,
+  buildReadScopeMessages,
   parsePlanFromContent,
+  parseReadScopeFromContent,
   formatPlanMarkdown,
   formatPlanExecutionMetadataMarkdown,
   formatPlanScratchpad,
@@ -664,7 +666,7 @@ export class Agent extends LoopDetector {
     const adapterName = getActiveAdapter(pageUrl)?.name || '';
     const communicationThread = isCommunicationThreadContext(pageUrl, adapterName);
     const required = requiresCompleteThreadRead(userMessage, runOptions, { communicationThread });
-    this.readCompletenessStates.set(tabId, createReadCompletenessState(token, required, communicationThread));
+    this.readCompletenessStates.set(tabId, createReadCompletenessState(token, required, communicationThread, adapterName));
     return token;
   }
 
@@ -691,8 +693,34 @@ export class Agent extends LoopDetector {
     return next;
   }
 
-  _readCompletenessBlock(tabId) {
-    return readCompletenessBlock(this.readCompletenessStates.get(tabId));
+  _readCompletenessNeedsScopeClassification(tabId) {
+    const state = this.readCompletenessStates.get(tabId);
+    return state?.communicationThread === true && state.required !== true;
+  }
+
+  _readWindowLimits(provider = null) {
+    let activeProvider = provider;
+    if (!activeProvider) {
+      try { activeProvider = this.providerManager.getActive(); } catch {}
+    }
+    return readWindowLimits(
+      this._resolvePromptTier(activeProvider),
+      activeProvider?.contextWindow,
+    );
+  }
+
+  _readCompletenessBlock(tabId, provider = null) {
+    const limits = this._readWindowLimits(provider);
+    return readCompletenessBlock(this.readCompletenessStates.get(tabId), limits.treePageChars, {
+      mode: this._effectiveRunMode(tabId),
+    });
+  }
+
+  _readCompletenessLimitation(tabId) {
+    return readCompletenessLimitation(
+      this.readCompletenessStates.get(tabId),
+      this._effectiveRunMode(tabId),
+    );
   }
 
   _completionTextSignalsSuccess(value, { allowBare = false } = {}) {
@@ -3038,7 +3066,7 @@ export class Agent extends LoopDetector {
     }
   }
 
-  _repairToolCallArgs(name, args = {}) {
+  _repairToolCallArgs(name, args = {}, options = {}) {
     if (name !== 'get_accessibility_tree' || !args || typeof args !== 'object' || Array.isArray(args)) {
       return { args, repaired: false, note: '' };
     }
@@ -3063,12 +3091,13 @@ export class Agent extends LoopDetector {
       next.page = Number(next.page.trim());
       repaired = true;
     }
-    if (typeof next.maxChars === 'number' && Number.isFinite(next.maxChars) && next.maxChars > 6000) {
-      next.maxChars = 6000;
+    const treePageChars = Number(options.treePageChars) === 12000 ? 12000 : 6000;
+    if (typeof next.maxChars === 'number' && Number.isFinite(next.maxChars) && next.maxChars > treePageChars) {
+      next.maxChars = treePageChars;
       repaired = true;
     }
     const note = repaired
-      ? '[TOOL ARGUMENT REPAIR: Normalized get_accessibility_tree arguments into a valid model-visible page request. Continue with explicit JSON like get_accessibility_tree({filter:"visible", page:2, maxChars:6000}).]'
+      ? `[TOOL ARGUMENT REPAIR: Normalized get_accessibility_tree arguments into a valid model-visible page request. Continue with explicit JSON like get_accessibility_tree({filter:"visible", page:2, maxChars:${treePageChars}}).]`
       : '';
     return { args: next, repaired, note };
   }
@@ -4946,6 +4975,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
     const promptTier = this._resolvePromptTier();
+    const readLimits = this._readWindowLimits();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     // Set of tools whose side effect can navigate the page. We snapshot the
     // URL before these and re-check after, so we can warn the model when an
@@ -5019,9 +5049,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
-      const argRepair = this._repairToolCallArgs(fnName, parsedArgs.args);
+      const argRepair = this._repairToolCallArgs(fnName, parsedArgs.args, {
+        treePageChars: readLimits.treePageChars,
+      });
       let fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, argRepair.args);
       const argRepairNotice = argRepair.note || '';
+      let readWindowNotice = '';
+      const readState = this.readCompletenessStates.get(tabId);
+      if (
+        fnName === 'get_accessibility_tree'
+        && readLimits.expanded
+        && readState?.required === true
+        && fnArgs.maxChars == null
+        && (!fnArgs.filter || fnArgs.filter === 'all')
+        && !fnArgs.ref_id
+        && (fnArgs.page == null || Number(fnArgs.page) === 1)
+      ) {
+        fnArgs = { ...fnArgs, maxChars: readLimits.treePageChars };
+        readWindowNotice = `[TRUSTED READ WINDOW: This capable provider uses a ${readLimits.treePageChars}-character accessibility-tree page for the required complete-thread read. Preserve maxChars in every returned continuationArgs.]`;
+      }
       const parameters = this._toolParametersForValidation(tabId, fnName, toolSchemas);
       const argumentValidation = parameters ? validateToolArguments(fnName, fnArgs, parameters) : { ok: true };
       if (!argumentValidation.ok) {
@@ -5475,6 +5521,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
           this._persist(tabId);
           return { action: 'continue' };
+        }
+
+        const readLimitation = this._readCompletenessLimitation(tabId);
+        if (readLimitation) {
+          const limitationResult = {
+            success: false,
+            done: true,
+            outcome: 'partial',
+            readCompleteness: true,
+            limitation: true,
+            summary: readLimitation,
+          };
+          onUpdate('tool_call', { name: fnName, args: fnArgs });
+          onUpdate('tool_result', { name: fnName, result: limitationResult });
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify(limitationResult),
+          });
+          const runId = this.currentRunId.get(tabId);
+          if (runId) {
+            trace.recordToolCall(runId, step, {
+              name: fnName, args: fnArgs, result: limitationResult, latencyMs: 0,
+            });
+          }
+          this._appendSyntheticToolResults(
+            tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: Ask mode cannot expand the complete Gmail conversation' })
+          );
+          onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });
+          this._persist(tabId);
+          return { action: 'return', value: readLimitation, status: 'read_scope_limited' };
         }
 
         const readBlock = this._readCompletenessBlock(tabId);
@@ -5992,7 +6070,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // our own trusted notes (the loop nudge), so the nudge stays outside the
       // <untrusted_page_content> box and is read as an instruction, not data.
       const resultTrustName = this._toolResultTrustName(fnName, toolResult);
-      let resultContent = this._wrapUntrusted(resultTrustName, this._limitToolResult(toolResult));
+      const modelResultChars = fnName === 'get_accessibility_tree'
+        && readLimits.expanded
+        && Number(fnArgs.maxChars) > 6000
+        ? readLimits.toolResultChars
+        : STANDARD_TOOL_RESULT_CHARS;
+      let resultContent = this._wrapUntrusted(
+        resultTrustName,
+        this._limitToolResult(toolResult, modelResultChars),
+      );
       if (toolResult?.errorCode === 'chrome_protected_page') {
         resultContent += '\n[TRUSTED RUNTIME ROUTING: Chrome blocks extension DOM/debugger access on this dashboard. Do not call another DOM, accessibility, wait, script, iframe, WebMCP, or upload_file tool here. Continue manually in the dashboard.]';
         onUpdate('warning', { message: 'Chrome-protected dashboard detected; DOM automation is unavailable.' });
@@ -6044,6 +6130,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         resultContent += '\n' + argRepairNotice;
         onUpdate('warning', { message: 'Normalized accessibility-tree arguments.' });
       }
+      if (readWindowNotice) resultContent += '\n' + readWindowNotice;
       if (mastodonObserved?.instruction) {
         resultContent += '\n' + mastodonObserved.instruction;
         onUpdate('warning', { message: 'Mastodon remote-follow handoff detected.' });
@@ -8965,7 +9052,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _maybeExecuteRecommendedActionFirstTool(tabId, runOptions, messages, onUpdate, provider, allowedToolNames) {
+  async _maybeExecuteRecommendedActionFirstTool(tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas = null) {
     const firstTool = this._recommendedActionFirstTool(runOptions, allowedToolNames);
     if (!firstTool) return null;
     const callId = `recommended_${firstTool.id.replace(/[^a-z0-9_-]/gi, '_')}_first_tool`;
@@ -8982,7 +9069,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       content: null,
       tool_calls: [toolCall],
     });
-    return await this._executeToolBatch(tabId, [toolCall], messages, onUpdate, provider, null, allowedToolNames, 0);
+    return await this._executeToolBatch(
+      tabId, [toolCall], messages, onUpdate, provider, null, allowedToolNames, 0, {}, toolSchemas,
+    );
   }
 
   _formatRecommendedActionFastPathScratchpad(plan) {
@@ -9022,13 +9111,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // building the digest) can never drop the just-typed message from the
     // transcript.
     const sourceBoundRun = runOptions?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;
+    const runReadScopeClassifier = !runIntent
+      && !sourceBoundRun
+      && this._readCompletenessNeedsScopeClassification(tabId);
     const sourceBoundPriorMessages = sourceBoundRun
       ? this._selectionGroundingPriorMessageSet(tabId, messages)
       : null;
     const sourceBoundPlannerMessages = sourceBoundRun
       ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
       : null;
-    const priorMessages = runIntent
+    const priorMessages = runIntent || runReadScopeClassifier
       ? (sourceBoundRun
         ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
         : messages.slice())
@@ -9040,6 +9132,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
     if (!runIntent) {
       this.plannerFollowUpSkipTabs.delete(tabId);
+      if (runReadScopeClassifier) {
+        const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
+        const readScopeOutcome = await this._runReadScopeClassifier(
+          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo,
+        );
+        if (!readScopeOutcome.proceed) {
+          messages.push({ role: 'assistant', content: readScopeOutcome.message });
+          this._persist(tabId);
+          return readScopeOutcome;
+        }
+      }
       return { proceed: true, requestKind: 'execute', requiresStateChange: false };
     }
     const fastPathPlan = this._recommendedActionFastPathPlan(runOptions);
@@ -9091,6 +9194,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : await this._runPlannerIntentGate(
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
+    if (
+      gate?.readOnlyFallback === true
+      && !sourceBoundRun
+      && this._readCompletenessNeedsScopeClassification(tabId)
+    ) {
+      const readScopeOutcome = await this._runReadScopeClassifier(
+        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo,
+      );
+      if (!readScopeOutcome.proceed) {
+        messages.push({ role: 'assistant', content: readScopeOutcome.message });
+        this._persist(tabId);
+        return readScopeOutcome;
+      }
+    }
     if (!gate.proceed) {
       messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
       this._persist(tabId);
@@ -9418,6 +9535,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
+  _plannerReadScopeFromApprovedPlanText(text) {
+    const match = String(text || '').match(
+      /^\s*-\s*Read scope:\s*(complete_thread|current_message|visible_page|none)\s*$/im,
+    );
+    return normalizeReadScope(match?.[1]) || 'none';
+  }
+
   _approvedPlanStepsText(text) {
     const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
     const start = lines.findIndex(line => line.trim().toLowerCase() === '### steps');
@@ -9430,6 +9554,154 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     return lines.slice(start + 1, end).join('\n').trim();
+  }
+
+  _approvedPlanStepActions(text) {
+    return this._approvedPlanStepsText(text)
+      .split('\n')
+      .map(line => line.match(/^\s*\d+[.)]\s+(.+?)\s*$/)?.[1] || '')
+      .map(action => action.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  _compactApprovedPlanStepActions(text) {
+    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+    const metadataStart = lines.findIndex(line =>
+      line.trim().toLowerCase() === '### planner execution metadata'
+    );
+    return (metadataStart >= 0 ? lines.slice(0, metadataStart) : lines)
+      .map(line => line.match(/^\s*\d+[.)]\s+(.+?)\s*$/)?.[1] || '')
+      .map(action => action.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  _compactApprovedPlanStepsChanged(plan, approvedText) {
+    const approved = this._compactApprovedPlanStepActions(approvedText);
+    const displaySteps = plan?.localized?.steps?.length ? plan.localized.steps : plan?.steps || [];
+    const original = displaySteps
+      .map(step => String(step?.action || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return approved.length !== original.length
+      || approved.some((action, index) => action !== original[index]);
+  }
+
+  _readScopeRepairMessages(messages) {
+    return [
+      ...messages,
+      {
+        role: 'user',
+        content: '/no_think\nThe previous response was not a valid read-scope classification. Output exactly one JSON object with one allowed value: {"read_scope":"complete_thread"}, {"read_scope":"current_message"}, {"read_scope":"visible_page"}, or {"read_scope":"none"}. No prose, markdown, tool calls, or reasoning text.',
+      },
+    ];
+  }
+
+  async _runReadScopeClassifier(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null) {
+    if (!this._readCompletenessNeedsScopeClassification(tabId)) {
+      return { proceed: true, readScope: null };
+    }
+    const { tabUrl, tabTitle } = tabInfo || await this._getTabUrlTitle(tabId);
+    const provider = this.providerManager.getActive();
+    const messages = buildReadScopeMessages(enriched, tabUrl, tabTitle, historyDigest, {
+      noThink: this._plannerPrefersNoThinkPrompt(provider),
+    });
+    onUpdate('thinking', { step: 0, note: 'Checking conversation scope…' });
+    try {
+      if (runId) {
+        try {
+          trace.recordLLMRequest(runId, 0, {
+            providerClass: provider?.constructor?.name,
+            model: provider?.model,
+            messageCount: messages.length,
+            toolsCount: 0,
+            ...Agent._traceMediaCounts(messages),
+            phase: 'read_scope',
+          });
+        } catch {}
+      }
+      const startedAt = Date.now();
+      let result = await this._chatWithCostAllowance(
+        provider,
+        messages,
+        { ...this._plannerChatOptions(provider, false, true), temperature: 0, maxTokens: 64 },
+        costState,
+        { tabId, generationName: 'read_scope' },
+      );
+      if (runId) {
+        try {
+          trace.recordLLMResponse(runId, 0, {
+            content: result.content,
+            toolCalls: null,
+            usage: result.usage,
+            latencyMs: Date.now() - startedAt,
+            model: provider?.model,
+            phase: 'read_scope',
+          });
+        } catch {}
+      }
+      if (this._checkAbort(tabId)) {
+        return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+      }
+      let readScope = parseReadScopeFromContent(result.content);
+      if (!readScope) {
+        onUpdate('thinking', { step: 0, note: 'Checking conversation scope… retrying JSON output' });
+        if (runId) {
+          try {
+            trace.recordLLMRequest(runId, 0, {
+              providerClass: provider?.constructor?.name,
+              model: provider?.model,
+              messageCount: messages.length + 1,
+              toolsCount: 0,
+              phase: 'read_scope',
+              repair: true,
+            });
+          } catch {}
+        }
+        const repairStartedAt = Date.now();
+        result = await this._chatWithCostAllowance(
+          provider,
+          this._readScopeRepairMessages(messages),
+          { ...this._plannerChatOptions(provider, true, true), temperature: 0 },
+          costState,
+          { tabId, generationName: 'read_scope' },
+        );
+        if (runId) {
+          try {
+            trace.recordLLMResponse(runId, 0, {
+              content: result.content,
+              toolCalls: null,
+              usage: result.usage,
+              latencyMs: Date.now() - repairStartedAt,
+              model: provider?.model,
+              phase: 'read_scope',
+              repair: true,
+            });
+          } catch {}
+        }
+        readScope = parseReadScopeFromContent(result.content);
+      }
+      if (!readScope) {
+        return {
+          proceed: false,
+          message: 'WebBrain could not determine how much of the active conversation must be read. No page tools ran; retry the request.',
+          reason: 'read_scope_error',
+        };
+      }
+      this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: readScope });
+      return { proceed: true, readScope };
+    } catch (error) {
+      if (this._checkAbort(tabId)) {
+        return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+      }
+      if (this._isCostAllowanceError(error)) {
+        return { proceed: false, message: error.message, reason: 'cost_limit' };
+      }
+      const detail = formatErrorMessage(error, { fallback: 'Unknown read-scope classifier error.' });
+      return {
+        proceed: false,
+        message: `WebBrain could not determine how much of the active conversation must be read: ${detail} No page tools ran; retry the request.`,
+        reason: 'read_scope_error',
+      };
+    }
   }
 
   /**
@@ -9796,6 +10068,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : plan.requires_submission;
       const approvedStepsChanged = verbosePlanEdited
         && this._approvedPlanStepsText(approvedText) !== this._approvedPlanStepsText(verboseMarkdown);
+      const approvedReadScopeStepsChanged = !!editedText && (
+        verbosePlanEdited
+          ? approvedStepsChanged
+          : this._compactApprovedPlanStepsChanged(plan, approvedText)
+      );
       // The visible metadata remains authoritative for unrelated edits, but a
       // changed Steps section can remove the action that justified the
       // planner's original positive submit intent while leaving its generated
@@ -9805,8 +10082,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && approvedStepsChanged
         ? false
         : approvedSubmissionMetadata;
+      const approvedReadScopeMetadata = verbosePlanEdited
+        ? this._plannerReadScopeFromApprovedPlanText(approvedText)
+        : (normalizeReadScope(plan.read_scope) || 'none');
+      const approvedReadScope = approvedReadScopeStepsChanged && approvedReadScopeMetadata === 'complete_thread'
+        ? 'none'
+        : approvedReadScopeMetadata;
       const approvedScratchpadText = formatPlanScratchpad(plan, approvedText, canonicalVerboseMarkdown);
-      this._armReadCompletenessFromPlan(tabId, approvedText || plan);
+      this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: approvedReadScope });
       return {
         proceed: true,
         approvedScratchpadText,
@@ -14820,8 +15103,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Limit tool result size to avoid blowing up the context.
    * Page text in particular can be huge.
    */
-  _limitToolResult(result) {
-    const maxResultChars = 8000; // ~2k tokens
+  _limitToolResult(result, maxResultChars = STANDARD_TOOL_RESULT_CHARS) {
+    maxResultChars = Number(maxResultChars) === 16000 ? 16000 : STANDARD_TOOL_RESULT_CHARS;
     const windowSafeResult = isReadPageWindowResult(result)
       ? fitReadPageWindowResult(result, maxResultChars)
       : result;
@@ -22924,7 +23207,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // loop. _startTraceRun is the single source of truth (no duplicate tab
     // fetch / startRun payload). (#6)
     let plannerTabInfo = null;
-    if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
+    const readScopePreflight = !selectionOnly && this._readCompletenessNeedsScopeClassification(tabId);
+    if ((this._isActionMode(mode) && runOptions?.cloudRun !== true) || readScopePreflight) {
       // Fetch once for trace metadata. The planner normally reuses it, but a
       // source-bound selection must not receive page URL/title context.
       const traceTabInfo = await this._getTabUrlTitle(tabId);
@@ -22969,11 +23253,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
     }
     const tier = provider.promptTier;
+    const readWindow = this._readWindowLimits(provider);
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, {
       strictSecretMode: this.strictSecretMode,
       tier,
+      accessibilityTreeMaxChars: readWindow.treePageChars,
       webMcpAvailable: this.webMcpEnabled === true,
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
@@ -23112,7 +23398,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
-      tabId, runOptions, messages, onUpdate, provider, allowedToolNames,
+      tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {
       finalResponse = recommendedFirstTool.value;
@@ -23145,6 +23431,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tools = getToolsForMode(mode, {
         strictSecretMode: this.strictSecretMode,
         tier,
+        accessibilityTreeMaxChars: readWindow.treePageChars,
         webMcpAvailable: this.webMcpEnabled === true,
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
@@ -23477,6 +23764,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await this._persistNow(tabId);
         return finalResponse;
       }
+      const readFinalLimitation = this._readCompletenessLimitation(tabId);
+      if (readFinalLimitation) {
+        finalResponse = readFinalLimitation;
+        _traceStatus = 'read_scope_limited';
+        messages.push({ role: 'assistant', content: finalResponse });
+        onUpdate('text', { content: finalResponse, replace: true });
+        onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });
+        await this._persistNow(tabId);
+        return finalResponse;
+      }
       const progressFinalBlock = this._plainFinalProgressBlock(tabId);
       const completionFinalBlock = this._completionPlainFinalBlock(tabId);
       const readFinalBlock = this._readCompletenessBlock(tabId);
@@ -23722,7 +24019,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // clears currentRunId, even on an early throw during setup. (#2)
     try {
     let plannerTabInfo = null;
-    if (this._isActionMode(mode) && runOptions?.cloudRun !== true) {
+    const readScopePreflight = !selectionOnly && this._readCompletenessNeedsScopeClassification(tabId);
+    if ((this._isActionMode(mode) && runOptions?.cloudRun !== true) || readScopePreflight) {
       // Fetch once for trace metadata. The planner normally reuses it, but a
       // source-bound selection must not receive page URL/title context.
       const traceTabInfo = await this._getTabUrlTitle(tabId);
@@ -23764,11 +24062,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
     }
     const tier = provider.promptTier;
+    const readWindow = this._readWindowLimits(provider);
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, {
       strictSecretMode: this.strictSecretMode,
       tier,
+      accessibilityTreeMaxChars: readWindow.treePageChars,
       webMcpAvailable: this.webMcpEnabled === true,
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
       skillTools,
@@ -23788,7 +24088,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let compressionPlaceholderRecoveryAttempted = false;
 
     const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
-      tabId, runOptions, messages, onUpdate, provider, allowedToolNames,
+      tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {
       return finish(recommendedFirstTool.value);
@@ -23814,6 +24114,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tools = getToolsForMode(mode, {
         strictSecretMode: this.strictSecretMode,
         tier,
+        accessibilityTreeMaxChars: readWindow.treePageChars,
         webMcpAvailable: this.webMcpEnabled === true,
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
         skillTools,
@@ -24042,6 +24343,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           await this._persistNow(tabId);
           return finish(clarificationFinalDecision.failure, clarificationFinalDecision.status);
+        }
+        const readFinalLimitation = this._readCompletenessLimitation(tabId);
+        if (readFinalLimitation) {
+          messages.push({ role: 'assistant', content: readFinalLimitation });
+          onUpdate('text', { content: readFinalLimitation, replace: true });
+          onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });
+          await this._persistNow(tabId);
+          return finish(readFinalLimitation, 'read_scope_limited');
         }
         // Preserve the progress ledger's purpose-built continuation before
         // treating other plain terminal text as unverified.

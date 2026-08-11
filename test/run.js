@@ -441,9 +441,12 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT,
   PLANNER_API_REPLAY_RULE,
   PLANNER_RESPONSE_ONLY_RULES,
+  READ_SCOPE_SYSTEM_PROMPT,
   buildPlannerSystemPrompt,
   buildPlannerIntentMessages,
+  buildReadScopeMessages,
   parsePlanFromContent,
+  parseReadScopeFromContent,
   formatPlanMarkdown,
   formatPlanScratchpad,
   normalizePlan,
@@ -457,10 +460,13 @@ const {
   PLANNER_INTENT_SYSTEM_PROMPT: PLANNER_INTENT_SYSTEM_PROMPT_FX,
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
   PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
+  READ_SCOPE_SYSTEM_PROMPT: READ_SCOPE_SYSTEM_PROMPT_FX,
   buildPlannerSystemPrompt: buildPlannerSystemPromptFx,
   buildPlannerMessages: buildPlannerMessagesFx,
   buildPlannerIntentMessages: buildPlannerIntentMessagesFx,
+  buildReadScopeMessages: buildReadScopeMessagesFx,
   parsePlanFromContent: parsePlanFromContentFx,
+  parseReadScopeFromContent: parseReadScopeFromContentFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/planner.js').replace(/\\/g, '/')
 );
@@ -4793,6 +4799,7 @@ const TRACE_RUNS = [
   {
     run: { runId: 'r1', userMessage: 'Find the cheapest Sony WH-1000XM5', model: 'haiku', status: 'stopped', webbrainVersion: '23.3.1' },
     events: [
+      { runId: 'r1', seq: 0, kind: 'llm_response', data: { step: 0, phase: 'read_scope', content: '{"read_scope":"visible_page"}' } },
       { runId: 'r1', seq: 0, kind: 'llm_response', data: { step: 0, phase: 'planner', content: '```json\n{"summary":"find cheapest Sony","steps":["search","filter"]}\n```' } },
       { runId: 'r1', seq: 1, kind: 'llm_response', data: { step: 1, content: '', toolCalls: [{ id: 'c1', name: 'fetch_url' }] } },
       { runId: 'r1', seq: 2, kind: 'tool', data: { step: 1, name: 'fetch_url', args: { url: 'https://www.galaxus.ch/de/search?q=Sony' }, result: { success: false, error: 'Blocked (403): Akamai challenge page' } } },
@@ -5059,6 +5066,7 @@ test('trace export: renders the full tool chain from trace events, in order', ()
   assert.equal(toolCount, 4);
   assert.match(markdown, /# WebBrain Conversation — tool chain/);
   assert.match(markdown, /## Turn 1 — Find the cheapest Sony WH-1000XM5/);
+  assert.match(markdown, /\*\*Read scope:\*\*\n```\n\{"read_scope":"visible_page"\}/); // classifier is diagnostic metadata, not an assistant answer
   assert.match(markdown, /\*\*Planner:\*\*\n```json\n\{"summary"/);   // planner labelled + fenced, model's ```json language preserved
   assert.ok(!/```\n```/.test(markdown), 'planner content must not be double-fenced');
   assert.match(markdown, /Screenshot pixels and vision descriptions are omitted here/);   // honest privacy footer
@@ -5257,36 +5265,44 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     ['chrome', ReadCompletenessCh],
     ['firefox', ReadCompletenessFx],
   ]) {
-    const communicationContext = { communicationThread: true };
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/FMfc123', 'gmail'), true, `${label}: Gmail thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);
-    assert.equal(runtime.requiresCompleteThreadRead('Summarize the whole thread', {}, communicationContext), true, `${label}: explicit whole-thread request was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead('Summarize this thread', {}, communicationContext), true, `${label}: ordinary thread-summary request was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead('What are the follow-ups in this conversation?', {}, communicationContext), true, `${label}: thread follow-up extraction was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead('Have you really read it all?', {}, communicationContext), true, `${label}: completeness challenge was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead("What's going on here?", {}, communicationContext), true, `${label}: vague page-relative thread read was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead('Can you explain this?', {}, communicationContext), true, `${label}: vague thread explanation was missed`);
-    assert.equal(runtime.requiresCompleteThreadRead('Explain this send button', {}, communicationContext), false, `${label}: element-specific explanation was over-gated`);
-    assert.equal(runtime.requiresCompleteThreadRead("What's going on here?"), false, `${label}: vague wording outside a communication thread was over-gated`);
-    assert.equal(runtime.requiresCompleteThreadRead('Summarize this conversation we just had?'), false, `${label}: chat-only wording on an unrelated page was over-gated`);
+    assert.equal(runtime.requiresCompleteThreadRead('Summarize the whole thread'), false, `${label}: raw English prose remained a read-scope authority`);
     assert.equal(runtime.requiresCompleteThreadRead('Summarize this', { recommendedAction: { id: 'summarize-thread' } }), true, `${label}: summarize-thread action was missed`);
     assert.equal(runtime.requiresCompleteThreadRead('Find the visible send button'), false, `${label}: ordinary UI read was over-gated`);
+    assert.equal(runtime.normalizeReadScope('complete_thread'), 'complete_thread', `${label}: valid read scope was rejected`);
+    assert.equal(runtime.normalizeReadScope('gesamter_thread'), null, `${label}: arbitrary localized scope was accepted`);
+    assert.deepEqual(runtime.readWindowLimits('compact', 128000), {
+      expanded: false,
+      treePageChars: 6000,
+      toolResultChars: 8000,
+    }, `${label}: Compact tier received the expanded read window`);
+    assert.equal(runtime.readWindowLimits('mid', 65535).expanded, false, `${label}: sub-64k provider received the expanded read window`);
+    assert.deepEqual(runtime.readWindowLimits('mid', 65536), {
+      expanded: true,
+      treePageChars: 12000,
+      toolResultChars: 16000,
+    }, `${label}: eligible Mid provider did not receive the expanded read window`);
+    assert.equal(runtime.readWindowLimits('full', 128000).expanded, true, `${label}: eligible Full provider did not receive the expanded read window`);
 
     const tracePlans = [
       {
         request_kind: 'execute',
-        summary: 'Read the open Gmail conversation and explain what it is about.',
-        steps: [{ action: 'Read the visible Gmail conversation and identify all messages in the thread.' }],
+        read_scope: 'complete_thread',
+        summary: 'Açık Gmail konuşmasını oku ve ne hakkında olduğunu açıkla.',
+        steps: [{ action: 'Konuşmadaki bütün iletileri incele.' }],
       },
       {
         request_kind: 'execute',
+        read_scope: 'complete_thread',
         summary: 'Review the open Gmail thread to assess whether his response timing has slowed.',
         steps: [{ action: 'Identify the messages, senders, and timestamps.' }],
       },
       {
         request_kind: 'execute',
+        read_scope: 'complete_thread',
         summary: 'Re-read the open Gmail thread and correct the prior assessment.',
         steps: [{ action: 'Review the message where he said it looked perfect.' }],
       },
@@ -5299,9 +5315,9 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       );
       assert.ok(runtime.readCompletenessBlock(planned), `${label}: semantic planner intent did not arm the guard`);
     }
-    assert.equal(runtime.plannerRequiresCompleteThreadRead('### Steps\n1. Read the open Gmail conversation and identify all messages.'), true, `${label}: approved plan text lost whole-thread intent`);
-    assert.equal(runtime.plannerRequiresCompleteThreadRead('### Steps\n1. Read only the currently expanded message.'), false, `${label}: narrowed approved plan text retained stale whole-thread intent`);
-    const unrelatedPlan = { request_kind: 'execute', summary: 'Read the visible send button.', steps: [{ action: 'Find the compose control.' }] };
+    assert.equal(runtime.plannerRequiresCompleteThreadRead({ request_kind: 'execute', read_scope: 'current_message' }), false, `${label}: current-message scope armed the full-thread guard`);
+    assert.equal(runtime.plannerRequiresCompleteThreadRead({ request_kind: 'execute', summary: 'Read every message.' }), false, `${label}: prose bypassed the structured scope`);
+    const unrelatedPlan = { request_kind: 'execute', read_scope: 'visible_page', summary: 'Read the visible send button.', steps: [{ action: 'Find the compose control.' }] };
     assert.equal(runtime.plannerRequiresCompleteThreadRead(unrelatedPlan), false, `${label}: ordinary UI plan was over-gated`);
     const unrelatedPageState = runtime.requirePlannerReadCompleteness(
       runtime.createReadCompletenessState(`${label}-unrelated`, false, false),
@@ -5311,6 +5327,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
 
     let state = runtime.createReadCompletenessState(`${label}-tree`, true);
     assert.match(runtime.readCompletenessBlock(state), /First call get_accessibility_tree/);
+    assert.match(runtime.readCompletenessBlock(state, 12000), /"maxChars":12000/, `${label}: expanded completeness nudge omitted the coordinated tree page size`);
     state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { filter: 'visible' }, { pageContent: 'visible prefix' });
     assert.equal(state.sawEligibleRead, false, `${label}: visible-only tree incorrectly satisfied a whole-thread read`);
     state = runtime.recordReadCompleteness(state, 'get_accessibility_tree', { filter: 'all', maxDepth: 1 }, { pageContent: 'shallow root only' });
@@ -5354,6 +5371,33 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     });
     assert.equal(runtime.readCompletenessBlock(state), null, `${label}: complete pages 1..3 remained blocked`);
 
+    let gmailState = runtime.createReadCompletenessState(`${label}-gmail-tree`, true, true, 'gmail');
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"\n  button "Collapse all"',
+      page: 1,
+      totalChars: 1200,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationExpansionState: 'collapsed',
+    });
+    assert.equal(gmailState.treeCoverageComplete, true, `${label}: terminal Gmail root read did not finish tree pagination`);
+    assert.equal(gmailState.complete, false, `${label}: collapsed Gmail messages were mistaken for complete coverage`);
+    assert.match(runtime.readCompletenessBlock(gmailState, 6000, { mode: 'act' }), /Expand all[\s\S]*fresh full-depth root/i, `${label}: Act did not receive deterministic expansion recovery`);
+    assert.match(runtime.readCompletenessLimitation(gmailState, 'ask') || '', /Ask mode cannot expand/i, `${label}: Ask did not receive a terminal collapsed-thread limitation`);
+
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"\n listitem "Latest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationExpansionState: 'expanded',
+    });
+    assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
+    assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged Gmail thread remained blocked`);
+
   }
 });
 
@@ -5374,16 +5418,12 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
     assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: unrelated active page was over-gated by chat wording`);
     agent._currentUrl = async () => 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
     await agent._beginReadCompleteness(tabId, "what's going on here?", {});
-    assert.ok(agent._readCompletenessBlock(tabId), `${label}: vague page-relative thread read was not armed before the mode split`);
-    await agent._beginReadCompleteness(tabId, 'Do you agree with my take on his reply timing?', {});
-    assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: semantic-only wording should wait for planner intent`);
+    assert.equal(agent._readCompletenessBlock(tabId), null, `${label}: raw user language armed completeness before structured classification`);
     agent._armReadCompletenessFromPlan(tabId, {
       request_kind: 'execute',
-      summary: 'Read the open Gmail conversation and explain what it is about.',
-      steps: [{ action: 'Read the visible Gmail conversation and identify all messages in the thread.' }],
+      read_scope: 'complete_thread',
     });
     assert.ok(agent._readCompletenessBlock(tabId), `${label}: planner did not arm the whole-thread guard for the reproduced trace`);
-    await agent._beginReadCompleteness(tabId, 'Summarize the whole thread', {});
 
     const result = await agent._executeToolBatch(
       tabId,
@@ -5405,6 +5445,51 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
   }
 });
 
+test('Ask returns a fixed limitation when Gmail expansion cannot be verified', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 52705 : 52706;
+    let executed = false;
+    agent._persist = () => {};
+    agent._currentUrl = async () => 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    agent.executeTool = async () => {
+      executed = true;
+      return { done: true };
+    };
+    agent._runModeOverrides.set(tabId, 'ask');
+    await agent._beginReadCompleteness(tabId, 'Bu konuşmada neler oluyor?', {});
+    agent._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: 'complete_thread' });
+    agent._recordReadCompleteness(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"\n  button "Collapse all"',
+      page: 1,
+      totalChars: 1200,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationExpansionState: 'collapsed',
+    });
+
+    const messages = [];
+    const result = await agent._executeToolBatch(
+      tabId,
+      [{ id: 'limited_done', function: { name: 'done', arguments: '{"summary":"complete summary"}' } }],
+      messages,
+      () => {},
+      { supportsVision: false },
+      null,
+      new Set(['done']),
+      1,
+    );
+
+    assert.equal(result.action, 'return', `${label}: Ask limitation did not terminate cleanly`);
+    assert.equal(result.status, 'read_scope_limited', `${label}: Ask limitation status was lost`);
+    assert.match(result.value, /Ask mode cannot expand/i, `${label}: user-facing limitation omitted the mode boundary`);
+    assert.equal(executed, false, `${label}: model-authored done executed despite the fixed limitation`);
+    const toolResult = JSON.parse(messages.find(message => message.tool_call_id === 'limited_done').content);
+    assert.equal(toolResult.limitation, true, `${label}: limitation result lacks structured evidence`);
+  }
+});
+
 test('planner and intent gates arm whole-thread coverage for trace-derived Gmail reads', async () => {
   const plan = {
     request_kind: 'execute',
@@ -5412,6 +5497,7 @@ test('planner and intent gates arm whole-thread coverage for trace-derived Gmail
     requires_submission: false,
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
+    read_scope: 'complete_thread',
     summary: 'Read the open Gmail conversation and explain what it is about.',
     confidence: 0.96,
     steps: [{ id: '1', action: 'Read the visible Gmail conversation and identify all messages in the thread.', tools: ['get_accessibility_tree'] }],
@@ -5485,12 +5571,17 @@ test('planner and intent gates arm whole-thread coverage for trace-derived Gmail
     );
     assert.equal(fullGate.proceed, true, `${label}: full planner gate did not proceed`);
     assert.ok(agent._readCompletenessBlock(fullTabId), `${label}: full planner gate did not arm whole-thread coverage`);
+    const compactReviewMarkdown = formatPlanMarkdown(plan, { localized: true });
+    assert.doesNotMatch(compactReviewMarkdown, /### Steps/i, `${label}: compact renderer unexpectedly gained a Steps heading`);
 
     const editedTabId = 52740 + index;
     agent.planReviewMode = 'always';
     agent._waitForPlanReview = async () => ({
       action: 'approve',
-      editedText: '### Summary\nInspect the selected message only.\n\n### Steps\n1. Read only the currently expanded message.',
+      editedText: compactReviewMarkdown.replace(
+        plan.localized.steps[0].action,
+        'Read only the currently expanded message.',
+      ),
       markdownMode: 'compact',
     });
     await agent._beginReadCompleteness(editedTabId, semanticOnlyPrompt, {});
@@ -5508,6 +5599,164 @@ test('planner and intent gates arm whole-thread coverage for trace-derived Gmail
     );
     assert.equal(editedGate.proceed, true, `${label}: edited full planner gate did not proceed`);
     assert.equal(agent._readCompletenessBlock(editedTabId), null, `${label}: stale planner object overrode the narrowed approved plan`);
+
+    const summaryEditTabId = 52745 + index;
+    agent._waitForPlanReview = async () => ({
+      action: 'approve',
+      editedText: compactReviewMarkdown.replace(
+        plan.localized.summary,
+        'Use a shorter final explanation.',
+      ),
+      markdownMode: 'compact',
+    });
+    await agent._beginReadCompleteness(summaryEditTabId, semanticOnlyPrompt, {});
+    const summaryEditGate = await agent._runPlannerGate(
+      summaryEditTabId,
+      { role: 'user', content: semanticOnlyPrompt },
+      () => {},
+      null,
+      null,
+      '',
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      'try',
+      'act',
+      { locale: 'en' },
+    );
+    assert.equal(summaryEditGate.proceed, true, `${label}: summary-only edited plan did not proceed`);
+    assert.ok(agent._readCompletenessBlock(summaryEditTabId), `${label}: summary-only edit discarded the unchanged structured read scope`);
+    assert.equal(agent._plannerReadScopeFromApprovedPlanText('- Read scope: current_message'), 'current_message', `${label}: stable read-scope metadata was not parsed`);
+  }
+});
+
+test('Ask and managed cloud classify communication read scope across languages', async () => {
+  const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+  const cases = [
+    { label: 'ask-tr', mode: 'ask', runOptions: {}, task: 'Bu konuşmada neler oluyor?', scope: 'complete_thread', blocked: true },
+    { label: 'cloud-es', mode: 'act', runOptions: { cloudRun: true }, task: 'Resume toda esta conversación.', scope: 'complete_thread', blocked: true },
+    { label: 'ask-ja', mode: 'ask', runOptions: {}, task: '選択した最新のメッセージだけを説明して。', scope: 'current_message', blocked: false },
+  ];
+
+  for (const [browserIndex, [browserLabel, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+    for (const [caseIndex, fixture] of cases.entries()) {
+      const provider = { name: `${browserLabel}-scope`, model: `${browserLabel}-scope`, promptTier: 'full' };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      const tabId = 52750 + (browserIndex * 10) + caseIndex;
+      let classifierCalls = 0;
+      agent._persist = () => {};
+      agent._persistSubmittedTurn = async () => {};
+      agent._currentUrl = async () => gmailUrl;
+      agent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' });
+      agent._chatWithCostAllowance = async (_provider, messages, _options, _costState, metadata) => {
+        classifierCalls += 1;
+        assert.equal(metadata?.generationName, 'read_scope', `${browserLabel}/${fixture.label}: wrong classifier generation`);
+        assert.match(messages[0]?.content || '', /semantic request across any language/i, `${browserLabel}/${fixture.label}: classifier is language-bound`);
+        return { content: JSON.stringify({ read_scope: fixture.scope }), usage: {} };
+      };
+
+      await agent._beginReadCompleteness(tabId, fixture.task, fixture.runOptions);
+      const messages = [{ role: 'system', content: 'system' }];
+      const outcome = await agent._maybeRunPlannerGate(
+        tabId,
+        messages,
+        { role: 'user', content: fixture.task },
+        () => {},
+        fixture.mode,
+        null,
+        null,
+        null,
+        fixture.runOptions,
+      );
+
+      assert.equal(outcome.proceed, true, `${browserLabel}/${fixture.label}: classified run did not proceed`);
+      assert.equal(classifierCalls, 1, `${browserLabel}/${fixture.label}: expected exactly one scope classification`);
+      assert.equal(Boolean(agent._readCompletenessBlock(tabId)), fixture.blocked, `${browserLabel}/${fixture.label}: structured scope was not enforced`);
+    }
+
+    const repairTabId = 52770 + browserIndex;
+    const repairProvider = { name: `${browserLabel}-scope-repair`, model: `${browserLabel}-scope-repair`, promptTier: 'full' };
+    const repairAgent = new AgentClass({ getActive: () => repairProvider, getVisionProvider: async () => null });
+    let repairCalls = 0;
+    repairAgent._persist = () => {};
+    repairAgent._persistSubmittedTurn = async () => {};
+    repairAgent._currentUrl = async () => gmailUrl;
+    repairAgent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' });
+    repairAgent._chatWithCostAllowance = async (_provider, messages, options, _costState, metadata) => {
+      repairCalls += 1;
+      assert.equal(metadata?.generationName, 'read_scope', `${browserLabel}: scope repair changed generation accounting`);
+      if (repairCalls === 1) return { content: 'I think the whole conversation is needed.', usage: {} };
+      assert.match(messages.at(-1)?.content || '', /previous response was not a valid read-scope classification/i, `${browserLabel}: repair prompt was not appended`);
+      assert.equal(options.maxTokens, 2048, `${browserLabel}: repair retained the brittle 64-token ceiling`);
+      return { content: '{"read_scope":"complete_thread"}', usage: {} };
+    };
+    await repairAgent._beginReadCompleteness(repairTabId, 'Bu konuşmayı özetle.', {});
+    const repairOutcome = await repairAgent._maybeRunPlannerGate(
+      repairTabId,
+      [{ role: 'system', content: 'system' }],
+      { role: 'user', content: 'Bu konuşmayı özetle.' },
+      () => {},
+      'ask',
+      null,
+      null,
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      {},
+    );
+    assert.equal(repairOutcome.proceed, true, `${browserLabel}: repaired scope classification did not proceed`);
+    assert.equal(repairCalls, 2, `${browserLabel}: scope repair was not bounded to one retry`);
+    assert.ok(repairAgent._readCompletenessBlock(repairTabId), `${browserLabel}: repaired complete-thread scope was not enforced`);
+
+    const fallbackTabId = 52780 + browserIndex;
+    const fallbackProvider = { name: `${browserLabel}-fallback-scope`, model: `${browserLabel}-fallback-scope`, promptTier: 'full' };
+    const fallbackAgent = new AgentClass({ getActive: () => fallbackProvider, getVisionProvider: async () => null });
+    fallbackAgent.setPlanBeforeActMode('off');
+    fallbackAgent._persist = () => {};
+    fallbackAgent._persistSubmittedTurn = async () => {};
+    fallbackAgent._currentUrl = async () => gmailUrl;
+    fallbackAgent._runPlannerIntentGate = async () => ({
+      proceed: true,
+      requestKind: 'respond',
+      readOnlyFallback: true,
+      requiresStateChange: false,
+    });
+    fallbackAgent._chatWithCostAllowance = async () => ({ content: '{"read_scope":"complete_thread"}', usage: {} });
+    await fallbackAgent._beginReadCompleteness(fallbackTabId, 'Bu konuşmayı özetle.', {});
+    const fallbackOutcome = await fallbackAgent._maybeRunPlannerGate(
+      fallbackTabId,
+      [{ role: 'system', content: 'system' }],
+      { role: 'user', content: 'Bu konuşmayı özetle.' },
+      () => {},
+      'act',
+      null,
+      null,
+      { tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' },
+      { locale: 'tr' },
+    );
+    assert.equal(fallbackOutcome.readOnlyFallback, true, `${browserLabel}: planner fallback marker was lost`);
+    assert.ok(fallbackAgent._readCompletenessBlock(fallbackTabId), `${browserLabel}: planner-to-Ask fallback skipped structured scope classification`);
+
+    const unrelatedTabId = 52790 + browserIndex;
+    const unrelatedAgent = new AgentClass({ getActive: () => fallbackProvider, getVisionProvider: async () => null });
+    let unrelatedClassifierCalls = 0;
+    unrelatedAgent._persist = () => {};
+    unrelatedAgent._persistSubmittedTurn = async () => {};
+    unrelatedAgent._currentUrl = async () => 'https://example.com/article';
+    unrelatedAgent._chatWithCostAllowance = async () => {
+      unrelatedClassifierCalls += 1;
+      return { content: '{"read_scope":"complete_thread"}', usage: {} };
+    };
+    await unrelatedAgent._beginReadCompleteness(unrelatedTabId, 'Bunu açıkla.', {});
+    const unrelatedOutcome = await unrelatedAgent._maybeRunPlannerGate(
+      unrelatedTabId,
+      [{ role: 'system', content: 'system' }],
+      { role: 'user', content: 'Bunu açıkla.' },
+      () => {},
+      'ask',
+      null,
+      null,
+      null,
+      {},
+    );
+    assert.equal(unrelatedOutcome.proceed, true, `${browserLabel}: unrelated Ask run did not proceed`);
+    assert.equal(unrelatedClassifierCalls, 0, `${browserLabel}: non-communication page paid for a read-scope classification`);
   }
 });
 
@@ -5515,6 +5764,8 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
+  assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
+  assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
   for (const [label, getTools, prompt] of [
     ['chrome', getToolsForModeCh, SYSTEM_PROMPT_ASK_CH],
@@ -5526,7 +5777,32 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
     assert.equal(tool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: model-visible tree pages can exceed the structured result window`);
     assert.match(tool?.function?.parameters?.properties?.maxChars?.description || '', /continuationArgs/i, `${label}: maxChars still describes an abort instead of structured paging`);
     assert.match(prompt, /whole-page, whole-document, or whole-thread[\s\S]*hasMore:false/i, `${label}: Ask prompt permits partial whole-thread answers`);
+    const expandedTool = getTools('ask', {
+      tier: 'full',
+      accessibilityTreeMaxChars: 12000,
+    }).find(item => item.function.name === 'get_accessibility_tree');
+    assert.equal(expandedTool?.function?.parameters?.properties?.maxChars?.maximum, 12000, `${label}: eligible provider schema omitted the expanded tree page`);
+    assert.match(expandedTool?.function?.parameters?.properties?.maxChars?.description || '', /whole-thread or whole-document/i, `${label}: expanded schema does not constrain the larger page to complete reads`);
+    const compactTool = getTools('act', {
+      tier: 'compact',
+      accessibilityTreeMaxChars: 12000,
+    }).find(item => item.function.name === 'get_accessibility_tree');
+    assert.equal(compactTool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: Compact schema accepted the expanded page`);
   }
+});
+
+test('accessibility read-window policy is documented with model-facing and trace limits separated', () => {
+  const accessibilityDocs = fs.readFileSync(path.join(ROOT, 'docs/accessibility-tree-and-refs.md'), 'utf8');
+  const toolDocs = fs.readFileSync(path.join(ROOT, 'docs/agent-tools.md'), 'utf8');
+  for (const [label, text] of [['accessibility docs', accessibilityDocs], ['tool docs', toolDocs]]) {
+    assert.match(text, /6,000\s*\/\s*8,000/i, `${label}: standard read-window pair is missing`);
+    assert.match(text, /12,000\s*\/\s*16,000/i, `${label}: expanded read-window pair is missing`);
+    assert.match(text, /65,536|64k/i, `${label}: context boundary is missing`);
+    assert.match(text, /continuationArgs/i, `${label}: deterministic continuation requirement is missing`);
+    assert.match(text, /Collapse all/i, `${label}: Gmail expansion evidence is missing`);
+    assert.match(text, /Ask[^\n]*cannot|Ask mode is read-only/i, `${label}: Ask collapsed-thread limitation is missing`);
+  }
+  assert.match(accessibilityDocs, /Trace storage has a separate diagnostic truncation policy/i, 'trace cap is conflated with the model-facing result budget');
 });
 
 test('trace export: empty input → empty transcript, zero counts', () => {
@@ -28424,6 +28700,103 @@ test('compact clarification results settle the pending pre-card tool step', () =
   }
 });
 
+test('compact tool detail toggles are rebound after chat restore', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const bindStart = panel.indexOf('function bindCompactStepDetailsToggle(');
+    const rebindStart = panel.indexOf('function rebindCompactStepDetailsToggles(', bindStart);
+    const rebindEnd = panel.indexOf('function rebindContinueButtons(', rebindStart);
+    assert.ok(bindStart >= 0 && rebindStart > bindStart, `${label}: compact detail toggle binder missing`);
+    assert.ok(rebindEnd > rebindStart, `${label}: compact detail toggle rebind helper missing`);
+
+    const restoredControlsSource = panel.slice(
+      panel.indexOf('function rebindRestoredMessageControls('),
+      panel.indexOf('function getProviderPickerOptions(', panel.indexOf('function rebindRestoredMessageControls(')),
+    );
+    assert.match(
+      restoredControlsSource,
+      /rebindCompactStepDetailsToggles\(\);/,
+      `${label}: restored compact detail buttons should regain their click handlers`,
+    );
+    const appendSource = panel.slice(
+      panel.indexOf('function appendCompactStep('),
+      panel.indexOf('function markLastStepDone(', panel.indexOf('function appendCompactStep(')),
+    );
+    assert.match(
+      appendSource,
+      /bindCompactStepDetailsToggle\(toggle\);/,
+      `${label}: live compact detail buttons should use the same restorable binding`,
+    );
+
+    const makeToggle = () => {
+      const classes = new Set(['step-details']);
+      const details = {
+        classList: {
+          contains: (name) => classes.has(name),
+          toggle: (name) => {
+            if (classes.has(name)) {
+              classes.delete(name);
+              return false;
+            }
+            classes.add(name);
+            return true;
+          },
+        },
+      };
+      const step = { nextElementSibling: details };
+      const listeners = [];
+      const attributes = new Map();
+      const toggle = {
+        dataset: {},
+        closest: (selector) => selector === '.step-item' ? step : null,
+        setAttribute: (name, value) => attributes.set(name, value),
+        addEventListener: (type, listener) => {
+          if (type === 'click') listeners.push(listener);
+        },
+      };
+      return { toggle, classes, listeners, attributes };
+    };
+
+    const live = makeToggle();
+    const toggles = [live.toggle];
+    const runtime = vm.runInNewContext(
+      `(() => {
+        ${panel.slice(bindStart, rebindEnd)}
+        return { rebindCompactStepDetailsToggles };
+      })()`,
+      {
+        messagesEl: {
+          querySelectorAll: (selector) => {
+            assert.equal(selector, '.step-details-toggle');
+            return toggles;
+          },
+        },
+      },
+    );
+
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(live.listeners.length, 1, `${label}: live compact detail button should bind once`);
+    assert.equal(live.toggle.type, 'button', `${label}: compact detail button should not submit a surrounding form`);
+    let stopped = false;
+    live.listeners[0]({ stopPropagation: () => { stopped = true; } });
+    assert.equal(stopped, true, `${label}: compact detail click should stay within the tool row`);
+    assert.equal(live.classes.has('open'), true, `${label}: compact detail click should reveal the panel`);
+    assert.equal(live.attributes.get('aria-expanded'), 'true', `${label}: compact detail state should be accessible`);
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(live.listeners.length, 1, `${label}: repeated live rebinds should not duplicate handlers`);
+
+    const restored = makeToggle();
+    toggles[0] = restored.toggle;
+    runtime.rebindCompactStepDetailsToggles();
+    assert.equal(restored.listeners.length, 1, `${label}: restored compact detail button should regain a handler`);
+    restored.listeners[0]({ stopPropagation: () => {} });
+    assert.equal(restored.classes.has('open'), true, `${label}: restored compact detail button should reveal the panel`);
+  }
+});
+
 test('all locales translate long-reply navigation labels', () => {
   const keys = [
     'sp.chat.follow_response',
@@ -49287,6 +49660,12 @@ test('agent rejects invalid tool JSON and repairs narrow get_accessibility_tree 
     const oversized = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', maxDepth: 15, maxChars: 60000 });
     assert.deepEqual(oversized.args, { filter: 'all', maxDepth: 15, maxChars: 6000 });
     assert.equal(oversized.repaired, true);
+    const expandedOversized = agent._repairToolCallArgs(
+      'get_accessibility_tree',
+      { filter: 'all', maxDepth: 15, maxChars: 60000 },
+      { treePageChars: 12000 },
+    );
+    assert.deepEqual(expandedOversized.args, { filter: 'all', maxDepth: 15, maxChars: 12000 });
 
     let executedArgs = null;
     const repairMessages = [];
@@ -49300,10 +49679,72 @@ test('agent rejects invalid tool JSON and repairs narrow get_accessibility_tree 
     ], repairMessages, (type, payload) => {
       if (type === 'warning') warnings.push(payload.message);
     }, { supportsVision: false });
-    assert.deepEqual(executedArgs, { filter: 'visible', page: 2, maxChars: 6000 });
+    assert.deepEqual(executedArgs, { filter: 'visible', page: 2, maxChars: 12000 });
     assert.doesNotThrow(() => JSON.parse(agent._unwrapUntrusted(repairMessages[0].content)), 'normalized accessibility result should remain valid JSON');
     assert.match(repairMessages[0].content, /TOOL ARGUMENT REPAIR/);
     assert.ok(warnings.includes('Normalized accessibility-tree arguments.'));
+  }
+});
+
+test('eligible complete-thread reads coordinate a 12k tree page with a parseable 16k result', async () => {
+  const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+  for (const [label, AgentClass, getTools] of [
+    ['chrome', AgentCh, getToolsForModeCh],
+    ['firefox', AgentFx, getToolsForModeFx],
+  ]) {
+    const provider = {
+      promptTier: 'full',
+      contextWindow: 65536,
+      supportsVision: false,
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = label === 'chrome' ? 783 : 784;
+    agent._persist = () => {};
+    agent._currentUrl = async () => gmailUrl;
+    await agent._beginReadCompleteness(tabId, 'Summarize this', {
+      recommendedAction: { id: 'summarize-thread' },
+    });
+
+    let executedArgs = null;
+    agent.executeTool = async (_tabId, _name, args) => {
+      executedArgs = args;
+      return {
+        pageContent: 'x'.repeat(11800),
+        page: 1,
+        totalChars: 11800,
+        hasMore: false,
+        truncated: false,
+        continuationArgs: null,
+      };
+    };
+    const tools = getTools('ask', {
+      tier: provider.promptTier,
+      accessibilityTreeMaxChars: 12000,
+    });
+    const toolSchemas = new Map(tools.map(tool => [tool.function.name, tool.function.parameters]));
+    const messages = [];
+    await agent._executeToolBatch(
+      tabId,
+      [{ id: 'expanded_tree', function: { name: 'get_accessibility_tree', arguments: '{"filter":"all","maxDepth":15}' } }],
+      messages,
+      () => {},
+      provider,
+      null,
+      new Set(['get_accessibility_tree']),
+      1,
+      {},
+      toolSchemas,
+    );
+
+    assert.equal(executedArgs.maxChars, 12000, `${label}: complete-thread root read did not receive the expanded page`);
+    const serialized = agent._unwrapUntrusted(messages[0]?.content || '');
+    assert.ok(serialized.length <= 16000, `${label}: expanded tree exceeded the coordinated serializer window`);
+    assert.equal(JSON.parse(serialized).pageContent.length, 11800, `${label}: expanded tree was clipped before the model`);
+    assert.doesNotMatch(serialized, /\[\.\.\.result truncated\]/, `${label}: expanded tree fell through to invalid generic truncation`);
+    assert.match(messages[0]?.content || '', /TRUSTED READ WINDOW[\s\S]*12000-character/i, `${label}: model was not told to preserve the expanded continuation size`);
   }
 });
 
@@ -51804,6 +52245,7 @@ function planOnlyTerminalFixture() {
   return JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
+    read_scope: 'visible_page',
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
     summary: 'Open the current page and collect the requested details.',
@@ -51834,6 +52276,7 @@ function plannerIntentFixture({
   requiresSubmission = false,
   allowsPlannerShapedResult = false,
   allowsAppStateToolEvidence = false,
+  readScope = null,
   scheduling = null,
   locale = 'en',
   localizedSummary = 'Carry out the requested task.',
@@ -51846,6 +52289,7 @@ function plannerIntentFixture({
     requires_submission: requiresSubmission,
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
+    read_scope: readScope || (requestKind === 'execute' ? 'visible_page' : 'none'),
     summary: requestKind === 'clarify'
       ? 'Ask the user for the missing information.'
       : 'Handle the requested task.',
@@ -59707,6 +60151,7 @@ test('exhaustiveness: every model-exposed tool is classified', () => {
 test('planner: parse and format structured plan', () => {
   const raw = JSON.stringify({
     requires_submission: true,
+    read_scope: 'complete_thread',
     summary: 'Follow GitHub stargazers',
     confidence: 92,
     steps: [{ id: '1', action: 'Open stargazers', tools: ['navigate', 'wait_for_stable'] }],
@@ -59730,6 +60175,7 @@ test('planner: parse and format structured plan', () => {
   assert.equal(plan.scheduling.tool, 'schedule_task');
   assert.equal(plan.requires_state_change, true, 'planned scheduling should always require a state change');
   assert.equal(plan.requires_submission, true, 'explicit submission intent should be preserved');
+  assert.equal(plan.read_scope, 'complete_thread', 'structured read scope should be preserved');
   assert.deepEqual(plan.skill_ids, ['freeskillz-xyz', 'otp-verification-code-helper']);
   const md = formatPlanMarkdown(plan);
   assert.match(md, /Follow GitHub stargazers/, 'compact plan should keep the summary');
@@ -59739,6 +60185,7 @@ test('planner: parse and format structured plan', () => {
   const verboseMd = formatPlanMarkdown(plan, { verbose: true });
   assert.match(verboseMd, /Confidence: 92%/);
   assert.match(verboseMd, /Submission required: yes/);
+  assert.match(verboseMd, /Read scope: complete_thread/);
   assert.match(verboseMd, /navigate, wait_for_stable/);
   assert.match(verboseMd, /Progress ledger: yes/);
   assert.match(verboseMd, /schedule_task/);
@@ -59749,6 +60196,7 @@ test('planner: parse and format structured plan', () => {
   const planOnly = parsePlanFromContent(JSON.stringify({
     request_kind: 'plan_only',
     requires_state_change: true,
+    read_scope: 'none',
     summary: 'Describe a monitor plan',
     steps: [{ id: '1', action: 'Describe the cadence.' }],
     scheduling: { tool: 'schedule_task', hint: 'Planning only.' },
@@ -59766,6 +60214,7 @@ test('planner: parse and format structured plan', () => {
   const respond = parsePlanFromContent(JSON.stringify({
     request_kind: 'respond',
     requires_state_change: true,
+    read_scope: 'none',
     summary: 'Return the draft already present in working context',
     steps: [],
     scheduling: { tool: 'schedule_task', hint: 'must not be armed' },
@@ -59779,6 +60228,7 @@ test('planner: parse and format structured plan', () => {
   assert.equal(respond?.request_kind, 'respond', 'tool-free follow-up should be a supported intent');
   assert.equal(respond?.requires_state_change, false, 'respond must never authorize page mutation');
   assert.equal(respond?.requires_submission, false, 'respond must never require submission');
+  assert.equal(respond?.read_scope, 'none', 'respond must never retain a page-read scope');
   assert.equal(respond?.scheduling, null, 'respond must not preserve scheduling metadata');
 
   for (const parse of [parsePlanFromContent, parsePlanFromContentFx]) {
@@ -59786,6 +60236,7 @@ test('planner: parse and format structured plan', () => {
       request_kind: 'clarify',
       requires_state_change: false,
       requires_submission: true,
+      read_scope: 'none',
       summary: 'Ask for the missing answer before submitting the form.',
       steps: [],
       memory: {},
@@ -59800,6 +60251,7 @@ test('planner: parse and format structured plan', () => {
     }), { requireIntent: true, locale: 'en' });
     assert.equal(clarifyBeforeSubmit?.requires_state_change, false, 'clarify must never authorize an immediate mutation');
     assert.equal(clarifyBeforeSubmit?.requires_submission, true, 'clarify must retain the eventual user-authorized submit intent');
+    assert.equal(clarifyBeforeSubmit?.read_scope, 'none', 'clarify must never retain a page-read scope');
   }
 });
 
@@ -59814,6 +60266,24 @@ test('planner: parse JSON inside markdown fence', () => {
     const legacy = parse(JSON.stringify({ summary: 'Legacy plan', steps: [], memory: {} }));
     assert.equal(legacy.memory.progress_ledger_policy, 'auto', 'missing legacy metadata should retain classifier fallback');
     assert.equal(legacy.requires_submission, null, 'missing legacy submission metadata should retain conservative fallback');
+    assert.equal(legacy.read_scope, 'none', 'legacy plans should normalize missing read scope without prose inference');
+    const missingStructuredScope = parse(JSON.stringify({
+      request_kind: 'execute',
+      requires_state_change: false,
+      summary: 'Read the current page.',
+      steps: [{ id: '1', action: 'Read the page.' }],
+      localized: { locale: 'en', summary: 'Read the current page.', steps: [{ id: '1', action: 'Read the page.' }], risks: [] },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(missingStructuredScope, null, 'intent plans must declare a valid structured read scope');
+    const invalidResponseScope = parse(JSON.stringify({
+      request_kind: 'respond',
+      requires_state_change: false,
+      read_scope: 'complete_thread',
+      summary: 'Use the existing conversation context.',
+      steps: [],
+      localized: { locale: 'en', summary: 'Use the existing conversation context.', steps: [], risks: [] },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(invalidResponseScope, null, 'non-execute intent must not retain a page-read scope');
   }
 });
 
@@ -59881,6 +60351,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_SYSTEM_PROMPT, /brief neutral scratchpad_notes/);
   assert.match(PLANNER_SYSTEM_PROMPT, /Do not plan to copy the full file/);
   assert.match(PLANNER_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /"read_scope": "complete_thread"/);
+  assert.match(PLANNER_SYSTEM_PROMPT, /Classify read_scope semantically across any language/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /precise fixed interval.*every five minutes.*start now/i);
@@ -59889,6 +60361,7 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"scheduling": null/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"use_progress_ledger": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"requires_submission": boolean/);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /"read_scope": "complete_thread"/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /explicit do-not-submit tasks and autosave UIs/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /For clarify, preserve true.*already-requested commit/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /answers, drafts, or values already prepared.*classify execute and inspect/i);
@@ -59905,6 +60378,18 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /Calendar\/cron recurrence.*unsupported/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /"use_progress_ledger": boolean/);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /"requires_submission": boolean/);
+  assert.equal(READ_SCOPE_SYSTEM_PROMPT_FX, READ_SCOPE_SYSTEM_PROMPT);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /semantic request across any language/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /response timing/);
+  for (const [build, parse] of [
+    [buildReadScopeMessages, parseReadScopeFromContent],
+    [buildReadScopeMessagesFx, parseReadScopeFromContentFx],
+  ]) {
+    const scopeMessages = build({ role: 'user', content: 'Bu konuşmayı özetle.' }, 'https://mail.google.com/mail/u/0/#inbox/abc', 'Gmail');
+    assert.equal(scopeMessages[0]?.content, READ_SCOPE_SYSTEM_PROMPT, 'read-scope classifier prompt drifted');
+    assert.equal(parse('{"read_scope":"complete_thread"}'), 'complete_thread');
+    assert.equal(parse('{"read_scope":"entire_conversation"}'), null);
+  }
   assert.match(PLANNER_SYSTEM_PROMPT, /"confidence": 0\.0/);
   assert.match(PLANNER_SYSTEM_PROMPT, /Set confidence from 0\.0 to 1\.0/);
   assert.doesNotMatch(PLANNER_SYSTEM_PROMPT, /read:[^\n]*\bscreenshot\b/);
@@ -60014,12 +60499,14 @@ async function withPlannerBrowserGlobals(fn) {
 }
 
 function plannerFixtureJson(overrides = {}) {
+  const requestKind = overrides.request_kind || 'execute';
   return JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
     requires_submission: false,
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
+    read_scope: requestKind === 'execute' ? 'visible_page' : 'none',
     summary: 'Open the page and collect visible account links',
     confidence: 0.75,
     steps: [{ id: '1', action: 'Read the current page', tools: ['read_page'] }],
@@ -60678,6 +61165,7 @@ test('planner validates semantic skill ids and activates approved skills before 
           content: JSON.stringify({
             request_kind: 'execute',
             requires_state_change: true,
+            read_scope: 'visible_page',
             summary: 'Download the requested public video.',
             confidence: 0.99,
             steps: [{ id: '1', action: 'Load the media skill and follow its workflow.', tools: ['load_skill'] }],

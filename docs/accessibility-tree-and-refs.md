@@ -38,7 +38,7 @@ dialog "Add a product" [ref_166]
 |---|---|---|
 | `filter` | `'all'` | `'all'` (whole DOM), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
 | `maxDepth` | `15` | Max tree depth to descend |
-| `maxChars` | — | Hard cap on output length (auto-slices with `autoDegraded:true` if exceeded) |
+| `maxChars` | Filter-dependent | Structured page size. Defaults to 6,000 for `all`, 3,000 for `visible`, and 3,500 for `interactive`; larger trees return continuation metadata. See [adaptive read windows](#adaptive-read-windows). |
 | `ref_id` | — | Anchor at a specific element's subtree instead of `document.body` |
 | `page` | — | 1-based chunk number for paginated results when tree is truncated |
 
@@ -87,6 +87,43 @@ Without `WeakRef`, the map would pin every element it ever indexed, preventing g
 The primary page-reading tool. Returns the rendered tree string plus metadata (`truncated`, `hasMore`, `autoDegraded`, `notice`).
 
 The agent uses this as its first action on almost every turn — it's faster and cheaper than a screenshot, and works on text-only models.
+
+### Adaptive read windows
+
+Accessibility-tree paging uses two coordinated limits: the `pageContent`
+window returned by the content script and the outer serialized tool result sent
+to the model. The standard pair is 6,000 / 8,000 characters. WebBrain exposes
+an expanded 12,000 / 16,000 pair only when the active provider:
+
+- is Mid or Full rather than Compact; and
+- reports a context window of at least 65,536 tokens (64k).
+
+The 12,000-character value is a maximum, not the ordinary default. Visible and
+interactive UI reads retain their 3,000 / 3,500 defaults, and ordinary
+accessibility results retain the 8,000-character serializer cap. The expanded
+serializer applies only to an accessibility-tree call that actually requests
+more than 6,000 characters. Other tools keep their existing result budgets.
+
+For a required complete-thread read, the runtime automatically adds
+`maxChars:12000` to the first root `filter:"all"` call when the provider is
+eligible. A model may also request the expanded page for a whole-document read.
+Every truncated result remains deterministic: callers must reuse the exact
+`continuationArgs`, including `maxChars`, until `hasMore:false`. Increasing the
+window reduces model round trips; it does not turn a multi-page tree into proof
+of complete coverage.
+
+Pagination also cannot prove that an application rendered hidden conversation
+content. For Gmail complete-thread reads, WebBrain requires a fresh full-depth
+root tree that exposes **Collapse all**; a terminal tree that still exposes
+**Expand all** remains incomplete. Ask mode is read-only, so if messages are
+still collapsed it reports that limitation and asks the user to expand them or
+switch to Act mode. Act/Dev can activate Expand all and then perform the fresh
+root read.
+
+Trace storage has a separate diagnostic truncation policy. A trace showing only
+the head of a large result does not mean the model received the same truncated
+payload; inspect the recorded total length and the model-facing paging metadata
+when diagnosing incomplete reads.
 
 ### `click_ax({ref_id})`
 
@@ -217,7 +254,7 @@ Ask or Compact.
 | Stale ref after SPA nav | All refs miss | Agent should read the tree again after `/navigate` or `wait_for_stable` |
 | Shadow DOM closed root | Tree shows `<my-component>` but not its children | Use `get_shadow_dom` + `shadow_dom_query` on Chrome; Firefox cannot pierce a closed root |
 | iframe not in tree | Agent can't find iframe content | Call `get_frames`, then use `iframe_read` / `iframe_click`; before editing, use `promote_iframe` if direct targeting stays unreliable |
-| Truncated tree | `truncated: true` + `hasMore: true` | Call `get_accessibility_tree` with `page: nextPage` or `ref_id` to zoom in |
+| Truncated tree | `truncated: true` + `hasMore: true` | Reuse the exact returned `continuationArgs`; use `ref_id` only to zoom into one already-identified subtree |
 | Portaled overlay not visible | Tree shows the combobox but not the dropdown | The overlay is hoisted to the `[open overlays]` section — re-read with `filter: 'all'` |
 
 ---
