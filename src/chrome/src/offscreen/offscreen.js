@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const res = await fetch(msg.url, {
         method: msg.method || 'POST',
         headers: msg.headers || {},
-        body: msg.body || undefined,
+        body: requestBodyFromMessage(msg),
       });
 
       const text = await res.text();
@@ -38,6 +38,38 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // keep sendResponse channel open for async
 });
 
+function requestBodyFromMessage(msg) {
+  if (msg?.bodyType !== 'form-data') return msg?.body || undefined;
+  if (!Array.isArray(msg.formDataEntries)) {
+    throw new Error('offscreen proxy received invalid FormData entries');
+  }
+  const form = new FormData();
+  for (const entry of msg.formDataEntries) {
+    if (!entry || typeof entry.name !== 'string') {
+      throw new Error('offscreen proxy received an invalid FormData field');
+    }
+    if (entry.kind === 'text') {
+      form.append(entry.name, String(entry.value ?? ''));
+      continue;
+    }
+    if (entry.kind !== 'blob' || typeof entry.value !== 'string') {
+      throw new Error(`offscreen proxy received an unsupported FormData field: ${entry.name}`);
+    }
+    const binary = atob(entry.value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], {
+      type: typeof entry.type === 'string' && entry.type
+        ? entry.type
+        : 'application/octet-stream',
+    });
+    form.append(entry.name, blob, typeof entry.filename === 'string' && entry.filename
+      ? entry.filename
+      : 'blob');
+  }
+  return form;
+}
+
 // Streaming variant of the fetch proxy, over a long-lived port. The
 // buffered onMessage path above can only respond after the ENTIRE body
 // has been consumed, so any caller-side timeout covers time-to-last-byte
@@ -54,7 +86,7 @@ chrome.runtime.onConnect.addListener((port) => {
       const res = await fetch(msg.url, {
         method: msg.method || 'POST',
         headers: msg.headers || {},
-        body: msg.body || undefined,
+        body: requestBodyFromMessage(msg),
       });
       post({
         type: 'headers',

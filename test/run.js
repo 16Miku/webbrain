@@ -22261,6 +22261,102 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
   }
 });
 
+test('chrome fetch fallback serializes multipart bodies and offscreen rebuilds FormData', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  let proxiedRequest = null;
+  let connectListener = null;
+  console.warn = () => {};
+
+  try {
+    globalThis.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    globalThis.chrome = {
+      offscreen: {
+        async hasDocument() { return true; },
+      },
+      runtime: {
+        onMessage: { addListener() {} },
+        onConnect: { addListener(fn) { connectListener = fn; } },
+      },
+    };
+    const offscreenUrl = 'file://' + path.join(ROOT, 'src/chrome/src/offscreen/offscreen.js').replace(/\\/g, '/') + `?multipart=${Date.now()}`;
+    await import(offscreenUrl);
+    assert.equal(typeof connectListener, 'function');
+
+    globalThis.fetch = async (url, options) => {
+      if (!proxiedRequest) {
+        throw new TypeError('Failed to fetch');
+      }
+      assert.equal(String(url), 'http://127.0.0.1:1234/v1/audio/transcriptions');
+      assert.ok(options.body instanceof FormData);
+      assert.equal(options.body.get('model'), 'whisper-local');
+      const file = options.body.get('file');
+      assert.ok(file instanceof Blob);
+      assert.equal(file.name, 'probe.wav');
+      assert.equal(file.type, 'audio/wav');
+      assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [82, 73, 70, 70]);
+      return new Response(JSON.stringify({ text: '' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    globalThis.chrome.runtime.connect = () => {
+      const callerMessageListeners = [];
+      const callerDisconnectListeners = [];
+      const offscreenRequestListeners = [];
+      const portForOffscreen = {
+        name: 'offscreen-fetch-stream',
+        onMessage: { addListener(fn) { offscreenRequestListeners.push(fn); } },
+        postMessage(msg) {
+          queueMicrotask(() => callerMessageListeners.forEach((fn) => fn(msg)));
+        },
+      };
+      connectListener(portForOffscreen);
+      return {
+        onMessage: { addListener(fn) { callerMessageListeners.push(fn); } },
+        onDisconnect: { addListener(fn) { callerDisconnectListeners.push(fn); } },
+        postMessage(msg) {
+          proxiedRequest = msg;
+          queueMicrotask(() => offscreenRequestListeners.forEach((fn) => fn(msg)));
+        },
+        disconnect() {
+          callerDisconnectListeners.forEach((fn) => fn());
+        },
+      };
+    };
+
+    const fetchUrl = 'file://' + path.join(ROOT, 'src/chrome/src/providers/fetch-with-fallback.js').replace(/\\/g, '/') + `?multipart=${Date.now()}`;
+    const { fetchWithFallback } = await import(fetchUrl);
+    const form = new FormData();
+    form.append('file', new Blob([Uint8Array.from([82, 73, 70, 70])], { type: 'audio/wav' }), 'probe.wav');
+    form.append('model', 'whisper-local');
+    const response = await fetchWithFallback('http://127.0.0.1:1234/v1/audio/transcriptions', {
+      method: 'POST',
+      body: form,
+      timeoutMs: 12345,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '{"text":""}');
+    assert.equal(proxiedRequest.bodyType, 'form-data');
+    assert.equal(proxiedRequest.body, undefined);
+    assert.deepEqual(proxiedRequest.formDataEntries.map(({ name, kind }) => ({ name, kind })), [
+      { name: 'file', kind: 'blob' },
+      { name: 'model', kind: 'text' },
+    ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    console.warn = previousWarn;
+  }
+});
+
 test('chrome fetch fallback resolves null-body proxy statuses without hanging', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;

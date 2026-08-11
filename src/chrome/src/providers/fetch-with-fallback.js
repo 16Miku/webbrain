@@ -158,6 +158,7 @@ export async function fetchWithFallback(url, options = {}) {
  * chunks in one burst.)
  */
 async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal) {
+  const serializedBody = await _serializeOffscreenRequestBody(fetchOptions.body);
   return await new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: 'offscreen-fetch-stream' });
     let settled = false;           // true once headers are in (or we've failed)
@@ -300,10 +301,45 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
         url,
         method: fetchOptions.method || 'POST',
         headers: fetchOptions.headers || {},
-        body: fetchOptions.body || undefined,
+        ...serializedBody,
       });
     } catch (e) {
       failBeforeHeaders(`offscreen proxy postMessage failed: ${e.message}`);
     }
   });
+}
+
+async function _serializeOffscreenRequestBody(body) {
+  if (!(typeof FormData !== 'undefined' && body instanceof FormData)) {
+    return { body: body || undefined };
+  }
+
+  const formDataEntries = [];
+  for (const [name, value] of body.entries()) {
+    if (typeof value === 'string') {
+      formDataEntries.push({ name, kind: 'text', value });
+      continue;
+    }
+    if (!(typeof Blob !== 'undefined' && value instanceof Blob)) {
+      throw new Error(`Unsupported FormData value for offscreen proxy field ${name}`);
+    }
+    const bytes = new Uint8Array(await value.arrayBuffer());
+    formDataEntries.push({
+      name,
+      kind: 'blob',
+      value: _bytesToBase64(bytes),
+      type: value.type || 'application/octet-stream',
+      filename: typeof value.name === 'string' && value.name ? value.name : 'blob',
+    });
+  }
+  return { bodyType: 'form-data', formDataEntries };
+}
+
+function _bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
