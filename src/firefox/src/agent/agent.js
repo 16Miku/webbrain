@@ -14930,6 +14930,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    if (name === 'resolve_visual_target') {
+      const mapped = this._screenshotClickCoords(tabId, args);
+      if (!mapped) {
+        return {
+          success: false,
+          dispatched: false,
+          error: 'x and y must be finite numbers',
+        };
+      }
+      args = { x: mapped.x, y: mapped.y };
+    }
     // Canonicalize coordinate clicks before toolbar recovery probes them.
     // The preflight binding and the eventual dispatch must resolve the same
     // CSS-pixel point, especially when the model clicked a downscaled image.
@@ -17462,6 +17473,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       'find_text': 'find_text',
       'execute_js': 'execute_js',
       'get_accessibility_tree': 'get_accessibility_tree',
+      'resolve_visual_target': 'resolve_visual_target',
       'click_ax': 'click_ax',
       'set_checked': 'set_checked',
       'type_ax': 'type_ax',
@@ -17575,12 +17587,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
+    const sendContentAction = () => browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action,
+      params: contentArgs,
+    }, messageOptions);
+    const dispatchContentAction = () => name === 'resolve_visual_target'
+      ? this._withIndicatorsHidden(tabId, sendContentAction)
+      : sendContentAction();
     try {
-      let response = await browser.tabs.sendMessage(tabId, {
-        target: 'content',
-        action,
-        params: contentArgs,
-      }, messageOptions);
+      let response = await dispatchContentAction();
       if (name === 'click' || name === 'click_ax') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }
@@ -17606,11 +17622,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Content script might not be injected — try injecting it
       try {
         await this._injectCoreContentScripts(tabId);
-        let response = await browser.tabs.sendMessage(tabId, {
-          target: 'content',
-          action,
-          params: contentArgs,
-        }, messageOptions);
+        let response = await dispatchContentAction();
         if (name === 'click' || name === 'click_ax') {
           response = await this._settleContentFilePickerGuard(tabId, response);
         }

@@ -2528,6 +2528,63 @@ for (const browserKind of ['chrome', 'firefox']) {
       throw new Error(`product context bounds regressed: ${JSON.stringify(result.targetContext)}`);
     }
   });
+
+  test(`resolve_visual_target (${browserKind}): nested SVG resolves semantic button`, async (page) => {
+    await setupContentHtml(page, `
+      <style>button { position: fixed; left: 40px; top: 30px; width: 120px; height: 60px; }</style>
+      <button id="target" aria-label="Add to cart">
+        <svg id="icon" width="100%" height="100%"><circle cx="60" cy="30" r="20"></circle></svg>
+      </button>
+    `, browserKind);
+    const point = await page.locator('#icon circle').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const result = await call(page, 'resolve_visual_target', point);
+    const buttonRect = await page.locator('#target').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    if (
+      !result?.success
+      || result.semanticTarget?.role !== 'button'
+      || result.semanticTarget?.name !== 'Add to cart'
+      || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+      || JSON.stringify(result.semanticTarget.rect) !== JSON.stringify(buttonRect)
+    ) {
+      throw new Error(`nested SVG did not resolve to button: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test(`resolve_visual_target (${browserKind}): plain canvas returns CSS fallback`, async (page) => {
+    await setupContentHtml(page, '<canvas id="canvas" width="200" height="100" style="position:fixed;left:20px;top:20px"></canvas>', browserKind);
+    const point = { x: 70, y: 55 };
+    const result = await call(page, 'resolve_visual_target', point);
+    if (!result?.success || result.semanticTarget || JSON.stringify(result.cssPoint) !== JSON.stringify(point)) {
+      throw new Error(`canvas should preserve CSS fallback: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test(`resolve_visual_target (${browserKind}): open shadow button resolves`, async (page) => {
+    await setupContentHtml(page, '<div id="host" style="position:fixed;left:25px;top:25px"></div>', browserKind);
+    await page.evaluate(() => {
+      const root = document.querySelector('#host').attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="shadow-target" aria-label="Shadow action" style="width:140px;height:50px">Action</button>';
+    });
+    const point = await page.locator('#host').evaluate((host) => {
+      const r = host.shadowRoot.querySelector('button').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const result = await call(page, 'resolve_visual_target', point);
+    if (
+      !result?.success
+      || result.semanticTarget?.role !== 'button'
+      || result.semanticTarget?.name !== 'Shadow action'
+      || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+    ) {
+      throw new Error(`open shadow target was not resolved: ${JSON.stringify(result)}`);
+    }
+  });
 }
 
 test('set_field (chrome): trusted contenteditable input updates framework state and enables submit', async (page) => {

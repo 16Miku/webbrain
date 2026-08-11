@@ -484,6 +484,56 @@
     return false;
   }
 
+  function composedParent(node) {
+    if (!node) return null;
+    if (node.assignedSlot) return node.assignedSlot;
+    const parent = node.parentNode;
+    if (parent) {
+      return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)
+        ? parent.host
+        : parent;
+    }
+    const root = node.getRootNode?.();
+    return (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot)
+      ? root.host
+      : null;
+  }
+
+  function deepestOpenShadowHit(x, y) {
+    let hit = document.elementFromPoint(x, y);
+    const seen = new Set();
+    while (hit?.shadowRoot?.mode === 'open' && !seen.has(hit)) {
+      seen.add(hit);
+      const inner = hit.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  }
+
+  function resolveVisualTargetAtPoint(x, y) {
+    const cssX = Number(x);
+    const cssY = Number(y);
+    if (!Number.isFinite(cssX) || !Number.isFinite(cssY)) return null;
+
+    for (let el = deepestOpenShadowHit(cssX, cssY); el; el = composedParent(el)) {
+      if (el.nodeType !== Node.ELEMENT_NODE || !isInteractive(el)) continue;
+      const r = el.getBoundingClientRect();
+      return {
+        ref_id: getOrMintRef(el),
+        role: getRole(el),
+        name: getAccessibleName(el) || '',
+        rect: {
+          x: Math.round(r.x),
+          y: Math.round(r.y),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+        },
+      };
+    }
+    return null;
+  }
+
   function isLandmark(el) {
     if (LANDMARK_TAGS.has(el.tagName.toLowerCase())) return true;
     return el.getAttribute('role') !== null;
@@ -1169,5 +1219,6 @@
   window.__wb_ax_ref = getOrMintRef;
   window.__wb_ax_name = getAccessibleName;
   window.__wb_ax_role = getRole;
+  window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

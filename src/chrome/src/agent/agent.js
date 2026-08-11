@@ -16736,6 +16736,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    if (name === 'resolve_visual_target') {
+      const mapped = this._screenshotClickCoords(tabId, args);
+      if (!mapped) {
+        return {
+          success: false,
+          dispatched: false,
+          error: 'x and y must be finite numbers',
+        };
+      }
+      args = { x: mapped.x, y: mapped.y };
+    }
     // Canonicalize coordinate clicks before toolbar recovery probes them.
     // The preflight binding and the eventual dispatch must resolve the same
     // CSS-pixel point, especially when the model clicked a downscaled image.
@@ -21531,6 +21542,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Accessibility-tree path (preferred). Ported from Claude for Chrome —
       // flat indented text output with persistent WeakRef-backed ref_ids.
       'get_accessibility_tree': 'get_accessibility_tree',
+      'resolve_visual_target': 'resolve_visual_target',
       'click_ax': 'click_ax',
       'set_checked': 'set_checked',
       'type_ax': 'type_ax',
@@ -21645,19 +21657,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
+    const messageOptions = DISPATCH_BINDING_TOOLS.has(name)
+      && dispatchBinding?.token
+      && Number.isInteger(dispatchBinding.frameId)
+      ? { frameId: dispatchBinding.frameId }
+      : undefined;
+    const sendContentAction = () => chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action,
+      params: contentArgs,
+    }, messageOptions);
+    const dispatchContentAction = () => name === 'resolve_visual_target'
+      ? this._withIndicatorsHidden(tabId, sendContentAction)
+      : sendContentAction();
+
     try {
       let response;
       try {
         await captureClickAxBaseline();
-        response = await chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action,
-          params: contentArgs,
-        }, DISPATCH_BINDING_TOOLS.has(name)
-          && dispatchBinding?.token
-          && Number.isInteger(dispatchBinding.frameId)
-          ? { frameId: dispatchBinding.frameId }
-          : undefined);
+        response = await dispatchContentAction();
       } catch (e) {
         // Content script might not be injected — try injecting it.
         // accessibility-tree.js must load first so content.js's
@@ -21668,15 +21686,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Re-stamp after inject so the safety window does not include the
           // injection gap (which can exceed 400ms on cold tabs).
           await captureClickAxBaseline();
-          response = await chrome.tabs.sendMessage(tabId, {
-            target: 'content',
-            action,
-            params: contentArgs,
-          }, DISPATCH_BINDING_TOOLS.has(name)
-            && dispatchBinding?.token
-            && Number.isInteger(dispatchBinding.frameId)
-            ? { frameId: dispatchBinding.frameId }
-            : undefined);
+          response = await dispatchContentAction();
         } catch (e2) {
           return { error: `Failed to communicate with page: ${e2.message}` };
         }
