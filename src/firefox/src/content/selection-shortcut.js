@@ -14,6 +14,7 @@
   const STORAGE_KEY = 'selectionShortcutEnabled';
   const LOCALE_STORAGE_KEY = 'wbLocale';
   const SUBMIT_MESSAGE = 'WB_SELECTION_SHORTCUT_SUBMIT';
+  const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';
   const GAP = 8;
   const BUTTON_SIZE = 44;
   const POPUP_WIDTH = 316;
@@ -21,6 +22,12 @@
   const TRANSLATION_LANGUAGES = Object.freeze([
     'en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar',
     'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he',
+    'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de',
+  ]);
+  const LOCALIZATION_KEYS = Object.freeze([
+    'askSelection', 'openChat', 'summarize', 'explain', 'quiz',
+    'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
+    'askQuestion', 'sendQuestion', 'hideShortcut', 'sentManual', 'sendFailed',
   ]);
 
   let enabled = true;
@@ -36,6 +43,8 @@
   let question = null;
   let sendButton = null;
   let interfaceLanguage = resolveInterfaceLanguage('');
+  let localization = null;
+  let localizationRequestId = 0;
   let toast = null;
   let toastTimer = null;
   let selectionTimer = null;
@@ -82,6 +91,56 @@
     if (isSupportedTranslationLanguage(preferred)) return preferred;
     const browserLanguage = String(navigator.language || 'en').slice(0, 2).toLowerCase();
     return isSupportedTranslationLanguage(browserLanguage) ? browserLanguage : 'en';
+  }
+
+  function normalizeLocalization(response) {
+    if (!response?.ok || !response.strings || typeof response.strings !== 'object') return null;
+    const strings = {};
+    for (const key of LOCALIZATION_KEYS) {
+      const value = response.strings[key];
+      if (typeof value !== 'string' || !value.trim()) return null;
+      strings[key] = value;
+    }
+    return {
+      locale: resolveInterfaceLanguage(response.locale),
+      dir: response.dir === 'rtl' ? 'rtl' : 'ltr',
+      strings,
+    };
+  }
+
+  function applyLocalization() {
+    if (!localization || !shadow) return;
+    const strings = localization.strings;
+    host.dir = localization.dir;
+    shortcut.setAttribute('aria-label', strings.askSelection);
+    shortcut.title = strings.askSelection;
+    popup.setAttribute('aria-label', strings.askSelection);
+    for (const action of ['summarize', 'explain', 'quiz', 'proofread', 'humanize', 'translate']) {
+      const button = shadow.querySelector(`[data-action="${action}"]`);
+      if (button) button.textContent = strings[action];
+    }
+    question.setAttribute('aria-label', strings.askQuestion);
+    question.placeholder = strings.askQuestion;
+    sendButton.setAttribute('aria-label', strings.sendQuestion);
+    const hideButton = shadow.querySelector('.hide');
+    if (hideButton) hideButton.textContent = strings.hideShortcut;
+  }
+
+  async function refreshLocalization(value) {
+    interfaceLanguage = resolveInterfaceLanguage(value);
+    const requestId = ++localizationRequestId;
+    try {
+      const response = await api.runtime.sendMessage({
+        type: LOCALIZATION_MESSAGE,
+        locale: interfaceLanguage,
+      });
+      if (requestId !== localizationRequestId) return;
+      const next = normalizeLocalization(response);
+      if (!next) return;
+      interfaceLanguage = next.locale;
+      localization = next;
+      applyLocalization();
+    } catch { /* English markup remains the offline fallback. */ }
   }
 
   function readSelection() {
@@ -152,7 +211,7 @@
         .actions { display:grid; gap:2px; }
         .action,.hide {
           width:100%; border:0; border-radius:10px; background:transparent;
-          color:var(--text); text-align:left; cursor:pointer;
+          color:var(--text); text-align:start; cursor:pointer;
         }
         .action { padding:10px 12px; font-size:15px; font-weight:550; }
         .action:hover,.hide:hover { background:var(--hover); }
@@ -225,6 +284,7 @@
     question = shadow.querySelector('textarea');
     sendButton = shadow.querySelector('.send');
     toast = shadow.querySelector('.toast');
+    applyLocalization();
 
     shortcut.addEventListener('click', (event) => {
       if (event.isTrusted && snapshot && !submitting) openPopup();
@@ -232,8 +292,7 @@
     shadow.querySelectorAll('[data-action]').forEach((button) => {
       button.addEventListener('click', (event) => {
         if (!event.isTrusted) return;
-        if (button.dataset.action === 'translate') submitSelection('translate', '', interfaceLanguage);
-        else submitSelection(button.dataset.action);
+        submitSelection(button.dataset.action, '', interfaceLanguage);
       });
     });
     question.addEventListener('input', () => {
@@ -384,16 +443,16 @@
       action,
       selectionText: snapshot.text,
       question: action === 'custom' ? String(customQuestion).trim() : undefined,
-      language: action === 'translate' ? language : undefined,
+      language: action === 'custom' ? undefined : (language || interfaceLanguage),
     };
     submitting = true;
     dismissSurface();
     try {
       const response = await api.runtime.sendMessage(request);
       if (!response?.ok) throw new Error(response?.error || 'Selection request was not accepted.');
-      if (response.requiresManualOpen) showToast('Sent to WebBrain. Open the sidebar if it doesn’t start.');
+      if (response.requiresManualOpen) showToast(localization?.strings.sentManual || 'Sent to WebBrain. Open the sidebar if it does not start.');
     } catch {
-      showToast('Couldn’t send to WebBrain. Use the right-click menu and choose “Ask WebBrain about this”.');
+      showToast(localization?.strings.sendFailed || 'Could not send to WebBrain. Try the right-click menu instead.');
     } finally {
       submitting = false;
     }
@@ -449,12 +508,12 @@
       enabled = changes[STORAGE_KEY].newValue !== false;
       if (!enabled) destroySurface();
     }
-    if (changes[LOCALE_STORAGE_KEY]) interfaceLanguage = resolveInterfaceLanguage(changes[LOCALE_STORAGE_KEY].newValue);
+    if (changes[LOCALE_STORAGE_KEY]) void refreshLocalization(changes[LOCALE_STORAGE_KEY].newValue);
   });
   Promise.resolve(api.storage.local.get({ [STORAGE_KEY]: true, [LOCALE_STORAGE_KEY]: '' }))
     .then((stored) => {
       enabled = stored?.[STORAGE_KEY] !== false;
-      interfaceLanguage = resolveInterfaceLanguage(stored?.[LOCALE_STORAGE_KEY]);
+      void refreshLocalization(stored?.[LOCALE_STORAGE_KEY]);
       if (!enabled) destroySurface();
     })
     .catch(() => { enabled = true; });
@@ -463,9 +522,7 @@
   window.__webbrainSelectionShortcut = {
     refreshFromSelection,
     openPopup,
-    submitPreset: (action) => action === 'translate'
-      ? submitSelection('translate', '', interfaceLanguage)
-      : submitSelection(action),
+    submitPreset: (action) => submitSelection(action, '', interfaceLanguage),
     submitCustom: (value) => submitSelection('custom', value),
     hideShortcut: disableShortcut,
     getState: () => ({
@@ -487,6 +544,10 @@
         : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
+      direction: host?.dir || 'ltr',
+      summarizeLabel: shadow?.querySelector('[data-action="summarize"]')?.textContent || '',
+      explainLabel: shadow?.querySelector('[data-action="explain"]')?.textContent || '',
+      quizLabel: shadow?.querySelector('[data-action="quiz"]')?.textContent || '',
     }),
   };
 })();
