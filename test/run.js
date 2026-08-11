@@ -20016,6 +20016,86 @@ test('all locales cover English keys and preserve interpolation placeholders', a
   }
 });
 
+test('Cloud Sync settings localize security-sensitive copy in every browser locale', async () => {
+  const requiredKeys = [
+    'st.sync.title',
+    'st.sync.lede_html',
+    'st.sync.email.label',
+    'st.sync.password.label',
+    'st.sync.confirm.label',
+    'st.sync.action.auth',
+    'st.sync.action.enable',
+    'st.sync.action.unlock',
+    'st.sync.action.now',
+    'st.sync.action.lock',
+    'st.sync.action.change_password',
+    'st.sync.action.disable',
+    'st.sync.action.reset',
+    'st.sync.status.syncing',
+    'st.sync.status.offline',
+    'st.sync.status.subscription',
+    'st.sync.status.error',
+    'st.sync.status.auth_required',
+    'st.sync.status.password_required',
+    'st.sync.status.unlocked',
+    'st.sync.status.locked',
+    'st.sync.result.updated',
+    'st.sync.result.current',
+    'st.sync.pending.syncing',
+    'st.sync.pending.syncing_short',
+    'st.sync.error.generic',
+    'st.sync.error.unknown',
+    'st.sync.validation.email_required',
+    'st.sync.validation.password_length',
+    'st.sync.validation.confirm_required',
+    'st.sync.validation.password_mismatch',
+    'st.sync.prompt.new_password',
+    'st.sync.prompt.password',
+    'st.sync.prompt.confirm_password',
+    'st.sync.prompt.current_password',
+    'st.sync.prompt.replacement_password',
+    'st.sync.auth.check_email',
+    'st.sync.auth.success',
+    'st.sync.confirm.disable',
+    'st.sync.confirm.reset',
+    'st.sync.consent.legacy',
+    'st.sync.consent.denied',
+  ];
+
+  for (const browser of ['chrome', 'firefox']) {
+    const prefix = path.join(ROOT, `src/${browser}/src/ui`);
+    const html = fs.readFileSync(path.join(prefix, 'settings.html'), 'utf8');
+    const script = fs.readFileSync(path.join(prefix, 'settings.js'), 'utf8');
+    const cardStart = html.indexOf('<div class="provider-card" id="profile-sync-card">');
+    const cardEnd = html.indexOf('<div class="provider-card" id="profile-card">', cardStart);
+    const card = html.slice(cardStart, cardEnd);
+
+    assert.ok(cardStart >= 0 && cardEnd > cardStart, `${browser}: Cloud Sync card missing`);
+    for (const key of requiredKeys.slice(0, 13)) {
+      assert.ok(card.includes(`data-i18n="${key}"`) || card.includes(`data-i18n-html="${key}"`), `${browser}: Cloud Sync markup bypasses ${key}`);
+    }
+    assert.doesNotMatch(card, />\s*(?:Encrypted Cloud Sync|WebBrain Cloud email|Sync password|Send sign-in link|Replace cloud copy)[^<]*</, `${browser}: Cloud Sync markup retains hard-coded English copy`);
+    assert.match(script, /function describeProfileSyncState\(state\)[\s\S]*?t\('st\.sync\.status\./, `${browser}: runtime sync status should use i18n`);
+    assert.match(script, /document\.addEventListener\('wb-locale-changed',[\s\S]*?refreshProfileSyncState\(\);[\s\S]*?\}\);/, `${browser}: language changes should redraw the dynamic sync status`);
+    assert.match(script, /window\.confirm\(t\('st\.sync\.confirm\.disable'\)\)/, `${browser}: disable confirmation should use i18n`);
+    assert.match(script, /window\.confirm\(t\('st\.sync\.confirm\.reset'\)\)/, `${browser}: reset confirmation should use i18n`);
+
+    const localeDir = path.join(prefix, 'locales');
+    const filenames = fs.readdirSync(localeDir).filter((name) => name.endsWith('.js')).sort();
+    const english = (await import(pathToFileURL(path.join(localeDir, 'en.js')).href)).default;
+    assert.deepEqual(Object.keys(english).filter((key) => key.startsWith('st.sync.')), requiredKeys, `${browser}/en: unexpected Cloud Sync locale surface`);
+    for (const key of requiredKeys) assert.equal(typeof english[key], 'string', `${browser}/en: missing ${key}`);
+    for (const filename of filenames) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      for (const key of requiredKeys) assert.equal(typeof locale[key], 'string', `${browser}/${filename}: missing ${key}`);
+      if (filename !== 'en.js') {
+        const translated = requiredKeys.filter((key) => locale[key] !== english[key]).length;
+        assert.ok(translated >= requiredKeys.length * 0.8, `${browser}/${filename}: Cloud Sync copy should be translated, not copied from English`);
+      }
+    }
+  }
+});
+
 test('locale helpers apply RTL direction for Arabic, Hebrew, and Persian', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/ui/i18n.js'],
