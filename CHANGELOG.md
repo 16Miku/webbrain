@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [29.0.1] - 2026-08-11
+
+### Changed
+- dist: rebuild submission zips for v29.0.0
+- fix: refine settings control order
+- docs: add 29.0.0 changelog
+- 29.0.0
+- Clean up settings organization
+
 ## [29.0.0] - 2026-08-12
 
 ### Changed
