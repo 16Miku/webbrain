@@ -4,6 +4,11 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.2.3] - 2026-08-11
+
+### Changed
+- Add active provider filter
+
 ## [28.2.2] - 2026-08-11
 
 ### Changed
