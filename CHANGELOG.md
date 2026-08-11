@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.2.1] - 2026-08-11
+
+### Changed
+- version up
+- fix: hide localized context menu instructions
+- blog: publish EXL3 + SparkInfer on Blackwell lite post
+- blog: add EXL3 + SparkInfer on Blackwell lite post (scheduled)
+- Apply suggestions from code review
+- feat: localize selection shortcuts
+- fix: dedupe run progress replay gaps
+- test(memory): cover newly formed memory cues
+- style(memory): animate the Firefox memory cue
+- feat(memory): render the Firefox memory cue
+- feat(memory): notify the Firefox side panel
+- feat(memory): mirror new-memory tracking in Firefox
+- style(memory): animate the Chrome memory cue
+- feat(memory): render the Chrome memory cue
+- feat(memory): notify the Chrome side panel
+- feat(memory): track newly formed memories
+
 ## [28.2.0] - 2026-08-11
 
 ### Changed
