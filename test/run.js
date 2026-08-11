@@ -62170,9 +62170,14 @@ test('plan before act: try is default while explicit off is preserved', () => {
 
 test('Chrome Web Store release uses an always-on protected-page guard and opt-in trusted skill tools', async () => {
   const dashboard = 'https://chrome.google.com/webstore/devconsole/f4a5b26f-27fe-4bc4-ad37-203b236e337c';
+  const reviews = 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb/reviews';
   assert.equal(chromeProtectedPageForUrl(dashboard), 'chrome-web-store-developer');
   assert.equal(chromeProtectedPageForUrl('https://chrome.google.com/webstore/devconsole?hl=en'), 'chrome-web-store-developer');
   assert.equal(chromeProtectedPageForUrl('https://chrome.google.com/webstore/devconsole#published'), 'chrome-web-store-developer');
+  assert.equal(chromeProtectedPageForUrl(reviews), 'chrome-web-store-gallery');
+  assert.equal(chromeProtectedPageForUrl('https://chromewebstore.google.com/'), 'chrome-web-store-gallery');
+  assert.equal(chromeProtectedPageForUrl('http://chromewebstore.google.com/detail/example'), '');
+  assert.equal(chromeProtectedPageForUrl('https://chromewebstore.google.com.evil.example/detail/example'), '');
   assert.equal(chromeProtectedPageForUrl('https://example.com/?next=https://chrome.google.com/webstore/devconsole'), '');
   const failure = chromeProtectedPageFailure(dashboard, 'get_accessibility_tree');
   assert.equal(failure.errorCode, 'chrome_protected_page');
@@ -62182,6 +62187,11 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   assert.match(failure.error, /Do not retry/i);
   assert.match(failure.error, /Continue manually/i);
   assert.doesNotMatch(failure.error, /enable.*Chrome Web Store release|Settings → Skills/i);
+  const galleryFailure = chromeProtectedPageFailure(reviews, 'get_accessibility_tree');
+  assert.equal(galleryFailure.errorCode, 'chrome_protected_page');
+  assert.equal(galleryFailure.nonRetryableScope, 'chrome-protected-page:chrome-web-store-gallery');
+  assert.equal(galleryFailure.recoveryTool, 'inspect_viewport');
+  assert.match(galleryFailure.error, /vision-enabled screenshot may be used once/i);
   const chromeAgentRoutingSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   assert.doesNotMatch(chromeAgentRoutingSource, /ask the user to enable\/configure that packaged skill/i, 'chrome: runtime warning must not route users to a removed packaged skill');
   for (const file of ['src/chrome/src/agent/adapters.js', 'src/firefox/src/agent/adapters.js']) {
@@ -62497,6 +62507,381 @@ test('Chrome Web Store upload forces a fresh status turn before any batched publ
       assert.equal(skipped.reason, 'chrome_web_store_upload_requires_status', `${label}/${id}: status requirement missing`);
     }
   }
+});
+
+test('Chrome Web Store gallery access promotes after bounded failures and uses at most one vision fallback', async () => {
+  const previousChrome = globalThis.chrome;
+  const reviews = 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb/reviews';
+  const tabId = 934;
+  let tabUrl = reviews;
+  try {
+    globalThis.chrome = {
+      ...(previousChrome || {}),
+      tabs: {
+        ...(previousChrome?.tabs || {}),
+        get: async id => ({ id, active: true, status: 'complete', url: tabUrl }),
+      },
+    };
+
+    const textOnlyAgent = new AgentCh({
+      getActive: () => ({ supportsVision: false }),
+      getVisionProvider: async () => null,
+    });
+    textOnlyAgent.currentRunId.set(tabId, 'gallery-text-only');
+    assert.equal(
+      await textOnlyAgent._chromeProtectedPageFailure(tabId, 'get_accessibility_tree'),
+      null,
+      'public gallery pages should get one ordinary recovery before promotion',
+    );
+    const missingTree = {
+      success: false,
+      errorCode: 'missing_tool_response',
+      missingToolResponse: true,
+      error: 'get_accessibility_tree returned no result.',
+    };
+    const first = await textOnlyAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'get_accessibility_tree',
+      { filter: 'visible' },
+      missingTree,
+    );
+    assert.equal(first.errorCode, 'missing_tool_response');
+    assert.equal(first.protectedPageCandidate, 'chrome-web-store-gallery');
+    assert.equal(first.protectedPageAttempt, 1);
+
+    const frames = await textOnlyAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'get_frames',
+      {},
+      { success: true, frames: [{ id: '0', url: reviews }] },
+    );
+    assert.equal(frames.success, true, 'browser frame metadata remains usable');
+
+    const promoted = await textOnlyAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'wait_for_stable',
+      {},
+      { ...missingTree, error: 'wait_for_stable returned no result.' },
+    );
+    assert.equal(promoted.errorCode, 'chrome_protected_page');
+    assert.equal(promoted.nonRetryable, true);
+    assert.equal(promoted.protectedPageConfirmed, true);
+    assert.equal(promoted.protectedPageEvidence, 'repeated_missing_page_access');
+    assert.equal(promoted.protectedPageAttempts, 2);
+    assert.equal(promoted.manualRequired, true);
+    assert.equal(promoted.screenshotAttempted, false, 'text-only runs should not capture an unusable screenshot');
+    assert.match(promoted.hint, /no vision-capable model/i);
+
+    const resetAgent = new AgentCh({
+      getActive: () => ({ supportsVision: false }),
+      getVisionProvider: async () => null,
+    });
+    resetAgent.currentRunId.set(tabId, 'gallery-reset');
+    await resetAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'read_page',
+      {},
+      missingTree,
+    );
+    await resetAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'read_page',
+      {},
+      { success: true, text: 'Readable page content' },
+    );
+    const afterHealthyRead = await resetAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'read_page',
+      {},
+      missingTree,
+    );
+    assert.equal(afterHealthyRead.protectedPageAttempt, 1, 'a healthy DOM read should reset the candidate counter');
+    tabUrl = 'https://example.com/';
+    await resetAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'read_page',
+      {},
+      { success: true, text: 'Different page' },
+    );
+    assert.equal(resetAgent._chromeProtectedGalleryStates.has(tabId), false, 'navigation away should clear gallery suspicion');
+
+    tabUrl = reviews;
+    let screenshotCalls = 0;
+    const visionAgent = new AgentCh({
+      getActive: () => ({ supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    visionAgent.currentRunId.set(tabId, 'gallery-vision');
+    visionAgent.executeTool = async (_tabId, name) => {
+      assert.equal(name, 'inspect_viewport');
+      screenshotCalls++;
+      return {
+        success: true,
+        method: 'image_attach',
+        description: 'One protected-page viewport',
+        _attachImage: 'data:image/png;base64,AA==',
+      };
+    };
+    const explicitDenial = await visionAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'research_url',
+      { url: reviews },
+      { success: false, error: 'research_url failed: The extensions gallery cannot be scripted.' },
+    );
+    assert.equal(explicitDenial.errorCode, 'chrome_protected_page');
+    assert.equal(explicitDenial.protectedPageEvidence, 'explicit_chrome_gallery_denial');
+    assert.equal(explicitDenial.visualFallbackSucceeded, true);
+    assert.equal(explicitDenial.screenshotAttempted, true);
+    assert.equal(explicitDenial._attachImage, 'data:image/png;base64,AA==');
+    assert.equal(screenshotCalls, 1, 'a definitive gallery denial should trigger one visual fallback');
+
+    const repeated = await visionAgent._maybePromoteChromeProtectedGalleryResult(
+      tabId,
+      'get_shadow_dom',
+      {},
+      { success: false, error: 'The extensions gallery cannot be scripted.' },
+    );
+    assert.equal(repeated.manualRequired, true);
+    assert.equal(repeated.screenshotAttempted, true);
+    assert.equal(screenshotCalls, 1, 'confirmed gallery protection must not capture a second screenshot');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Chrome Web Store gallery retry state is scoped to process-message runs without tracing', async () => {
+  for (const method of ['processMessage', 'processMessageStream']) {
+    const agent = new AgentCh({});
+    const tabId = method === 'processMessage' ? 936 : 937;
+    let enteredInner = false;
+    agent._claimRunEntry = async () => {};
+    agent._hydrate = async () => {};
+    agent._resetActiveSkillsForRun = () => {};
+    agent._clearRunLoopState = () => {};
+    agent._resetRichTextToolbarAudit = () => {};
+    agent._beginCompletionInvariant = () => null;
+    agent._beginReadCompleteness = async () => null;
+    agent._clearCompletionInvariant = () => {};
+    agent._clearReadCompleteness = () => {};
+    agent._configureCapturePolicyForRun = () => null;
+    agent._restoreCapturePolicyAfterRun = async () => {};
+    agent._discardProvisionalSelectionGroundingScope = () => {};
+    agent._storeContinuationExecutionEvidence = () => {};
+    agent._chromeProtectedGalleryStates.set(tabId, {
+      key: 'stale-run',
+      failures: 2,
+      confirmed: true,
+      screenshotAttempted: true,
+    });
+    const innerName = method === 'processMessage'
+      ? '_processMessageInner'
+      : '_processMessageStreamInner';
+    agent[innerName] = async () => {
+      enteredInner = true;
+      assert.equal(
+        agent._chromeProtectedGalleryStates.has(tabId),
+        false,
+        `${method}: a previous run must not suppress this run's retry or vision fallback`,
+      );
+      agent._chromeProtectedGalleryStates.set(tabId, {
+        key: 'current-run',
+        failures: 2,
+        confirmed: true,
+        screenshotAttempted: true,
+      });
+      return 'done';
+    };
+
+    const result = method === 'processMessage'
+      ? await agent.processMessage(tabId, 'review this page')
+      : await agent.processMessageStream(tabId, 'review this page');
+    assert.equal(result, 'done');
+    assert.equal(enteredInner, true, `${method}: test did not enter the run`);
+    assert.equal(
+      agent._chromeProtectedGalleryStates.has(tabId),
+      false,
+      `${method}: protected-page state must be discarded when the run finishes`,
+    );
+  }
+});
+
+test('Chrome Web Store gallery promotion terminates queued browser work after visual or manual fallback', async () => {
+  const previousChrome = globalThis.chrome;
+  const reviews = 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb/reviews';
+  const tabId = 935;
+  try {
+    globalThis.chrome = {
+      ...(previousChrome || {}),
+      tabs: {
+        ...(previousChrome?.tabs || {}),
+        get: async id => ({ id, active: true, status: 'complete', url: reviews }),
+      },
+    };
+
+    for (const supportsVision of [false, true]) {
+      const agent = new AgentCh({
+        getActive: () => ({ contextWindow: 128000, supportsVision }),
+        getVisionProvider: async () => null,
+      });
+      const messages = [];
+      const executed = [];
+      let screenshotCalls = 0;
+      agent.currentRunId.set(tabId, `gallery-batch-${supportsVision ? 'vision' : 'manual'}`);
+      agent._currentUrl = async () => reviews;
+      agent._persist = () => {};
+      agent.executeTool = async (_tabId, name) => {
+        executed.push(name);
+        if (name === 'inspect_viewport') {
+          screenshotCalls++;
+          return {
+            success: true,
+            method: 'image_attach',
+            description: 'Protected Chrome Web Store viewport',
+            _attachImage: 'data:image/png;base64,AA==',
+          };
+        }
+        return undefined;
+      };
+
+      const first = await agent._executeToolBatch(
+        tabId,
+        [{ id: `gallery_first_${supportsVision}`, function: { name: 'get_accessibility_tree', arguments: '{"filter":"visible"}' } }],
+        messages,
+        () => {},
+        { supportsVision },
+        null,
+        new Set(['get_accessibility_tree']),
+        1,
+      );
+      assert.equal(first.action, 'continue');
+
+      const updates = [];
+      const secondCallId = `gallery_second_${supportsVision}`;
+      const queuedCallId = `gallery_queued_${supportsVision}`;
+      const second = await agent._executeToolBatch(
+        tabId,
+        [
+          { id: secondCallId, function: { name: 'wait_for_stable', arguments: '{}' } },
+          { id: queuedCallId, function: { name: 'click_ax', arguments: '{"ref_id":"ref_1"}' } },
+        ],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision },
+        null,
+        new Set(['wait_for_stable', 'click_ax', 'done']),
+        2,
+      );
+
+      assert.equal(second.action, supportsVision ? 'deliver' : 'return');
+      assert.equal(
+        second.status,
+        supportsVision ? 'chrome_protected_page_visual_fallback' : 'chrome_protected_page_manual_required',
+      );
+      assert.deepEqual(
+        executed,
+        supportsVision
+          ? ['get_accessibility_tree', 'wait_for_stable', 'inspect_viewport']
+          : ['get_accessibility_tree', 'wait_for_stable'],
+        'queued actions must not dispatch after gallery protection is confirmed',
+      );
+      assert.equal(screenshotCalls, supportsVision ? 1 : 0);
+      if (supportsVision) {
+        assert.deepEqual(second.recovery, {
+          phase: 'protected_page_recovery',
+          status: 'chrome_protected_page_visual_fallback',
+        });
+      } else {
+        assert.equal(second.recovery, undefined);
+      }
+      const protectedUpdate = updates.find(update => update.type === 'tool_result' && update.data?.name === 'wait_for_stable');
+      assert.equal(protectedUpdate?.data?.result?.errorCode, 'chrome_protected_page');
+      assert.equal(protectedUpdate?.data?.result?.nonRetryable, true);
+      const skipped = messages.find(message => message.tool_call_id === queuedCallId);
+      assert.match(skipped?.content || '', /bounded visual\/manual fallback is terminal/i);
+      const imageTurn = messages.find(message => Array.isArray(message.content)
+        && message.content.some(block => block?.type === 'image_url'));
+      assert.equal(!!imageTurn, supportsVision, 'only the vision path should attach one screenshot');
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Chrome Web Store visual fallback uses protected-page terminal recovery and preserves status', async () => {
+  const agent = new AgentCh({});
+  const tabId = 938;
+  const messages = [
+    { role: 'system', content: 'ordinary agent prompt' },
+    { role: 'user', content: 'Summarize the visible reviews.' },
+    {
+      role: 'tool',
+      tool_call_id: 'protected_read',
+      content: JSON.stringify({
+        success: false,
+        errorCode: 'chrome_protected_page',
+        protectedPage: 'chrome-web-store-gallery',
+        visualFallback: { description: 'The screenshot shows two visible review cards.' },
+      }),
+    },
+  ];
+  const updates = [];
+  let request = null;
+  agent._persist = () => {};
+  agent._chatWithCostAllowance = async (_provider, sentMessages, options) => {
+    request = { sentMessages, options };
+    return {
+      content: '',
+      toolCalls: [{
+        id: 'protected_done',
+        function: {
+          name: 'done',
+          arguments: JSON.stringify({
+            summary: 'The screenshot exposed two review cards. Chrome protected the page, so further review and interaction must continue manually.',
+            outcome: 'partial',
+          }),
+        },
+      }],
+    };
+  };
+
+  const recovery = await agent._recoverDeliveryCheckpointTurn(
+    tabId,
+    messages,
+    (type, data) => updates.push({ type, data }),
+    { model: 'test-model', supportsVision: true },
+    {},
+    null,
+    2,
+    'protected fallback should not be used',
+    {},
+    null,
+    null,
+    {
+      phase: 'protected_page_recovery',
+      status: 'chrome_protected_page_visual_fallback',
+    },
+  );
+
+  assert.equal(recovery.status, 'chrome_protected_page_visual_fallback');
+  assert.match(recovery.content, /Chrome protected the page/i);
+  assert.match(request?.sentMessages?.[0]?.content || '', /protected-page delivery turn/i);
+  assert.doesNotMatch(request?.sentMessages?.[0]?.content || '', /two delivery checkpoints|observation limit/i);
+  assert.match(request?.options?.tools?.[0]?.function?.description || '', /Chrome protected/i);
+  assert.doesNotMatch(request?.options?.tools?.[0]?.function?.description || '', /observation limit/i);
+  assert.equal(
+    updates.some(update => update.type === 'run_status'
+      && update.data?.status === 'chrome_protected_page_visual_fallback'),
+    true,
+  );
+  assert.equal(
+    updates.some(update => /observation limit/i.test(update.data?.message || '')),
+    false,
+    'protected-page recovery must not claim that delivery checkpoints were exhausted',
+  );
+  const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
+  assert.equal(persistedResult.protectedPageRecovery, true);
 });
 
 test('Chrome Web Store status forces a fresh inspection turn before publish', async () => {
