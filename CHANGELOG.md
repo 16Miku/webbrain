@@ -4,6 +4,100 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.1.1] - 2026-08-11
+
+### Changed
+- version up
+- fix: enforce complete thread read coverage
+- Fix restored compact tool details
+- fix: honor complete thread read intent
+- fix: require complete thread reads
+- 28
+- ci: make cloud smoke manual-only
+- fix: toggle vision for custom local providers
+- fix: detect vision for custom local providers
+- fix: preserve local model capability identity
+- feat: detect vision support for local providers
+- Fix Ollama vision slash toggle
+- Detect Ollama vision capabilities
+- fix: address post-merge review findings
+- feat: harden coupon domain refresh
+- fix: call window.focus() before inputEl.focus() for focus-input command
+- fix: use storage.onChanged for command dispatch instead of runtime.sendMessage
+- docs: correct tab grouping visibility model
+- fix(firefox): change focus-input shortcut from Ctrl+Slash to Ctrl+Period
+- fix(firefox): add browser-level keyboard shortcuts via commands API
+- test: preserve runner line endings
+- test: cover automatic tab grouping opt-out
+- feat(settings): add Firefox tab grouping preference
+- feat(i18n): add zh Firefox tab grouping labels
+- feat(i18n): add vi Firefox tab grouping labels
+- feat(i18n): add uk Firefox tab grouping labels
+- feat(i18n): add tr Firefox tab grouping labels
+- feat(i18n): add tl Firefox tab grouping labels
+- feat(i18n): add th Firefox tab grouping labels
+- feat(i18n): add ru Firefox tab grouping labels
+- feat(i18n): add pt Firefox tab grouping labels
+- feat(i18n): add pl Firefox tab grouping labels
+- feat(i18n): add nl Firefox tab grouping labels
+- feat(i18n): add ms Firefox tab grouping labels
+- feat(i18n): add ko Firefox tab grouping labels
+- feat(i18n): add ja Firefox tab grouping labels
+- feat(i18n): add id Firefox tab grouping labels
+- feat(i18n): add hi Firefox tab grouping labels
+- feat(i18n): add he Firefox tab grouping labels
+- feat(i18n): add fr Firefox tab grouping labels
+- feat(i18n): add fa Firefox tab grouping labels
+- feat(i18n): add es Firefox tab grouping labels
+- feat(i18n): add en Firefox tab grouping labels
+- feat(i18n): add de Firefox tab grouping labels
+- feat(i18n): add bn Firefox tab grouping labels
+- feat(i18n): add ar Firefox tab grouping labels
+- feat(settings): add Firefox tab grouping preference
+- feat(settings): add Firefox tab grouping preference
+- feat(settings): honor Firefox tab grouping preference
+- feat(settings): honor Firefox tab grouping preference
+- feat(settings): honor Firefox tab grouping preference
+- feat(i18n): add zh tab grouping labels
+- feat(i18n): add vi tab grouping labels
+- feat(i18n): add uk tab grouping labels
+- feat(i18n): add tr tab grouping labels
+- feat(i18n): add tl tab grouping labels
+- feat(i18n): add th tab grouping labels
+- feat(i18n): add ru tab grouping labels
+- feat(i18n): add pt tab grouping labels
+- feat(i18n): add pl tab grouping labels
+- feat(i18n): add nl tab grouping labels
+- feat(i18n): add ms tab grouping labels
+- feat(i18n): add ko tab grouping labels
+- feat(i18n): add ja tab grouping labels
+- feat(i18n): add id tab grouping labels
+- feat(i18n): add hi tab grouping labels
+- feat(i18n): add he tab grouping labels
+- feat(i18n): add French tab grouping labels
+- feat(i18n): add Persian tab grouping labels
+- feat(i18n): localize Chrome tab grouping preference
+- feat(settings): add Chrome tab grouping preference
+- feat(settings): update Chrome agent tab grouping
+- feat(settings): add tab grouping opt-out
+- test: cover pinduoduo adapter
+- agent: mirror pinduoduo adapter in firefox
+- agent: add adapter for pinduoduo
+- test: preserve run.js line endings
+- ci: keep patch release changelog in sync
+- test: cover patch release changelog ordering
+- docs: backfill patch release changelog
+- fix(captcha): serialize Cloudflare gate hydration
+- fix(captcha): ignore unrelated response tokens
+- fix(captcha): make English matcher additive
+- fix(captcha): revalidate cleared token state
+- fix(captcha): retire post-solve read inference
+- fix(captcha): detect Cloudflare challenge pages
+- ux improvements
+- feat: generate coupon merchant coverage
+- feat: add verified coupon code action
+- documentation enhanced
+
 ## [28.1.0] - 2026-08-11
 
 ### Fixed
