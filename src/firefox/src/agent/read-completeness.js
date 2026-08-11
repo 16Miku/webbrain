@@ -49,15 +49,51 @@ export function requiresCompleteThreadRead(userMessage, runOptions = {}, context
     || /\b(?:summari[sz](?:e|ing)|summary|recap|analy[sz](?:e|ing))\b[^.!?\n]{0,80}\b(?:thread|conversation|email\s+chain)\b/i.test(text)
     || /\b(?:follow[- ]?ups?|action\s+items?|open\s+questions?)\b[^.!?\n]{0,80}\b(?:thread|conversation|email\s+chain)\b/i.test(text)
     || /\b(?:thread|conversation|email\s+chain)\b[^.!?\n]{0,50}\b(?:in\s+its\s+entirety|completely|fully|from\s+(?:the\s+)?(?:start|beginning)\s+to\s+(?:the\s+)?end|oldest\s+to\s+newest)\b/i.test(text)
-    || /\b(?:read|review(?:ed)?|inspect(?:ed)?|check(?:ed)?|look(?:ed)?\s+at)\b[^.!?\n]{0,80}\b(?:it|this|the\s+(?:thread|conversation|chain))\b[^.!?\n]{0,35}\ball\b/i.test(text);
+    || /\b(?:read|review(?:ed)?|inspect(?:ed)?|check(?:ed)?|look(?:ed)?\s+at)\b[^.!?\n]{0,80}\b(?:it|this|the\s+(?:thread|conversation|chain))\b[^.!?\n]{0,35}\ball\b/i.test(text)
+    || /\b(?:what(?:'s|\s+is)\s+(?:going\s+on|happening)(?:\s+here)?|what(?:'s|\s+is)\s+(?:this|it)\s+about|catch\s+me\s+up|bring\s+me\s+up\s+to\s+speed)\b/i.test(text)
+    || /\bexplain\s+(?:this|it)(?:\s+(?:thread|conversation|email|exchange))?\s*[?.!]*$/i.test(text);
 }
 
-export function createReadCompletenessState(runToken = '', required = false) {
+export function plannerRequiresCompleteThreadRead(plan = null) {
+  if (!plan || (typeof plan !== 'string' && plan.request_kind !== 'execute')) return false;
+  const text = (typeof plan === 'string'
+    ? plan
+    : [
+      plan.summary,
+      ...(Array.isArray(plan.steps) ? plan.steps.map(step => step?.action) : []),
+    ].filter(Boolean).join(' ')
+  ).replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  return /\b(?:all|every)\s+(?:of\s+the\s+)?(?:messages?|emails?|replies?)\b/i.test(text)
+    || /\b(?:complete|entire|full)\s+(?:email\s+|message\s+)?(?:thread|conversation|chain)\b/i.test(text)
+    || /\b(?:read|re-?read|review|inspect|analy[sz]e)\b[^.!?\n]{0,100}\b(?:open|current|visible)\s+(?:gmail\s+|email\s+|message\s+)?(?:thread|conversation)\b/i.test(text)
+    || /\b(?:messages?|replies?)\b[^.!?\n]{0,80}\b(?:timestamps?|response\s+timing|reply\s+timing|intervals?)\b/i.test(text)
+    || /\b(?:compare|assess|review)\b[^.!?\n]{0,100}\b(?:response|reply)\s+(?:timing|times?|intervals?|speed)\b/i.test(text);
+}
+
+export function createReadCompletenessState(runToken = '', required = false, communicationThread = false) {
   return {
     runToken: String(runToken || ''),
+    communicationThread: communicationThread === true,
     required: required === true,
     sawEligibleRead: false,
     complete: required !== true,
+    treeKey: '',
+    treePages: [],
+    treeTerminalPage: null,
+    pendingTool: '',
+    continuationArgs: null,
+  };
+}
+
+export function requirePlannerReadCompleteness(state, plan = null) {
+  const current = state || createReadCompletenessState();
+  if (!current.communicationThread || current.required || !plannerRequiresCompleteThreadRead(plan)) return current;
+  return {
+    ...current,
+    required: true,
+    complete: false,
+    sawEligibleRead: false,
     treeKey: '',
     treePages: [],
     treeTerminalPage: null,
