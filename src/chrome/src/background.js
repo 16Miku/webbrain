@@ -628,6 +628,13 @@ async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operatio
   });
 }
 
+function notifyUserMemoryCreated() {
+  chrome.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'user_memory_created',
+  }).catch(() => {});
+}
+
 function scheduleUserMemoryExtractionDrain(delayMs = USER_MEMORY_EXTRACTION_DELAY_MS) {
   if (userMemoryExtractionTimer) clearTimeout(userMemoryExtractionTimer);
   userMemoryExtractionTimer = setTimeout(() => {
@@ -720,7 +727,10 @@ async function drainUserMemoryExtractionQueue() {
         });
         const operations = parseUserMemoryExtractionResult(result?.content || '');
         const applied = await applyUserMemoryExtractionOperationsToCurrentStore(job.id, operations);
-        if (applied.changed) await syncAgentUserMemoryFromStorage();
+        if (applied.changed) {
+          await syncAgentUserMemoryFromStorage();
+          if (applied.created) notifyUserMemoryCreated();
+        }
       } catch (error) {
         if (agent._isCostAllowanceError?.(error)) {
           await removeUserMemoryExtractionJob(job.id);
