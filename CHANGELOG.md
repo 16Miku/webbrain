@@ -4,6 +4,19 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [28.2.2] - 2026-08-11
+
+### Changed
+- fix streaming multipart offscreen uploads
+- fix transcription runtime fallback transport
+- fix chrome multipart offscreen fallback
+- fix multimodal provider validation
+- Fix anchored accessibility pagination
+- Reset protected gallery state after URL reads
+- Fix planner retry error handling
+- Handle protected Chrome Web Store pages
+- Fix planner provider compatibility and Act fallback
+
 ## [28.2.1] - 2026-08-11
 
 ### Changed
