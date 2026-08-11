@@ -9,6 +9,11 @@ This changelog was generated from the repository Git history and release tags. V
 ### Changed
 - Reorganized Settings to surface frequently used controls and group advanced options more clearly.
 
+## [28.2.3] - 2026-08-11
+
+### Changed
+- Add active provider filter
+
 ## [28.2.2] - 2026-08-11
 
 ### Changed
