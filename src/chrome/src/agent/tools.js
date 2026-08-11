@@ -1,5 +1,6 @@
 import { closeToolDefinitions } from './tool-arguments.js';
 import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
+import { EXPANDED_TREE_PAGE_CHARS, STANDARD_TREE_PAGE_CHARS } from './read-completeness.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -26,7 +27,7 @@ export const AGENT_TOOLS = [
         properties: {
           filter: { type: 'string', enum: ['all', 'visible', 'interactive'], description: 'Which nodes to include. "visible" (in-viewport, visible) is a good default for navigation tasks. "interactive" shows only clickable/typeable things. "all" traverses the entire DOM. Defaults to "all" when omitted.' },
           maxDepth: { type: 'number', description: 'Max tree depth to descend (default 15). Lower values produce smaller output.' },
-          maxChars: { type: 'number', maximum: 6000, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Larger trees return continuationArgs for the next page.' },
+          maxChars: { type: 'number', maximum: STANDARD_TREE_PAGE_CHARS, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Capable non-Compact providers with at least 64k context advertise a 12000 maximum for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.' },
           ref_id: { type: 'string', description: 'Optional. Anchor the read at a previously-seen ref_id instead of document.body — returns just that element and its subtree. Useful for zooming into a nav, table, or dialog you already found.' },
           page: { type: 'number', description: 'Optional 1-based chunk number for any tree filter. When a result returns hasMore:true, reuse the exact continuationArgs so filter, maxDepth, and maxChars remain stable.' },
         },
@@ -1480,6 +1481,33 @@ export function getToolsForMode(mode, opts = {}) {
   } else {
     base = AGENT_TOOLS.filter(t => FULL_TOOL_NAMES.has(t.function.name));
   }
+  const requestedTreePageChars = tier !== 'compact'
+    && Number(opts.accessibilityTreeMaxChars) === EXPANDED_TREE_PAGE_CHARS
+    ? EXPANDED_TREE_PAGE_CHARS
+    : STANDARD_TREE_PAGE_CHARS;
+  base = base.map((tool) => {
+    if (tool.function?.name !== 'get_accessibility_tree') return tool;
+    const maxChars = tool.function.parameters?.properties?.maxChars || {};
+    return {
+      ...tool,
+      function: {
+        ...tool.function,
+        parameters: {
+          ...tool.function.parameters,
+          properties: {
+            ...tool.function.parameters.properties,
+            maxChars: {
+              ...maxChars,
+              maximum: requestedTreePageChars,
+              description: requestedTreePageChars === EXPANDED_TREE_PAGE_CHARS
+                ? 'Maximum pageContent characters per structured page. Default 6000; maximum 12000. Reserve values above 6000 for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.'
+                : 'Maximum pageContent characters per structured page (default and maximum 6000). Larger trees return continuationArgs for the next page.',
+            },
+          },
+        },
+      },
+    };
+  });
   if (normalizedMode === 'dev' && tier !== 'compact') {
     const seen = new Set(base.map(t => t.function?.name).filter(Boolean));
     const devTools = AGENT_TOOLS.filter(t => DEV_EXTENDED_TOOL_NAMES.has(t.function.name) && !seen.has(t.function.name));
@@ -1592,7 +1620,7 @@ ACCESSIBILITY TREE — read this carefully:
 - Parameters:
     filter: "all" (default) | "visible" (in-viewport only) | "interactive" (clickable/typeable only)
     maxDepth: how deep to go (default 15)
-    maxChars: structured page size (default and maximum 6000); larger trees return continuationArgs
+    maxChars: structured page size. Default 6000; capable non-Compact providers with at least 64k context may advertise 12000. Reserve values above 6000 for whole-thread or whole-document reads; larger trees return continuationArgs
     page: when any output is truncated, reuse the exact returned continuationArgs before scrolling or answering
     ref_id: anchor the read at a specific element — returns its subtree only
 - \`ref_id\`s are STABLE across calls. A ref_id you saw in a previous turn still points to the same element, unless the element was removed from the DOM or the page navigated.
@@ -1704,7 +1732,7 @@ ACCESSIBILITY TREE — read this carefully:
 - Parameters:
     filter: "all" (default) | "visible" (in-viewport only — great default for action tasks) | "interactive" (only clickable/typeable nodes)
     maxDepth: how deep to descend (default 15)
-    maxChars: structured page size (default and maximum 6000); larger trees return continuationArgs
+    maxChars: structured page size. Default 6000; capable non-Compact providers with at least 64k context may advertise 12000. Reserve values above 6000 for whole-thread or whole-document reads; larger trees return continuationArgs
     page: when any output is truncated, reuse the exact returned continuationArgs before scrolling or answering
     ref_id: re-read just the subtree under a previously-seen ref_id (useful for zooming into a form or nav)
 - \`ref_id\`s are STABLE across calls. A ref_id you saw last turn still points to the same element as long as it's still in the DOM. If you get a "not found" error, the element was removed or the page navigated — re-read the tree.

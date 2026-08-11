@@ -22,6 +22,27 @@ WebBrain separates **model tier** from **conversation mode**.
 Tier defaults and resolution rules are documented in
 [providers and models](providers-and-models.md#prompttool-tiers-and-modes).
 
+## Accessibility read budgets
+
+`get_accessibility_tree` normally uses a 6,000-character structured page inside
+an 8,000-character serialized result. Mid/Full providers with a detected
+context window of at least 65,536 tokens advertise the expanded 12,000 / 16,000
+pair. When that larger page is requested, its accessibility result alone may
+use the 16,000-character serializer window. Compact providers and providers below the
+64k boundary remain at 6,000 / 8,000.
+
+The larger window is reserved for complete-thread and whole-document reads.
+Ordinary visible/interactive UI reads retain their smaller defaults, other tool
+results remain capped at 8,000 characters, and every truncated tree must be
+continued with its exact returned `continuationArgs` until the required
+coverage is complete. See
+[adaptive read windows](accessibility-tree-and-refs.md#adaptive-read-windows).
+
+For Gmail, complete coverage additionally requires a fresh root read after the
+conversation is expanded, with **Collapse all** visible as evidence. Ask cannot
+expand collapsed messages and returns a clear limitation; Act/Dev can use
+**Expand all** and then re-read the root.
+
 ## Tool matrix
 
 Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·

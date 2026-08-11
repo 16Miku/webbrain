@@ -860,15 +860,38 @@
     };
   }
 
+  function detectGmailConversationExpansionState() {
+    if (window.location.hostname !== 'mail.google.com') return null;
+    let collapsed = false;
+    try {
+      for (const control of document.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Message bodies are untrusted page data and may contain arbitrary
+        // buttons. Only Gmail chrome outside message/article containers can
+        // provide the structured expansion evidence used by the agent guard.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
+        if (name === 'Collapse all') return 'expanded';
+        if (name === 'Expand all') collapsed = true;
+      }
+    } catch (e) {}
+    return collapsed ? 'collapsed' : null;
+  }
+
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page) {
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
+      const conversationExpansionState = refId ? null : detectGmailConversationExpansionState();
+      const conversationMetadata = conversationExpansionState
+        ? { conversationExpansionState }
+        : {};
       // Bound every default tree, including `all`. The model-facing tool
-      // result is capped separately at ~8k chars; leaving `all` unlimited
-      // made that later generic limiter chop serialized JSON and discard the
-      // structured hasMore/nextPage contract. A 6k line-aware page fits below
-      // the outer cap while retaining deterministic continuation metadata.
+      // result is capped separately at 8k chars by default; leaving `all`
+      // unlimited made that later generic limiter chop serialized JSON and
+      // discard the structured hasMore/nextPage contract. A 6k line-aware
+      // default fits below that outer cap. Capable callers may explicitly use
+      // a 12k page only when paired with the 16k serialized-result window.
       const defaultDepth = effFilter === 'all' ? 15 : 10;
       const defaultChars = effFilter === 'visible' ? 3000
                           : effFilter === 'interactive' ? 3500
@@ -1001,7 +1024,7 @@
 
       const output = lines.join('\n');
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, ...conversationMetadata };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -1016,7 +1039,7 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, ...conversationMetadata };
         }
         const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
@@ -1029,6 +1052,7 @@
             viewport,
             autoDegraded: true,
             notice: hint,
+            ...conversationMetadata,
           };
         }
         let hint = `Output exceeds ${effMaxChars} character limit (${output.length} characters). `;
@@ -1042,7 +1066,7 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport };
+      return { pageContent: output, viewport, ...conversationMetadata };
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),

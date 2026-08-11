@@ -162,6 +162,8 @@ export function tracesToMarkdown(runsWithEvents, {
         // it (derails often start in the plan) but label it and preserve its shape.
         if (d.phase === 'planner') {
           md += `**Planner:**\n${fencedBlock(content)}\n`;
+        } else if (d.phase === 'read_scope') {
+          md += `**Read scope:**\n${fencedBlock(content)}\n`;
         } else {
           md += `**WebBrain:** ${oneLine(content)}\n`;
           lastAssistantContent = content;

@@ -1,5 +1,6 @@
 import { closeToolDefinitions } from './tool-arguments.js';
 import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
+import { EXPANDED_TREE_PAGE_CHARS, STANDARD_TREE_PAGE_CHARS } from './read-completeness.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -26,7 +27,7 @@ export const AGENT_TOOLS = [
         properties: {
           filter: { type: 'string', enum: ['all', 'visible', 'interactive'], description: 'Which nodes to include. "visible" (in-viewport, visible) is a good default. "interactive" shows only clickable/typeable things. "all" traverses the entire DOM.' },
           maxDepth: { type: 'number', description: 'Max tree depth to descend (default 15).' },
-          maxChars: { type: 'number', maximum: 6000, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Larger trees return continuationArgs for the next page.' },
+          maxChars: { type: 'number', maximum: STANDARD_TREE_PAGE_CHARS, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Capable non-Compact providers with at least 64k context advertise a 12000 maximum for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.' },
           ref_id: { type: 'string', description: 'Optional. Anchor at a previously-seen ref_id instead of document.body.' },
           page: { type: 'number', description: 'Optional 1-based chunk number for any tree filter. When a result returns hasMore:true, reuse the exact continuationArgs so filter, maxDepth, and maxChars remain stable.' },
         },
@@ -1326,6 +1327,33 @@ export function getToolsForMode(mode, opts = {}) {
   } else {
     base = AGENT_TOOLS.filter(t => FULL_TOOL_NAMES.has(t.function.name));
   }
+  const requestedTreePageChars = tier !== 'compact'
+    && Number(opts.accessibilityTreeMaxChars) === EXPANDED_TREE_PAGE_CHARS
+    ? EXPANDED_TREE_PAGE_CHARS
+    : STANDARD_TREE_PAGE_CHARS;
+  base = base.map((tool) => {
+    if (tool.function?.name !== 'get_accessibility_tree') return tool;
+    const maxChars = tool.function.parameters?.properties?.maxChars || {};
+    return {
+      ...tool,
+      function: {
+        ...tool.function,
+        parameters: {
+          ...tool.function.parameters,
+          properties: {
+            ...tool.function.parameters.properties,
+            maxChars: {
+              ...maxChars,
+              maximum: requestedTreePageChars,
+              description: requestedTreePageChars === EXPANDED_TREE_PAGE_CHARS
+                ? 'Maximum pageContent characters per structured page. Default 6000; maximum 12000. Reserve values above 6000 for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.'
+                : 'Maximum pageContent characters per structured page (default and maximum 6000). Larger trees return continuationArgs for the next page.',
+            },
+          },
+        },
+      },
+    };
+  });
   if (normalizedMode === 'dev' && tier !== 'compact') {
     const seen = new Set(base.map(t => t.function?.name).filter(Boolean));
     const devTools = AGENT_TOOLS.filter(t => DEV_EXTENDED_TOOL_NAMES.has(t.function.name) && !seen.has(t.function.name));
@@ -1491,7 +1519,7 @@ READING THE CURRENT TAB vs. FETCHING URLS — read this:
 - Exception for YouTube video-content questions: if an enabled skill exposes a transcript tool such as \`read_youtube_transcript\`, call it first. Purpose-built skill tools are not generic \`fetch_url\`. Do not ask for \`/allow-api\` before calling a skill tool; \`/allow-api\` only applies to mutating \`fetch_url\`/\`research_url\` API calls. Read-only skill tools can run in Ask mode; download-job skill tools require Act mode plus download permission.
 - DO NOT call \`fetch_url\` or \`research_url\` against the URL of the active tab, the API equivalent of the active tab, or a "renderable" / "raw" / "amp" / "mobile" variant of the active tab's URL. Re-fetching content the user is already looking at is the most common wasted step. Symptom of this antipattern: you fetch a Wikipedia/MediaWiki API URL for the same page the user is on, get a truncated result, then fetch a slightly different variant hoping for more content. Stop and call \`read_page\` instead.
 - \`fetch_url\` and \`research_url\` are for content on OTHER URLs — a referenced article, an API the page links to, a sibling page, a different site entirely.
-- If \`get_accessibility_tree\` returns \`truncated:true\` / \`hasMore:true\`, reuse its exact \`continuationArgs\`. For a whole-page, whole-document, or whole-thread request, continue until \`hasMore:false\` before answering; for an ordinary UI target, continue only until the target is found.
+- If \`get_accessibility_tree\` returns \`truncated:true\` / \`hasMore:true\`, reuse its exact \`continuationArgs\`. For a whole-page, whole-document, or whole-thread request, continue until \`hasMore:false\` before answering; for an ordinary UI target, continue only until the target is found. Capable non-Compact providers with at least 64k context may advertise maxChars:12000; reserve values above 6000 for these complete reads.
 - If \`read_page\` returns \`hasMore:true\`, continue deterministically with the exact returned \`continuationArgs\` (equivalent to \`{offset: nextOffset, limit: textLimit, includeChrome}\`) until enough article text is covered. Preserve every extraction option across windows; do not scroll and reread the same prefix. \`truncationReason:"tool_output_window"\` with \`accessState:"no_blocking_page_gate"\` is NOT a paywall or access restriction; only a structured blocking \`pageGate\` supports that claim.
 
 Guidelines:
