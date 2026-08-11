@@ -6879,7 +6879,7 @@ function showBusySlashCommandNotice() {
   showComposerToast(t('sp.slash.busy_only_oob'), { duration: 5000 });
 }
 
-function showComposerToast(message, { duration = 2600 } = {}) {
+function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
   if (!message) return;
   let toast = document.getElementById('composer-toast');
   if (!toast) {
@@ -6892,10 +6892,19 @@ function showComposerToast(message, { duration = 2600 } = {}) {
   }
   if (isSystemHtml(message)) toast.innerHTML = message.__systemHtml;
   else toast.textContent = message;
+  toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
+  if (effect === 'memory') {
+    toast.classList.add('memory-update-cue');
+    if (!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      void toast.offsetWidth;
+      toast.classList.add('memory-update-cue-enter');
+    }
+  }
   toast.classList.remove('hidden');
   clearTimeout(composerToastTimer);
   composerToastTimer = setTimeout(() => {
     toast.classList.add('hidden');
+    toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
   }, duration);
 }
 
@@ -8260,6 +8269,13 @@ if (recordingStopBtn) recordingStopBtn.addEventListener('click', stopRecording);
 hydrateRecordingFromBackground();
 
 // --- Listen for Agent Updates ---
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'user_memory_created'
+      || document.visibilityState === 'hidden') return;
+  showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
+});
 
 // Recorder broadcasts — independent of the per-tab agent_update flow.
 // These are intentionally NOT scoped by tabId because the recording banner
