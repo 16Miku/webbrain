@@ -302,7 +302,7 @@ export default {
   'sp.plan.timed_out': 'Approval timed out',
   'sp.plan.timed_out_hint': 'Nothing ran. Retry to review a fresh plan.',
   'sp.plan.awaiting_review': 'Approve or cancel the plan above before sending another message.',
-  'sp.plan.intent_unavailable': 'The planner could not return valid structured output after one repair. Continuing this turn in read-only mode.',
+  'sp.plan.intent_unavailable': 'Planning failed after two attempts. Continuing in Act mode with normal safeguards.',
 
   // Permission prompt (structured; returns once/always/deny — no free text)
   'sp.perm.question': 'WebBrain wants to {verb} {host}. Allow it?',
@@ -556,7 +556,7 @@ export default {
   'st.display.openai_ask_streaming.label': 'Stream Ask responses',
   'st.display.openai_ask_streaming.desc': 'Show text as it arrives in Ask mode for supported providers. Interrupted streams show a notice and retry once without streaming; provider/API errors are still shown. Tool calls wait for stream completion; Act, Dev, scheduled, cloud, and Continue runs stay non-streaming. On by default.',
   'st.display.plan_before_act.label': 'Plan before Act',
-  'st.display.plan_before_act.desc': 'Act and Dev always run a structured intent check before tools. Try (default) also builds full plans but may reuse a recently approved plan for a short follow-up; Strict builds a full plan every turn. Try falls back to a read-only turn if intent or planning remains invalid after one repair; Strict stops before tools.',
+  'st.display.plan_before_act.desc': 'Act and Dev always run a structured intent check before tools. Try (default) also builds full plans but may reuse a recently approved plan for a short follow-up; Strict builds a full plan every turn. Try retries once, then continues in Act with a warning if intent or planning is still invalid; Strict stops before tools.',
   'st.display.plan_before_act.try': 'Try planning (default)',
   'st.display.plan_before_act.strict': 'Strict planning',
   'st.display.plan_before_act.off': 'Off',
