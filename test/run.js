@@ -5912,6 +5912,7 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
+  assert.match(chromeSource, /const continuationBase = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
   assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
@@ -8082,6 +8083,43 @@ test('accessibility-tree nextPage pagination past the read cap is not suspicious
   d._checkAccessibilityReadLoop(tab, 'click_ax', { ref_id: 'ref_15' }, { success: true });
   assert.equal(d.axReadStates.has(tab), false);
   assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_9' }, { pageContent: 'generic [ref_9]' }).kind, 'none');
+});
+
+test('accessibility-tree anchored nextPage pagination stays within one safe subtree scope', () => {
+  const d = new ConfiguredLoopDetector();
+  const tab = 24;
+  for (let page = 1; page <= 2; page++) {
+    const rootScope = { filter: 'visible', maxDepth: 12, maxChars: 3000 };
+    assert.equal(d._checkAccessibilityReadLoop(
+      tab,
+      'get_accessibility_tree',
+      { ...rootScope, ...(page > 1 ? { page } : {}) },
+      {
+        pageContent: `visible root page ${page}`,
+        nextPage: page + 1,
+        continuationArgs: { ...rootScope, page: page + 1 },
+      },
+    ).kind, 'none');
+  }
+  const scope = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 12000,
+    ref_id: 'ref_main',
+  };
+  for (let page = 1; page <= 15; page++) {
+    const result = d._checkAccessibilityReadLoop(
+      tab,
+      'get_accessibility_tree',
+      { ...scope, ...(page > 1 ? { page } : {}) },
+      {
+        pageContent: `main page ${page} [ref_main]`,
+        nextPage: page + 1,
+        continuationArgs: { ...scope, page: page + 1 },
+      },
+    );
+    assert.equal(result.kind, 'none', `exact anchored continuation page ${page} was treated as ref enumeration`);
+  }
 });
 
 test('accessibility-tree read cap still stops a non-sequential read after long pagination', () => {
