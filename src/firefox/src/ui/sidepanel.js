@@ -4282,14 +4282,15 @@ async function applyActiveRunState(numericTabId, state) {
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
     const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
-    const replayGapBeforeSeq = Number(runAssistantEl.dataset.replayGapBeforeSeq || 0);
+    const replayGapNoted = runAssistantEl.dataset.replayGapNoted === 'true'
+      || Number(runAssistantEl.dataset.replayGapBeforeSeq || 0) > 0;
     if (unavailableBeforeSeq > lastRenderedSeq
-        && unavailableBeforeSeq > replayGapBeforeSeq) {
+        && !replayGapNoted) {
       addRunProgressReplayGapNote();
       // Keep replay-loss notice deduplication separate from the rendered-event
       // cursor. A terminal snapshot can be fully acknowledged (and therefore
       // absent from events) while finalContent still needs to be restored.
-      runAssistantEl.dataset.replayGapBeforeSeq = String(unavailableBeforeSeq);
+      runAssistantEl.dataset.replayGapNoted = 'true';
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
