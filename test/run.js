@@ -64971,13 +64971,13 @@ test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeat
     evicted.record(10, `${label}-evicted`, 'thinking', { step: 2 });
     const snapshot = evicted.get(10);
     let lastRenderedSeq = 0;
-    let replayGapBeforeSeq = 0;
+    let replayGapNoted = false;
     let notices = 0;
     for (let poll = 0; poll < 6; poll++) {
       const boundary = unavailableBeforeSeq(snapshot);
-      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+      if (boundary > lastRenderedSeq && !replayGapNoted) {
         notices += 1;
-        replayGapBeforeSeq = boundary;
+        replayGapNoted = true;
       }
     }
     assert.equal(notices, 1, `${label}: repeated state polls should render one replay-gap notice`);
@@ -64995,16 +64995,33 @@ test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeat
     );
 
     lastRenderedSeq = 0;
-    replayGapBeforeSeq = 0;
+    replayGapNoted = false;
     notices = 0;
     for (let poll = 0; poll < 6; poll++) {
       const boundary = unavailableBeforeSeq(acknowledged.get(9));
-      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+      if (boundary > lastRenderedSeq && !replayGapNoted) {
         notices += 1;
-        replayGapBeforeSeq = boundary;
+        replayGapNoted = true;
       }
     }
     assert.equal(notices, 1, `${label}: acknowledged events from another panel should produce one replay-gap notice, not one per poll`);
+
+    const advancing = new Journal();
+    advancing.begin(12, `${label}-advancing-boundary`);
+    lastRenderedSeq = 0;
+    replayGapNoted = false;
+    notices = 0;
+    for (let step = 1; step <= 3; step++) {
+      const event = advancing.record(12, `${label}-advancing-boundary`, 'thinking', { step });
+      advancing.acknowledge(12, `${label}-advancing-boundary`, event.seq);
+      const boundary = unavailableBeforeSeq(advancing.get(12));
+      if (boundary > lastRenderedSeq && !replayGapNoted) {
+        notices += 1;
+        replayGapNoted = true;
+      }
+    }
+    assert.equal(notices, 1, `${label}: an advancing replay boundary should still render only one notice for the run`);
+    assert.equal(lastRenderedSeq, 0, `${label}: advancing replay loss must not move the rendered-event cursor`);
 
     const completed = new Journal();
     completed.begin(11, `${label}-acknowledged-terminal`);
@@ -65018,15 +65035,15 @@ test('run UI journal: replay gaps distinguish acknowledgements and dedupe repeat
     completed.acknowledge(11, `${label}-acknowledged-terminal`, terminal.seq);
     const terminalSnapshot = completed.get(11);
     lastRenderedSeq = 0;
-    replayGapBeforeSeq = 0;
+    replayGapNoted = false;
     notices = 0;
     let terminalRenders = 0;
     let renderedTerminalContent = '';
     for (let poll = 0; poll < 6; poll++) {
       const boundary = unavailableBeforeSeq(terminalSnapshot);
-      if (boundary > lastRenderedSeq && boundary > replayGapBeforeSeq) {
+      if (boundary > lastRenderedSeq && !replayGapNoted) {
         notices += 1;
-        replayGapBeforeSeq = boundary;
+        replayGapNoted = true;
       }
       if (lastRenderedSeq < terminalSnapshot.seq) {
         terminalRenders += 1;
@@ -66005,7 +66022,7 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(panel, /sendPlanReviewDecisionWithReconnect\(/, `${label}: plan decisions should survive a lost response channel`);
     assert.match(panel, /showActivity\('Reconnecting…'\)/, `${label}: reconnect attempts should be visible`);
     assert.match(panel, /onState: state => applyActiveRunState\(tabId, state\)/, `${label}: reconnect probes should replay missed UI journal events`);
-    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?const replayGapBeforeSeq = Number\(runAssistantEl\.dataset\.replayGapBeforeSeq \|\| 0\);[\s\S]*?unavailableBeforeSeq > lastRenderedSeq[\s\S]*?unavailableBeforeSeq > replayGapBeforeSeq[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?dataset\.replayGapBeforeSeq = String\(unavailableBeforeSeq\)/, `${label}: replay-gap notices should dedupe without advancing the rendered-event cursor`);
+    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?const replayGapNoted = runAssistantEl\.dataset\.replayGapNoted === 'true'[\s\S]*?Number\(runAssistantEl\.dataset\.replayGapBeforeSeq \|\| 0\) > 0;[\s\S]*?unavailableBeforeSeq > lastRenderedSeq[\s\S]*?!replayGapNoted[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?dataset\.replayGapNoted = 'true'/, `${label}: replay-gap notices should render once per run without advancing the rendered-event cursor`);
     assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\('sp\.run_progress_replay_gap'\)/, `${label}: replay loss needs distinct non-context-compaction copy`);
     assert.doesNotMatch(panel, /addContextCompactedNote\(\{ message: 'Some hidden-tab progress was compacted\.' \}\)/, `${label}: replay loss must not masquerade as model-context compaction`);
     assert.match(panel, /void adoptRestoredRunState\(numericTabId, state\)/, `${label}: remounted sidepanels should adopt orphaned run monitors`);
