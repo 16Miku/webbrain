@@ -54524,7 +54524,7 @@ test('planner intent degrades to a localized read-only turn after one repair', a
   });
 });
 
-test('planner intent preserves Act for a canonical download plan missing localized display fields', async () => {
+test('planner intent preserves Act and canonical execution fields when localized display fields are missing', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
       const agent = new AgentClass({ getActive: () => ({ name: 'intent-test', model: 'intent-test' }) });
@@ -54568,7 +54568,7 @@ test('planner intent preserves Act for a canonical download plan missing localiz
       assert.equal(gate.proceed, true, `${AgentClass.name}: recoverable localization blocked execution`);
       assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: download intent was downgraded`);
       assert.equal(gate.readOnlyFallback, undefined, `${AgentClass.name}: download plan fell back to Ask`);
-      assert.equal(gate.requiresStateChange, true, `${AgentClass.name}: canonical download action did not require mutation evidence`);
+      assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: localization recovery changed canonical execution metadata`);
       assert.equal(warning, '', `${AgentClass.name}: recoverable localization emitted a planner failure warning`);
     }
   });
@@ -60632,7 +60632,7 @@ test('planner: parse and format structured plan', () => {
   }
 });
 
-test('planner: canonical fields recover missing localization and explicit download actions require state change', () => {
+test('planner: canonical fields recover missing and partial localization without changing execution metadata', () => {
   const tracePlan = JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
@@ -60661,7 +60661,7 @@ test('planner: canonical fields recover missing localization and explicit downlo
       `${label}: canonical steps did not backfill localized display text`,
     );
     assert.deepEqual(plan.localized.risks, plan.risks, `${label}: canonical risks did not backfill localized display text`);
-    assert.equal(plan.requires_state_change, true, `${label}: explicit canonical download action stayed read-only`);
+    assert.equal(plan.requires_state_change, false, `${label}: localization recovery changed canonical execution metadata`);
 
     const partialLocalization = JSON.parse(tracePlan);
     partialLocalization.risks = ['First canonical risk', 'Second canonical risk'];
@@ -60691,45 +60691,6 @@ test('planner: canonical fields recover missing localization and explicit downlo
     }), { requireIntent: true, locale: 'tr' });
     assert.equal(malformedClarification, null, `${label}: clarification without the actual localized question bypassed repair`);
 
-    const linkLookup = parse(JSON.stringify({
-      request_kind: 'execute',
-      requires_state_change: false,
-      requires_submission: false,
-      read_scope: 'visible_page',
-      summary: 'Find the download link for the current report',
-      steps: [{ id: '1', action: 'Read the page and return the download URL' }],
-      risks: [],
-    }), { requireIntent: true, locale: 'en' });
-    assert.equal(linkLookup?.requires_state_change, false, `${label}: read-only download-link lookup was over-classified`);
-
-    const toolDeclaredDownload = parse(JSON.stringify({
-      request_kind: 'execute',
-      requires_state_change: false,
-      requires_submission: false,
-      read_scope: 'visible_page',
-      summary: 'Save the selected media locally',
-      steps: [{ id: '1', action: 'Save the selected media', tools: ['download_public_media'] }],
-      risks: [],
-    }), { requireIntent: true, locale: 'en' });
-    assert.equal(toolDeclaredDownload?.requires_state_change, true, `${label}: declared download tool stayed read-only`);
-
-    for (const action of [
-      'Save the selected media locally',
-      'Store the video on the device',
-      'Saving the report to the Downloads folder',
-      'Storing the recording to disk',
-    ]) {
-      const localSave = parse(JSON.stringify({
-        request_kind: 'execute',
-        requires_state_change: false,
-        requires_submission: false,
-        read_scope: 'visible_page',
-        summary: action,
-        steps: [{ id: '1', action }],
-        risks: [],
-      }), { requireIntent: true, locale: 'en' });
-      assert.equal(localSave?.requires_state_change, true, `${label}: compact local-save action stayed read-only: ${action}`);
-    }
   }
 });
 

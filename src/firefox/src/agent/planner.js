@@ -9,24 +9,13 @@ import { sanitizeText } from './text-sanitize.js';
 
 const UNTRUSTED_PAGE_CONTENT_TAG_RE = /<\/?untrusted_page_content\b[^>]*>/gi;
 const REQUEST_KINDS = new Set(['execute', 'respond', 'plan_only', 'clarify']);
-const DOWNLOAD_PLAN_TOOLS = new Set([
-  'download_file',
-  'download_files',
-  'download_public_media',
-  'download_resource_from_page',
-  'download_social_media',
-]);
 
-function canonicalPlanRequiresDownload(summary, steps) {
-  if (steps.some(step => step.tools.some(tool => DOWNLOAD_PLAN_TOOLS.has(tool)))) return true;
-  // Canonical planner fields are required to be English. Match an explicit
-  // download action, but not a read-only request to find a download link. A
-  // bounded local-save phrase covers compact plans, whose steps omit tools.
-  const actionText = [summary, ...steps.map(step => step.action)].join('\n');
-  return actionText.split('\n').some(line => (
-    /(?:^|[.!?]\s*|\b(?:and|then|to)\s+)download(?:s|ed|ing)?\s+(?!(?:links?|urls?|buttons?|pages?|instructions?)\b)\S/i.test(line)
-    || /\b(?:sav(?:e|es|ed|ing)|stor(?:e|es|ed|ing))\b[^\n.!?]{0,120}\b(?:locally|to (?:the )?(?:downloads? folder|disk)|on (?:the )?(?:device|computer|disk))\b/i.test(line)
-  ));
+function canonicalPlanRequiresDownload(_summary, _steps) {
+  // TODO(#2752): Derive download completion requirements from structured,
+  // language-neutral planner intent. Do not infer them from canonical prose;
+  // lookup framing such as "Find the URL to download the report" makes that
+  // heuristic ambiguous. Until then, preserve the planner-declared value.
+  return false;
 }
 
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
