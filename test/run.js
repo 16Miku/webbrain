@@ -21191,6 +21191,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       `${label}: onInstalled should pass install details to the guide gate`,
     );
     assert.match(html, /id="open-panel-button"/, `${label}: install guide should provide a real panel-open action`);
+    assert.match(html, /id="install-intro"[^>]*aria-live="polite"/, `${label}: changing install guidance should be announced accessibly`);
     assert.match(html, /id="open-panel-button"[^>]*\sdisabled(?:\s|>)/, `${label}: install CTA should start disabled until hydration binds its click handler`);
     assert.match(
       installJs,
@@ -21213,8 +21214,8 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.doesNotMatch(installJs, /classList\.(?:add|remove)\('is-open'\)/, `${label}: install logic should not apply the retired success-green state`);
     assert.match(
       installJs,
-      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
-      `${label}: install page should report panel bookkeeping only after a successful open`,
+      /Promise\.resolve\(opening\)\.then\(\(\) => \{[\s\S]*?advanceInstallGuide\(\{ guide \}\);[\s\S]*?reportInstalledPanelOpened\(\{ build, tabId: installTab\?\.id \}\)[\s\S]*?\}\)\.catch/,
+      `${label}: a successful panel open should advance the guide before background bookkeeping`,
     );
 
     assert.equal(
@@ -21263,6 +21264,25 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.equal(installModule.getBrowserGuide('firefox').failureKey, 'install.open_failed_firefox', `${label}: Firefox should receive its native recovery instructions`);
     assert.equal(installModule.getBrowserGuide('vivaldi').nextKey, 'install.pin.next', `${label}: Chromium install pages should preview the pin step without coachmark-only spatial copy`);
     assert.equal(installModule.getBrowserGuide('vivaldi').failureKey, 'install.open_failed_chromium', `${label}: Chromium browsers should receive shortcut and Extensions-menu recovery`);
+
+    const guideCopy = {
+      'install.pin.title': 'Pin WebBrain',
+      [installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey]: 'Browser-specific next step',
+    };
+    const guideNodes = {
+      'install-title': { dataset: { i18n: 'install.installed' }, textContent: 'WebBrain installed' },
+      'install-intro': { dataset: { i18n: 'install.open_panel.body' }, textContent: 'Open WebBrain' },
+    };
+    const guideAdvanced = installModule.advanceInstallGuide({
+      guide: installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome'),
+      documentLike: { getElementById: (id) => guideNodes[id] || null },
+      translate: (key) => guideCopy[key],
+    });
+    assert.equal(guideAdvanced, true, `${label}: successful open should advance the install guide`);
+    assert.equal(guideNodes['install-title'].textContent, 'Pin WebBrain', `${label}: successful open should replace the stale installed heading`);
+    assert.equal(guideNodes['install-intro'].textContent, 'Browser-specific next step', `${label}: successful open should show native next-step guidance`);
+    assert.equal(guideNodes['install-title'].dataset.i18n, 'install.pin.title', `${label}: locale refresh should preserve the advanced heading`);
+    assert.equal(guideNodes['install-intro'].dataset.i18n, installModule.getBrowserGuide(label === 'firefox' ? 'firefox' : 'chrome').nextKey, `${label}: locale refresh should preserve the browser-specific guidance`);
 
     const calls = [];
     const messages = [];

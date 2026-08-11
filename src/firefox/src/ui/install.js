@@ -39,6 +39,22 @@ export function getBrowserGuide(browserKey) {
   return GUIDES[browserKey] || GUIDES.unknown;
 }
 
+export function advanceInstallGuide({
+  guide,
+  documentLike = globalThis.document,
+  translate = t,
+} = {}) {
+  const title = documentLike?.getElementById?.('install-title');
+  const intro = documentLike?.getElementById?.('install-intro');
+  if (!guide?.nextKey || !title || !intro) return false;
+
+  title.dataset.i18n = 'install.pin.title';
+  intro.dataset.i18n = guide.nextKey;
+  title.textContent = translate('install.pin.title');
+  intro.textContent = translate(guide.nextKey);
+  return true;
+}
+
 /**
  * Keep the open calls in the click handler's synchronous turn. Both Chrome's
  * sidePanel.open() and Firefox's sidebarAction.open() require a user gesture.
@@ -124,7 +140,8 @@ async function hydrateGuide() {
       openButton.classList.remove('is-opening');
       openButton.disabled = false;
       openButton.removeAttribute('aria-busy');
-      status.textContent = t(guide.nextKey);
+      advanceInstallGuide({ guide });
+      status.textContent = '';
       reportInstalledPanelOpened({ build, tabId: installTab?.id }).catch(() => {});
     }).catch(() => {
       openButton.classList.remove('is-opening');
