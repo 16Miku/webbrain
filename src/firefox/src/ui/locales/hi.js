@@ -992,7 +992,7 @@ export default {
   "st.sync.status.auth_required": "एन्क्रिप्टेड सिंक का उपयोग करने के लिए अपने WebBrain Cloud ईमेल से साइन इन करें।",
   "st.sync.status.password_required": "साइन इन हो गया। एन्क्रिप्टेड सिंक चालू करने के लिए एक सिंक पासवर्ड चुनें।",
   "st.sync.status.unlocked": "इस डिवाइस के लिए एन्क्रिप्टेड सिंक चालू है.",
-  "st.sync.status.locked": "एन्क्रिप्टेड सिंक लॉक है. Enter your sync password to unlock it on this device.",
+  "st.sync.status.locked": "एन्क्रिप्टेड सिंक लॉक है। इस डिवाइस पर इसे अनलॉक करने के लिए अपना सिंक पासवर्ड दर्ज करें।",
   "st.sync.result.updated": "एन्क्रिप्टेड सिंक अपडेट किया गया.",
   "st.sync.result.current": "एन्क्रिप्टेड सिंक अद्यतित है.",
   "st.sync.pending.syncing": "एन्क्रिप्टेड क्लाउड कॉपी सिंक हो रही है…",
