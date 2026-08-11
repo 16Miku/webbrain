@@ -22099,6 +22099,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _maybeFallbackFieldWithCdp(tabId, toolName, args, response) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
+    const clearsExisting = toolName === 'set_field'
+      ? args?.clear !== false
+      : args?.clear === true;
+    const contentEditableSelectionMode = clearsExisting ? 'all' : 'end';
     delete response._expectedValue;
     if (response.success !== false || response.verified !== false || expected == null || typeof args?.ref_id !== 'string') {
       return response;
@@ -22115,7 +22119,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let prepared = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
-        params: { ref_id: args.ref_id },
+        params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
       });
       if (!prepared?.success) {
         return {
@@ -22139,12 +22143,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
         });
         // The trusted click collapses the preflight selection. Re-resolve the
-        // same ref and select all once more before Input.insertText replaces
-        // the editor contents.
+        // same ref and restore the requested selection immediately before
+        // dispatch: replacement selects all; append collapses at the end so
+        // existing rich-editor markup and spacing survive unchanged.
         const reselected = await chrome.tabs.sendMessage(tabId, {
           target: 'content',
           action: 'ax_prepare_field_for_trusted_type',
-          params: { ref_id: args.ref_id },
+          params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
         });
         if (!reselected?.success) {
           return {
@@ -22157,8 +22162,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         prepared = reselected;
       }
       trustedDispatched = true;
-      if (expected) {
-        await cdpClient.sendCommand(tabId, 'Input.insertText', { text: expected });
+      const appendingContentEditable = prepared.contentEditable && !clearsExisting;
+      const trustedText = appendingContentEditable
+        ? (typeof args?.text === 'string' ? args.text : '')
+        : expected;
+      if (trustedText || appendingContentEditable) {
+        await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
       } else {
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
@@ -22171,7 +22180,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const verification = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_verify_field_value',
-        params: { ref_id: args.ref_id, expected },
+        params: {
+          ref_id: args.ref_id,
+          expected,
+          ...(appendingContentEditable ? { appendText: trustedText } : {}),
+        },
       });
       if (!verification?.success || verification.verified !== true) {
         return {

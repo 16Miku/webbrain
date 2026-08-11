@@ -3738,11 +3738,61 @@
 
   const SET_FIELD_VERIFY_DELAY_MS = 80;
 
+  function _contentEditableValueMatches(actual, expected) {
+    const normalizeNewlines = value => String(value).replace(/\r\n?/g, '\n');
+    const actualText = normalizeNewlines(actual);
+    const expectedText = normalizeNewlines(expected);
+    if (actualText === expectedText) return true;
+
+    // Chromium serializes line feeds inserted into contenteditable fields as
+    // block nodes. An empty line becomes <div><br></div>, and innerText then
+    // exposes one extra newline for each empty block: "a\n\nb" reads back as
+    // "a\n\n\nb". Leading and trailing line feeds are doubled. Accept only
+    // that deterministic expansion while keeping every non-newline character
+    // and every ordinary single line break exact.
+    let actualOffset = 0;
+    let expectedOffset = 0;
+    while (actualOffset < actualText.length || expectedOffset < expectedText.length) {
+      const actualBreak = actualText.indexOf('\n', actualOffset);
+      const expectedBreak = expectedText.indexOf('\n', expectedOffset);
+      const actualTextEnd = actualBreak < 0 ? actualText.length : actualBreak;
+      const expectedTextEnd = expectedBreak < 0 ? expectedText.length : expectedBreak;
+      if (actualText.slice(actualOffset, actualTextEnd) !== expectedText.slice(expectedOffset, expectedTextEnd)) {
+        return false;
+      }
+      if (actualBreak < 0 || expectedBreak < 0) return actualBreak === expectedBreak;
+
+      let actualRunEnd = actualBreak;
+      while (actualText[actualRunEnd] === '\n') actualRunEnd += 1;
+      let expectedRunEnd = expectedBreak;
+      while (expectedText[expectedRunEnd] === '\n') expectedRunEnd += 1;
+      const actualRun = actualRunEnd - actualBreak;
+      const expectedRun = expectedRunEnd - expectedBreak;
+      const boundaryRun = expectedBreak === 0 || expectedRunEnd === expectedText.length;
+      const expandedRun = boundaryRun
+        ? actualRun === expectedRun * 2
+        : expectedRun > 1 && actualRun === (expectedRun * 2) - 1;
+      if (actualRun !== expectedRun && !expandedRun) return false;
+      actualOffset = actualRunEnd;
+      expectedOffset = expectedRunEnd;
+    }
+    return true;
+  }
+
   function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
+    if (clear) return _contentEditableValueMatches(actual, expected);
     const normalize = value => String(value).replace(/\r\n?/g, '\n');
-    return normalize(actual) === normalize(expected);
+    const actualText = normalize(actual);
+    const previousText = normalize(previous);
+    if (!actualText.startsWith(previousText)) return false;
+    const actualSuffix = actualText.slice(previousText.length);
+    if (!previousText) return _contentEditableValueMatches(actualSuffix, text);
+    // A suffix that begins with a newline is internal to the full editor even
+    // though it is now at the boundary of this sliced comparison. Prefix both
+    // sides with the same marker so Chromium's internal-run rule is applied.
+    return _contentEditableValueMatches(`\u0000${actualSuffix}`, `\u0000${text}`);
   }
 
   function _editableTextValue(el) {
@@ -5249,11 +5299,11 @@
         }
       },
       // Internal Chrome recovery helpers. The background resolves the exact
-      // ref again, selects its current value, sends trusted CDP text, then
-      // asks this content script for a settled exact readback.
+      // ref again, prepares either replacement or append selection, sends
+      // trusted CDP text, then asks this content script for settled readback.
       'ax_prepare_field_for_trusted_type': () => {
         try {
-          const { ref_id } = msg.params || {};
+          const { ref_id, selectionMode = 'all' } = msg.params || {};
           if (typeof ref_id !== 'string') return { success: false, error: 'ref_id is required' };
           if (typeof window.__wb_ax_lookup !== 'function') return { success: false, error: 'accessibility-tree.js not injected' };
           const el = window.__wb_ax_lookup(ref_id);
@@ -5266,6 +5316,7 @@
             const selection = window.getSelection();
             const range = document.createRange();
             range.selectNodeContents(el);
+            if (selectionMode === 'end') range.collapse(false);
             selection.removeAllRanges();
             selection.addRange(range);
           } else if (typeof el.select === 'function') {
@@ -5284,6 +5335,7 @@
             fieldMeta: _fieldMeta(el),
             isCombobox,
             contentEditable: !!el.isContentEditable,
+            selectionMode: el.isContentEditable && selectionMode === 'end' ? 'end' : 'all',
             rect: {
               x: Math.round(rect.x),
               y: Math.round(rect.y),
@@ -5297,7 +5349,7 @@
       },
       'ax_verify_field_value': () => {
         try {
-          const { ref_id, expected } = msg.params || {};
+          const { ref_id, expected, appendText } = msg.params || {};
           if (typeof ref_id !== 'string' || typeof expected !== 'string') {
             return { success: false, verified: false, error: 'ref_id and expected are required' };
           }
@@ -5305,9 +5357,21 @@
           const el = window.__wb_ax_lookup(ref_id);
           if (!el || !el.isConnected) return { success: false, verified: false, error: `ref_id ${ref_id} is stale` };
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verifiesAppend = el.isContentEditable && typeof appendText === 'string';
+          const expectedPrefix = verifiesAppend
+            ? expected.slice(0, expected.length - appendText.length)
+            : '';
           return {
             success: true,
-            verified: _setFieldValueMatches(actual, '', expected, true, el.isContentEditable),
+            verified: verifiesAppend && !expected.endsWith(appendText)
+              ? false
+              : _setFieldValueMatches(
+                  actual,
+                  expectedPrefix,
+                  verifiesAppend ? appendText : expected,
+                  !verifiesAppend,
+                  el.isContentEditable,
+                ),
             actual: actual.slice(0, 200),
             fieldMeta: _fieldMeta(el),
           };
