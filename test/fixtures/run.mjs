@@ -944,6 +944,10 @@ function normalizeTreeRefs(content) {
   });
 }
 
+function normalizeTreeRevision(content) {
+  return String(content || '').replace(/fnv1a64:[0-9a-f]{16}/g, 'tree_revision');
+}
+
 function assertGmailComposeRecipientTree(tree, label) {
   const content = String(tree?.pageContent || '');
   if (!/generic "Alex Russell \(gmail\.com\)" \[ref_\d+\]/.test(content)) {
@@ -995,6 +999,7 @@ async function readAllConversationTreePages(page, sourcePath, label) {
       current.maxChars,
       null,
       current.page,
+      current.tree_revision,
     ), args);
     if (JSON.stringify(result).length > 8000) {
       throw new Error(`${label}: structured accessibility page exceeded the model-facing tool cap`);
@@ -1095,13 +1100,21 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
       current.maxChars,
       current.ref_id,
       current.page,
+      current.tree_revision,
     ), args);
     if (result.conversationRootRefId !== discovery.conversationRootRefId) {
       throw new Error(`${label}: trusted Gmail root drifted during pagination`);
     }
     pages.push(result);
     if (!result.hasMore) break;
-    const expected = { ...args, page: args.page + 1 };
+    const expected = {
+      filter: args.filter,
+      maxDepth: args.maxDepth,
+      maxChars: args.maxChars,
+      ref_id: args.ref_id,
+      tree_revision: result.treeRevision,
+      page: args.page + 1,
+    };
     if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
       throw new Error(`${label}: Gmail thread continuation lost its trusted anchor: ${JSON.stringify(result.continuationArgs)}`);
     }
@@ -1116,6 +1129,25 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
   }
   if (combined.includes('Unrelated inbox conversation')) {
     throw new Error(`${label}: trusted Gmail pagination leaked the background inbox`);
+  }
+
+  const revisionMismatch = await page.evaluate(continuation => {
+    const message = document.querySelector('#active-thread article p');
+    const previous = message.textContent;
+    message.textContent = previous.replace('project', 'product');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    message.textContent = previous;
+    return result;
+  }, pages[0].continuationArgs);
+  if (revisionMismatch.treeRevisionMismatch !== true || !revisionMismatch.error || revisionMismatch.pageContent) {
+    throw new Error(`${label}: same-length Gmail tree drift did not invalidate the continuation`);
   }
 
   const routeClassification = await page.evaluate(() => {
@@ -1169,11 +1201,12 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
     totalChars: result.totalChars,
     hasMore: result.hasMore,
     truncated: result.truncated,
-    pageContent: normalizeTreeRefs(result.pageContent),
+    pageContent: normalizeTreeRevision(normalizeTreeRefs(result.pageContent)),
+    treeRevision: 'tree_revision',
     conversationRootRefId: 'ref_trusted_root',
     conversationExpansionState: result.conversationExpansionState,
     continuationArgs: result.continuationArgs
-      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root' }
+      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root', tree_revision: 'tree_revision' }
       : null,
   }));
 }

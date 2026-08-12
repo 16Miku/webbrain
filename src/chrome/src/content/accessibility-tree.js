@@ -915,6 +915,15 @@
     };
   }
 
+  function fingerprintTreeContent(output) {
+    let hash = 0xcbf29ce484222325n;
+    for (let index = 0; index < output.length; index += 1) {
+      hash ^= BigInt(output.charCodeAt(index));
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    return `fnv1a64:${hash.toString(16).padStart(16, '0')}`;
+  }
+
   function isGmailThreadIdentifier(value) {
     const segment = String(value || '').split('?')[0];
     return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
@@ -978,7 +987,7 @@
     return collapsed ? 'collapsed' : null;
   }
 
-  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page) {
+  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
@@ -1007,7 +1016,7 @@
         refId: refId || null,
       };
       const effMaxChars = maxChars != null ? maxChars : defaultChars;
-      const continuationBase = {
+      const baseTreeScope = {
         filter: effFilter,
         maxDepth: opts.maxDepth,
         maxChars: effMaxChars,
@@ -1129,8 +1138,24 @@
       sweepDeadRefs();
 
       const output = lines.join('\n');
+      const treeRevision = fingerprintTreeContent(output);
+      const revisionBound = !!refId;
+      const continuationBase = {
+        ...baseTreeScope,
+        ...(revisionBound ? { tree_revision: treeRevision } : {}),
+      };
+      if (revisionBound && expectedTreeRevision && expectedTreeRevision !== treeRevision) {
+        return {
+          error: 'The anchored accessibility tree changed during pagination. Restart from page 1 with the current conversation root.',
+          pageContent: '',
+          viewport,
+          treeRevision,
+          treeRevisionMismatch: true,
+          ...conversationMetadata,
+        };
+      }
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, ...conversationMetadata };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -1145,7 +1170,7 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, ...conversationMetadata };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
         }
         const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
@@ -1156,6 +1181,7 @@
           return {
             ...sliced,
             viewport,
+            treeRevision,
             autoDegraded: true,
             notice: hint,
             ...conversationMetadata,
@@ -1172,7 +1198,7 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport, ...conversationMetadata };
+      return { pageContent: output, viewport, treeRevision, ...conversationMetadata };
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),

@@ -5515,6 +5515,8 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(nonGmailState.coverageRevision, 0, `${label}: generic document pages received trusted Gmail progress credit`);
 
     const gmailRootRef = 'ref_trusted_main';
+    const gmailRevisionA = 'fnv1a64:1111111111111111';
+    const gmailRevisionB = 'fnv1a64:2222222222222222';
     let gmailState = runtime.createReadCompletenessState(`${label}-gmail-tree`, true, true, 'gmail');
     const beforeDiscovery = gmailState;
     gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12, maxChars: 12000 }, {
@@ -5524,6 +5526,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       truncated: true,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeDiscovery, gmailState), true, `${label}: trusted Gmail root discovery was not meaningful progress`);
     assert.deepEqual(gmailState.continuationArgs, {
@@ -5542,6 +5545,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeArbitraryRef, gmailState), false, `${label}: arbitrary Gmail subtree was credited as whole-thread progress`);
     assert.equal(gmailState.treeCoverageComplete, false, `${label}: arbitrary Gmail subtree satisfied complete-thread coverage`);
@@ -5558,6 +5562,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeSkippedPage, gmailState), false, `${label}: non-sequential Gmail page was credited as progress`);
     assert.deepEqual(gmailState.continuationArgs, {
@@ -5575,6 +5580,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(gmailState.treeCoverageComplete, true, `${label}: terminal trusted Gmail thread read did not finish pagination`);
     assert.equal(gmailState.complete, false, `${label}: collapsed Gmail messages were mistaken for complete coverage`);
@@ -5604,20 +5610,23 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     const beforeDriftedPage = gmailState;
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2 }, {
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
       pageContent: 'tree changed before page two',
       page: 2,
-      totalChars: 2500,
+      totalChars: 2400,
       hasMore: false,
       truncated: false,
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionB,
+      treeRevisionMismatch: true,
     });
     assert.equal(runtime.readCompletenessMadeProgress(beforeDriftedPage, gmailState), false, `${label}: changed Gmail tree page was credited as deterministic progress`);
     assert.deepEqual(gmailState.continuationArgs, expandedPage1Args, `${label}: changed Gmail tree did not restart at trusted page one`);
@@ -5629,11 +5638,12 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2 }, {
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
       pageContent: 'listitem "Latest message"',
       page: 2,
       totalChars: 2500,
@@ -5642,6 +5652,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
     assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
@@ -5661,13 +5672,14 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { ...expandedPage1Args, page: 2 },
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     const beforeMissingRoot = missingRootState;
     missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
-      ...expandedPage1Args, page: 2,
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
     }, {
       pageContent: 'detached thread page two',
       page: 2,
@@ -5700,9 +5712,10 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       hasMore: true,
       truncated: true,
       nextPage: 2,
-      continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 2 },
+      continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 2, tree_revision: gmailRevisionA },
       conversationRootRefId: 'ref_root_A',
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
       filter: 'visible', maxDepth: 12, maxChars: 12000,
@@ -5722,6 +5735,7 @@ test('whole-thread reads require deterministic terminal page coverage in both br
       truncated: false,
       continuationArgs: null,
       conversationRootRefId: 'ref_root_B',
+      treeRevision: gmailRevisionB,
     });
     assert.equal(changedRootState.treeCoverageComplete, true, `${label}: new Gmail root terminal coverage was not recorded`);
     assert.equal(changedRootState.complete, false, `${label}: a new Gmail root completed with stale expansion evidence`);
@@ -5805,6 +5819,7 @@ test('Ask returns a fixed limitation when Gmail expansion cannot be verified', a
       continuationArgs: null,
       conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: 'fnv1a64:3333333333333333',
     });
 
     const messages = [];
@@ -6143,7 +6158,8 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
-  assert.match(chromeSource, /const continuationBase = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /const baseTreeScope = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /tree_revision: treeRevision/, 'anchored tree continuationArgs do not bind a content revision');
   assert.match(chromeSource, /conversationRootRefId/, 'trusted Gmail conversation-root metadata is not returned');
   assert.match(chromeSource, /candidate\.closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body landmarks can spoof the trusted Gmail conversation root');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
@@ -6156,6 +6172,7 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
     const tool = getTools('ask').find(item => item.function.name === 'get_accessibility_tree');
     assert.match(tool?.function?.description || '', /exact returned `continuationArgs`[\s\S]*whole-page or whole-thread[\s\S]*hasMore:false/i, `${label}: tree tool lacks terminal continuation guidance`);
     assert.match(tool?.function?.parameters?.properties?.page?.description || '', /any tree filter[\s\S]*exact continuationArgs/i, `${label}: page schema still limits paging to one filter`);
+    assert.match(tool?.function?.parameters?.properties?.tree_revision?.description || '', /opaque tree snapshot revision[\s\S]*exact continuationArgs/i, `${label}: tree schema does not preserve snapshot identity`);
     assert.equal(tool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: model-visible tree pages can exceed the structured result window`);
     assert.match(tool?.function?.parameters?.properties?.maxChars?.description || '', /continuationArgs/i, `${label}: maxChars still describes an abort instead of structured paging`);
     assert.match(prompt, /whole-page, whole-document, or whole-thread[\s\S]*hasMore:false/i, `${label}: Ask prompt permits partial whole-thread answers`);

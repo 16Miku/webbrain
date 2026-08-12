@@ -139,6 +139,7 @@ function normalizedTreeScope(args = {}) {
     maxChars: normalizedTreeMaxChars(args),
     ref_id: typeof args?.ref_id === 'string' ? args.ref_id.trim() : '',
     page: normalizedTreePage(args, null),
+    tree_revision: typeof args?.tree_revision === 'string' ? args.tree_revision.trim() : '',
   };
 }
 
@@ -164,15 +165,21 @@ function restartGmailRootDiscovery(state) {
 
 function gmailAccessibilityTreeState(state, args, result) {
   const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
+  const requestedTreeRevision = typeof args?.tree_revision === 'string'
+    ? args.tree_revision.trim()
+    : '';
   const resultRootRefId = typeof result?.conversationRootRefId === 'string'
     ? result.conversationRootRefId.trim()
+    : '';
+  const resultTreeRevision = typeof result?.treeRevision === 'string'
+    ? result.treeRevision.trim()
     : '';
   const previousRootRefId = state.conversationRootRefId;
   if (!resultRootRefId && previousRootRefId && (
     requestedRefId === previousRootRefId
     || (!result?.error && typeof result?.pageContent === 'string')
   )) return restartGmailRootDiscovery(state);
-  if (result?.error || typeof result?.pageContent !== 'string' || !resultRootRefId) return state;
+  if (!resultRootRefId) return state;
   const currentRootRefId = resultRootRefId;
 
   const rootChanged = !!previousRootRefId && previousRootRefId !== currentRootRefId;
@@ -192,6 +199,28 @@ function gmailAccessibilityTreeState(state, args, result) {
     ref_id: currentRootRefId,
     page: 1,
   };
+
+  const revisionMismatch = trustedThreadRead
+    && !!requestedTreeRevision
+    && requestedTreeRevision !== resultTreeRevision;
+  const revisionMissing = trustedThreadRead && !resultTreeRevision;
+  if (revisionMismatch || revisionMissing) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: false,
+      expansionConfirmed,
+      treeKey: '',
+      treePages: [],
+      treeTerminalPage: null,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+  if (result?.error || typeof result?.pageContent !== 'string') return state;
 
   if (!trustedThreadRead) {
     const discoveredRoot = !previousRootRefId && !!currentRootRefId;
@@ -254,9 +283,8 @@ function gmailAccessibilityTreeState(state, args, result) {
   }
 
   const page = normalizedTreePage(args, result);
-  const totalChars = result.totalChars == null ? Number.NaN : Number(result.totalChars);
-  const treeKey = Number.isFinite(totalChars)
-    ? `gmail|${currentRootRefId}|${totalChars}|${maxDepth}|${maxChars}`
+  const treeKey = resultTreeRevision
+    ? `gmail|${currentRootRefId}|${resultTreeRevision}|${maxDepth}|${maxChars}`
     : '';
   const treeChanged = !!(treeKey && state.treeKey && treeKey !== state.treeKey);
   if (treeChanged && page > 1) {
@@ -300,6 +328,7 @@ function gmailAccessibilityTreeState(state, args, result) {
         maxChars,
         ref_id: currentRootRefId,
         page: Math.trunc(nextPage),
+        tree_revision: resultTreeRevision,
       }
     : null;
 

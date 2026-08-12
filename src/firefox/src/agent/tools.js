@@ -30,6 +30,7 @@ export const AGENT_TOOLS = [
           maxChars: { type: 'number', maximum: STANDARD_TREE_PAGE_CHARS, description: 'Maximum pageContent characters per structured page (default and maximum 6000). Capable non-Compact providers with at least 64k context advertise a 12000 maximum for whole-thread or whole-document reads. Larger trees return continuationArgs for the next page.' },
           ref_id: { type: 'string', description: 'Optional. Anchor at a previously-seen ref_id instead of document.body.' },
           page: { type: 'number', description: 'Optional 1-based chunk number for any tree filter. When a result returns hasMore:true, reuse the exact continuationArgs so filter, maxDepth, and maxChars remain stable.' },
+          tree_revision: { type: 'string', description: 'Opaque tree snapshot revision returned inside continuationArgs. Never invent or modify it; reuse the exact continuationArgs so pages cannot mix different DOM snapshots.' },
         },
         required: [],
       },
