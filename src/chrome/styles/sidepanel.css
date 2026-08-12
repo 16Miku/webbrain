@@ -2549,6 +2549,10 @@ body {
    ASK / ACT MODE TOGGLE
    ========================================================================== */
 
+html[data-standalone="true"] #mode-toggle {
+  display: none;
+}
+
 #mode-toggle {
   display: flex;
   gap: 2px;
