@@ -4,6 +4,32 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [30.0.1] - 2026-08-12
+
+### Changed
+- fix: disambiguate nested Gmail label routes
+- fix: reject Gmail list routes with hex names
+- fix: bind tree pagination to content revisions
+- fix: require fresh Gmail root metadata
+- Update contributor count in webstore explainer
+- fix: reject Gmail list routes for thread reads
+- fix: polish standalone window UX
+- feat: add standalone Ask window
+- Fix Gmail thread read completeness
+- Polish selection shortcut actions
+- fix: isolate standalone chat context
+- fix: require verified download completion
+- 29.0.3
+- updated numbers
+- Fix #466: Expand sidepanel into standalone window
+- Fix #2752: Derive planner download completion requirements without prose heuristics
+- fix: preserve legacy click dispatch behavior
+- refactor: reconcile screenshot clicks through semantic AX targets
+- fix: constrain general knowledge to custom selections
+- fix(planner): require structured download completion evidence
+- feat: add general knowledge selection scope
+- feat: resolve visual targets to semantic refs
+
 ## [30.0.0] - 2026-08-12
 
 ### Changed
