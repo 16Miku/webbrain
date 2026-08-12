@@ -9,6 +9,26 @@ const EMAIL_ADAPTERS = new Set(['gmail', 'yahoo-mail', 'proton-mail', 'fastmail'
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com|mail\.yandex\.[a-z.]+)$/i;
 const DM_HOST_RE = /(^|\.)(instagram\.com|x\.com|twitter\.com|facebook\.com|messenger\.com|threads\.net|reddit\.com|linkedin\.com|discord\.com|slack\.com|web\.whatsapp\.com|messages\.google\.com|web\.telegram\.org)$/i;
 
+function isGmailThreadIdentifier(value = '') {
+  const segment = String(value || '').split('?')[0];
+  return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
+}
+
+function isGmailConversationHash(hash = '') {
+  const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+  const route = String(segments[0] || '').toLowerCase();
+  const threadId = segments.at(-1);
+  if (!isGmailThreadIdentifier(threadId)) return false;
+  if (route === 'label') {
+    // Label names may contain slashes and may themselves look like legacy
+    // hexadecimal thread IDs. Only Gmail's unambiguous modern ID prefix can
+    // terminate a variable-depth label conversation route.
+    return segments.length >= 3 && /^FMfc[A-Za-z0-9_-]+$/.test(threadId);
+  }
+  if (route === 'search' || route === 'category') return segments.length === 3;
+  return segments.length === 2;
+}
+
 export function normalizeReadScope(value) {
   const scope = String(value || '').trim();
   return READ_SCOPES.has(scope) ? scope : null;
@@ -39,8 +59,7 @@ export function isCommunicationThreadContext(url = '', adapterName = '') {
   const adapter = String(adapterName || '').trim().toLowerCase();
   if (EMAIL_HOST_RE.test(host) || EMAIL_ADAPTERS.has(adapter)) {
     if (/(?:^|\.)google\.com$/i.test(host) || host === 'gmail.com') {
-      const hashSegments = parsed.hash.replace(/^#/, '').split('/').filter(Boolean);
-      return hashSegments.length >= 2;
+      return isGmailConversationHash(parsed.hash);
     }
     return /(?:^|[/?#])(?:messages?|message|thread|conversation|id|p)(?:[/?#])[^/?#\s]+/i.test(route)
       || /(?:^|[/?#])(?:inbox|sent|all|archive|folders?|labels?)(?:[/?#])[^/?#\s]+/i.test(route);
@@ -77,6 +96,8 @@ export function createReadCompletenessState(runToken = '', required = false, com
     treeKey: '',
     treePages: [],
     treeTerminalPage: null,
+    conversationRootRefId: '',
+    coverageRevision: 0,
     pendingTool: '',
     continuationArgs: null,
   };
@@ -95,21 +116,263 @@ export function requirePlannerReadCompleteness(state, plan = null) {
     treeKey: '',
     treePages: [],
     treeTerminalPage: null,
+    conversationRootRefId: '',
+    coverageRevision: Number(current.coverageRevision || 0),
     pendingTool: '',
     continuationArgs: null,
   };
 }
 
-function accessibilityTreeState(state, args, result) {
+function normalizedTreePage(args, result) {
+  const rawPage = Number(result?.page ?? args?.page ?? 1);
+  return Number.isFinite(rawPage) && rawPage >= 1 ? Math.trunc(rawPage) : 1;
+}
+
+function normalizedTreeMaxChars(args) {
+  const maxChars = Number(args?.maxChars);
+  return Number.isFinite(maxChars) && maxChars > 0 ? Math.trunc(maxChars) : STANDARD_TREE_PAGE_CHARS;
+}
+
+function updateExpansionEvidence(state, result) {
+  let expansionConfirmed = state.expansionConfirmed === true;
+  let expansionChanged = false;
+  if (result?.conversationExpansionState === 'expanded') {
+    expansionChanged = expansionConfirmed !== true;
+    expansionConfirmed = true;
+  } else if (result?.conversationExpansionState === 'collapsed') {
+    expansionChanged = expansionConfirmed !== false;
+    expansionConfirmed = false;
+  }
+  return { expansionConfirmed, expansionChanged };
+}
+
+function normalizedTreeScope(args = {}) {
+  return {
+    filter: String(args?.filter || 'all'),
+    maxDepth: args?.maxDepth == null ? 15 : Number(args.maxDepth),
+    maxChars: normalizedTreeMaxChars(args),
+    ref_id: typeof args?.ref_id === 'string' ? args.ref_id.trim() : '',
+    page: normalizedTreePage(args, null),
+    tree_revision: typeof args?.tree_revision === 'string' ? args.tree_revision.trim() : '',
+  };
+}
+
+function sameTreeScope(left, right) {
+  return JSON.stringify(normalizedTreeScope(left)) === JSON.stringify(normalizedTreeScope(right));
+}
+
+function restartGmailRootDiscovery(state) {
+  return {
+    ...state,
+    sawEligibleRead: false,
+    complete: false,
+    treeCoverageComplete: false,
+    expansionConfirmed: false,
+    treeKey: '',
+    treePages: [],
+    treeTerminalPage: null,
+    conversationRootRefId: '',
+    pendingTool: '',
+    continuationArgs: null,
+  };
+}
+
+function gmailAccessibilityTreeState(state, args, result) {
+  const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
+  const requestedTreeRevision = typeof args?.tree_revision === 'string'
+    ? args.tree_revision.trim()
+    : '';
+  const resultRootRefId = typeof result?.conversationRootRefId === 'string'
+    ? result.conversationRootRefId.trim()
+    : '';
+  const resultTreeRevision = typeof result?.treeRevision === 'string'
+    ? result.treeRevision.trim()
+    : '';
+  const previousRootRefId = state.conversationRootRefId;
+  if (!resultRootRefId && previousRootRefId && (
+    requestedRefId === previousRootRefId
+    || (!result?.error && typeof result?.pageContent === 'string')
+  )) return restartGmailRootDiscovery(state);
+  if (!resultRootRefId) return state;
+  const currentRootRefId = resultRootRefId;
+
+  const rootChanged = !!previousRootRefId && previousRootRefId !== currentRootRefId;
+  const trustedThreadRead = requestedRefId === currentRootRefId;
+  const expansionEvidenceState = rootChanged
+    ? { ...state, expansionConfirmed: false }
+    : state;
+  const { expansionConfirmed, expansionChanged } = updateExpansionEvidence(expansionEvidenceState, result);
+  const expandedAfterCollapsed = state.expansionConfirmed === false
+    && result?.conversationExpansionState === 'expanded';
+  const resetCoverage = rootChanged || expandedAfterCollapsed;
+  const maxChars = normalizedTreeMaxChars(args);
+  const startArgs = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars,
+    ref_id: currentRootRefId,
+    page: 1,
+  };
+
+  const revisionMismatch = trustedThreadRead
+    && !!requestedTreeRevision
+    && requestedTreeRevision !== resultTreeRevision;
+  const revisionMissing = trustedThreadRead && !resultTreeRevision;
+  if (revisionMismatch || revisionMissing) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: false,
+      expansionConfirmed,
+      treeKey: '',
+      treePages: [],
+      treeTerminalPage: null,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+  if (result?.error || typeof result?.pageContent !== 'string') return state;
+
+  if (!trustedThreadRead) {
+    const discoveredRoot = !previousRootRefId && !!currentRootRefId;
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: false,
+      expansionConfirmed,
+      treeKey: resetCoverage ? '' : state.treeKey,
+      treePages: resetCoverage ? [] : state.treePages,
+      treeTerminalPage: resetCoverage ? null : state.treeTerminalPage,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0)
+        + (discoveredRoot || expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+
+  const filter = String(args?.filter || 'all');
+  const maxDepth = args?.maxDepth == null ? 15 : Number(args.maxDepth);
+  if (filter !== 'all' || !Number.isFinite(maxDepth) || maxDepth < 15) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: resetCoverage ? false : state.treeCoverageComplete,
+      expansionConfirmed,
+      treeKey: resetCoverage ? '' : state.treeKey,
+      treePages: resetCoverage ? [] : state.treePages,
+      treeTerminalPage: resetCoverage ? null : state.treeTerminalPage,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+
+  const expectedArgs = resetCoverage
+    ? startArgs
+    : state.pendingTool === 'get_accessibility_tree' && state.continuationArgs
+      ? state.continuationArgs
+      : startArgs;
+  if (!sameTreeScope(args, expectedArgs)) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: resetCoverage ? false : state.treeCoverageComplete,
+      expansionConfirmed,
+      treeKey: resetCoverage ? '' : state.treeKey,
+      treePages: resetCoverage ? [] : state.treePages,
+      treeTerminalPage: resetCoverage ? null : state.treeTerminalPage,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: expectedArgs,
+    };
+  }
+
+  const page = normalizedTreePage(args, result);
+  const treeKey = resultTreeRevision
+    ? `gmail|${currentRootRefId}|${resultTreeRevision}|${maxDepth}|${maxChars}`
+    : '';
+  const treeChanged = !!(treeKey && state.treeKey && treeKey !== state.treeKey);
+  if (treeChanged && page > 1) {
+    return {
+      ...state,
+      sawEligibleRead: true,
+      complete: false,
+      treeCoverageComplete: false,
+      expansionConfirmed,
+      treeKey: '',
+      treePages: [],
+      treeTerminalPage: null,
+      conversationRootRefId: currentRootRefId,
+      coverageRevision: Number(state.coverageRevision || 0) + (expansionChanged ? 1 : 0),
+      pendingTool: 'get_accessibility_tree',
+      continuationArgs: startArgs,
+    };
+  }
+  const resetPages = resetCoverage || treeChanged;
+  const pages = new Set(resetPages ? [] : state.treePages);
+  const addedPage = !pages.has(page);
+  pages.add(page);
+
+  const paged = result.hasMore === true
+    || result.truncated === true
+    || result.page != null
+    || args?.page != null;
+  let terminalPage = resetPages ? null : state.treeTerminalPage;
+  if (paged && result.hasMore !== true && result.truncated !== true) terminalPage = page;
+  const pagesComplete = Number.isInteger(terminalPage)
+    && terminalPage >= 1
+    && Array.from({ length: terminalPage }, (_, index) => index + 1).every(item => pages.has(item));
+  const treeCoverageComplete = !paged || pagesComplete;
+  const complete = treeCoverageComplete
+    && (state.requiresExpansionEvidence !== true || expansionConfirmed);
+  const nextPage = result.nextPage == null ? Number.NaN : Number(result.nextPage);
+  const fallbackContinuation = result.hasMore === true && Number.isFinite(nextPage)
+    ? {
+        filter: 'all',
+        maxDepth,
+        maxChars,
+        ref_id: currentRootRefId,
+        page: Math.trunc(nextPage),
+        tree_revision: resultTreeRevision,
+      }
+    : null;
+
+  return {
+    ...state,
+    sawEligibleRead: true,
+    complete: state.complete || complete,
+    treeCoverageComplete,
+    expansionConfirmed,
+    treeKey: treeKey || state.treeKey,
+    treePages: [...pages].sort((a, b) => a - b),
+    treeTerminalPage: terminalPage,
+    conversationRootRefId: currentRootRefId,
+    coverageRevision: Number(state.coverageRevision || 0)
+      + (addedPage || expansionChanged ? 1 : 0),
+    pendingTool: complete ? '' : 'get_accessibility_tree',
+    continuationArgs: complete ? null : (result.continuationArgs || fallbackContinuation),
+  };
+}
+
+function documentAccessibilityTreeState(state, args, result) {
   const filter = String(args?.filter || 'all');
   const maxDepth = args?.maxDepth == null ? 15 : Number(args.maxDepth);
   if (filter !== 'all' || args?.ref_id || !Number.isFinite(maxDepth) || maxDepth < 15 || result?.error || typeof result?.pageContent !== 'string') return state;
 
-  const rawPage = Number(result.page ?? args?.page ?? 1);
-  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.trunc(rawPage) : 1;
+  const page = normalizedTreePage(args, result);
+  const maxChars = normalizedTreeMaxChars(args);
   const totalChars = result.totalChars == null ? Number.NaN : Number(result.totalChars);
   const treeKey = Number.isFinite(totalChars)
-    ? `${totalChars}|${maxDepth}|${Number(args?.maxChars) || 6000}`
+    ? `${totalChars}|${maxDepth}|${maxChars}`
     : '';
   const resetPages = treeKey && state.treeKey && treeKey !== state.treeKey;
   const pages = new Set(resetPages ? [] : state.treePages);
@@ -125,9 +388,7 @@ function accessibilityTreeState(state, args, result) {
     && terminalPage >= 1
     && Array.from({ length: terminalPage }, (_, index) => index + 1).every(item => pages.has(item));
   const treeCoverageComplete = !paged || pagesComplete;
-  let expansionConfirmed = resetPages ? false : state.expansionConfirmed === true;
-  if (result.conversationExpansionState === 'expanded') expansionConfirmed = true;
-  if (result.conversationExpansionState === 'collapsed') expansionConfirmed = false;
+  const { expansionConfirmed } = updateExpansionEvidence(state, result);
   const complete = treeCoverageComplete
     && (state.requiresExpansionEvidence !== true || expansionConfirmed);
   const nextPage = result.nextPage == null ? Number.NaN : Number(result.nextPage);
@@ -135,7 +396,7 @@ function accessibilityTreeState(state, args, result) {
     ? {
         filter: 'all',
         maxDepth,
-        ...(Number.isFinite(Number(args?.maxChars)) ? { maxChars: Number(args.maxChars) } : {}),
+        maxChars,
         page: Math.trunc(nextPage),
       }
     : null;
@@ -149,9 +410,18 @@ function accessibilityTreeState(state, args, result) {
     treeKey: treeKey || state.treeKey,
     treePages: [...pages].sort((a, b) => a - b),
     treeTerminalPage: terminalPage,
+    // Only Gmail's anchored path validates exact sequential continuations.
+    // Generic document pages retain their coverage bookkeeping, but must not
+    // bypass the delivery checkpoint merely by using new page numbers.
+    coverageRevision: Number(state.coverageRevision || 0),
     pendingTool: complete ? '' : 'get_accessibility_tree',
     continuationArgs: complete ? null : (result.continuationArgs || fallbackContinuation),
   };
+}
+
+function accessibilityTreeState(state, args, result) {
+  if (state.adapterName === 'gmail') return gmailAccessibilityTreeState(state, args, result);
+  return documentAccessibilityTreeState(state, args, result);
 }
 
 export function recordReadCompleteness(state, toolName, args = {}, result = null) {
@@ -159,6 +429,12 @@ export function recordReadCompleteness(state, toolName, args = {}, result = null
   if (!current.required || current.complete) return current;
   if (toolName === 'get_accessibility_tree') return accessibilityTreeState(current, args, result);
   return current;
+}
+
+export function readCompletenessMadeProgress(beforeState, afterState) {
+  if (!beforeState?.required || !afterState?.required) return false;
+  if (beforeState.adapterName !== 'gmail' || afterState.adapterName !== 'gmail') return false;
+  return Number(afterState.coverageRevision || 0) > Number(beforeState.coverageRevision || 0);
 }
 
 export function readCompletenessLimitation(state, mode = 'ask') {
@@ -184,7 +460,7 @@ export function readCompletenessBlock(state, treePageChars = STANDARD_TREE_PAGE_
   const continuation = expansionRequired
     ? options.mode === 'ask'
       ? ' The root tree is fully paged, but Gmail conversation expansion is not verified. Ask mode cannot expand messages. Report that limitation without claiming complete coverage.'
-      : ' The root tree is fully paged, but Gmail conversation expansion is not verified. Activate Gmail\'s top-level Expand all control, then perform a fresh full-depth root accessibility-tree read and verify that the tree exposes Collapse all before answering.'
+      : ' The trusted active-thread tree is fully paged, but Gmail conversation expansion is not verified. Activate Gmail\'s top-level Expand all control, then perform a fresh full-depth accessibility-tree read of the trusted active conversation root and verify that Gmail exposes Collapse all before answering.'
     : state.pendingTool && state.continuationArgs
     ? ` Call ${state.pendingTool}(${JSON.stringify(state.continuationArgs)}) exactly, then repeat with each returned continuationArgs while hasMore or truncated is true.`
     : state.sawEligibleRead

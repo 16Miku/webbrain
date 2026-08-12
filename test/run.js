@@ -2786,6 +2786,8 @@ test('matches gmail.com under mail.google.com', () => {
   assert.match(a?.notes || '', /top-level "Expand all" control/i);
   assert.match(a?.notes || '', /read it from oldest to newest/i);
   assert.match(a?.notes || '', /Show trimmed content.*not a substitute for expanding the conversation/is);
+  assert.match(a?.notes || '', /conversationRootRefId/i);
+  assert.match(a?.notes || '', /Never paginate document-root page 2/i);
   assert.doesNotMatch(a?.notes || '', /Click into it before typing/i);
   const firefox = getActiveAdapterFx('https://mail.google.com/mail/u/0/#inbox');
   assert.equal(firefox?.name, 'gmail');
@@ -5383,6 +5385,19 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     ['firefox', ReadCompletenessFx],
   ]) {
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/FMfc123', 'gmail'), true, `${label}: Gmail thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project/FMfc123', 'gmail'), true, `${label}: Gmail search-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Work/FMfc123', 'gmail'), true, `${label}: Gmail label-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/promotions/FMfc123', 'gmail'), true, `${label}: Gmail category-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project', 'gmail'), false, `${label}: Gmail search results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Work', 'gmail'), false, `${label}: Gmail label results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/promotions', 'gmail'), false, `${label}: Gmail category results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail search results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail label results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail category results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/deadbeefcafe', 'gmail'), false, `${label}: nested hexadecimal Gmail label was mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail inbox thread was rejected`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail search thread was rejected`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/Subproject/FMfc123', 'gmail'), true, `${label}: modern nested-label Gmail thread was rejected`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);
@@ -5488,32 +5503,249 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     });
     assert.equal(runtime.readCompletenessBlock(state), null, `${label}: complete pages 1..3 remained blocked`);
 
+    let nonGmailState = runtime.createReadCompletenessState(`${label}-non-gmail-progress`, true, true, 'yahoo-mail');
+    for (const page of [100, 101, 102]) {
+      const beforeArbitraryPage = nonGmailState;
+      nonGmailState = runtime.recordReadCompleteness(nonGmailState, 'get_accessibility_tree', {
+        filter: 'all', maxDepth: 15, maxChars: 6000, page,
+      }, {
+        pageContent: `arbitrary generic page ${page}`,
+        page,
+        totalChars: 9999,
+        hasMore: true,
+        truncated: true,
+        nextPage: page + 1,
+        continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 6000, page: page + 1 },
+      });
+      assert.equal(runtime.readCompletenessMadeProgress(beforeArbitraryPage, nonGmailState), false, `${label}: arbitrary non-Gmail page ${page} bypassed the delivery checkpoint`);
+    }
+    assert.equal(nonGmailState.coverageRevision, 0, `${label}: generic document pages received trusted Gmail progress credit`);
+
+    const gmailRootRef = 'ref_trusted_main';
+    const gmailRevisionA = 'fnv1a64:1111111111111111';
+    const gmailRevisionB = 'fnv1a64:2222222222222222';
     let gmailState = runtime.createReadCompletenessState(`${label}-gmail-tree`, true, true, 'gmail');
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
-      pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"\n  button "Collapse all"',
+    const beforeDiscovery = gmailState;
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12, maxChars: 12000 }, {
+      pageContent: 'textbox "Message Body" [ref_draft]',
+      page: 1,
+      hasMore: true,
+      truncated: true,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeDiscovery, gmailState), true, `${label}: trusted Gmail root discovery was not meaningful progress`);
+    assert.deepEqual(gmailState.continuationArgs, {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 1,
+    }, `${label}: Gmail discovery continued through the document root instead of the active thread`);
+
+    const beforeArbitraryRef = gmailState;
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_draft', page: 1,
+    }, {
+      pageContent: 'textbox "Message Body" [ref_draft] value="partial draft"',
+      page: 1,
+      totalChars: 80,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeArbitraryRef, gmailState), false, `${label}: arbitrary Gmail subtree was credited as whole-thread progress`);
+    assert.equal(gmailState.treeCoverageComplete, false, `${label}: arbitrary Gmail subtree satisfied complete-thread coverage`);
+
+    const beforeSkippedPage = gmailState;
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 2,
+    }, {
+      pageContent: 'thread page two without page one',
+      page: 2,
+      totalChars: 1200,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeSkippedPage, gmailState), false, `${label}: non-sequential Gmail page was credited as progress`);
+    assert.deepEqual(gmailState.continuationArgs, {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 1,
+    }, `${label}: non-sequential Gmail read did not retain the exact missing page`);
+
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 1,
+    }, {
+      pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"',
       page: 1,
       totalChars: 1200,
       hasMore: false,
       truncated: false,
       continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: gmailRevisionA,
     });
-    assert.equal(gmailState.treeCoverageComplete, true, `${label}: terminal Gmail root read did not finish tree pagination`);
+    assert.equal(gmailState.treeCoverageComplete, true, `${label}: terminal trusted Gmail thread read did not finish pagination`);
     assert.equal(gmailState.complete, false, `${label}: collapsed Gmail messages were mistaken for complete coverage`);
-    assert.match(runtime.readCompletenessBlock(gmailState, 6000, { mode: 'act' }), /Expand all[\s\S]*fresh full-depth root/i, `${label}: Act did not receive deterministic expansion recovery`);
+    assert.match(runtime.readCompletenessBlock(gmailState, 6000, { mode: 'act' }), /Expand all[\s\S]*fresh full-depth[\s\S]*trusted active conversation root/i, `${label}: Act did not receive deterministic expansion recovery`);
     assert.match(runtime.readCompletenessLimitation(gmailState, 'ask') || '', /Ask mode cannot expand/i, `${label}: Ask did not receive a terminal collapsed-thread limitation`);
 
-    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
-      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"\n listitem "Latest message"',
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12, maxChars: 12000 }, {
+      pageContent: 'main\n button "Collapse all"',
       page: 1,
+      hasMore: false,
+      truncated: false,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+    });
+    assert.equal(gmailState.treeCoverageComplete, false, `${label}: expanding Gmail retained stale collapsed-thread coverage`);
+    assert.deepEqual(gmailState.continuationArgs, {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 1,
+    }, `${label}: expanded Gmail did not request a fresh trusted-thread read`);
+
+    const expandedPage1Args = {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: gmailRootRef, page: 1,
+    };
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', expandedPage1Args, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    const beforeDriftedPage = gmailState;
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
+      pageContent: 'tree changed before page two',
+      page: 2,
       totalChars: 2400,
       hasMore: false,
       truncated: false,
       continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionB,
+      treeRevisionMismatch: true,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeDriftedPage, gmailState), false, `${label}: changed Gmail tree page was credited as deterministic progress`);
+    assert.deepEqual(gmailState.continuationArgs, expandedPage1Args, `${label}: changed Gmail tree did not restart at trusted page one`);
+
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', expandedPage1Args, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2500,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    gmailState = runtime.recordReadCompleteness(gmailState, 'get_accessibility_tree', { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA }, {
+      pageContent: 'listitem "Latest message"',
+      page: 2,
+      totalChars: 2500,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
     });
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
-    assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged Gmail thread remained blocked`);
+    assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
+
+    let missingRootState = runtime.createReadCompletenessState(`${label}-gmail-missing-root`, true, true, 'gmail');
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
+      filter: 'visible', maxDepth: 12, maxChars: 12000,
+    }, {
+      pageContent: 'trusted root discovery',
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+    });
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', expandedPage1Args, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    const beforeMissingRoot = missingRootState;
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
+      ...expandedPage1Args, page: 2, tree_revision: gmailRevisionA,
+    }, {
+      pageContent: 'detached thread page two',
+      page: 2,
+      totalChars: 2400,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeMissingRoot, missingRootState), false, `${label}: missing Gmail root metadata was credited as progress`);
+    assert.equal(missingRootState.conversationRootRefId, '', `${label}: missing Gmail root metadata retained the stale root`);
+    assert.equal(missingRootState.expansionConfirmed, false, `${label}: missing Gmail root metadata retained expansion trust`);
+    assert.deepEqual(missingRootState.treePages, [], `${label}: missing Gmail root metadata retained stale pages`);
+    assert.equal(missingRootState.treeCoverageComplete, false, `${label}: missing Gmail root metadata retained completed coverage`);
+    assert.match(runtime.readCompletenessBlock(missingRootState), /First call get_accessibility_tree[\s\S]*document root/i, `${label}: missing Gmail root metadata did not restart discovery`);
+
+    let changedRootState = runtime.createReadCompletenessState(`${label}-gmail-root-change`, true, true, 'gmail');
+    changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
+      filter: 'visible', maxDepth: 12, maxChars: 12000,
+    }, {
+      pageContent: 'root A discovery',
+      conversationRootRefId: 'ref_root_A',
+      conversationExpansionState: 'expanded',
+    });
+    changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 1,
+    }, {
+      pageContent: 'root A page one',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_A', page: 2, tree_revision: gmailRevisionA },
+      conversationRootRefId: 'ref_root_A',
+      conversationExpansionState: 'expanded',
+      treeRevision: gmailRevisionA,
+    });
+    changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
+      filter: 'visible', maxDepth: 12, maxChars: 12000,
+    }, {
+      pageContent: 'root B discovery without expansion evidence',
+      conversationRootRefId: 'ref_root_B',
+    });
+    assert.equal(changedRootState.expansionConfirmed, false, `${label}: a new Gmail root inherited stale expansion evidence`);
+    assert.deepEqual(changedRootState.treePages, [], `${label}: a new Gmail root retained old content coverage`);
+    changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'ref_root_B', page: 1,
+    }, {
+      pageContent: 'root B terminal page without expansion evidence',
+      page: 1,
+      totalChars: 1200,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+      conversationRootRefId: 'ref_root_B',
+      treeRevision: gmailRevisionB,
+    });
+    assert.equal(changedRootState.treeCoverageComplete, true, `${label}: new Gmail root terminal coverage was not recorded`);
+    assert.equal(changedRootState.complete, false, `${label}: a new Gmail root completed with stale expansion evidence`);
 
   }
 });
@@ -5576,14 +5808,25 @@ test('Ask returns a fixed limitation when Gmail expansion cannot be verified', a
     agent._runModeOverrides.set(tabId, 'ask');
     await agent._beginReadCompleteness(tabId, 'Bu konuşmada neler oluyor?', {});
     agent._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: 'complete_thread' });
-    agent._recordReadCompleteness(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+    const gmailRootRef = `ref_${label}_main`;
+    agent._recordReadCompleteness(tabId, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12 }, {
+      pageContent: 'main\n button "Expand all"',
+      page: 1,
+      hasMore: false,
+      truncated: false,
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'collapsed',
+    });
+    agent._recordReadCompleteness(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15, ref_id: gmailRootRef }, {
       pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"\n  button "Collapse all"',
       page: 1,
       totalChars: 1200,
       hasMore: false,
       truncated: false,
       continuationArgs: null,
+      conversationRootRefId: gmailRootRef,
       conversationExpansionState: 'collapsed',
+      treeRevision: 'fnv1a64:3333333333333333',
     });
 
     const messages = [];
@@ -5922,7 +6165,10 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   const chromeSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/accessibility-tree.js'), 'utf8');
   const firefoxSource = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/accessibility-tree.js'), 'utf8');
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
-  assert.match(chromeSource, /const continuationBase = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /const baseTreeScope = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
+  assert.match(chromeSource, /tree_revision: treeRevision/, 'anchored tree continuationArgs do not bind a content revision');
+  assert.match(chromeSource, /conversationRootRefId/, 'trusted Gmail conversation-root metadata is not returned');
+  assert.match(chromeSource, /candidate\.closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body landmarks can spoof the trusted Gmail conversation root');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
   assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
@@ -5933,9 +6179,12 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
     const tool = getTools('ask').find(item => item.function.name === 'get_accessibility_tree');
     assert.match(tool?.function?.description || '', /exact returned `continuationArgs`[\s\S]*whole-page or whole-thread[\s\S]*hasMore:false/i, `${label}: tree tool lacks terminal continuation guidance`);
     assert.match(tool?.function?.parameters?.properties?.page?.description || '', /any tree filter[\s\S]*exact continuationArgs/i, `${label}: page schema still limits paging to one filter`);
+    assert.match(tool?.function?.parameters?.properties?.tree_revision?.description || '', /opaque tree snapshot revision[\s\S]*exact continuationArgs/i, `${label}: tree schema does not preserve snapshot identity`);
     assert.equal(tool?.function?.parameters?.properties?.maxChars?.maximum, 6000, `${label}: model-visible tree pages can exceed the structured result window`);
     assert.match(tool?.function?.parameters?.properties?.maxChars?.description || '', /continuationArgs/i, `${label}: maxChars still describes an abort instead of structured paging`);
     assert.match(prompt, /whole-page, whole-document, or whole-thread[\s\S]*hasMore:false/i, `${label}: Ask prompt permits partial whole-thread answers`);
+    assert.match(tool?.function?.description || '', /conversationRootRefId[\s\S]*never paginate the Gmail document root/i, `${label}: tree tool does not constrain complete Gmail reads to the trusted thread root`);
+    assert.match(prompt, /conversationRootRefId[\s\S]*never paginate the Gmail document root/i, `${label}: Ask prompt can still wander from a Gmail thread into inbox rows`);
     const expandedTool = getTools('ask', {
       tier: 'full',
       accessibilityTreeMaxChars: 12000,
@@ -5960,6 +6209,17 @@ test('accessibility read-window policy is documented with model-facing and trace
     assert.match(text, /continuationArgs/i, `${label}: deterministic continuation requirement is missing`);
     assert.match(text, /Collapse all/i, `${label}: Gmail expansion evidence is missing`);
     assert.match(text, /Ask[^\n]*cannot|Ask mode is read-only/i, `${label}: Ask collapsed-thread limitation is missing`);
+  }
+  for (const relativePath of [
+    'docs/accessibility-tree-and-refs.md',
+    'docs/agent-tools.md',
+    'docs/fr/accessibility-tree-and-refs.md',
+    'docs/fr/agent-tools.md',
+    'docs/zh-CN/accessibility-tree-and-refs.md',
+    'docs/zh-CN/agent-tools.md',
+  ]) {
+    const text = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+    assert.match(text, /conversationRootRefId/, `${relativePath}: trusted Gmail root guidance is missing`);
   }
   assert.match(accessibilityDocs, /Trace storage has a separate diagnostic truncation policy/i, 'trace cap is conflated with the model-facing result budget');
 });
@@ -7662,6 +7922,32 @@ test('delivery checkpoints escalate at eight and reset only after meaningful pro
     assert.match(forcedDelivery.warning, /call done exactly once/i, `${label}: terminal instruction missing`);
     assert.match(forcedDelivery.warning, /partial or failed/i, `${label}: recovery outcomes must exclude success`);
 
+    const requiredReadTab = `${tab}-required-read`;
+    for (let page = 1; page <= 12; page++) {
+      const requiredRead = agent._checkDeliveryObservationStreak(
+        requiredReadTab,
+        'get_accessibility_tree',
+        { filter: 'all', ref_id: 'ref_trusted_main', page },
+        { success: true, page, hasMore: page < 12 },
+        { ...enforced, requiredReadProgress: true },
+      );
+      assert.equal(requiredRead.kind, 'none', `${label}: trusted completeness page ${page} triggered forced delivery`);
+    }
+    assert.equal(agent.deliveryObservationStreaks.has(requiredReadTab), false, `${label}: trusted completeness progress retained an observation streak`);
+
+    const wrongScopeTab = `${tab}-wrong-scope`;
+    let wrongScopeResult = null;
+    for (let page = 1; page <= 8; page++) {
+      wrongScopeResult = agent._checkDeliveryObservationStreak(
+        wrongScopeTab,
+        'get_accessibility_tree',
+        { filter: 'all', ref_id: `ref_untrusted_${page}`, page: 1 },
+        { success: true },
+        enforced,
+      );
+    }
+    assert.equal(wrongScopeResult?.kind, 'deliver', `${label}: non-progressing arbitrary subtrees bypassed forced delivery`);
+
     assert.equal(agent._checkDeliveryObservationStreak(tab, 'click_ax', {}, { success: true, verified: true }, { ...enforced, consequential: true }).kind, 'none');
     assert.equal(agent.deliveryObservationStreaks.has(tab), false, `${label}: verified consequential progress should reset the streak`);
 
@@ -7726,7 +8012,7 @@ test('delivery checkpoints escalate at eight and reset only after meaningful pro
 test('delivery checkpoint enforcement is wired into both agent loops', () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
-    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\([\s\S]{0,180}?toolResult,[\s\S]{0,700}?enforceTerminal: runOptions\?\.cloudRun !== true[\s\S]{0,120}?allowedToolNames\.has\('done'\)/, `${browserName}: every interactive mode with done must enforce the second checkpoint`);
+    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\([\s\S]{0,180}?toolResult,[\s\S]{0,800}?requiredReadProgress,[\s\S]{0,300}?enforceTerminal: runOptions\?\.cloudRun !== true[\s\S]{0,120}?allowedToolNames\.has\('done'\)/, `${browserName}: every interactive mode with done must preserve required-read progress and enforce the second checkpoint`);
     assert.doesNotMatch(source, /enforceTerminal:[\s\S]{0,160}?_isActionMode/, `${browserName}: Ask research must not be excluded from terminal delivery`);
     assert.match(source, /deliveryCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
     assert.match(source, /deliveryCheck\.kind === 'deliver'[\s\S]{0,900}?action: 'deliver'/, `${browserName}: second checkpoint must leave the browser loop`);
@@ -13674,6 +13960,8 @@ test('communication threads get reply, summary, and follow-up suggestions', () =
       assert.equal(actions.find((a) => a.id === 'draft-reply')?.mode, undefined);
       assert.equal(actions.find((a) => a.id === 'summarize-thread')?.runOptions?.tool, 'get_accessibility_tree');
       assert.equal(actions.find((a) => a.id === 'find-followups')?.runOptions?.tool, 'get_accessibility_tree');
+      assert.match(actions.find((a) => a.id === 'summarize-thread')?.prompt || '', /conversationRootRefId[\s\S]*instead of paginating the document root/i);
+      assert.match(actions.find((a) => a.id === 'find-followups')?.prompt || '', /conversationRootRefId[\s\S]*instead of paginating the document root/i);
     }
     const inboxActions = buildRecommendedActions({
       url: 'https://mail.google.com/mail/u/0/#inbox',
@@ -62671,6 +62959,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /"read_scope": "complete_thread"/);
   assert.match(PLANNER_SYSTEM_PROMPT, /Classify read_scope semantically across any language/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /currently open draft\/reply itself[\s\S]*review, proofread, rewrite, or critique/i);
+  assert.match(PLANNER_SYSTEM_PROMPT, /Do not choose complete_thread merely because the target is an email reply or draft/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /Do not speculate that required personal information is missing/i);
   assert.match(PLANNER_SYSTEM_PROMPT, /classify execute and include a conditional clarify step after inspection/i);
@@ -62706,6 +62996,8 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.equal(READ_SCOPE_SYSTEM_PROMPT_FX, READ_SCOPE_SYSTEM_PROMPT);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /semantic request across any language/i);
   assert.match(READ_SCOPE_SYSTEM_PROMPT, /response timing/);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /review my message, don't send[\s\S]*current_message/i);
+  assert.match(READ_SCOPE_SYSTEM_PROMPT, /Do not choose this merely because the target is an email reply or draft/i);
   for (const [build, parse] of [
     [buildReadScopeMessages, parseReadScopeFromContent],
     [buildReadScopeMessagesFx, parseReadScopeFromContentFx],
