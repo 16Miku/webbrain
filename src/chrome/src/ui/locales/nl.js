@@ -95,6 +95,8 @@ export default {
   "sp.clear.action_warning": "Wist geschiedenis",
   "sp.selection_scope.title": "Alleen geselecteerde tekst",
   "sp.selection_scope.description": "Start een nieuw gesprek voor toegang tot de pagina of het scherm.",
+  "sp.selection_scope.context_title": "Geselecteerde tekst + algemene kennis",
+  "sp.selection_scope.context_description": "Gebruikt de geselecteerde tekst en modelkennis. De pagina, tools, bestanden en eerdere gesprekken blijven niet beschikbaar.",
   "sp.input.selection_placeholder": "Vraag over de geselecteerde tekst...",
   'sp.mode.ask': 'Vragen',
   'sp.mode.ask.title': 'Vragen stellen over de pagina — er worden geen wijzigingen aangebracht',

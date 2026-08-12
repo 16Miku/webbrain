@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "ล้างประวัติ",
   "sp.selection_scope.title": "เฉพาะข้อความที่เลือก",
   "sp.selection_scope.description": "เริ่มการสนทนาใหม่เพื่อเข้าถึงหน้าหรือหน้าจอ",
+  "sp.selection_scope.context_title": "ข้อความที่เลือก + ความรู้ทั่วไป",
+  "sp.selection_scope.context_description": "ใช้ข้อความที่เลือกและความรู้ของโมเดล โดยยังไม่สามารถเข้าถึงหน้า เครื่องมือ ไฟล์ และบทสนทนาก่อนหน้าได้",
   "sp.input.selection_placeholder": "ถามเกี่ยวกับข้อความที่เลือก...",
 
   'sp.mode.ask': 'ถาม',

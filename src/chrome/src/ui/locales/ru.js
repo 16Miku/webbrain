@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "Очищает историю",
   "sp.selection_scope.title": "Только выделенный текст",
   "sp.selection_scope.description": "Начните новый диалог, чтобы получить доступ к странице или экрану.",
+  "sp.selection_scope.context_title": "Выделенный текст + общие знания",
+  "sp.selection_scope.context_description": "Использует выделенный текст и знания модели. Страница, инструменты, файлы и предыдущий диалог остаются недоступны.",
   "sp.input.selection_placeholder": "Спросите о выделенном тексте...",
 
   'sp.mode.ask': 'Спросить',

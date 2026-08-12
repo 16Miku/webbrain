@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "履歴を消去",
   "sp.selection_scope.title": "選択したテキストのみ",
   "sp.selection_scope.description": "ページや画面にアクセスするには、新しい会話を開始してください。",
+  "sp.selection_scope.context_title": "選択したテキスト + 一般知識",
+  "sp.selection_scope.context_description": "選択したテキストとモデルの知識を使用します。ページ、ツール、ファイル、以前の会話は利用できません。",
   "sp.input.selection_placeholder": "選択したテキストについて質問...",
 
   'sp.mode.ask': '質問',

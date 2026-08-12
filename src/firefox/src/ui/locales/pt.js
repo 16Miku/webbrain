@@ -97,6 +97,8 @@ export default {
   "sp.clear.action_warning": "Limpa o histórico",
   "sp.selection_scope.title": "Somente texto selecionado",
   "sp.selection_scope.description": "Inicie uma nova conversa para acessar a página ou a tela.",
+  "sp.selection_scope.context_title": "Texto selecionado + conhecimento geral",
+  "sp.selection_scope.context_description": "Usa o texto selecionado e o conhecimento do modelo. A página, as ferramentas, os arquivos e a conversa anterior continuam indisponíveis.",
   "sp.input.selection_placeholder": "Pergunte sobre o texto selecionado...",
 
   'sp.mode.ask': "Pergunte",

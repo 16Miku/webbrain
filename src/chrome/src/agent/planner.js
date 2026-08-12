@@ -51,6 +51,12 @@ const PLANNER_LOCALIZED_SCHEMA = {
   },
   required: ['locale', 'summary', 'steps', 'risks'],
 };
+const PLANNER_COMPLETION_REQUIREMENTS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { download: { type: 'boolean' } },
+  required: ['download'],
+};
 
 export const PLANNER_RESPONSE_JSON_SCHEMA = {
   type: 'object',
@@ -59,7 +65,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
     request_kind: PLANNER_REQUEST_KIND_SCHEMA,
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
-    requires_download: { type: 'boolean' },
+    completion_requirements: PLANNER_COMPLETION_REQUIREMENTS_SCHEMA,
     allows_planner_shaped_result: { type: 'boolean' },
     allows_app_state_tool_evidence: { type: 'boolean' },
     read_scope: PLANNER_READ_SCOPE_SCHEMA,
@@ -99,7 +105,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
     'request_kind',
     'requires_state_change',
     'requires_submission',
-    'requires_download',
+    'completion_requirements',
     'allows_planner_shaped_result',
     'allows_app_state_tool_evidence',
     'read_scope',
@@ -122,6 +128,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
     request_kind: PLANNER_REQUEST_KIND_SCHEMA,
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
+    completion_requirements: PLANNER_COMPLETION_REQUIREMENTS_SCHEMA,
     allows_planner_shaped_result: { type: 'boolean' },
     allows_app_state_tool_evidence: { type: 'boolean' },
     read_scope: PLANNER_READ_SCOPE_SCHEMA,
@@ -152,7 +159,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
     'request_kind',
     'requires_state_change',
     'requires_submission',
-    'requires_download',
+    'completion_requirements',
     'allows_planner_shaped_result',
     'allows_app_state_tool_evidence',
     'read_scope',
@@ -172,7 +179,6 @@ export const READ_SCOPE_RESPONSE_JSON_SCHEMA = {
   required: ['read_scope'],
 };
 
-
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
 // Keep response-only routing identical across the full Plan-before-Act planner
@@ -191,7 +197,7 @@ Schema:
   "request_kind": "execute" | "respond" | "plan_only" | "clarify",
   "requires_state_change": boolean,
   "requires_submission": boolean,
-  "requires_download": boolean,
+  "completion_requirements": { "download": boolean },
   "allows_planner_shaped_result": boolean,
   "allows_app_state_tool_evidence": boolean,
   "read_scope": "complete_thread" | "current_message" | "visible_page" | "none",
@@ -234,9 +240,9 @@ ${PLANNER_RESPONSE_ONLY_RULES}
 - Do not speculate that required personal information is missing merely because a task may need it. First use trusted task/profile context and relevant page or public inspection.
 - If a required form value remains unavailable after relevant inspection, leave the field untouched and use clarify. Never plan to focus, clear, or write an empty value as a stand-in for missing personal information.
 - Classify clarify immediately only when trusted current-task context already proves a required value is missing and no useful inspection or action can happen first. Otherwise classify execute and include a conditional clarify step after inspection.
-- requires_download is true only when the authorized task explicitly requires downloading a file to the user's local filesystem (e.g. "download this video", "save the report locally"). It is false for read-only lookups (e.g. "find the download link", "get the URL to download").
 - requires_state_change is true only when completing an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
 - requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- completion_requirements.download is true only when success requires WebBrain to write a file into browser/OS download storage. It is false when the user asks only to find a download URL, link, button, instructions, or an explanation, even if that result refers to a future download. Classify this semantic intent across any language, not with word matching. This field only tightens completion evidence; it never authorizes tools, changes mode, or bypasses download permission.
 - Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
@@ -270,7 +276,7 @@ export const PLANNER_INTENT_SYSTEM_PROMPT = `You are the intent and compact plan
   "request_kind": "execute" | "respond" | "plan_only" | "clarify",
   "requires_state_change": boolean,
   "requires_submission": boolean,
-  "requires_download": boolean,
+  "completion_requirements": { "download": boolean },
   "allows_planner_shaped_result": boolean,
   "allows_app_state_tool_evidence": boolean,
   "read_scope": "complete_thread" | "current_message" | "visible_page" | "none",
@@ -305,9 +311,9 @@ ${PLANNER_RESPONSE_ONLY_RULES}
 - Do not speculate that required personal information is missing merely because a task may need it. First use trusted task/profile context and relevant page or public inspection.
 - If a required form value remains unavailable after relevant inspection, leave the field untouched and use clarify. Never plan to focus, clear, or write an empty value as a stand-in for missing personal information.
 - Classify clarify immediately only when trusted current-task context already proves a required value is missing and no useful inspection or action can happen first. Otherwise classify execute and make the need to clarify after inspection explicit in the step action.
-- requires_download is true only when the authorized task explicitly requires downloading a file to the user's local filesystem (e.g. "download this video", "save the report locally"). It is false for read-only lookups (e.g. "find the download link", "get the URL to download").
 - requires_state_change is true only when an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
 - requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- completion_requirements.download is true only when success requires WebBrain to write a file into browser/OS download storage. It is false for finding a download URL, link, button, instructions, or explanation, even when that result mentions a future download. Decide semantically across any language, never by matching words. This metadata only tightens completion evidence; it does not authorize tools, change mode, or bypass download permission.
 - Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
@@ -556,7 +562,8 @@ export function normalizePlan(obj, opts = {}) {
   const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
-  const requiresDownload = executablePlan && obj.requires_download === true;
+  const requiresDownload = executablePlan
+    && obj.completion_requirements?.download === true;
   const completionRequirementCorrection = requiresDownload
     && hasRequiresStateChange
     && obj.requires_state_change === false
@@ -574,7 +581,7 @@ export function normalizePlan(obj, opts = {}) {
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
-    requires_download: requiresDownload,
+    completion_requirements: { download: requiresDownload },
     completion_requirement_correction: completionRequirementCorrection,
     allows_planner_shaped_result: requestKind === 'execute' && obj.allows_planner_shaped_result === true,
     allows_app_state_tool_evidence: requestKind === 'execute' && obj.allows_app_state_tool_evidence === true,
@@ -641,7 +648,7 @@ function formatPlanConfidence(plan) {
 function appendPlanExecutionMetadata(lines, plan) {
   lines.push('### Completion requirements');
   lines.push(`- Submission required: ${plan.requires_submission === true ? 'yes' : (plan.requires_submission === false ? 'no' : 'auto')}`);
-  lines.push(`- Download required: ${plan.requires_download === true ? 'yes' : 'no'}`);
+  lines.push(`- Download required: ${plan.completion_requirements?.download === true ? 'yes' : 'no'}`);
   lines.push(`- Read scope: ${normalizeReadScope(plan.read_scope) || 'none'}`);
   lines.push('');
 

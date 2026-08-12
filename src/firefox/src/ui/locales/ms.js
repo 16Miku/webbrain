@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "Mengosongkan sejarah",
   "sp.selection_scope.title": "Teks dipilih sahaja",
   "sp.selection_scope.description": "Mulakan perbualan baharu untuk mengakses halaman atau skrin.",
+  "sp.selection_scope.context_title": "Teks dipilih + pengetahuan umum",
+  "sp.selection_scope.context_description": "Menggunakan teks dipilih dan pengetahuan model. Halaman, alat, fail dan perbualan terdahulu kekal tidak tersedia.",
   "sp.input.selection_placeholder": "Tanya tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',

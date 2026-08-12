@@ -97,6 +97,8 @@ export default {
   "sp.clear.action_warning": "Xóa lịch sử",
   "sp.selection_scope.title": "Chỉ văn bản đã chọn",
   "sp.selection_scope.description": "Bắt đầu cuộc trò chuyện mới để truy cập trang hoặc màn hình.",
+  "sp.selection_scope.context_title": "Văn bản đã chọn + kiến thức chung",
+  "sp.selection_scope.context_description": "Sử dụng văn bản đã chọn và kiến thức của mô hình. Trang, công cụ, tệp và cuộc trò chuyện trước đó vẫn không khả dụng.",
   "sp.input.selection_placeholder": "Hỏi về văn bản đã chọn...",
 
   'sp.mode.ask': "Hỏi",

@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "يمسح السجل",
   "sp.selection_scope.title": "النص المحدد فقط",
   "sp.selection_scope.description": "ابدأ محادثة جديدة للوصول إلى الصفحة أو الشاشة.",
+  "sp.selection_scope.context_title": "النص المحدد + المعرفة العامة",
+  "sp.selection_scope.context_description": "يستخدم النص المحدد ومعرفة النموذج. تظل الصفحة والأدوات والملفات والمحادثة السابقة غير متاحة.",
   "sp.input.selection_placeholder": "اسأل عن النص المحدد...",
 
   'sp.mode.ask': 'سؤال',

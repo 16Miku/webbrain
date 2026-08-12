@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "清除历史",
   "sp.selection_scope.title": "仅限所选文本",
   "sp.selection_scope.description": "请开始新对话以访问页面或屏幕。",
+  "sp.selection_scope.context_title": "所选文本 + 通用知识",
+  "sp.selection_scope.context_description": "使用所选文本和模型知识。页面、工具、文件及之前的对话仍不可用。",
   "sp.input.selection_placeholder": "询问所选文本...",
 
   'sp.mode.ask': '问',

@@ -96,13 +96,46 @@ export function assertStoreSafeFlagLicenseEntries(entries, label) {
   }
 }
 
-function readJsonAtHead(relativePath) {
-  const json = execFileSync('git', ['show', `HEAD:${relativePath}`], {
+const STORE_REVIEWED_JAVASCRIPT_PATHS = [
+  'vendor/pdfjs/pdf.mjs',
+  'vendor/pdfjs/pdf.worker.mjs',
+  'src/providers/manager.js',
+];
+
+const STORE_REJECTION_PATTERNS = [
+  {
+    pattern: /\bLT\s*\+\s*SCRIPT\s*\+\s*GT\s*\+\s*content\s*\+\s*LT\s*\+\s*['"]\/['"]\s*\+\s*SCRIPT\s*\+\s*GT\b/,
+    reason: 'split PDF.js <script> construction',
+  },
+  {
+    pattern: /['"]java['"]\s*\+\s*SCRIPT\s*\+\s*['"]:['"]/,
+    reason: 'split javascript: scheme',
+  },
+  {
+    pattern: /data:(?:image|audio)\/[a-z0-9.+-]+;base64,[a-z0-9+/=]{128,}/i,
+    reason: 'long inline base64 media payload',
+  },
+];
+
+export function assertStoreReviewableJavaScript(source, label) {
+  for (const { pattern, reason } of STORE_REJECTION_PATTERNS) {
+    if (pattern.test(source)) {
+      throw new Error(`${label} contains ${reason}; use transparent source or a packaged asset.`);
+    }
+  }
+}
+
+function readTextAtHead(relativePath) {
+  return execFileSync('git', ['show', `HEAD:${relativePath}`], {
     cwd: root,
     encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return JSON.parse(json);
+}
+
+function readJsonAtHead(relativePath) {
+  return JSON.parse(readTextAtHead(relativePath));
 }
 
 function listTreeEntryNamesAtHead(relativePath) {
@@ -134,6 +167,10 @@ function runCli() {
       listTreeEntryNamesAtHead(`src/${sourceDir}`),
       `HEAD src/${sourceDir}`
     );
+    for (const relativePath of STORE_REVIEWED_JAVASCRIPT_PATHS) {
+      const archivePath = `src/${sourceDir}/${relativePath}`;
+      assertStoreReviewableJavaScript(readTextAtHead(archivePath), `HEAD ${archivePath}`);
+    }
   }
 
   const distDir = path.join(root, 'dist');
