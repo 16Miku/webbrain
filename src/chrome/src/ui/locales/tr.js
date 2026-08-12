@@ -167,6 +167,8 @@ export default {
   "sp.clear.action_warning": "Geçmişi siler",
   "sp.selection_scope.title": "Yalnızca seçili metin",
   "sp.selection_scope.description": "Sayfaya veya ekrana erişmek için yeni bir konuşma başlatın.",
+  "sp.selection_scope.context_title": "Seçili metin + genel bilgi",
+  "sp.selection_scope.context_description": "Seçili metni ve model bilgisini kullanır. Sayfa, araçlar, dosyalar ve önceki konuşma kullanılamaz.",
   "sp.input.selection_placeholder": "Seçili metin hakkında sorun...",
 
   'sp.mode.ask': 'Sor',

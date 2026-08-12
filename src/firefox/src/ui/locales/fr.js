@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "Efface l’historique",
   "sp.selection_scope.title": "Texte sélectionné uniquement",
   "sp.selection_scope.description": "Démarrez une nouvelle conversation pour accéder à la page ou à l’écran.",
+  "sp.selection_scope.context_title": "Texte sélectionné + connaissances générales",
+  "sp.selection_scope.context_description": "Utilise le texte sélectionné et les connaissances du modèle. La page, les outils, les fichiers et la conversation précédente restent indisponibles.",
   "sp.input.selection_placeholder": "Posez une question sur le texte sélectionné…",
 
   'sp.mode.ask': 'Demander',

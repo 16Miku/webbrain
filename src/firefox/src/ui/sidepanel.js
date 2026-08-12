@@ -12,6 +12,8 @@ import { createContextMenuPromptHandler } from './context-menu-prompts.js';
 import {
   formatSelectionPromptForDisplay,
   normalizeSelectionAction,
+  normalizeSelectionSourceGrounding,
+  SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
 import {
@@ -405,6 +407,8 @@ const newConversationConfirmEl = document.getElementById('new-conversation-confi
 const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
 const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
 const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
+const selectionScopeTitleEl = document.getElementById('selection-scope-title');
+const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 const historyBtn = document.getElementById('btn-history');
 const settingsBtn = document.getElementById('btn-settings');
@@ -872,7 +876,7 @@ const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
 const clearingConversationTabs = new Set();
-const selectionGroundedTabs = new Set();
+const selectionGroundingByTab = new Map();
 let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
@@ -922,12 +926,19 @@ function isConversationClearInProgress(tabId = currentTabId) {
 
 function isSelectionGroundedForTab(tabId = currentTabId) {
   const numericTabId = Number(tabId);
-  return Number.isFinite(numericTabId) && selectionGroundedTabs.has(numericTabId);
+  return Number.isFinite(numericTabId) && selectionGroundingByTab.has(numericTabId);
+}
+
+function selectionGroundingForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId)
+    ? normalizeSelectionSourceGrounding(selectionGroundingByTab.get(numericTabId))
+    : '';
 }
 
 function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding = null) {
   if (mode !== 'act' && mode !== 'dev') return false;
-  if (sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+  if (!normalizeSelectionSourceGrounding(sourceGrounding)
       && !isSelectionGroundedForTab(tabId)) return false;
   showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
   return true;
@@ -935,7 +946,18 @@ function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding =
 
 function syncSelectionScopeUi() {
   const scoped = isSelectionGroundedForTab(currentTabId);
+  const sourceGrounding = selectionGroundingForTab(currentTabId);
   selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  if (selectionScopeTitleEl) {
+    selectionScopeTitleEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_title'
+      : 'sp.selection_scope.title');
+  }
+  if (selectionScopeDescriptionEl) {
+    selectionScopeDescriptionEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_description'
+      : 'sp.selection_scope.description');
+  }
   for (const button of [modeActBtn, modeDevBtn]) {
     if (!button) continue;
     button.classList.toggle('selection-scope-unavailable', scoped);
@@ -948,22 +970,29 @@ function syncSelectionScopeUi() {
   else resetInputPlaceholderRotation();
 }
 
-function setSelectionGroundedForTab(tabId, grounded) {
+function setSelectionGroundedForTab(
+  tabId,
+  grounded,
+  sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
+) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return;
-  const changed = grounded
-    ? !selectionGroundedTabs.has(numericTabId)
-    : selectionGroundedTabs.has(numericTabId);
-  if (grounded) selectionGroundedTabs.add(numericTabId);
-  else selectionGroundedTabs.delete(numericTabId);
+  const normalizedSourceGrounding = grounded
+    ? normalizeSelectionSourceGrounding(sourceGrounding) || SELECTION_ONLY_SOURCE_GROUNDING
+    : '';
+  const changed = selectionGroundingForTab(numericTabId) !== normalizedSourceGrounding;
+  if (normalizedSourceGrounding) selectionGroundingByTab.set(numericTabId, normalizedSourceGrounding);
+  else selectionGroundingByTab.delete(numericTabId);
   if (changed && sameTabId(currentTabId, numericTabId)) syncSelectionScopeUi();
 }
 
 function applyConversationScopeState(tabId, state) {
   if (!state || !Object.prototype.hasOwnProperty.call(state, 'sourceGrounding')) return;
+  const sourceGrounding = normalizeSelectionSourceGrounding(state.sourceGrounding);
   setSelectionGroundedForTab(
     tabId,
-    state.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING,
+    !!sourceGrounding,
+    sourceGrounding,
   );
 }
 
@@ -5634,9 +5663,7 @@ function retryPayloadFromButton(btn) {
   const retryId = btn.dataset.retryId || '';
   const attachments = retryAttachmentPayloads.get(retryId) || [];
   const attachmentCount = Number(btn.dataset.retryAttachmentCount || 0) || 0;
-  const sourceGrounding = btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const sourceGrounding = normalizeSelectionSourceGrounding(btn.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(btn.dataset.retrySelectionAction)
     : '';
@@ -5720,9 +5747,7 @@ function retryPayloadForRunAssistant(assistantEl) {
   const userEl = userMessageForRunAssistant(assistantEl);
   const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
   if (!String(text || '').trim()) return null;
-  const sourceGrounding = assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
@@ -7431,9 +7456,7 @@ async function sendMessage(extraChatParams = {}) {
     onContextMenuClaimRejected?.(rejection);
   };
   const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
-  const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const sourceGrounding = normalizeSelectionSourceGrounding(requestedSourceGrounding) || null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
   // The shortcut action rides along only on the turn that started the scope,
@@ -7716,7 +7739,7 @@ async function sendMessage(extraChatParams = {}) {
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
   const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
-  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true, sourceGrounding);
   try {
     const res = await sendRunWithReconnect('chat_start', {
       tabId,
@@ -9841,9 +9864,7 @@ function configureRetryButton(btn, retryPayload) {
   btn.dataset.retryMode = retryPayload.mode || 'ask';
   btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
   btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
-  btn.dataset.retrySourceGrounding = retryPayload.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : '';
+  btn.dataset.retrySourceGrounding = normalizeSelectionSourceGrounding(retryPayload.sourceGrounding);
   btn.dataset.retrySelectionAction = btn.dataset.retrySourceGrounding
     ? normalizeSelectionAction(retryPayload.selectionAction)
     : '';
@@ -12048,12 +12069,14 @@ if (languageSelect) {
     applyDOMTranslations(document);
     syncLanguagePicker();
     updateInputPlaceholder();
+    syncSelectionScopeUi();
     scheduleChatNavigationUpdate();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     syncLanguagePicker();
     updateInputPlaceholder();
+    syncSelectionScopeUi();
     scheduleChatNavigationUpdate();
   });
 }

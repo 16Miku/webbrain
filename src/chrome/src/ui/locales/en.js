@@ -97,6 +97,8 @@ export default {
   "sp.clear.action_warning": "Clears history",
   "sp.selection_scope.title": "Selected text only",
   "sp.selection_scope.description": "Start a new conversation to access the page or screen.",
+  "sp.selection_scope.context_title": "Selected text + general knowledge",
+  "sp.selection_scope.context_description": "Uses selected text and model knowledge. Page, tools, files, and earlier conversation stay unavailable.",
   "sp.input.selection_placeholder": "Ask about the selected text...",
 
   'sp.mode.ask': 'Ask',

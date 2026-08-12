@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "Очищає історію",
   "sp.selection_scope.title": "Лише виділений текст",
   "sp.selection_scope.description": "Почніть новий діалог, щоб отримати доступ до сторінки або екрана.",
+  "sp.selection_scope.context_title": "Виділений текст + загальні знання",
+  "sp.selection_scope.context_description": "Використовує виділений текст і знання моделі. Сторінка, інструменти, файли та попередня розмова залишаються недоступними.",
   "sp.input.selection_placeholder": "Запитайте про виділений текст...",
 
   'sp.mode.ask': 'Запитати',

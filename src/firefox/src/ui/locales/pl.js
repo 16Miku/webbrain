@@ -75,6 +75,8 @@ export default {
   "sp.clear.action_warning": "Czyści historię",
   "sp.selection_scope.title": "Tylko zaznaczony tekst",
   "sp.selection_scope.description": "Rozpocznij nową rozmowę, aby uzyskać dostęp do strony lub ekranu.",
+  "sp.selection_scope.context_title": "Zaznaczony tekst + wiedza ogólna",
+  "sp.selection_scope.context_description": "Używa zaznaczonego tekstu i wiedzy modelu. Strona, narzędzia, pliki i wcześniejsza rozmowa pozostają niedostępne.",
   "sp.input.selection_placeholder": "Zapytaj o zaznaczony tekst...",
   'sp.mode.ask': 'Pytaj',
   'sp.mode.ask.title': 'Zadawaj pytania o stronie — bez wprowadzania zmian',

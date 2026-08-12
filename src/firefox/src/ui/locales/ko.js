@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "기록 삭제",
   "sp.selection_scope.title": "선택한 텍스트만",
   "sp.selection_scope.description": "페이지나 화면에 접근하려면 새 대화를 시작하세요.",
+  "sp.selection_scope.context_title": "선택한 텍스트 + 일반 지식",
+  "sp.selection_scope.context_description": "선택한 텍스트와 모델 지식을 사용합니다. 페이지, 도구, 파일 및 이전 대화는 사용할 수 없습니다.",
   "sp.input.selection_placeholder": "선택한 텍스트에 대해 질문하세요...",
 
   'sp.mode.ask': '질문',

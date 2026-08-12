@@ -623,6 +623,25 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: custom selection questions opt into general knowledge explicitly`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
+    const initial = await selectFixtureText(page);
+    if (initial.generalKnowledgeChecked || initial.generalKnowledgeLabel !== '使用通用知识') {
+      throw new Error(`general-knowledge choice should be localized and off by default: ${JSON.stringify(initial)}`);
+    }
+    await page.evaluate(() => {
+      window.__webbrainSelectionShortcut.setGeneralKnowledge(true);
+      return window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？');
+    });
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
+    if (submitted.action !== 'custom'
+        || submitted.question !== '现在有哪些跨平台框架？'
+        || submitted.allowGeneralKnowledge !== true) {
+      throw new Error(`broader custom question lost its explicit scope choice: ${JSON.stringify(submitted)}`);
+    }
+  });
+
   test(`${label}: selection shortcut clamps to the viewport and supports keyboard dismissal`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     const state = await selectFixtureText(page);
