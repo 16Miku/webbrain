@@ -5385,6 +5385,12 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     ['firefox', ReadCompletenessFx],
   ]) {
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/FMfc123', 'gmail'), true, `${label}: Gmail thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project/FMfc123', 'gmail'), true, `${label}: Gmail search-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Work/FMfc123', 'gmail'), true, `${label}: Gmail label-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/promotions/FMfc123', 'gmail'), true, `${label}: Gmail category-thread route was missed`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project', 'gmail'), false, `${label}: Gmail search results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Work', 'gmail'), false, `${label}: Gmail label results were mistaken for a thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/promotions', 'gmail'), false, `${label}: Gmail category results were mistaken for a thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);

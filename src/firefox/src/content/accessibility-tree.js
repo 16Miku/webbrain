@@ -915,13 +915,18 @@
     };
   }
 
+  function isGmailThreadIdentifier(value) {
+    const segment = String(value || '').split('?')[0];
+    return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
+  }
+
   function isGmailConversationRoute() {
     if (window.location.hostname !== 'mail.google.com') return false;
     const hashSegments = String(window.location.hash || '')
       .replace(/^#/, '')
       .split('/')
       .filter(Boolean);
-    return hashSegments.length >= 2;
+    return hashSegments.length >= 2 && isGmailThreadIdentifier(hashSegments.at(-1));
   }
 
   function detectGmailConversationRoot() {
@@ -934,10 +939,13 @@
         if (candidate.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
         if (!isVisible(candidate)) continue;
         const gmailMessageCount = candidate.querySelectorAll('.adn,.ads').length;
+        // Inbox, search, label, and category result lists also expose semantic
+        // listitems. Fail closed unless Gmail message containers prove that
+        // this landmark is the active conversation.
+        if (!gmailMessageCount) continue;
         const semanticMessageCount = candidate.querySelectorAll('[role="article"],[role="listitem"]').length;
         const hasEditor = !!candidate.querySelector('textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
         const hasHeading = !!candidate.querySelector('h1,h2,h3,[role="heading"]');
-        if (!gmailMessageCount && !semanticMessageCount && !hasEditor && !hasHeading) continue;
         const rect = candidate.getBoundingClientRect();
         const visibleArea = Math.max(0, rect.width) * Math.max(0, rect.height);
         const score = (gmailMessageCount * 1000000)

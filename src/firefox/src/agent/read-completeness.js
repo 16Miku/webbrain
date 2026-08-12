@@ -9,6 +9,11 @@ const EMAIL_ADAPTERS = new Set(['gmail', 'yahoo-mail', 'proton-mail', 'fastmail'
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com|mail\.yandex\.[a-z.]+)$/i;
 const DM_HOST_RE = /(^|\.)(instagram\.com|x\.com|twitter\.com|facebook\.com|messenger\.com|threads\.net|reddit\.com|linkedin\.com|discord\.com|slack\.com|web\.whatsapp\.com|messages\.google\.com|web\.telegram\.org)$/i;
 
+function isGmailThreadIdentifier(value = '') {
+  const segment = String(value || '').split('?')[0];
+  return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
+}
+
 export function normalizeReadScope(value) {
   const scope = String(value || '').trim();
   return READ_SCOPES.has(scope) ? scope : null;
@@ -40,7 +45,7 @@ export function isCommunicationThreadContext(url = '', adapterName = '') {
   if (EMAIL_HOST_RE.test(host) || EMAIL_ADAPTERS.has(adapter)) {
     if (/(?:^|\.)google\.com$/i.test(host) || host === 'gmail.com') {
       const hashSegments = parsed.hash.replace(/^#/, '').split('/').filter(Boolean);
-      return hashSegments.length >= 2;
+      return hashSegments.length >= 2 && isGmailThreadIdentifier(hashSegments.at(-1));
     }
     return /(?:^|[/?#])(?:messages?|message|thread|conversation|id|p)(?:[/?#])[^/?#\s]+/i.test(route)
       || /(?:^|[/?#])(?:inbox|sent|all|archive|folders?|labels?)(?:[/?#])[^/?#\s]+/i.test(route);

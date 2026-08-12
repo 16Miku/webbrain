@@ -1118,6 +1118,37 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
     throw new Error(`${label}: trusted Gmail pagination leaked the background inbox`);
   }
 
+  const routeClassification = await page.evaluate(() => {
+    const classify = hash => {
+      window.history.replaceState(null, '', hash);
+      const result = window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+      return {
+        hasRoot: !!result.conversationRootRefId,
+        expansionState: result.conversationExpansionState || null,
+      };
+    };
+    const results = {
+      searchList: classify('#search/project'),
+      labelList: classify('#label/Work'),
+      categoryList: classify('#category/promotions'),
+      searchThread: classify('#search/project/FMfc123'),
+      labelThread: classify('#label/Work/FMfc123'),
+      categoryThread: classify('#category/promotions/FMfc123'),
+    };
+    window.history.replaceState(null, '', '#inbox/FMfc123');
+    return results;
+  });
+  for (const routeName of ['searchList', 'labelList', 'categoryList']) {
+    if (routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState != null) {
+      throw new Error(`${label}: Gmail ${routeName} exposed trusted conversation metadata`);
+    }
+  }
+  for (const routeName of ['searchThread', 'labelThread', 'categoryThread']) {
+    if (!routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState !== 'expanded') {
+      throw new Error(`${label}: Gmail ${routeName} lost trusted conversation metadata`);
+    }
+  }
+
   const spoofOnlyExpansion = await page.evaluate(() => {
     document.getElementById('real-collapse').remove();
     return window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
