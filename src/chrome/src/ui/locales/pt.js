@@ -62,6 +62,7 @@ export default {
   'sp.btn.history': "Histórico de bate-papo",
   'sp.btn.settings': "Configurações",
   "sp.btn.clear": "Nova conversa",
+  'sp.btn.expand': 'Open in new window',
   'sp.btn.send': "Enviar",
   'sp.chat.follow_response': 'Acompanhar resposta',
   'sp.chat.jump_latest': 'Ir para o mais recente',

@@ -113,6 +113,7 @@ export default {
   'sp.btn.language': 'ภาษา',
   'sp.btn.settings': 'การตั้งค่า',
   "sp.btn.clear": "การสนทนาใหม่",
+  'sp.btn.expand': 'Open in new window',
   'sp.btn.send': 'ส่ง',
   'sp.chat.follow_response': 'ติดตามคำตอบ',
   'sp.chat.jump_latest': 'ไปยังล่าสุด',

@@ -113,6 +113,7 @@ export default {
   'sp.btn.language': 'Мова',
   'sp.btn.settings': 'Налаштування',
   "sp.btn.clear": "Новий діалог",
+  'sp.btn.expand': 'Open in new window',
   'sp.btn.send': 'Надіслати',
   'sp.chat.follow_response': 'Стежити за відповіддю',
   'sp.chat.jump_latest': 'До останнього повідомлення',

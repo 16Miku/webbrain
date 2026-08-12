@@ -528,6 +528,7 @@ const newConversationConfirmAcceptBtn = document.getElementById('new-conversatio
 const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 const historyBtn = document.getElementById('btn-history');
+const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
@@ -12490,6 +12491,23 @@ historyBtn?.addEventListener('click', () => {
 settingsBtn.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
+
+const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+if (expandBtn) {
+  if (isStandaloneWindow) {
+    expandBtn.style.display = 'none';
+  } else {
+    expandBtn.addEventListener('click', () => {
+      const standaloneUrl = chrome.runtime.getURL('src/ui/sidepanel.html?mode=ask&standalone=true');
+      chrome.windows.create({
+        url: standaloneUrl,
+        type: 'popup',
+        width: 400,
+        height: 600
+      });
+    });
+  }
+}
 
 // --- Language picker (compact trigger + accessible custom listbox) ---
 if (languageSelect) {
