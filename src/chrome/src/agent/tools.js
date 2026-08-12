@@ -142,22 +142,6 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'resolve_visual_target',
-      description: 'Read-only. Resolve a point identified from inspect_viewport or another viewport source to the nearest semantic interactive DOM/accessibility target. Returns semanticTarget with ref_id/role/name/rect when available; otherwise returns cssPoint for a deliberate existing click({x,y}) fallback. Set from_screenshot:true only when x/y are image pixels from the most recent screenshot.',
-      parameters: {
-        type: 'object',
-        properties: {
-          x: { type: 'number', description: 'Horizontal viewport point in CSS pixels, or screenshot image pixels when from_screenshot is true.' },
-          y: { type: 'number', description: 'Vertical viewport point in CSS pixels, or screenshot image pixels when from_screenshot is true.' },
-          from_screenshot: { type: 'boolean', description: 'Convert image pixels from the most recent screenshot to CSS pixels using the stored screenshot scale.' },
-        },
-        required: ['x', 'y'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'read_page',
       description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). While `hasMore:true`, continue with the exact returned `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. NOTE: PDF tabs auto-redirect to read_pdf because Chrome\'s PDF viewer is a chrome-extension:// page that content scripts cannot scrape.',
       parameters: {
@@ -1700,7 +1684,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 Available tools:
 - get_accessibility_tree: PREFERRED read. Flat-text tree of the page with roles, names, and stable ref_ids. Default starting point for almost every turn.
 - inspect_viewport: Read-only visual inspection when appearance or rendered pixels matter.
-- resolve_visual_target({x,y,from_screenshot}): After visual inspection, resolve the point to a semantic ref_id and prefer click_ax; use returned cssPoint only for the existing coordinate-click fallback.
+- After visual inspection, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
 - click_ax: Click a node by its ref_id from the tree. Preferred over click({text/selector}).
 - set_checked: Idempotently set a native checkbox by ref_id and verify checkedBefore/checkedAfter. Use this instead of toggling with click_ax.
 - type_ax: Type into a node by its ref_id from the tree. Preferred over the click-then-type_text pattern.
@@ -1944,7 +1928,7 @@ DEV MODE APPENDIX:
  * see that many options.
  */
 export const COMPACT_TOOL_NAMES = new Set([
-  'get_accessibility_tree', 'inspect_viewport', 'resolve_visual_target', 'read_page', 'scroll',
+  'get_accessibility_tree', 'inspect_viewport', 'read_page', 'scroll',
   'get_window_info',
   'extract_data', 'get_selection', 'find_text',
   'click_ax', 'set_checked', 'type_ax', 'set_field',
@@ -2020,7 +2004,7 @@ PATTERN:
  * downloads from visible page elements.
  */
 export const MID_TOOL_NAMES = new Set([
-  'get_accessibility_tree', 'inspect_viewport', 'resolve_visual_target', 'click_ax', 'set_checked', 'type_ax', 'set_field',
+  'get_accessibility_tree', 'inspect_viewport', 'click_ax', 'set_checked', 'type_ax', 'set_field',
   'list_webmcp_tools', 'execute_webmcp_tool',
   'read_page', 'read_pdf', 'get_window_info', 'get_interactive_elements',
   'click', 'type_text', 'press_keys', 'scroll', 'navigate', 'go_back', 'go_forward',
@@ -2061,7 +2045,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
-- resolve_visual_target({x,y,from_screenshot}): After inspect_viewport, resolve the chosen point to a semantic ref_id and prefer click_ax; use returned cssPoint only for the existing coordinate-click fallback.
+- After inspect_viewport, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
 - read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run; promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
 - get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.

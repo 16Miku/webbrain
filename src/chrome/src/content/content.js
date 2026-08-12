@@ -5391,8 +5391,13 @@
           }
           const semanticTarget = window.__wb_ax_resolve_visual_target(x, y);
           return semanticTarget
-            ? { success: true, semanticTarget }
-            : { success: true, cssPoint: { x, y } };
+            ? {
+                success: true,
+                semanticTarget,
+                documentToken: _axDocumentToken(),
+                refScopeUrl: location.href,
+              }
+            : { success: true };
         } catch (e) {
           return { success: false, error: e?.message || String(e) };
         }

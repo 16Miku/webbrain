@@ -6001,6 +6001,141 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _coordinateReconciliationDiagnostic(point, resolution, clickPath, fallbackReason) {
+    const target = resolution?.success === true ? resolution.semanticTarget : null;
+    const ref = typeof target?.ref_id === 'string' && /^ref_\d+$/.test(target.ref_id)
+      ? target.ref_id.slice(0, 32)
+      : '';
+    const resolved = !!ref;
+    return {
+      canonicalPoint: { x: Number(point.x), y: Number(point.y) },
+      semanticTargetResolved: resolved,
+      ...(resolved ? {
+        target: {
+          role: String(target.role || '').slice(0, 32),
+          name: String(target.name || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+          ref,
+        },
+      } : {}),
+      clickPath,
+      fallbackReason,
+    };
+  }
+
+  _withCoordinateReconciliation(result, diagnostic) {
+    return diagnostic && result && typeof result === 'object'
+      ? { ...result, coordinateReconciliation: diagnostic }
+      : result;
+  }
+
+  async _resolveCoordinateVisualTarget(tabId, point) {
+    const send = () => browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'resolve_visual_target',
+      params: { x: Number(point.x), y: Number(point.y) },
+    });
+    try {
+      try {
+        return await this._withIndicatorsHidden(tabId, send);
+      } catch {
+        await this._injectCoreContentScripts(tabId);
+        return await this._withIndicatorsHidden(tabId, send);
+      }
+    } catch {
+      return { success: false };
+    }
+  }
+
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null) {
+    let contentArgs = axScope?.documentToken
+      ? {
+          ...args,
+          expectedDocumentToken: axScope.documentToken,
+          ...(axScope.pageUrl ? { expectedPageUrl: axScope.pageUrl } : {}),
+        }
+      : args;
+    if (dispatchBinding?.token) {
+      contentArgs = { ...contentArgs, dispatchBinding };
+    }
+    const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
+      ? { frameId: dispatchBinding.frameId }
+      : undefined;
+    const send = () => browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'click_ax',
+      params: contentArgs,
+    }, messageOptions);
+    const finish = async (response) => {
+      response = await this._settleContentFilePickerGuard(tabId, response);
+      if (response?.documentToken && (
+        response.documentChanged === true
+        || response.routeChanged === true
+        || response.staleRef === true
+      )) {
+        this._rememberAxScope(tabId, response.documentToken, response.refScopeUrl || '');
+      }
+      return response;
+    };
+
+    try {
+      return await finish(await send());
+    } catch {
+      try {
+        await this._injectCoreContentScripts(tabId);
+        return await finish(await send());
+      } catch (error) {
+        let pageUrl = '';
+        try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
+        const accessFailure = firefoxHostPermissionFailure(pageUrl, error.message);
+        if (accessFailure) return accessFailure;
+        return { error: `Failed to communicate with page: ${error.message}` };
+      }
+    }
+  }
+
+  async _reconcileCoordinateClick(tabId, point) {
+    const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    const target = resolution?.semanticTarget;
+    const semanticEligible = resolution?.success === true
+      && target?.eligibility === 'semantic-button'
+      && target?.role === 'button'
+      && typeof target?.ref_id === 'string'
+      && /^ref_\d+$/.test(target.ref_id);
+    if (semanticEligible) {
+      const result = await this._dispatchClickAx(
+        tabId,
+        { ref_id: target.ref_id },
+        { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
+      );
+      return {
+        result: {
+          ...result,
+          coordinateReconciliation: this._coordinateReconciliationDiagnostic(
+            point,
+            resolution,
+            'semantic',
+            'none',
+          ),
+        },
+        diagnostic: null,
+      };
+    }
+    const fallbackReason = resolution?.success !== true
+      ? 'resolver-error'
+      : target
+        ? 'coordinate-only-target'
+        : 'no-target';
+    return {
+      result: null,
+      diagnostic: this._coordinateReconciliationDiagnostic(
+        point,
+        resolution,
+        'coordinate-fallback',
+        fallbackReason,
+      ),
+    };
+  }
+
   /**
    * Coordinate-system sentence for screenshot notes shown to the model.
    * Captures are CSS-locked (scale:1) but may be downscaled when a viewport
@@ -15273,17 +15408,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
-    if (name === 'resolve_visual_target') {
-      const mapped = this._screenshotClickCoords(tabId, args);
-      if (!mapped) {
-        return {
-          success: false,
-          dispatched: false,
-          error: 'x and y must be finite numbers',
-        };
-      }
-      args = { x: mapped.x, y: mapped.y };
-    }
+    let coordinatePoint = null;
+    let coordinateDiagnostic = null;
     // Canonicalize coordinate clicks before toolbar recovery probes them.
     // The preflight binding and the eventual dispatch must resolve the same
     // CSS-pixel point, especially when the model clicked a downscaled image.
@@ -15298,7 +15424,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const mapped = this._screenshotClickCoords(tabId, args);
-      if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
+      if (mapped) {
+        args = { ...args, x: mapped.x, y: mapped.y };
+        coordinatePoint = { x: mapped.x, y: mapped.y };
+      }
     }
     const richTextToolbarBlock = await this._richTextToolbarToolBlock(
       tabId,
@@ -15308,6 +15437,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     let dispatchBinding = dispatchContext.dispatchBinding || null;
+    if (coordinatePoint && dispatchBinding?.token) {
+      coordinateDiagnostic = this._coordinateReconciliationDiagnostic(
+        coordinatePoint,
+        null,
+        'coordinate-fallback',
+        'bound-coordinate-target',
+      );
+    }
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
@@ -17816,7 +17953,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       'find_text': 'find_text',
       'execute_js': 'execute_js',
       'get_accessibility_tree': 'get_accessibility_tree',
-      'resolve_visual_target': 'resolve_visual_target',
       'click_ax': 'click_ax',
       'set_checked': 'set_checked',
       'type_ax': 'type_ax',
@@ -17884,6 +18020,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
+    if (name === 'click_ax') {
+      return this._dispatchClickAx(tabId, args, this._lastAxScopes.get(tabId), dispatchBinding);
+    }
+
     if (name === 'click') {
       const duplicateSubmit = await guardRecentSubmitClick(
         this._recentSubmitClicks,
@@ -17895,10 +18035,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         },
       );
       if (duplicateSubmit) return duplicateSubmit;
+      if (coordinatePoint && !dispatchBinding?.token) {
+        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint);
+        if (reconciled.result) return reconciled.result;
+        coordinateDiagnostic = reconciled.diagnostic;
+      }
     }
 
     const axScope = this._lastAxScopes.get(tabId);
-    let contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
+    let contentArgs = name === 'set_checked' && axScope?.documentToken
       ? {
           ...args,
           expectedDocumentToken: axScope.documentToken,
@@ -17935,12 +18080,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       action,
       params: contentArgs,
     }, messageOptions);
-    const dispatchContentAction = () => name === 'resolve_visual_target'
-      ? this._withIndicatorsHidden(tabId, sendContentAction)
-      : sendContentAction();
+    const dispatchContentAction = sendContentAction;
     try {
       let response = await dispatchContentAction();
-      if (name === 'click' || name === 'click_ax') {
+      if (name === 'click') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }
       if (response?.documentToken && (
@@ -17960,13 +18103,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response = applyReadPageWindow(response, args);
       }
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
-      return response;
+      return this._withCoordinateReconciliation(response, coordinateDiagnostic);
     } catch (e) {
       // Content script might not be injected — try injecting it
       try {
         await this._injectCoreContentScripts(tabId);
         let response = await dispatchContentAction();
-        if (name === 'click' || name === 'click_ax') {
+        if (name === 'click') {
           response = await this._settleContentFilePickerGuard(tabId, response);
         }
         if (response?.documentToken && (
@@ -17986,13 +18129,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           response = applyReadPageWindow(response, args);
         }
         this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
-        return response;
+        return this._withCoordinateReconciliation(response, coordinateDiagnostic);
       } catch (e2) {
         let pageUrl = '';
         try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
         const accessFailure = firefoxHostPermissionFailure(pageUrl, e2.message);
-        if (accessFailure) return accessFailure;
-        return { error: `Failed to communicate with page: ${e2.message}` };
+        if (accessFailure) return this._withCoordinateReconciliation(accessFailure, coordinateDiagnostic);
+        return this._withCoordinateReconciliation(
+          { error: `Failed to communicate with page: ${e2.message}` },
+          coordinateDiagnostic,
+        );
       }
     }
   }

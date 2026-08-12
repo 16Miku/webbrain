@@ -511,24 +511,29 @@
     return hit;
   }
 
+  function visualTargetEligibility(el) {
+    const tag = el.tagName?.toLowerCase() || '';
+    if (tag === 'button') return 'semantic-button';
+    if (['canvas', 'iframe', 'label', 'input', 'textarea', 'select'].includes(tag)) {
+      return 'coordinate-only';
+    }
+    return isInteractive(el) ? 'coordinate-only' : '';
+  }
+
   function resolveVisualTargetAtPoint(x, y) {
     const cssX = Number(x);
     const cssY = Number(y);
     if (!Number.isFinite(cssX) || !Number.isFinite(cssY)) return null;
 
     for (let el = deepestOpenShadowHit(cssX, cssY); el; el = composedParent(el)) {
-      if (el.nodeType !== Node.ELEMENT_NODE || !isInteractive(el)) continue;
-      const r = el.getBoundingClientRect();
+      if (el.nodeType !== Node.ELEMENT_NODE) continue;
+      const eligibility = visualTargetEligibility(el);
+      if (!eligibility) continue;
       return {
         ref_id: getOrMintRef(el),
         role: getRole(el),
-        name: getAccessibleName(el) || '',
-        rect: {
-          x: Math.round(r.x),
-          y: Math.round(r.y),
-          w: Math.round(r.width),
-          h: Math.round(r.height),
-        },
+        name: (getAccessibleName(el) || '').slice(0, 160),
+        eligibility,
       };
     }
     return null;
