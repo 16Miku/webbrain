@@ -2261,12 +2261,24 @@ export async function downloadResourceFromPage(tabId, args = {}) {
       filename: downloadFilename,
       conflictAction: 'uniquify',
     });
+    const info = await resolveDownloadInfo(downloadId);
+    const complete = info?.state === 'complete';
     return {
-      success: true,
+      success: complete,
       downloadId,
       sourceUrl: r.isBlob ? '[blob]' : r.url,
       mime: r.mime || null,
       blob: !!r.isBlob,
+      ...(info?.filename ? { filename: info.filename } : {}),
+      ...(info?.state ? { state: info.state } : {}),
+      ...(info?.bytesReceived != null ? { bytesReceived: info.bytesReceived } : {}),
+      ...(info?.totalBytes != null ? { totalBytes: info.totalBytes } : {}),
+      ...(!complete ? {
+        pending: info?.state !== 'interrupted',
+        error: info?.state === 'interrupted'
+          ? `Download interrupted${info.error ? `: ${info.error}` : ' before completion.'}`
+          : `Download did not complete before timeout${info?.state ? ` (state: ${info.state})` : ''}.`,
+      } : {}),
     };
   } catch (e) {
     return { success: false, error: e.message };

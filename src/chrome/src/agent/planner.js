@@ -51,6 +51,12 @@ const PLANNER_LOCALIZED_SCHEMA = {
   },
   required: ['locale', 'summary', 'steps', 'risks'],
 };
+const PLANNER_COMPLETION_REQUIREMENTS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { download: { type: 'boolean' } },
+  required: ['download'],
+};
 
 export const PLANNER_RESPONSE_JSON_SCHEMA = {
   type: 'object',
@@ -59,6 +65,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
     request_kind: PLANNER_REQUEST_KIND_SCHEMA,
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
+    completion_requirements: PLANNER_COMPLETION_REQUIREMENTS_SCHEMA,
     allows_planner_shaped_result: { type: 'boolean' },
     allows_app_state_tool_evidence: { type: 'boolean' },
     read_scope: PLANNER_READ_SCOPE_SCHEMA,
@@ -98,6 +105,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
     'request_kind',
     'requires_state_change',
     'requires_submission',
+    'completion_requirements',
     'allows_planner_shaped_result',
     'allows_app_state_tool_evidence',
     'read_scope',
@@ -120,6 +128,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
     request_kind: PLANNER_REQUEST_KIND_SCHEMA,
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
+    completion_requirements: PLANNER_COMPLETION_REQUIREMENTS_SCHEMA,
     allows_planner_shaped_result: { type: 'boolean' },
     allows_app_state_tool_evidence: { type: 'boolean' },
     read_scope: PLANNER_READ_SCOPE_SCHEMA,
@@ -150,6 +159,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
     'request_kind',
     'requires_state_change',
     'requires_submission',
+    'completion_requirements',
     'allows_planner_shaped_result',
     'allows_app_state_tool_evidence',
     'read_scope',
@@ -169,14 +179,6 @@ export const READ_SCOPE_RESPONSE_JSON_SCHEMA = {
   required: ['read_scope'],
 };
 
-function canonicalPlanRequiresDownload(_summary, _steps) {
-  // TODO(#2752): Derive download completion requirements from structured,
-  // language-neutral planner intent. Do not infer them from canonical prose;
-  // lookup framing such as "Find the URL to download the report" makes that
-  // heuristic ambiguous. Until then, preserve the planner-declared value.
-  return false;
-}
-
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
 // Keep response-only routing identical across the full Plan-before-Act planner
@@ -195,6 +197,7 @@ Schema:
   "request_kind": "execute" | "respond" | "plan_only" | "clarify",
   "requires_state_change": boolean,
   "requires_submission": boolean,
+  "completion_requirements": { "download": boolean },
   "allows_planner_shaped_result": boolean,
   "allows_app_state_tool_evidence": boolean,
   "read_scope": "complete_thread" | "current_message" | "visible_page" | "none",
@@ -239,6 +242,7 @@ ${PLANNER_RESPONSE_ONLY_RULES}
 - Classify clarify immediately only when trusted current-task context already proves a required value is missing and no useful inspection or action can happen first. Otherwise classify execute and include a conditional clarify step after inspection.
 - requires_state_change is true only when completing an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
 - requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- completion_requirements.download is true only when success requires WebBrain to write a file into browser/OS download storage. It is false when the user asks only to find a download URL, link, button, instructions, or an explanation, even if that result refers to a future download. Classify this semantic intent across any language, not with word matching. This field only tightens completion evidence; it never authorizes tools, changes mode, or bypasses download permission.
 - Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
@@ -272,6 +276,7 @@ export const PLANNER_INTENT_SYSTEM_PROMPT = `You are the intent and compact plan
   "request_kind": "execute" | "respond" | "plan_only" | "clarify",
   "requires_state_change": boolean,
   "requires_submission": boolean,
+  "completion_requirements": { "download": boolean },
   "allows_planner_shaped_result": boolean,
   "allows_app_state_tool_evidence": boolean,
   "read_scope": "complete_thread" | "current_message" | "visible_page" | "none",
@@ -308,6 +313,7 @@ ${PLANNER_RESPONSE_ONLY_RULES}
 - Classify clarify immediately only when trusted current-task context already proves a required value is missing and no useful inspection or action can happen first. Otherwise classify execute and make the need to clarify after inspection explicit in the step action.
 - requires_state_change is true only when an execute request needs a mutation such as interacting with form/account state, modifying page data, downloading/uploading a file, a write-method network request, a Dev patch, or scheduling work. It is false for reads, analysis, summaries, navigation, scrolling, hovering, window/viewport changes, plan_only, and clarify.
 - requires_submission is true when the user-authorized task ultimately requires an explicit form/dialog commit action such as Submit, Save, Send, Publish, Post, or Confirm. For clarify, preserve true when the missing answer is only a prerequisite to that already-requested commit; clarify itself still performs no action. It is false for filling, editing, checking, or selecting without committing, including explicit do-not-submit tasks and autosave UIs, and false for respond and plan_only.
+- completion_requirements.download is true only when success requires WebBrain to write a file into browser/OS download storage. It is false for finding a download URL, link, button, instructions, or explanation, even when that result mentions a future download. Decide semantically across any language, never by matching words. This metadata only tightens completion evidence; it does not authorize tools, change mode, or bypass download permission.
 - Do not classify a follow-up as clarify merely because it refers to answers, drafts, or values already prepared in the ongoing task or currently present on the page. When the user authorizes using those existing values, classify execute and inspect them with read tools; clarify only after the available trusted context or runtime inspection cannot supply a required value.
 - allows_planner_shaped_result is true only when the user explicitly requests planner-like final data (summary/steps JSON or Plan/Steps/Workflow markdown). Never changes request_kind.
 - allows_app_state_tool_evidence is true only when the requested work itself is reading/updating WebBrain scratchpad or progress ledger (not incidental bookkeeping).
@@ -556,18 +562,27 @@ export function normalizePlan(obj, opts = {}) {
   const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
+  const requiresDownload = executablePlan
+    && obj.completion_requirements?.download === true;
+  const completionRequirementCorrection = requiresDownload
+    && hasRequiresStateChange
+    && obj.requires_state_change === false
+    ? 'download_requires_state_change'
+    : null;
   const requiresStateChange = executablePlan
     ? (
       !!obj.requires_state_change
       || requiresSubmission === true
       || !!normalizedScheduling
-      || canonicalPlanRequiresDownload(summary, steps)
+      || requiresDownload
     )
     : false;
   return {
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    completion_requirements: { download: requiresDownload },
+    completion_requirement_correction: completionRequirementCorrection,
     allows_planner_shaped_result: requestKind === 'execute' && obj.allows_planner_shaped_result === true,
     allows_app_state_tool_evidence: requestKind === 'execute' && obj.allows_app_state_tool_evidence === true,
     read_scope: requestKind === 'execute' || (!opts.requireIntent && requestKind === null)
@@ -633,6 +648,7 @@ function formatPlanConfidence(plan) {
 function appendPlanExecutionMetadata(lines, plan) {
   lines.push('### Completion requirements');
   lines.push(`- Submission required: ${plan.requires_submission === true ? 'yes' : (plan.requires_submission === false ? 'no' : 'auto')}`);
+  lines.push(`- Download required: ${plan.completion_requirements?.download === true ? 'yes' : 'no'}`);
   lines.push(`- Read scope: ${normalizeReadScope(plan.read_scope) || 'none'}`);
   lines.push('');
 

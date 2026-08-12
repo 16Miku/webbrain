@@ -3,7 +3,7 @@
  * The Chrome and Firefox copies of this file are identical — edit both together.
  */
 
-import { SELECTION_ONLY_SOURCE_GROUNDING, normalizeSelectionAction } from '../context-menu-storage.js';
+import { normalizeSelectionAction, normalizeSelectionSourceGrounding } from '../context-menu-storage.js';
 
 export function createContextMenuPromptHandler({
   getCurrentTabId,
@@ -33,9 +33,7 @@ export function createContextMenuPromptHandler({
     const id = payload?.id
       ? String(payload.id)
       : `ctx-${tabId ?? 'unknown'}-${payload?.createdAt || Date.now()}-${text.length}`;
-    const sourceGrounding = payload?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-      ? SELECTION_ONLY_SOURCE_GROUNDING
-      : null;
+    const sourceGrounding = normalizeSelectionSourceGrounding(payload?.sourceGrounding) || null;
     // Only a source-bound prompt has a shortcut action to report; anything
     // else would be an unattributed id riding into the run options.
     const selectionAction = sourceGrounding ? normalizeSelectionAction(payload?.selectionAction) : '';

@@ -33,11 +33,13 @@ import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import {
+  SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
   buildSelectionPrompt,
   normalizeSelectionAction,
+  normalizeSelectionSourceGrounding,
   createContextMenuStorage,
 } from './context-menu-storage.js';
 import {
@@ -1345,7 +1347,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
   const tab = sender?.tab;
   const selectionAction = normalizeSelectionAction(msg.action);
-  const text = buildSelectionPrompt(msg.selectionText, msg.action, msg.question, msg.language);
+  const sourceGrounding = selectionAction === 'custom' && msg.allowGeneralKnowledge === true
+    ? SELECTION_CONTEXT_SOURCE_GROUNDING
+    : SELECTION_ONLY_SOURCE_GROUNDING;
+  const text = buildSelectionPrompt(
+    msg.selectionText,
+    msg.action,
+    msg.question,
+    msg.language,
+    sourceGrounding,
+  );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid selection shortcut request.' });
     return;
@@ -1355,7 +1366,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     tabId: tab.id,
     text,
-    sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+    sourceGrounding,
     ...(selectionAction ? { selectionAction } : {}),
     createdAt: Date.now(),
   };
@@ -2541,9 +2552,9 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
-          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+          ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
-              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
               ...(normalizeSelectionAction(msg.selectionAction)
                 ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
                 : {}),
@@ -2682,9 +2693,9 @@ async function handleMessage(msg, sender) {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
           ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
-          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+          ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
-              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
               ...(normalizeSelectionAction(msg.selectionAction)
                 ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
                 : {}),

@@ -96,6 +96,8 @@ export default {
   "sp.clear.action_warning": "Löscht den Verlauf",
   "sp.selection_scope.title": "Nur ausgewählter Text",
   "sp.selection_scope.description": "Starte ein neues Gespräch, um auf die Seite oder den Bildschirm zuzugreifen.",
+  "sp.selection_scope.context_title": "Ausgewählter Text + Allgemeinwissen",
+  "sp.selection_scope.context_description": "Verwendet den ausgewählten Text und Modellwissen. Seite, Tools, Dateien und frühere Unterhaltung bleiben nicht verfügbar.",
   "sp.input.selection_placeholder": "Frage zum ausgewählten Text...",
   'sp.mode.ask': 'Fragen',
   'sp.mode.ask.title': 'Fragen zur Seite stellen — keine Änderungen',
