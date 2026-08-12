@@ -148,6 +148,16 @@ function selectionScopeSystemNote(sourceGrounding) {
     ? SELECTION_CONTEXT_SCOPE_SYSTEM_NOTE
     : SELECTION_ONLY_SCOPE_SYSTEM_NOTE;
 }
+
+function normalizeSelectionScopeSourceGrounding(sourceGrounding, selectionAction) {
+  const normalizedSourceGrounding = normalizeSelectionSourceGrounding(sourceGrounding);
+  // The agent is authoritative for retries and restored state: only a custom
+  // action may opt into the broader selected-text context policy.
+  return normalizedSourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+    && normalizeSelectionAction(selectionAction) !== 'custom'
+    ? SELECTION_ONLY_SOURCE_GROUNDING
+    : normalizedSourceGrounding;
+}
 // Site adapters where a run is likely to compose prose the user will send, so
 // the Humanizer skill is preactivated instead of waiting for a load_skill hop.
 const HUMANIZER_SKILL_SITE_ADAPTERS = new Set([
@@ -1098,6 +1108,7 @@ export class Agent extends LoopDetector {
           && Number.isInteger(entry.selectionGroundingScope.anchorIndex)
           && entry.selectionGroundingScope.anchorIndex >= 1
         ) {
+          const action = normalizeSelectionAction(entry.selectionGroundingScope.action);
           this.selectionGroundingScopes.set(tabId, {
             conversationId: entry.selectionGroundingScope.conversationId || null,
             anchorIndex: entry.selectionGroundingScope.anchorIndex,
@@ -1107,8 +1118,11 @@ export class Agent extends LoopDetector {
             excludedFingerprints: Array.isArray(entry.selectionGroundingScope.excludedFingerprints)
               ? entry.selectionGroundingScope.excludedFingerprints.filter(value => typeof value === 'string')
               : [],
-            action: normalizeSelectionAction(entry.selectionGroundingScope.action),
-            sourceGrounding: normalizeSelectionSourceGrounding(entry.selectionGroundingScope.sourceGrounding)
+            action,
+            sourceGrounding: normalizeSelectionScopeSourceGrounding(
+              entry.selectionGroundingScope.sourceGrounding,
+              action,
+            )
               || SELECTION_ONLY_SOURCE_GROUNDING,
           });
         }
@@ -1304,7 +1318,8 @@ export class Agent extends LoopDetector {
     return {
       conversationId: this.conversationIds.get(tabId) || null,
       sourceGrounding: selectionGrounded
-        ? normalizeSelectionSourceGrounding(scope?.sourceGrounding) || SELECTION_ONLY_SOURCE_GROUNDING
+        ? normalizeSelectionScopeSourceGrounding(scope?.sourceGrounding, scope?.action)
+          || SELECTION_ONLY_SOURCE_GROUNDING
         : null,
       persistenceDegraded: this.persistenceDegradedTabs.has(tabId),
       persistenceDegradedReason: this.persistenceDegradedTabs.get(tabId)?.reason || null,
@@ -14313,7 +14328,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } = runOptions;
       return independentOptions;
     }
-    const explicitSourceGrounding = normalizeSelectionSourceGrounding(runOptions?.sourceGrounding);
+    const explicitSelectionAction = normalizeSelectionAction(runOptions?.selectionAction);
+    const explicitSourceGrounding = normalizeSelectionScopeSourceGrounding(
+      runOptions?.sourceGrounding,
+      explicitSelectionAction,
+    );
     const explicitSelection = !!explicitSourceGrounding;
     let scope = this.selectionGroundingScopes.get(tabId) || null;
     if (explicitSelection) {
@@ -14327,20 +14346,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Only the opening turn carries the shortcut action. Store it on the
         // scope so "now make it warmer" is still recognizable as the writing
         // flow the user started, without re-trusting a resent field.
-        action: normalizeSelectionAction(runOptions?.selectionAction),
+        action: explicitSelectionAction,
         sourceGrounding: explicitSourceGrounding,
       };
       this.selectionGroundingScopes.set(tabId, scope);
-    } else if (
-      !scope?.anchorFingerprint
-      || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0
-    ) {
-      this.selectionGroundingScopes.delete(tabId);
-      return runOptions;
+    } else {
+      const action = normalizeSelectionAction(scope?.action);
+      const sourceGrounding = normalizeSelectionScopeSourceGrounding(
+        scope?.sourceGrounding,
+        action,
+      ) || SELECTION_ONLY_SOURCE_GROUNDING;
+      if (scope && (scope.action !== action || scope.sourceGrounding !== sourceGrounding)) {
+        scope = { ...scope, action, sourceGrounding };
+        this.selectionGroundingScopes.set(tabId, scope);
+      }
+      if (
+        !scope?.anchorFingerprint
+        || this._selectionGroundingAnchorIndex(tabId, messages, scope) < 0
+      ) {
+        this.selectionGroundingScopes.delete(tabId);
+        return runOptions;
+      }
     }
     return {
       ...runOptions,
-      sourceGrounding: normalizeSelectionSourceGrounding(scope?.sourceGrounding)
+      sourceGrounding: normalizeSelectionScopeSourceGrounding(scope?.sourceGrounding, scope?.action)
         || SELECTION_ONLY_SOURCE_GROUNDING,
       selectionGroundingScopeStarted: explicitSelection,
       selectionAction: normalizeSelectionAction(scope?.action),

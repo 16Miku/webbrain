@@ -21041,7 +21041,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       ['active', 91, sourceGrounding],
     ], `${label}: detached state probes should apply scope before active run UI`);
 
-    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded[\s\S]*?normalizeSelectionSourceGrounding\(scope\?\.sourceGrounding\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?: null/, `${label}: agent should report the exact allowlisted selected-text policy with a legacy fallback`);
+    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded[\s\S]*?normalizeSelectionScopeSourceGrounding\(scope\?\.sourceGrounding, scope\?\.action\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?: null/, `${label}: agent should report the action-constrained selected-text policy with a legacy fallback`);
     assert.match(background, /case 'ensure_conversation_id':[\s\S]*?agent\.getConversationState\(tabId, msg\.mode \|\| 'ask'\)/, `${label}: identity hydration should return scope state`);
     assert.match(background, /case 'agent_run_state':[\s\S]*?agent\.getConversationState\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)/, `${label}: reconnect polling should return scope state`);
   }
@@ -27651,6 +27651,50 @@ test('selection-context grounding persists intrinsic-knowledge scope without exp
   }
 });
 
+test('selection-context grounding fails closed for forged fixed-action metadata', async () => {
+  for (const [label, AgentClass, contextGrounding, onlyGrounding] of [
+    ['chrome', AgentCh, SELECTION_CONTEXT_SOURCE_GROUNDING_CH, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, SELECTION_CONTEXT_SOURCE_GROUNDING_FX, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
+    const tabId = label === 'chrome' ? 9650 : 9651;
+    const messages = [{ role: 'system', content: 'system rules' }];
+    agent._persist = () => {};
+    agent.conversationIds.set(tabId, `${label}-forged-selection-context`);
+    agent.conversations.set(tabId, messages);
+
+    const openingOptions = agent._selectionGroundedRunOptions(tabId, messages, {
+      sourceGrounding: contextGrounding,
+      selectionAction: 'summarize',
+    });
+    assert.equal(openingOptions.sourceGrounding, onlyGrounding, `${label}: fixed actions must downgrade broader grounding`);
+    assert.equal(openingOptions.selectionAction, 'summarize', `${label}: fixed-action provenance should remain intact`);
+    assert.equal(
+      agent.selectionGroundingScopes.get(tabId)?.sourceGrounding,
+      onlyGrounding,
+      `${label}: forged broader grounding must not enter durable state`,
+    );
+
+    const anchor = { role: 'user', content: 'forged persisted fixed-action selection' };
+    messages.push(anchor);
+    agent.selectionGroundingScopes.set(tabId, {
+      conversationId: `${label}-forged-selection-context`,
+      anchorIndex: 1,
+      anchorFingerprint: agent._selectionGroundingMessageFingerprint(anchor),
+      excludedFingerprints: [],
+      action: 'summarize',
+      sourceGrounding: contextGrounding,
+    });
+    const restoredOptions = agent._selectionGroundedRunOptions(tabId, messages, {});
+    assert.equal(restoredOptions.sourceGrounding, onlyGrounding, `${label}: restored forged scope must fail closed`);
+    assert.equal(
+      agent.selectionGroundingScopes.get(tabId)?.sourceGrounding,
+      onlyGrounding,
+      `${label}: restored forged scope should be repaired before reuse`,
+    );
+  }
+});
+
 test('selection-only response-only phases carry the scope note', async () => {
   for (const [label, AgentClass, sourceGrounding] of [
     ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
@@ -28299,8 +28343,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(prompts, /const selectionAction = sourceGrounding \? normalizeSelectionAction\(payload\?\.selectionAction\) : '';/, `${label}: only a source-bound prompt should keep a shortcut action`);
     assert.match(prompts, /\.\.\.\(payload\.selectionAction \? \{ selectionAction: payload\.selectionAction \} : \{\}\),/, `${label}: the stored action should ride with the prompt it belongs to`);
     assert.match(panelSource, /const requestedSelectionAction = retryOptions\?\.selectionAction \?\? chatExtraParams\.selectionAction;[\s\S]*?const selectionAction = sourceGrounding \? normalizeSelectionAction\(requestedSelectionAction\) : '';[\s\S]*?delete chatExtraParams\.selectionAction;/, `${label}: sidepanel should retain retry actions but drop actions without selected-text grounding`);
-    assert.match(agentSource, /action: normalizeSelectionAction\(runOptions\?\.selectionAction\),/, `${label}: the durable scope should record the shortcut action`);
-    assert.match(agentSource, /action: normalizeSelectionAction\(entry\.selectionGroundingScope\.action\),/, `${label}: a restarted worker should restore the shortcut action`);
+    assert.match(agentSource, /const explicitSelectionAction = normalizeSelectionAction\(runOptions\?\.selectionAction\);[\s\S]*?action: explicitSelectionAction,/, `${label}: the durable scope should record the normalized shortcut action`);
+    assert.match(agentSource, /const action = normalizeSelectionAction\(entry\.selectionGroundingScope\.action\);[\s\S]*?action,[\s\S]*?normalizeSelectionScopeSourceGrounding\([\s\S]*?entry\.selectionGroundingScope\.sourceGrounding,[\s\S]*?action,/, `${label}: a restarted worker should restore the action and fail closed on contradictory broader grounding`);
     assert.match(agentSource, /selectionAction: normalizeSelectionAction\(scope\?\.action\),/, `${label}: follow-up turns should read the action off the scope, not a resent field`);
   }
 
