@@ -36,6 +36,10 @@ import {
   unsupportedVisionGenerationControl,
   visionGenerationOptions,
 } from './provider-compatibility.js';
+import {
+  loadTranscriptionConnectionTestAudio,
+  loadVisionConnectionTestImage,
+} from './connection-test-assets.js';
 
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
 const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all'];
@@ -54,32 +58,6 @@ const PROVIDER_CREDENTIAL_KEYS = ['apiKey', 'accessKeyId', 'secretAccessKey', 's
 const OLLAMA_VISION_MODES = new Set(['auto', 'on', 'off']);
 const OLLAMA_VISION_METADATA_TIMEOUT_MS = 3000;
 const VISION_METADATA_TIMEOUT_MS = 3000;
-const VISION_CONNECTION_TEST_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAAAwCAIAAABhdOiYAAAAwElEQVR4nO3YQQ6DMBBD0dz/0rAHqV/GCUXwvW1nPHlLxmZ+Zvz7gKdHIIhAEIEgAkHGIc1w1pSkelLXO/MUgQQS6NQ78xSBZgKtK2oiUFwkEBQJBEUCQdHXgXCzQAJ1mwUSqNsMQM2v0JSkdrh4s0AC0Rnp/wWis6N1Ai0EWvqqWbMCxeMCwbhAMC4QjGdeAgkkUDguEIwLBOP3fQ+Kkr7q8pF89rpugQTqugV6KVDT/YUIBBEIIhBEIIhAEIEgO8m5f6WX/xaRAAAAAElFTkSuQmCC';
-
-function silentWavBlob() {
-  const sampleRate = 8000;
-  const sampleCount = sampleRate; // One second avoids provider minimum-duration rejections.
-  const dataSize = sampleCount * 2;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-  const write = (offset, value) => {
-    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-  };
-  write(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  write(8, 'WAVE');
-  write(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  write(36, 'data');
-  view.setUint32(40, dataSize, true);
-  return new Blob([buffer], { type: 'audio/wav' });
-}
 
 /**
  * Manages LLM provider instances and persists configuration.
@@ -1141,11 +1119,17 @@ export class ProviderManager {
   async testVisionProvider() {
     const provider = await this.getVisionProvider();
     if (!provider) return { ok: false, error: 'Vision model not configured' };
+    let imageDataUrl;
+    try {
+      imageDataUrl = await loadVisionConnectionTestImage(browser.runtime);
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
     const messages = [{
       role: 'user',
       content: [
         { type: 'text', text: 'Read the three-character black code centered in the attached image. Reply with only that code.' },
-        { type: 'image_url', image_url: { url: VISION_CONNECTION_TEST_IMAGE } },
+        { type: 'image_url', image_url: { url: imageDataUrl } },
       ],
     }];
     let attempts = 1;
@@ -1210,7 +1194,13 @@ export class ProviderManager {
     const headers = {};
     if (cfg.apiKey) headers['Authorization'] = `Bearer ${cfg.apiKey}`;
     const form = new FormData();
-    form.append('file', silentWavBlob(), 'webbrain-connection-test.wav');
+    let audioBlob;
+    try {
+      audioBlob = await loadTranscriptionConnectionTestAudio(browser.runtime);
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+    form.append('file', audioBlob, 'webbrain-connection-test.wav');
     form.append('model', cfg.model);
     form.append('response_format', 'json');
     try {
