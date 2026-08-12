@@ -27460,6 +27460,8 @@ test('selection shortcut localizations cover every interface locale with browser
     assert.equal(chinese.strings.summarize, '总结', `${label}: the Chinese shortcut should localize Summarize`);
     assert.equal(chinese.strings.explain, '解释', `${label}: the Chinese shortcut should localize Explain`);
     assert.equal(chinese.strings.quiz, '测验我', `${label}: the Chinese shortcut should localize Quiz me`);
+    assert.equal(chinese.strings.hideShortcut, '隐藏此项', `${label}: the Chinese shortcut should use the compact Hide this label`);
+    assert.equal(getLocalization('en').strings.hideShortcut, 'Hide this', `${label}: the English shortcut should use the compact footer label`);
     assert.equal(chinese.dir, 'ltr', `${label}: Chinese should retain left-to-right layout`);
     assert.equal(getLocalization('ar').dir, 'rtl', `${label}: Arabic should use right-to-left layout`);
     assert.equal(normalizeLocale('unknown-locale'), 'en', `${label}: unknown locales should fall back to English`);
@@ -28370,14 +28372,19 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /attachShadow\(\{ mode: 'closed' \}\)/, `${label}: selection UI should use a closed Shadow DOM`);
     assert.match(content, /const STORAGE_KEY = 'selectionShortcutEnabled';/, `${label}: content script should use the persistent setting`);
     assert.match(content, /const LOCALE_STORAGE_KEY = 'wbLocale';/, `${label}: content script should use the plugin interface language`);
-    assert.match(content, /data-action="translate">Translate<\/button>/, `${label}: floating popup should expose one-click Translate`);
-    assert.match(content, /class="knowledge-option"[\s\S]*?<input type="checkbox">[\s\S]*?<span>Use general knowledge<\/span>/, `${label}: custom question UI should expose an explicit conservative-default knowledge choice`);
+    assert.match(content, /data-action="translate">[\s\S]*?<span class="action-label">Translate<\/span>[\s\S]*?<\/button>/, `${label}: floating popup should expose one-click Translate`);
+    assert.equal((content.match(/<svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">/g) || []).length, 6, `${label}: all six floating actions should use the same accessible icon shell`);
+    assert.match(content, /\.action-icon \{[\s\S]*?width:17px; height:17px; flex:0 0 17px; color:var\(--accent\);[\s\S]*?stroke-width:1\.7;[\s\S]*?stroke-linecap:round; stroke-linejoin:round;/, `${label}: action icons should share one compact line-icon treatment`);
+    assert.match(content, /class="knowledge-option"[\s\S]*?<input type="checkbox" checked>[\s\S]*?<span>Use general knowledge<\/span>/, `${label}: custom question UI should expose a default-on general-knowledge choice`);
+    assert.match(content, /\.hide-row \{ display:flex; \}[\s\S]*?\.hide \{[\s\S]*?width:auto; margin-left:auto; padding:5px 8px;[\s\S]*?font-size:12px;/, `${label}: Hide this should be compact and right-aligned`);
+    assert.match(content, /<button class="hide" type="button">Hide this<\/button>/, `${label}: the footer action should use the concise Hide this label`);
+    assert.doesNotMatch(content, /generalKnowledge\.checked = false;/, `${label}: new selection surfaces should not reset general knowledge to off`);
     assert.doesNotMatch(content, /class="language-select"|class="translate-view"/, `${label}: floating Translate should not open a second screen`);
     assert.match(content, /submitSelection\(button\.dataset\.action, '', interfaceLanguage\)/, `${label}: every floating preset should submit directly in the plugin language`);
     assert.match(content, /const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';/, `${label}: floating shortcuts should request their labels from the extension background`);
     assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
     assert.match(content, /allowGeneralKnowledge: action === 'custom' \? generalKnowledge\?\.checked === true : undefined/, `${label}: only custom questions should submit the broader grounding choice`);
-    assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?button\.textContent = strings\[action\];/, `${label}: localization should update direction and visible labels on the existing surface`);
+    assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?\.action-label`\);[\s\S]*?label\.textContent = strings\[action\];/, `${label}: localization should update action labels without replacing their icons`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
     assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
@@ -28415,7 +28422,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /msg\?\.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION'[\s\S]*?getSelectionShortcutLocalization\(msg\.locale\)/, `${label}: the background should serve a validated localization bundle to the classic content script`);
     assert.match(background, /selectionAction = normalizeSelectionAction\(menuItemId\.slice\(CONTEXT_MENU_ACTION_PREFIX\.length\)\)/, `${label}: native action ids should be normalized before travelling with the prompt`);
     assert.match(background, /normalizeSelectionAction\(msg\.selectionAction\)\s*\?\s*\{ selectionAction: normalizeSelectionAction\(msg\.selectionAction\) \}/, `${label}: only a normalized shortcut action should reach agent run options`);
-    assert.match(content, /data-action="humanize">Humanize<\/button>/, `${label}: floating popup should expose one-click Humanize`);
+    assert.match(content, /data-action="humanize">[\s\S]*?<span class="action-label">Humanize<\/span>[\s\S]*?<\/button>/, `${label}: floating popup should expose one-click Humanize`);
 
     // The action travels one hop at a time and every hop re-validates it, so a
     // page-authored message cannot name a skill route of its own.
