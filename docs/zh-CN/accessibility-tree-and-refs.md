@@ -86,6 +86,13 @@ role "accessible name" [ref_id] href="..." type="..." placeholder="..." value=".
 
 代理在几乎每一轮中都将此作为首个操作——它比截图更快、更便宜，并且适用于纯文本模型。
 
+对于完整的 Gmail 会话读取，第一个结果会提供活动会话可信的
+`conversationRootRefId`。覆盖要求使用 `filter:"all"` 和 `maxDepth:15`
+从第 1 页到终止页读取该锚定子树，并原样复用每个 `continuationArgs`。
+文档根节点的续页还会遍历收件箱，因此不计入覆盖。**Collapse all**
+状态是所有邮件已展开的独立证据。每个新的精确页面都算作有界进展；
+重复、跳页、过期、树已变化或错误 `ref_id` 的读取则不算。
+
 ### `click_ax({ref_id})`
 
 1. 通过 `__wb_ax_lookup()` 解析 `ref_id`

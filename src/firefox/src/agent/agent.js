@@ -4,7 +4,7 @@ import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSAT
 import { formatErrorMessage } from '../error-format.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
-import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
+import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readCompletenessMadeProgress, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
 import { LoopDetector } from './loop-detector.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
@@ -2741,6 +2741,13 @@ export class Agent extends LoopDetector {
   _checkDeliveryObservationStreak(tabId, name, args = {}, result = null, options = {}) {
     const observation = this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
       && !isNetworkMutation(name, args);
+    if (observation && options.requiredReadProgress === true) {
+      // A new page in the runtime-required complete-thread scope is bounded,
+      // deterministic progress, not aimless research drift. Let exact trusted
+      // continuations finish even when the thread is longer than eight pages.
+      this.deliveryObservationStreaks.delete(tabId);
+      return { kind: 'none' };
+    }
     if (observation && options.verifiedPendingAction === true) {
       // A successful observation that clears the completion invariant's
       // post-action verification debt is meaningful progress. Start the next
@@ -5145,7 +5152,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
       const completionStateAfterTool = this._recordCompletionToolResult(tabId, fnName, fnArgs, toolResult);
-      this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
+      const readCompletenessBeforeTool = this.readCompletenessStates.get(tabId) || null;
+      const readCompletenessAfterTool = this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
+      const requiredReadProgress = readCompletenessMadeProgress(
+        readCompletenessBeforeTool,
+        readCompletenessAfterTool,
+      );
       // Keep binary attachments out of updates, traces, and persisted tool
       // result text. They are delivered through dedicated message channels.
       let attachedImage = null;
@@ -5456,6 +5468,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             completionStateBeforeTool,
             completionStateAfterTool,
           ),
+          requiredReadProgress,
           // Ask research can lose a useful deliverable to the same observation
           // drift as Act/Dev. Any interactive mode that advertises `done`
           // gets the second-checkpoint terminal recovery.

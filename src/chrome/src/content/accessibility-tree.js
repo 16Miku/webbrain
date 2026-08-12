@@ -915,11 +915,48 @@
     };
   }
 
-  function detectGmailConversationExpansionState() {
-    if (window.location.hostname !== 'mail.google.com') return null;
+  function isGmailConversationRoute() {
+    if (window.location.hostname !== 'mail.google.com') return false;
+    const hashSegments = String(window.location.hash || '')
+      .replace(/^#/, '')
+      .split('/')
+      .filter(Boolean);
+    return hashSegments.length >= 2;
+  }
+
+  function detectGmailConversationRoot() {
+    if (!isGmailConversationRoute()) return null;
+    const candidates = [];
+    try {
+      for (const candidate of document.querySelectorAll('main,[role="main"]')) {
+        // Message HTML is untrusted and may contain arbitrary landmarks. A
+        // nested fake main must never become trusted whole-thread coverage.
+        if (candidate.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (!isVisible(candidate)) continue;
+        const gmailMessageCount = candidate.querySelectorAll('.adn,.ads').length;
+        const semanticMessageCount = candidate.querySelectorAll('[role="article"],[role="listitem"]').length;
+        const hasEditor = !!candidate.querySelector('textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+        const hasHeading = !!candidate.querySelector('h1,h2,h3,[role="heading"]');
+        if (!gmailMessageCount && !semanticMessageCount && !hasEditor && !hasHeading) continue;
+        const rect = candidate.getBoundingClientRect();
+        const visibleArea = Math.max(0, rect.width) * Math.max(0, rect.height);
+        const score = (gmailMessageCount * 1000000)
+          + (hasEditor ? 100000 : 0)
+          + (semanticMessageCount * 1000)
+          + (hasHeading ? 100 : 0)
+          + Math.min(99, Math.round(visibleArea / 10000));
+        candidates.push({ candidate, score });
+      }
+    } catch (e) {}
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.candidate || null;
+  }
+
+  function detectGmailConversationExpansionState(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
     let collapsed = false;
     try {
-      for (const control of document.querySelectorAll('button,[role="button"]')) {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
         if (!isVisible(control)) continue;
         // Message bodies are untrusted page data and may contain arbitrary
         // buttons. Only Gmail chrome outside message/article containers can
@@ -937,10 +974,15 @@
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
-      const conversationExpansionState = refId ? null : detectGmailConversationExpansionState();
-      const conversationMetadata = conversationExpansionState
-        ? { conversationExpansionState }
-        : {};
+      const conversationRoot = detectGmailConversationRoot();
+      const conversationRootRefId = conversationRoot ? getOrMintRef(conversationRoot) : '';
+      const conversationExpansionState = conversationRoot
+        ? detectGmailConversationExpansionState(conversationRoot)
+        : null;
+      const conversationMetadata = {
+        ...(conversationRootRefId ? { conversationRootRefId } : {}),
+        ...(conversationExpansionState ? { conversationExpansionState } : {}),
+      };
       // Bound every default tree, including `all`. The model-facing tool
       // result is capped separately at 8k chars by default; leaving `all`
       // unlimited made that later generic limiter chop serialized JSON and

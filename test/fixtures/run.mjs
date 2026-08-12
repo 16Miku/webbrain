@@ -218,6 +218,19 @@ async function setupAccessibilityTreeHtml(page, html, sourcePath) {
   await page.waitForFunction(() => typeof window.__generateAccessibilityTree === 'function');
 }
 
+async function setupAccessibilityTreeGmailHtml(page, html, sourcePath) {
+  await page.route('https://mail.google.com/**', route => {
+    if (route.request().resourceType() === 'document') {
+      return route.fulfill({ body: html, contentType: 'text/html' });
+    }
+    return route.fulfill({ body: '', contentType: 'text/plain' });
+  });
+  await page.goto('https://mail.google.com/mail/u/0/#inbox/FMfc123', { waitUntil: 'domcontentloaded' });
+  const src = await readFile(sourcePath, 'utf-8');
+  await page.addScriptTag({ content: src });
+  await page.waitForFunction(() => typeof window.__generateAccessibilityTree === 'function');
+}
+
 async function rawContentCall(page, action, params) {
   return page.evaluate(({ action, params }) => new Promise((resolve) => {
     const ret = window.__wb_handler(
@@ -1018,6 +1031,122 @@ test('accessibility tree (Firefox): long-conversation paging keeps Chrome parity
   const firefoxPages = await readAllConversationTreePages(page, firefoxAccessibilityTreeJsPath, 'firefox');
   if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeLongConversationPages)) {
     throw new Error('Chrome/Firefox long-conversation pages differ');
+  }
+});
+
+const gmailThreadScopeFixture = `<!doctype html>
+  <style>
+    body { margin: 0; font: 16px sans-serif; }
+    main { display: block; width: 900px; min-height: 600px; }
+    #background-inbox { min-height: 120px; }
+    article { display: block; min-height: 24px; }
+  </style>
+  <main id="background-inbox" aria-label="Inbox">
+    <button aria-label="Expand all">Unrelated background control</button>
+    <div role="listitem">Unrelated inbox conversation that must never enter trusted thread coverage</div>
+  </main>
+  <main id="active-thread" aria-label="A chat about WebBrain and your work">
+    <h1>A chat about WebBrain and your work</h1>
+    <button id="real-collapse" aria-label="Collapse all">Collapse all</button>
+    ${Array.from({ length: 72 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      const injected = index === 0
+        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button aria-label="Expand all">Expand all</button></main>'
+        : '';
+      return `<article class="adn" role="listitem" aria-label="Thread message ${number}">${injected}<p>Message ${number}: project details, decisions, context, and follow-up.</p></article>`;
+    }).join('')}
+    <div role="textbox" contenteditable="true" aria-label="Message Body">Unsent reply draft</div>
+  </main>`;
+
+let chromeGmailThreadScopePages = [];
+
+async function readTrustedGmailThreadPages(page, sourcePath, label) {
+  await setupAccessibilityTreeGmailHtml(page, gmailThreadScopeFixture, sourcePath);
+  const discovery = await page.evaluate(() => window.__generateAccessibilityTree('visible', 12, 1200, null, 1));
+  if (!/^ref_\d+$/.test(String(discovery.conversationRootRefId || ''))) {
+    throw new Error(`${label}: trusted Gmail conversation root ref is missing: ${JSON.stringify(discovery)}`);
+  }
+  if (discovery.conversationExpansionState !== 'expanded') {
+    throw new Error(`${label}: top-level Collapse all did not produce expanded evidence`);
+  }
+  const rootIdentity = await page.evaluate(refId => ({
+    trustedId: window.__wb_ax_lookup(refId)?.id || '',
+    fakeRef: window.__wb_ax_ref(document.getElementById('fake-main')),
+  }), discovery.conversationRootRefId);
+  if (rootIdentity.trustedId !== 'active-thread') {
+    throw new Error(`${label}: trusted Gmail root resolved to ${rootIdentity.trustedId || 'nothing'}`);
+  }
+  if (rootIdentity.fakeRef === discovery.conversationRootRefId) {
+    throw new Error(`${label}: message-body landmark spoofed the trusted Gmail root`);
+  }
+
+  const pages = [];
+  let args = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 1200,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  };
+  for (let guard = 0; guard < 30; guard += 1) {
+    const result = await page.evaluate(current => window.__generateAccessibilityTree(
+      current.filter,
+      current.maxDepth,
+      current.maxChars,
+      current.ref_id,
+      current.page,
+    ), args);
+    if (result.conversationRootRefId !== discovery.conversationRootRefId) {
+      throw new Error(`${label}: trusted Gmail root drifted during pagination`);
+    }
+    pages.push(result);
+    if (!result.hasMore) break;
+    const expected = { ...args, page: args.page + 1 };
+    if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
+      throw new Error(`${label}: Gmail thread continuation lost its trusted anchor: ${JSON.stringify(result.continuationArgs)}`);
+    }
+    args = result.continuationArgs;
+  }
+  if (pages.length < 2 || pages.at(-1)?.hasMore !== false) {
+    throw new Error(`${label}: trusted Gmail thread did not reach a terminal page`);
+  }
+  const combined = pages.map(result => result.pageContent).join('\n');
+  if (!combined.includes('Message 001') || !combined.includes('Message 072')) {
+    throw new Error(`${label}: trusted Gmail pagination lost thread messages`);
+  }
+  if (combined.includes('Unrelated inbox conversation')) {
+    throw new Error(`${label}: trusted Gmail pagination leaked the background inbox`);
+  }
+
+  const spoofOnlyExpansion = await page.evaluate(() => {
+    document.getElementById('real-collapse').remove();
+    return window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+  });
+  if (spoofOnlyExpansion.conversationExpansionState != null) {
+    throw new Error(`${label}: message-body Expand all spoofed expansion evidence`);
+  }
+  return pages.map(result => ({
+    page: result.page,
+    totalChars: result.totalChars,
+    hasMore: result.hasMore,
+    truncated: result.truncated,
+    pageContent: normalizeTreeRefs(result.pageContent),
+    conversationRootRefId: 'ref_trusted_root',
+    conversationExpansionState: result.conversationExpansionState,
+    continuationArgs: result.continuationArgs
+      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root' }
+      : null,
+  }));
+}
+
+test('accessibility tree (Chrome): Gmail whole-thread reads use one trusted active-thread anchor', async (page) => {
+  chromeGmailThreadScopePages = await readTrustedGmailThreadPages(page, accessibilityTreeJsPath, 'chrome');
+});
+
+test('accessibility tree (Firefox): Gmail trusted thread metadata and pagination keep Chrome parity', async (page) => {
+  const firefoxPages = await readTrustedGmailThreadPages(page, firefoxAccessibilityTreeJsPath, 'firefox');
+  if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeGmailThreadScopePages)) {
+    throw new Error('Chrome/Firefox trusted Gmail thread pages differ');
   }
 });
 

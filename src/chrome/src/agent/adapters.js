@@ -15837,7 +15837,8 @@ const ADAPTERS = [
 - Sending: the "Send" button is bottom-left of the compose window; "Send + Schedule" arrow is next to it for scheduled send.
 - Search uses operators: from:, to:, subject:, has:attachment, before:YYYY/MM/DD.
 - Before drafting a reply or forward, make the whole conversation visible and read it from oldest to newest. Prefer Gmail's top-level "Expand all" control; if it is not exposed and Gmail keyboard shortcuts are available, press ; to expand the entire conversation. Expand any still-collapsed message header individually. "Show trimmed content" reveals quoted text inside one message and is not a substitute for expanding the conversation; open it only when that quoted material is needed.
-- Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one; continue with the returned nextPage when truncated.`,
+- For a complete-thread Gmail read, use the first accessibility result's trusted conversationRootRefId as ref_id with filter:"all" and maxDepth:15, then reuse every exact returned continuationArgs until hasMore:false. Never paginate document-root page 2+, because that walks unrelated inbox rows instead of the active conversation.
+- Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads for ordinary current-message or compose tasks, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one.`,
   },
   {
     name: 'yahoo-mail',
