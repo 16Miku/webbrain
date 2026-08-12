@@ -932,8 +932,16 @@
   function isGmailConversationHash(hash) {
     const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
     const route = String(segments[0] || '').toLowerCase();
-    const minimumSegments = route === 'search' || route === 'label' || route === 'category' ? 3 : 2;
-    return segments.length >= minimumSegments && isGmailThreadIdentifier(segments.at(-1));
+    const threadId = segments.at(-1);
+    if (!isGmailThreadIdentifier(threadId)) return false;
+    if (route === 'label') {
+      // Label names may contain slashes and may themselves look like legacy
+      // hexadecimal thread IDs. Only Gmail's unambiguous modern ID prefix can
+      // terminate a variable-depth label conversation route.
+      return segments.length >= 3 && /^FMfc[A-Za-z0-9_-]+$/.test(threadId);
+    }
+    if (route === 'search' || route === 'category') return segments.length === 3;
+    return segments.length === 2;
   }
 
   function isGmailConversationRoute() {

@@ -5394,8 +5394,10 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail search results were mistaken for a legacy thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail label results were mistaken for a legacy thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#category/deadbeefcafe', 'gmail'), false, `${label}: hexadecimal Gmail category results were mistaken for a legacy thread`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/deadbeefcafe', 'gmail'), false, `${label}: nested hexadecimal Gmail label was mistaken for a legacy thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#inbox/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail inbox thread was rejected`);
     assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#search/project/deadbeefcafe', 'gmail'), true, `${label}: legacy hexadecimal Gmail search thread was rejected`);
+    assert.equal(runtime.isCommunicationThreadContext('https://mail.google.com/mail/u/0/#label/Projects/Subproject/FMfc123', 'gmail'), true, `${label}: modern nested-label Gmail thread was rejected`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/messages/123-456', 'twitter'), true, `${label}: direct-message thread route was missed`);
     assert.equal(runtime.isCommunicationThreadContext('https://x.com/example-profile', 'twitter'), false, `${label}: social profile was mistaken for a message thread`);
     assert.equal(runtime.isCommunicationThreadContext('https://example.com/article', ''), false, `${label}: unrelated page was mistaken for a communication thread`);
