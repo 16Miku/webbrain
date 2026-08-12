@@ -105,20 +105,29 @@ serializer applies only to an accessibility-tree call that actually requests
 more than 6,000 characters. Other tools keep their existing result budgets.
 
 For a required complete-thread read, the runtime automatically adds
-`maxChars:12000` to the first root `filter:"all"` call when the provider is
-eligible. A model may also request the expanded page for a whole-document read.
-Every truncated result remains deterministic: callers must reuse the exact
+`maxChars:12000` to the first discovery call when the provider is eligible. A
+model may also request the expanded page for a whole-document read. Every
+truncated result remains deterministic: callers must reuse the exact
 `continuationArgs`, including `maxChars`, until `hasMore:false`. Increasing the
 window reduces model round trips; it does not turn a multi-page tree into proof
 of complete coverage.
 
 Pagination also cannot prove that an application rendered hidden conversation
-content. For Gmail complete-thread reads, WebBrain requires a fresh full-depth
-root tree that exposes **Collapse all**; a terminal tree that still exposes
-**Expand all** remains incomplete. Ask mode is read-only, so if messages are
-still collapsed it reports that limitation and asks the user to expand them or
-switch to Act mode. Act/Dev can activate Expand all and then perform the fresh
-root read.
+content. On a Gmail thread route, a discovery read returns a trusted
+`conversationRootRefId` selected from visible Gmail-owned conversation
+structure. Complete-thread coverage then requires exact page 1-to-terminal
+pagination of that anchored subtree with `filter:"all"` and `maxDepth:15`.
+Document-root continuation pages traverse unrelated inbox UI and never count;
+arbitrary message-body or generic refs cannot substitute for the trusted root.
+
+Gmail expansion remains separate evidence. The page must expose **Collapse all**;
+a terminal anchored tree observed while **Expand all** is active remains
+incomplete. Ask mode is read-only, so if messages are still collapsed it reports
+that limitation and asks the user to expand them or switch to Act mode. Act/Dev
+can activate Expand all and then restart the trusted anchored read at page 1.
+Each newly accepted exact page counts as bounded completeness progress, so a
+long thread can exceed the ordinary eight-observation delivery checkpoint;
+repeated, skipped, stale, changed-tree, and wrong-scope reads still do not.
 
 Trace storage has a separate diagnostic truncation policy. A trace showing only
 the head of a large result does not mean the model received the same truncated

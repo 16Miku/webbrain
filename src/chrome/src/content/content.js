@@ -4393,7 +4393,7 @@
           }
           const documentToken = _axDocumentToken();
           const refScopeUrl = location.href;
-          const { filter, maxDepth, maxChars, ref_id, page } = msg.params || {};
+          const { filter, maxDepth, maxChars, ref_id, page, tree_revision } = msg.params || {};
           const gate = detectPageGate();
           if (gate) {
             const pageGate = pageGatePublic(gate);
@@ -4419,7 +4419,7 @@
             };
           }
           return {
-            ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page),
+            ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision),
             documentToken,
             refScopeUrl,
           };

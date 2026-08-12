@@ -86,6 +86,15 @@ L'outil principal de lecture de page. Retourne la chaîne d'arbre rendue plus le
 
 L'agent l'utilise comme première action à presque chaque tour — c'est plus rapide et moins coûteux qu'une capture d'écran, et fonctionne sur les modèles textuels uniquement.
 
+Pour une lecture complète d'un fil Gmail, le premier résultat fournit un
+`conversationRootRefId` fiable pour la conversation active. La couverture exige
+les pages 1 à terminales de ce sous-arbre ancré avec `filter:"all"` et
+`maxDepth:15`, en réutilisant chaque `continuationArgs` exact. Les continuations
+de la racine du document parcourent aussi la boîte de réception et ne comptent
+pas. L'état **Collapse all** constitue une preuve distincte que tous les messages
+sont développés. Chaque nouvelle page exacte est une progression bornée ; une
+page répétée, sautée, périmée ou issue d'un autre `ref_id` ne l'est pas.
+
 ### `click_ax({ref_id})`
 
 1. Résout `ref_id` via `__wb_ax_lookup()`

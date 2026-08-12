@@ -384,25 +384,25 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
     addUnique(actions, {
       id: 'summarize-thread',
       label: 'Summarize this thread',
-      prompt: 'Use get_accessibility_tree with filter:"all" and follow every returned continuationArgs until hasMore:false to read the complete email or message thread. Summarize key points, decisions, and unanswered questions.',
+      prompt: 'Read the complete active email or message thread with get_accessibility_tree. In Gmail, use the first result\'s trusted conversationRootRefId as ref_id with filter:"all" and maxDepth:15 instead of paginating the document root. Follow every exact returned continuationArgs until hasMore:false, then summarize key points, decisions, and unanswered questions.',
       runOptions: firstToolRunOptions(
         'summarize-thread',
         'get_accessibility_tree',
         completeTreeArgs(15),
         'Read the complete conversation thread before summarizing it.',
-        ['Call get_accessibility_tree with filter:"all" and maxDepth:15.', 'Follow every continuationArgs until hasMore:false.', 'Summarize the complete thread from the returned page data.'],
+        ['Discover the active thread, then anchor Gmail reads to its trusted conversationRootRefId.', 'Follow every exact continuationArgs until hasMore:false.', 'Summarize the complete thread from the returned thread data.'],
       ),
     });
     addUnique(actions, {
       id: 'find-followups',
       label: 'Find follow-ups',
-      prompt: 'Use get_accessibility_tree with filter:"all" and follow every returned continuationArgs until hasMore:false to read the complete conversation. Extract action items, deadlines, people to follow up with, and open questions.',
+      prompt: 'Read the complete active conversation with get_accessibility_tree. In Gmail, use the first result\'s trusted conversationRootRefId as ref_id with filter:"all" and maxDepth:15 instead of paginating the document root. Follow every exact returned continuationArgs until hasMore:false, then extract action items, deadlines, people to follow up with, and open questions.',
       runOptions: firstToolRunOptions(
         'find-followups',
         'get_accessibility_tree',
         completeTreeArgs(15),
         'Read the complete conversation thread before extracting follow-ups.',
-        ['Call get_accessibility_tree with filter:"all" and maxDepth:15.', 'Follow every continuationArgs until hasMore:false.', 'Extract follow-ups from the complete thread data.'],
+        ['Discover the active thread, then anchor Gmail reads to its trusted conversationRootRefId.', 'Follow every exact continuationArgs until hasMore:false.', 'Extract follow-ups from the complete thread data.'],
       ),
     });
   }
