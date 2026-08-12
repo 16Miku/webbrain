@@ -411,6 +411,7 @@ const selectionScopeTitleEl = document.getElementById('selection-scope-title');
 const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
 const historyBtn = document.getElementById('btn-history');
+const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
@@ -7750,6 +7751,7 @@ async function sendMessage(extraChatParams = {}) {
       intentFailureMessage: t('sp.plan.intent_unavailable'),
       apiMutationsAllowed: apiMutationsAllowedForSend,
       foreground: foregroundForSend,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
       ...(runCaptureDirective ? {
         runCapture: {
           kind: runCaptureDirective.kind,
@@ -12060,6 +12062,38 @@ historyBtn?.addEventListener('click', () => {
 settingsBtn.addEventListener('click', () => {
   browser.runtime.openOptionsPage();
 });
+
+const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+
+function standaloneWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(360, Math.round(availableWidth * 0.9)));
+  const height = Math.min(availableHeight, Math.max(560, Math.round(availableHeight * 0.9)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+if (expandBtn) {
+  if (isStandaloneWindow) {
+    expandBtn.style.display = 'none';
+  } else {
+    expandBtn.addEventListener('click', () => {
+      const standaloneUrl = browser.runtime.getURL('src/ui/sidepanel.html?mode=ask&standalone=true');
+      browser.windows.create({
+        url: standaloneUrl,
+        type: 'popup',
+        ...standaloneWindowBounds(),
+      });
+    });
+  }
+}
 
 // --- Language picker (compact trigger + accessible custom listbox) ---
 if (languageSelect) {

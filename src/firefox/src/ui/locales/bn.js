@@ -62,6 +62,7 @@ export default {
   'sp.btn.history': "চ্যাট ইতিহাস",
   'sp.btn.settings': "সেটিংস",
   "sp.btn.clear": "নতুন কথোপকথন",
+  'sp.btn.expand': 'নতুন উইন্ডোতে খুলুন',
   'sp.btn.send': "পাঠান",
   'sp.chat.follow_response': 'উত্তর অনুসরণ করুন',
   'sp.chat.jump_latest': 'সর্বশেষে যান',

@@ -113,6 +113,7 @@ export default {
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Tetapan',
   "sp.btn.clear": "Perbualan baharu",
+  'sp.btn.expand': 'Buka dalam tetingkap baharu',
   'sp.btn.send': 'Hantar',
   'sp.chat.follow_response': 'Ikuti jawapan',
   'sp.chat.jump_latest': 'Pergi ke yang terkini',

@@ -113,6 +113,7 @@ export default {
   'sp.btn.language': 'Langue',
   'sp.btn.settings': 'Paramètres',
   "sp.btn.clear": "Nouvelle conversation",
+  'sp.btn.expand': 'Ouvrir dans une nouvelle fenêtre',
   'sp.btn.send': 'Envoyer',
   'sp.chat.follow_response': 'Suivre la réponse',
   'sp.chat.jump_latest': 'Aller au plus récent',

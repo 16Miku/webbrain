@@ -2253,6 +2253,7 @@ async function handleMessage(msg, sender) {
           ...(isWorkflowRun ? { independentRun: true } : {}),
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
+          ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
@@ -2388,6 +2389,7 @@ async function handleMessage(msg, sender) {
         const runOptions = {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
+          ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
           ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
               sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),

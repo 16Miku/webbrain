@@ -113,6 +113,7 @@ export default {
   'sp.btn.language': 'Wika',
   'sp.btn.settings': 'Mga Setting',
   "sp.btn.clear": "Bagong pag-uusap",
+  'sp.btn.expand': 'Buksan sa bagong window',
   'sp.btn.send': 'Ipadala',
   'sp.chat.follow_response': 'Subaybayan ang sagot',
   'sp.chat.jump_latest': 'Pumunta sa pinakabago',

@@ -27528,6 +27528,87 @@ test('selection shortcut grounding metadata suppresses competing page images', a
   }
 });
 
+test('standalone chat runs omit active extension-page context and screenshots', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    let activeProviderCalls = 0;
+    let visionProviderCalls = 0;
+    let screenshotCalls = 0;
+    const agent = new AgentClass({
+      getActive() {
+        activeProviderCalls += 1;
+        return { supportsVision: true };
+      },
+      async getVisionProvider() {
+        visionProviderCalls += 1;
+        return null;
+      },
+    });
+    agent._captureBudgetedAutoScreenshot = async () => {
+      screenshotCalls += 1;
+      return {
+        dataUrl: 'data:image/png;base64,AA==',
+        width: 100,
+        height: 100,
+        coordAligned: true,
+      };
+    };
+
+    const enriched = await agent._enrichUserMessageWithCurrentPage(
+      1001,
+      [],
+      'Answer without using a browser page.',
+      null,
+      { standaloneChat: true },
+    );
+    assert.equal(typeof enriched.content, 'string', `${label}: standalone chat should remain text-only`);
+    assert.match(enriched.content, /Answer without using a browser page/, `${label}: standalone prompt was lost`);
+    assert.doesNotMatch(
+      enriched.content,
+      /Current page context|chrome-extension:|moz-extension:|Initial viewport|SCREENSHOT/,
+      `${label}: standalone chat received page-derived context`,
+    );
+    assert.equal(activeProviderCalls, 0, `${label}: standalone enrichment inspected main vision capability`);
+    assert.equal(visionProviderCalls, 0, `${label}: standalone enrichment invoked a vision provider`);
+    assert.equal(screenshotCalls, 0, `${label}: standalone enrichment captured the chat UI`);
+  }
+});
+
+test('standalone window transport, sizing, and translations are mirrored', async () => {
+  const localeCodes = [
+    'ar', 'bn', 'de', 'en', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko',
+    'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
+  ];
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(panel, /isStandaloneWindow \? \{ standaloneChat: true \} : \{\}/, `${label}: standalone flag is not sent with chat_start`);
+    assert.equal(
+      [...background.matchAll(/msg\.standaloneChat === true \? \{ standaloneChat: true \} : \{\}/g)].length,
+      2,
+      `${label}: standalone flag must reach both streaming paths`,
+    );
+    assert.match(agent, /const standaloneChat = runOptions\?\.standaloneChat === true;/, `${label}: agent does not recognize standalone runs`);
+    assert.match(agent, /if \(!selectionScoped && !standaloneChat\)/, `${label}: standalone run still reads the active tab`);
+    assert.match(agent, /selectionScoped \|\| standaloneChat \|\| hasPriorUserTurn/, `${label}: standalone run still reaches screenshot enrichment`);
+    assert.match(panel, /availableWidth \* 0\.9/, `${label}: popup width is not derived from available screen size`);
+    assert.match(panel, /availableHeight \* 0\.9/, `${label}: popup height is not derived from available screen size`);
+    assert.doesNotMatch(panel, /type: 'popup',\s*width: 400,\s*height: 600/, `${label}: popup retained fixed compact dimensions`);
+  }
+
+  for (const locale of localeCodes) {
+    const chromeLocale = (await import(pathToFileURL(path.join(ROOT, `src/chrome/src/ui/locales/${locale}.js`)).href)).default;
+    const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
+    assert.equal(firefoxLocale['sp.btn.expand'], chromeLocale['sp.btn.expand'], `${locale}: expand translation differs across browsers`);
+    assert.ok(chromeLocale['sp.btn.expand']?.trim(), `${locale}: expand translation is empty`);
+    if (locale !== 'en') {
+      assert.notEqual(chromeLocale['sp.btn.expand'], english['sp.btn.expand'], `${locale}: expand label fell back to English`);
+    }
+  }
+});
+
 test('selection-only model requests exclude prior conversation context', async () => {
   for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],

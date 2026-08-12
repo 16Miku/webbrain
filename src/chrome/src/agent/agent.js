@@ -3721,6 +3721,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
+    const standaloneChat = runOptions?.standaloneChat === true;
     // Dynamic trusted state belongs in the per-turn user context, not the
     // cache-stable system prompt. The same enriched message is passed to the
     // planner gate and the main agent loop, so neither has to guess the clock.
@@ -3731,7 +3732,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Collect URL + title via chrome.tabs (cheap, no debugger needed).
     let url = '';
     let title = '';
-    if (!selectionScoped) {
+    if (!selectionScoped && !standaloneChat) {
       try {
         const tab = await chrome.tabs.get(tabId);
         url = tab?.url || '';
@@ -3817,7 +3818,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Selected-text shortcuts have an explicit source boundary. Do not attach
     // page title, adapter guidance, a vision description, or raw pixels that a
     // small multimodal model could mistake for the authoritative selection.
-    if (selectionScoped || hasPriorUserTurn) {
+    if (selectionScoped || standaloneChat || hasPriorUserTurn) {
       return { role: 'user', content: contextLine + userMessage };
     }
 
