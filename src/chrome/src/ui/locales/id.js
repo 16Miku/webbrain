@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "Rekam tindakan Anda sebagai alur kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan alur kerja tersimpan berdasarkan ID",
   "sp.workflows.run_prompt": "Jalankan alur kerja tersimpan “{name}”",
+  "sp.workflows.standalone_unavailable": "Jendela mandiri ini hanya untuk mode Tanya. Buka WebBrain di panel samping untuk menjalankan alur kerja tersimpan dalam mode Bertindak.",
   "sp.workflows.parameters_for": "Masukkan parameter untuk “{name}”. Nilai hanya digunakan untuk proses ini.",
   "sp.workflows.parameter_required": "“{name}” wajib diisi.",
   "sp.slash.save_workflow": "Simpan proses terekam terbaru yang berhasil",

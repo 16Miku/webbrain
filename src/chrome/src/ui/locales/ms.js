@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
   "sp.workflows.run_prompt": "Jalankan aliran kerja tersimpan “{name}”",
+  "sp.workflows.standalone_unavailable": "Tetingkap kendiri ini hanya untuk mod Tanya. Buka WebBrain dalam panel sisi untuk menjalankan aliran kerja tersimpan dalam mod Tindakan.",
   "sp.workflows.parameters_for": "Masukkan parameter untuk “{name}”. Nilai hanya digunakan untuk larian ini.",
   "sp.workflows.parameter_required": "“{name}” diperlukan.",
   "sp.slash.save_workflow": "Simpan pelaksanaan berjaya terkini yang direkodkan",

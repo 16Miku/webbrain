@@ -130,6 +130,7 @@ export default {
   "sp.slash.teach": "Acties opnemen als opgeslagen workflow",
   'sp.slash.run_workflow': 'Voer een opgeslagen workflow uit op ID',
   'sp.workflows.run_prompt': 'Opgeslagen workflow "{name}" uitvoeren',
+  "sp.workflows.standalone_unavailable": "Dit zelfstandige venster is alleen voor de Vraagmodus. Open WebBrain in het zijpaneel om opgeslagen workflows in de Actiemodus uit te voeren.",
   'sp.workflows.parameters_for': 'Voer parameters in voor "{name}". Waarden worden alleen voor deze uitvoering gebruikt.',
   'sp.workflows.parameter_required': '"{name}" is verplicht.',
   'sp.slash.save_workflow': 'Sla de laatste succesvolle opgenomen uitvoering op',

@@ -806,6 +806,7 @@ export default {
   "sp.slash.teach": "Eylemlerinizi kayıtlı bir iş akışı olarak kaydedin",
   "sp.slash.run_workflow": "Kaydedilmiş iş akışını kimliğe göre çalıştır",
   "sp.workflows.run_prompt": "Kaydedilmiş “{name}” iş akışını çalıştır",
+  "sp.workflows.standalone_unavailable": "Bu bağımsız pencere yalnızca Sor modu içindir. Kaydedilmiş iş akışlarını Harekete Geç modunda çalıştırmak için WebBrain'i yan panelde açın.",
   "sp.workflows.parameters_for": "“{name}” için parametreleri girin. Değerler yalnızca bu çalıştırmada kullanılır.",
   "sp.workflows.parameter_required": "“{name}” zorunludur.",
   "sp.slash.save_workflow": "En son başarılı kaydedilmiş çalışmayı sakla",

@@ -167,6 +167,7 @@ export default {
   'sp.slash.import_config': 'WebBrain-Konfigurations-Snapshot als JSON importieren',
   'sp.slash.import_config_file': 'WebBrain-Konfigurations-JSON-Datei auswählen',
   'sp.workflows.run_prompt': 'Gespeicherten Workflow „{name}" ausführen',
+  "sp.workflows.standalone_unavailable": "Dieses eigenständige Fenster ist nur für den Fragen-Modus vorgesehen. Öffnen Sie WebBrain in der Seitenleiste, um gespeicherte Workflows im Handeln-Modus auszuführen.",
   'sp.workflows.parameters_for': 'Parameter für „{name}" eingeben. Die Werte werden nur für diesen Durchlauf verwendet.',
   'sp.workflows.parameter_required': '„{name}" ist erforderlich.',
   'sp.recommended.title': 'Vorgeschlagene Aktionen',

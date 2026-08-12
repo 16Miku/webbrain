@@ -3698,9 +3698,15 @@ function requestSavedWorkflowFile(tabId) {
 
 const boundWorkflowParameterForms = new WeakSet();
 
+function rejectStandaloneWorkflowRun() {
+  if (!isStandaloneWindow) return false;
+  showComposerToast(t('sp.workflows.standalone_unavailable'), { duration: 6000 });
+  return true;
+}
+
 async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
   if (!workflow?.id || currentTabId !== tabId) return false;
-  if (isStandaloneWindow) return false;
+  if (rejectStandaloneWorkflowRun()) return false;
   if (!(await ensureActMode())) return false;
   inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
   autoResizeInput();
@@ -3793,7 +3799,7 @@ function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
 }
 
 async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
-  if (isStandaloneWindow) return false;
+  if (rejectStandaloneWorkflowRun()) return false;
   try {
     const res = await sendToBackground('get_saved_workflow', { id: String(id || '').trim() });
     if (currentTabId !== tabId) return;
@@ -7435,7 +7441,10 @@ function reportTrailingRunCaptureError(directive, error, tabId) {
 
 async function sendMessage(extraChatParams = {}) {
   if (isStandaloneWindow) {
-    if (extraChatParams?.workflowId) return false;
+    if (extraChatParams?.workflowId) {
+      rejectStandaloneWorkflowRun();
+      return false;
+    }
     const retryOptions = extraChatParams?.__retry;
     extraChatParams = {
       ...(extraChatParams || {}),

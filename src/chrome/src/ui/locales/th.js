@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
   "sp.workflows.run_prompt": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ “{name}”",
+  "sp.workflows.standalone_unavailable": "หน้าต่างแยกนี้ใช้ได้เฉพาะโหมดถาม เปิด WebBrain ในแผงด้านข้างเพื่อเรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ในโหมดลงมือทำ",
   "sp.workflows.parameters_for": "ป้อนพารามิเตอร์สำหรับ “{name}” ค่าจะใช้สำหรับการเรียกใช้ครั้งนี้เท่านั้น",
   "sp.workflows.parameter_required": "ต้องระบุ “{name}”",
   "sp.slash.save_workflow": "บันทึกการทำงานล่าสุดที่สำเร็จและมีการติดตาม",

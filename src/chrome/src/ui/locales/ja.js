@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",
   "sp.workflows.run_prompt": "保存済みワークフロー「{name}」を実行",
+  "sp.workflows.standalone_unavailable": "このスタンドアロンウィンドウは質問モード専用です。保存済みワークフローを操作モードで実行するには、サイドパネルで WebBrain を開いてください。",
   "sp.workflows.parameters_for": "「{name}」のパラメーターを入力してください。値は今回の実行だけに使用されます。",
   "sp.workflows.parameter_required": "「{name}」は必須です。",
   "sp.slash.save_workflow": "直近の成功した記録済み実行を保存",

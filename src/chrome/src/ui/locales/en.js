@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "Record your actions as a saved workflow",
   'sp.slash.run_workflow': 'Run a saved workflow by ID',
   'sp.workflows.run_prompt': 'Run saved workflow “{name}”',
+  "sp.workflows.standalone_unavailable": "This standalone window is Ask-only. Open WebBrain in the side panel to run saved workflows in Act mode.",
   'sp.workflows.parameters_for': 'Enter parameters for “{name}”. Values are used only for this run.',
   'sp.workflows.parameter_required': '“{name}” is required.',
   'sp.slash.save_workflow': 'Save the latest successful recorded run',

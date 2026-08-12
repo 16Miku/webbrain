@@ -798,6 +798,7 @@ export default {
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
   "sp.workflows.run_prompt": "Uruchom zapisany przepływ pracy „{name}”",
+  "sp.workflows.standalone_unavailable": "To samodzielne okno działa tylko w trybie Pytaj. Otwórz WebBrain w panelu bocznym, aby uruchamiać zapisane przepływy pracy w trybie Działaj.",
   "sp.workflows.parameters_for": "Wprowadź parametry dla „{name}”. Wartości zostaną użyte tylko w tym uruchomieniu.",
   "sp.workflows.parameter_required": "Pole „{name}” jest wymagane.",
   "sp.slash.save_workflow": "Zapisz ostatnie udane zarejestrowane wykonanie",

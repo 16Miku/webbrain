@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",
   "sp.workflows.run_prompt": "تشغيل سير العمل المحفوظ «{name}»",
+  "sp.workflows.standalone_unavailable": "هذه النافذة المستقلة مخصصة لوضع السؤال فقط. افتح WebBrain في اللوحة الجانبية لتشغيل مهام سير العمل المحفوظة في وضع التنفيذ.",
   "sp.workflows.parameters_for": "أدخل معلمات «{name}». تُستخدم القيم لهذا التشغيل فقط.",
   "sp.workflows.parameter_required": "«{name}» مطلوب.",
   "sp.slash.save_workflow": "حفظ أحدث تشغيل مسجل وناجح",

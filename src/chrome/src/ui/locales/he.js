@@ -430,6 +430,7 @@ export default {
   "sp.slash.teach": "הקלטת הפעולות שלך כתהליך עבודה שמור",
   "sp.slash.run_workflow": "הפעלת תהליך עבודה שמור לפי מזהה",
   "sp.workflows.run_prompt": "הפעלת תהליך העבודה השמור „{name}”",
+  "sp.workflows.standalone_unavailable": "החלון העצמאי הזה מיועד למצב שאל בלבד. פתחו את WebBrain בחלונית הצד כדי להריץ תהליכי עבודה שמורים במצב פעולה.",
   "sp.workflows.parameters_for": "יש להזין פרמטרים עבור „{name}”. הערכים משמשים להרצה זו בלבד.",
   "sp.workflows.parameter_required": "„{name}” הוא שדה חובה.",
   "sp.slash.save_workflow": "שמירת ההרצה המוקלטת והמוצלחת האחרונה",

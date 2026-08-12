@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "اقدامات خود را به‌صورت گردش‌کار ذخیره‌شده ضبط کنید",
   'sp.slash.run_workflow': "یک گردش کار ذخیره شده توسط ID را اجرا کنید",
   'sp.workflows.run_prompt': "اجرای گردش کار ذخیره شده \"{name}\"",
+  "sp.workflows.standalone_unavailable": "این پنجرهٔ مستقل فقط برای حالت پرسش است. برای اجرای گردش‌کارهای ذخیره‌شده در حالت اقدام، WebBrain را در پنل کناری باز کنید.",
   'sp.workflows.parameters_for': "پارامترهای \"{name}\" را وارد کنید. مقادیر فقط برای این اجرا استفاده می شود.",
   'sp.workflows.parameter_required': "\"{name}\" مورد نیاز است.",
   'sp.slash.save_workflow': "آخرین اجرای موفق ثبت شده را ذخیره کنید",

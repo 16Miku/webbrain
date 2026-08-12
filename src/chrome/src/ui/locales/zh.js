@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",
   "sp.workflows.run_prompt": "运行已保存的工作流“{name}”",
+  "sp.workflows.standalone_unavailable": "此独立窗口仅支持“询问”模式。请在侧边栏中打开 WebBrain，以“操作”模式运行已保存的工作流。",
   "sp.workflows.parameters_for": "请输入“{name}”的参数。参数值仅用于本次运行。",
   "sp.workflows.parameter_required": "“{name}”为必填项。",
   "sp.slash.save_workflow": "保存最近一次成功且已记录的运行",
