@@ -14,6 +14,13 @@ function isGmailThreadIdentifier(value = '') {
   return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
 }
 
+function isGmailConversationHash(hash = '') {
+  const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+  const route = String(segments[0] || '').toLowerCase();
+  const minimumSegments = route === 'search' || route === 'label' || route === 'category' ? 3 : 2;
+  return segments.length >= minimumSegments && isGmailThreadIdentifier(segments.at(-1));
+}
+
 export function normalizeReadScope(value) {
   const scope = String(value || '').trim();
   return READ_SCOPES.has(scope) ? scope : null;
@@ -44,8 +51,7 @@ export function isCommunicationThreadContext(url = '', adapterName = '') {
   const adapter = String(adapterName || '').trim().toLowerCase();
   if (EMAIL_HOST_RE.test(host) || EMAIL_ADAPTERS.has(adapter)) {
     if (/(?:^|\.)google\.com$/i.test(host) || host === 'gmail.com') {
-      const hashSegments = parsed.hash.replace(/^#/, '').split('/').filter(Boolean);
-      return hashSegments.length >= 2 && isGmailThreadIdentifier(hashSegments.at(-1));
+      return isGmailConversationHash(parsed.hash);
     }
     return /(?:^|[/?#])(?:messages?|message|thread|conversation|id|p)(?:[/?#])[^/?#\s]+/i.test(route)
       || /(?:^|[/?#])(?:inbox|sent|all|archive|folders?|labels?)(?:[/?#])[^/?#\s]+/i.test(route);

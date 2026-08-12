@@ -1163,19 +1163,24 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
       searchList: classify('#search/project'),
       labelList: classify('#label/Work'),
       categoryList: classify('#category/promotions'),
+      searchHexList: classify('#search/deadbeefcafe'),
+      labelHexList: classify('#label/deadbeefcafe'),
+      categoryHexList: classify('#category/deadbeefcafe'),
       searchThread: classify('#search/project/FMfc123'),
       labelThread: classify('#label/Work/FMfc123'),
       categoryThread: classify('#category/promotions/FMfc123'),
+      inboxLegacyThread: classify('#inbox/deadbeefcafe'),
+      searchLegacyThread: classify('#search/project/deadbeefcafe'),
     };
     window.history.replaceState(null, '', '#inbox/FMfc123');
     return results;
   });
-  for (const routeName of ['searchList', 'labelList', 'categoryList']) {
+  for (const routeName of ['searchList', 'labelList', 'categoryList', 'searchHexList', 'labelHexList', 'categoryHexList']) {
     if (routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState != null) {
       throw new Error(`${label}: Gmail ${routeName} exposed trusted conversation metadata`);
     }
   }
-  for (const routeName of ['searchThread', 'labelThread', 'categoryThread']) {
+  for (const routeName of ['searchThread', 'labelThread', 'categoryThread', 'inboxLegacyThread', 'searchLegacyThread']) {
     if (!routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState !== 'expanded') {
       throw new Error(`${label}: Gmail ${routeName} lost trusted conversation metadata`);
     }

@@ -929,13 +929,16 @@
     return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
   }
 
+  function isGmailConversationHash(hash) {
+    const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+    const route = String(segments[0] || '').toLowerCase();
+    const minimumSegments = route === 'search' || route === 'label' || route === 'category' ? 3 : 2;
+    return segments.length >= minimumSegments && isGmailThreadIdentifier(segments.at(-1));
+  }
+
   function isGmailConversationRoute() {
     if (window.location.hostname !== 'mail.google.com') return false;
-    const hashSegments = String(window.location.hash || '')
-      .replace(/^#/, '')
-      .split('/')
-      .filter(Boolean);
-    return hashSegments.length >= 2 && isGmailThreadIdentifier(hashSegments.at(-1));
+    return isGmailConversationHash(window.location.hash);
   }
 
   function detectGmailConversationRoot() {
