@@ -62,7 +62,7 @@ export default {
   'sp.btn.history': 'Chat-Verlauf',
   'sp.btn.settings': 'Einstellungen',
   "sp.btn.clear": "Neues Gespräch",
-  'sp.btn.expand': 'Open in new window',
+  'sp.btn.expand': 'In neuem Fenster öffnen',
   'sp.btn.send': 'Senden',
   'sp.chat.follow_response': 'Antwort folgen',
   'sp.chat.jump_latest': 'Zum neuesten',

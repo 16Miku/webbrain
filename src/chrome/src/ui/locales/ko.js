@@ -113,7 +113,7 @@ export default {
   'sp.btn.language': '언어',
   'sp.btn.settings': '설정',
   "sp.btn.clear": "새 대화",
-  'sp.btn.expand': 'Open in new window',
+  'sp.btn.expand': '새 창에서 열기',
   'sp.btn.send': '보내기',
   'sp.chat.follow_response': '답변 따라가기',
   'sp.chat.jump_latest': '최신으로 이동',

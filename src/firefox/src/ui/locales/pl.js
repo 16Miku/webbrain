@@ -59,7 +59,7 @@ export default {
   'sp.btn.language': 'Język',
   'sp.btn.settings': 'Ustawienia',
   "sp.btn.clear": "Nowa rozmowa",
-  'sp.btn.expand': 'Open in new window',
+  'sp.btn.expand': 'Otwórz w nowym oknie',
   'sp.btn.send': 'Wyślij',
   'sp.chat.follow_response': 'Śledź odpowiedź',
   'sp.chat.jump_latest': 'Przejdź do najnowszego',

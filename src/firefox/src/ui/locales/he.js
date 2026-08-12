@@ -62,7 +62,7 @@ export default {
   "sp.btn.history": "היסטוריית צ'אט",
   "sp.btn.settings": "הגדרות",
   "sp.btn.clear": "שיחה חדשה",
-  'sp.btn.expand': 'Open in new window',
+  'sp.btn.expand': 'פתיחה בחלון חדש',
   "sp.btn.send": "שלח",
   'sp.chat.follow_response': 'מעקב אחר התשובה',
   'sp.chat.jump_latest': 'מעבר לעדכון האחרון',
