@@ -9,6 +9,7 @@
 
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
@@ -741,6 +742,7 @@ const {
 const {
   assertMatchingArchiveVersion,
   assertStoreSafeFlagLicenseEntries,
+  assertStoreReviewableJavaScript,
   listZipEntryNames,
 } = await import(
   'file://' + path.join(ROOT, 'scripts/build-zip.mjs').replace(/\\/g, '/')
@@ -12054,6 +12056,80 @@ test('build-zip rejects filenames that would disagree with archived manifests', 
     () => assertMatchingArchiveVersion('23.0.0', '22.4.5', 'Chrome manifest'),
     /Chrome manifest is 22\.4\.5, but the release package version is 23\.0\.0/
   );
+});
+
+test('build-zip rejects store-obscuring JavaScript constructions', () => {
+  assert.doesNotThrow(() => assertStoreReviewableJavaScript(
+    "return '<script>' + content + '</script>';\nconst scheme = 'javascript:';",
+    'transparent fixture',
+  ));
+  assert.throws(
+    () => assertStoreReviewableJavaScript(
+      "return LT + SCRIPT + GT + content + LT + '/' + SCRIPT + GT;",
+      'split tag fixture',
+    ),
+    /split tag fixture contains split PDF\.js <script> construction/,
+  );
+  assert.throws(
+    () => assertStoreReviewableJavaScript(
+      `const probe = 'data:image/png;base64,${'A'.repeat(128)}';`,
+      'inline image fixture',
+    ),
+    /inline image fixture contains long inline base64 media payload/,
+  );
+});
+
+test('vendored PDF.js and multimodal probes remain store-reviewable in both builds', () => {
+  const pdfFiles = ['pdf.mjs', 'pdf.worker.mjs'];
+  for (const browser of ['chrome', 'firefox']) {
+    for (const filename of pdfFiles) {
+      const relativePath = `src/${browser}/vendor/pdfjs/${filename}`;
+      const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+      assert.doesNotThrow(() => assertStoreReviewableJavaScript(source, relativePath));
+      assert.match(source, /return '<script>' \+ content \+ '<\/script>';/);
+      assert.match(source, /var JS = 'javascript:';/);
+    }
+
+    const managerPath = `src/${browser}/src/providers/manager.js`;
+    const manager = fs.readFileSync(path.join(ROOT, managerPath), 'utf8');
+    assert.doesNotThrow(() => assertStoreReviewableJavaScript(manager, managerPath));
+    assert.doesNotMatch(manager, /VISION_CONNECTION_TEST_IMAGE\s*=\s*['"]data:/);
+    assert.doesNotMatch(manager, /function silentWavBlob\s*\(/);
+  }
+
+  for (const filename of pdfFiles) {
+    assert.equal(
+      fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/pdfjs', filename), 'utf8'),
+      fs.readFileSync(path.join(ROOT, 'src/firefox/vendor/pdfjs', filename), 'utf8'),
+      `${filename} must remain byte-identical across browser packages`,
+    );
+  }
+});
+
+test('multimodal connection-test assets preserve the prior image and silent WAV bytes', () => {
+  const expectedHashes = {
+    'vision-connection-test.png': '514fd28946340ea4e7e7bb7817d876ef1679456c635fbf3afc1b978031e30482',
+    'transcription-connection-test.wav': '56d4af65701c26df20bd4021eda95b6e830348ce3a746086079fe89285548dc9',
+  };
+  for (const [filename, expectedHash] of Object.entries(expectedHashes)) {
+    const chromeAsset = fs.readFileSync(path.join(ROOT, 'src/chrome/assets', filename));
+    const firefoxAsset = fs.readFileSync(path.join(ROOT, 'src/firefox/assets', filename));
+    assert.deepEqual(firefoxAsset, chromeAsset, `${filename} differs between browser packages`);
+    assert.equal(createHash('sha256').update(chromeAsset).digest('hex'), expectedHash);
+  }
+
+  const png = fs.readFileSync(path.join(ROOT, 'src/chrome/assets/vision-connection-test.png'));
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(png.readUInt32BE(16), 96);
+  assert.equal(png.readUInt32BE(20), 48);
+
+  const wav = fs.readFileSync(path.join(ROOT, 'src/chrome/assets/transcription-connection-test.wav'));
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(wav.toString('ascii', 8, 12), 'WAVE');
+  assert.equal(wav.readUInt16LE(22), 1, 'WAV must remain mono');
+  assert.equal(wav.readUInt32LE(24), 8000, 'WAV sample rate changed');
+  assert.equal(wav.readUInt16LE(34), 16, 'WAV sample width changed');
+  assert.ok(wav.subarray(44).every(byte => byte === 0), 'WAV probe must remain silent');
 });
 
 test('tracked store archives contain the Opera-safe flag license filename', () => {
@@ -74679,36 +74755,6 @@ test('dedicated vision retries without unsupported LM Studio reasoning controls'
 });
 
 test('multimodal connection tests exercise image and audio routes instead of only model listing', async () => {
-  for (const [label, ProviderManager] of [
-    ['chrome', ProviderManagerCh],
-    ['firefox', ProviderManagerFx],
-  ]) {
-    const visionCalls = [];
-    const visionManager = new ProviderManager();
-    visionManager.getVisionProvider = async () => ({
-      model: 'qwen/qwen3.5-9b',
-      baseUrl: 'http://127.0.0.1:1234/v1',
-      chat: async (messages, options) => {
-        visionCalls.push({ messages, options });
-        return { content: 'WB7' };
-      },
-    });
-    const visionResult = await visionManager.testVisionProvider();
-    assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
-    assert.equal(visionCalls.length, 1);
-    assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
-    assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
-
-    visionManager.getVisionProvider = async () => ({
-      model: 'text-only-model',
-      baseUrl: 'http://127.0.0.1:1234/v1',
-      chat: async () => ({ content: 'I can respond without reading the image.' }),
-    });
-    const textOnlyResult = await visionManager.testVisionProvider();
-    assert.equal(textOnlyResult.ok, false, `${label}: a text-only response must not pass the vision probe`);
-    assert.match(textOnlyResult.error, /did not read the image probe correctly/);
-  }
-
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
   const originalFetch = globalThis.fetch;
@@ -74718,6 +74764,9 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       ['firefox', ProviderManagerFx],
     ]) {
       const storageApi = {
+        runtime: {
+          getURL: relativePath => `https://${label}.extension.test/${relativePath}`,
+        },
         storage: {
           local: {
             get: async () => ({
@@ -74733,14 +74782,50 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       };
       globalThis.chrome = storageApi;
       globalThis.browser = storageApi;
+      let endpointResponse = null;
       let request = null;
       globalThis.fetch = async (url, options) => {
-        request = { url: String(url), options };
-        return new Response(JSON.stringify({ text: '' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const requestedUrl = String(url);
+        const assetPrefix = `https://${label}.extension.test/`;
+        if (requestedUrl.startsWith(assetPrefix)) {
+          const relativePath = requestedUrl.slice(assetPrefix.length);
+          return new Response(fs.readFileSync(path.join(ROOT, `src/${label}`, relativePath)), {
+            status: 200,
+          });
+        }
+        request = { url: requestedUrl, options };
+        return endpointResponse();
       };
+
+      const visionCalls = [];
+      const visionManager = new ProviderManager();
+      visionManager.getVisionProvider = async () => ({
+        model: 'qwen/qwen3.5-9b',
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        chat: async (messages, options) => {
+          visionCalls.push({ messages, options });
+          return { content: 'WB7' };
+        },
+      });
+      const visionResult = await visionManager.testVisionProvider();
+      assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
+      assert.equal(visionCalls.length, 1);
+      assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+      assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+
+      visionManager.getVisionProvider = async () => ({
+        model: 'text-only-model',
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        chat: async () => ({ content: 'I can respond without reading the image.' }),
+      });
+      const textOnlyResult = await visionManager.testVisionProvider();
+      assert.equal(textOnlyResult.ok, false, `${label}: a text-only response must not pass the vision probe`);
+      assert.match(textOnlyResult.error, /did not read the image probe correctly/);
+
+      endpointResponse = () => new Response(JSON.stringify({ text: '' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
 
       const result = await new ProviderManager().testTranscriptionProvider();
       assert.equal(result.ok, true, `${label}: valid silent audio probe should pass`);
@@ -74749,8 +74834,15 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       assert.ok(request.options.body instanceof FormData);
       assert.equal(request.options.body.get('model'), 'whisper-local');
       assert.ok(request.options.body.get('file') instanceof Blob);
+      assert.equal(
+        createHash('sha256')
+          .update(Buffer.from(await request.options.body.get('file').arrayBuffer()))
+          .digest('hex'),
+        '56d4af65701c26df20bd4021eda95b6e830348ce3a746086079fe89285548dc9',
+        `${label}: transcription request changed the silent WAV payload`,
+      );
 
-      globalThis.fetch = async () => new Response(JSON.stringify({
+      endpointResponse = () => new Response(JSON.stringify({
         error: 'Unexpected endpoint or method.',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       const rejected = await new ProviderManager().testTranscriptionProvider();
