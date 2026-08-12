@@ -2,6 +2,25 @@ const COMPATIBILITY_PRESETS = new Set(['auto', 'openai', 'qwen', 'deepseek', 'op
 const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
 const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']);
+const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
+  'azure-openai',
+  'llamacpp',
+  'lmstudio',
+  'localai',
+  'ollama',
+  'openai',
+  'openrouter',
+  'sglang',
+  'vllm',
+]);
+const LOCAL_OPENAI_COMPAT_PROVIDER_NAMES = new Set([
+  'llamacpp',
+  'lmstudio',
+  'localai',
+  'ollama',
+  'sglang',
+  'vllm',
+]);
 
 export const RESERVED_EXTRA_BODY_KEYS = new Set([
   'model',
@@ -20,6 +39,64 @@ const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function clean(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+/**
+ * Normalize an OpenAI-compatible API base without rewriting provider-specific
+ * paths. Bare origins such as LM Studio's http://127.0.0.1:1234 need /v1;
+ * explicit paths such as /api/v1 or /compatible-mode/v1 are already complete.
+ */
+export function normalizeOpenAICompatibleBaseUrl(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    if ((url.protocol === 'http:' || url.protocol === 'https:')
+        && url.pathname === '/'
+        && !url.search
+        && !url.hash) {
+      return `${trimmed}/v1`;
+    }
+  } catch { /* preserve validation behavior at the eventual request site */ }
+  return trimmed;
+}
+
+export function openAiCompatiblePayloadError(payload, maxLength = 500) {
+  const error = payload?.error;
+  if (!error) return '';
+  const detail = typeof error === 'string'
+    ? error
+    : String(error.message || error.detail || JSON.stringify(error));
+  return detail.slice(0, maxLength);
+}
+
+export function visionGenerationOptions(maxTokens = 800, { reasoningControl = true } = {}) {
+  const extraBody = {};
+  if (reasoningControl) {
+    // LM Studio 0.4.8+ honors these fields for Chat Completions. They prevent
+    // Qwen vision models from spending the entire output budget in a hidden
+    // reasoning channel and leaving no caption for the browser agent.
+    extraBody.reasoning_effort = 'none';
+    extraBody.reasoning_tokens = 0;
+    extraBody.chat_template_kwargs = { enable_thinking: false };
+  }
+  return { maxTokens, temperature: 0, extraBody };
+}
+
+export function unsupportedVisionGenerationControl(error) {
+  const message = String(error?.message || error || '');
+  return /reasoning_effort|reasoning_tokens|chat_template_kwargs|enable_thinking/i.test(message);
+}
+
+function isDirectDeepSeekConfig(config = {}) {
+  const providerName = clean(config.providerName);
+  if (providerName === 'deepseek') return true;
+  try {
+    if (new URL(config.baseUrl || '').hostname.toLowerCase() === 'api.deepseek.com') return true;
+  } catch {}
+  return normalizeProviderCompatibility(config).preset === 'deepseek'
+    && clean(config.category) !== 'local'
+    && !LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName);
 }
 
 export function isPlainObject(value) {
@@ -205,6 +282,62 @@ export function compatibilityRequestBody(config = {}) {
       : { reasoning_effort: effort };
   }
   return {};
+}
+
+/**
+ * Per-request controls for classifier/planner calls that need short,
+ * machine-readable JSON instead of hidden reasoning or free-form prose.
+ *
+ * This maps protocol families, not individual model ids. Unknown endpoints
+ * receive no non-standard fields and continue to rely on the planner prompt
+ * plus local parsing. Callers can set includeResponseFormat:false for the
+ * repair attempt so a server that rejects structured-output parameters still
+ * gets one portable prompt-only retry.
+ */
+export function plannerRequestBody(config = {}, {
+  schema = null,
+  schemaName = 'webbrain_planner',
+  includeResponseFormat = true,
+  disableThinking = true,
+} = {}) {
+  const providerName = clean(config.providerName);
+  const preset = effectiveCompatibilityPreset(config);
+  const isLocalOpenAICompat = clean(config.category) === 'local'
+    || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName);
+  const isDirectDeepSeek = isDirectDeepSeekConfig(config) && !isLocalOpenAICompat;
+  const body = {};
+
+  if (disableThinking) {
+    if (preset === 'openrouter') {
+      body.reasoning = { enabled: false };
+    } else if (isDirectDeepSeek) {
+      body.thinking = { type: 'disabled' };
+    } else if ((preset === 'qwen' && isLocalOpenAICompat) || providerName === 'vllm' || providerName === 'sglang') {
+      body.chat_template_kwargs = { enable_thinking: false };
+    } else if (preset === 'openai' && shouldUseOpenAIResponsesApi(config)) {
+      // Responses reasoning models may not accept a fully disabled mode. Keep
+      // the classifier budget small without recreating a provider error.
+      body.reasoning = { effort: 'minimal' };
+    }
+  }
+
+  if (!includeResponseFormat) return body;
+  if (isDirectDeepSeek) {
+    // The direct DeepSeek API supports JSON Object mode, not JSON Schema.
+    body.response_format = { type: 'json_object' };
+    return body;
+  }
+  if (schema && STRUCTURED_OUTPUT_PROVIDER_NAMES.has(providerName)) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: String(schemaName || 'webbrain_planner').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
+        strict: true,
+        schema,
+      },
+    };
+  }
+  return body;
 }
 
 export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody = undefined) {

@@ -464,8 +464,8 @@
       border-color: currentColor;
     }
     .provider-search {
-      flex: 0 1 240px;
-      min-width: 180px;
+      flex: 0 1 200px;
+      min-width: 160px;
       margin: 0 0 0 auto;
     }
     .provider-search input {
@@ -1222,16 +1222,6 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.verbose.label"></div>
-          <div class="setting-desc" data-i18n="st.display.verbose.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-verbose">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
           <div class="setting-label" data-i18n="st.display.selection_shortcut.label"></div>
           <div class="setting-desc" data-i18n="st.display.selection_shortcut.desc"></div>
         </div>
@@ -1272,46 +1262,6 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.scheduled_tasks.label"></div>
-          <div class="setting-desc" data-i18n="st.display.scheduled_tasks.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-scheduled-tasks" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.scheduled_confirm.label"></div>
-          <div class="setting-desc" data-i18n="st.display.scheduled_confirm.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-scheduled-confirm" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.notify_sound.label"></div>
-          <div class="setting-desc" data-i18n="st.display.notify_sound.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-notify-sound" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.completion_confetti.label"></div>
-          <div class="setting-desc" data-i18n="st.display.completion_confetti.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-completion-confetti" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
           <div class="setting-label"><span data-i18n="st.display.max_steps.label"></span> <span id="steps-value" style="color:var(--accent);font-weight:700;margin-left:4px;">50</span></div>
           <div class="setting-desc" data-i18n="st.display.max_steps.desc"></div>
         </div>
@@ -1328,21 +1278,44 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.traces_link.label"></div>
-          <div class="setting-desc" data-i18n="st.display.traces_link.desc"></div>
+          <div class="setting-label" data-i18n="st.display.auto_screenshot.label"></div>
+          <div class="setting-desc" data-i18n="st.display.auto_screenshot.desc"></div>
         </div>
-        <a id="btn-open-traces" href="traces.html" target="_blank"
-           style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;"
-           data-i18n="st.display.traces_link.open"></a>
+        <select id="select-auto-screenshot" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
+          <option value="off" data-i18n="st.display.auto_screenshot.off"></option>
+          <option value="navigation" data-i18n="st.display.auto_screenshot.navigation"></option>
+          <option value="state_change" data-i18n="st.display.auto_screenshot.state_change"></option>
+          <option value="every_step" data-i18n="st.display.auto_screenshot.every_step"></option>
+        </select>
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.history_link.label"></div>
-          <div class="setting-desc" data-i18n="st.display.history_link.desc"></div>
+          <div class="setting-label" data-i18n="st.display.cost_session_limit.label"></div>
+          <div class="setting-desc" data-i18n="st.display.cost_session_limit.desc"></div>
+          <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
         </div>
-        <a id="btn-open-history" href="history.html" target="_blank"
-           style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;"
-           data-i18n="st.display.history_link.open"></a>
+        <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
+          <span>$</span>
+          <input type="number" id="input-cost-session-limit" min="0" step="0.01" value="10"
+                 style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
+        </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label"><span data-i18n="st.display.cost_total_limit.label"></span> <span id="cost-spent-value" style="color:var(--accent);font-weight:700;margin-left:4px;">$0.00 / $10.00</span></div>
+          <div class="setting-desc" data-i18n="st.display.cost_total_limit.desc"></div>
+          <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+          <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
+            <span>$</span>
+            <input type="number" id="input-cost-total-limit" min="0" step="0.01" value="10"
+                   style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
+          </label>
+          <button type="button" id="btn-reset-cost-spend"
+                  style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"
+                  data-i18n="st.display.cost_reset"></button>
+        </div>
       </div>
       <div class="setting-row">
         <div class="setting-info">
@@ -1358,6 +1331,66 @@
       <details class="advanced-settings">
         <summary data-i18n="st.display.advanced"></summary>
         <div class="advanced-settings-body">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.tracing.label"></div>
+              <div class="setting-desc" data-i18n-html="st.display.tracing.desc_html"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-tracing">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.verbose.label"></div>
+              <div class="setting-desc" data-i18n="st.display.verbose.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-verbose">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.scheduled_tasks.label"></div>
+              <div class="setting-desc" data-i18n="st.display.scheduled_tasks.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-scheduled-tasks" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.scheduled_confirm.label"></div>
+              <div class="setting-desc" data-i18n="st.display.scheduled_confirm.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-scheduled-confirm" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.notify_sound.label"></div>
+              <div class="setting-desc" data-i18n="st.display.notify_sound.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-notify-sound" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.completion_confetti.label"></div>
+              <div class="setting-desc" data-i18n="st.display.completion_confetti.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-completion-confetti" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label" id="auto-group-tabs-label" data-i18n="st.display.auto_group_tabs.label"></div>
@@ -1466,57 +1499,6 @@
               <input type="checkbox" id="toggle-openai-ask-streaming" checked>
               <span class="toggle-slider"></span>
             </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.auto_screenshot.label"></div>
-              <div class="setting-desc" data-i18n="st.display.auto_screenshot.desc"></div>
-            </div>
-            <select id="select-auto-screenshot" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
-              <option value="off" data-i18n="st.display.auto_screenshot.off"></option>
-              <option value="navigation" data-i18n="st.display.auto_screenshot.navigation"></option>
-              <option value="state_change" data-i18n="st.display.auto_screenshot.state_change"></option>
-              <option value="every_step" data-i18n="st.display.auto_screenshot.every_step"></option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.tracing.label"></div>
-              <div class="setting-desc" data-i18n-html="st.display.tracing.desc_html"></div>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" id="toggle-tracing">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.cost_session_limit.label"></div>
-              <div class="setting-desc" data-i18n="st.display.cost_session_limit.desc"></div>
-              <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
-            </div>
-            <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
-              <span>$</span>
-              <input type="number" id="input-cost-session-limit" min="0" step="0.01" value="10"
-                     style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label"><span data-i18n="st.display.cost_total_limit.label"></span> <span id="cost-spent-value" style="color:var(--accent);font-weight:700;margin-left:4px;">$0.00 / $10.00</span></div>
-              <div class="setting-desc" data-i18n="st.display.cost_total_limit.desc"></div>
-              <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-              <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
-                <span>$</span>
-                <input type="number" id="input-cost-total-limit" min="0" step="0.01" value="10"
-                       style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
-              </label>
-              <button type="button" id="btn-reset-cost-spend"
-                      style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"
-                      data-i18n="st.display.cost_reset"></button>
-            </div>
           </div>
           <div class="setting-row">
             <div class="setting-info">

@@ -302,7 +302,7 @@ export default {
   'sp.plan.timed_out': 'O tempo para aprovação expirou',
   'sp.plan.timed_out_hint': 'Nada foi executado. Tente novamente para revisar um novo plano.',
   'sp.plan.awaiting_review': "Aprove ou cancele o plano acima antes de enviar outra mensagem.",
-  'sp.plan.intent_unavailable': "O planejador não conseguiu retornar uma saída estruturada válida após um reparo. Continuando este turno no modo somente leitura.",
+  'sp.plan.intent_unavailable': "O planejamento falhou após duas tentativas. Continuando no modo Act com as proteções normais.",
 
   // Permission prompt (structured; returns once/always/deny — no free text)
   'sp.perm.question': "WebBrain deseja {verb} {host}. Permitir?",
@@ -555,7 +555,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Transmitir respostas no modo Ask",
   'st.display.openai_ask_streaming.desc': "Mostre as respostas do provedor assim que chegarem no modo Ask. As chamadas de ferramenta aguardam um evento final do fluxo; execu??es Act, Dev, agendadas, na nuvem e Continue permanecem sem streaming. Ativado por padr?o.",
   'st.display.plan_before_act.label': "Planeje antes de agir",
-  'st.display.plan_before_act.desc': "Act e Dev sempre executam uma verificação de intenção estruturada antes das ferramentas. Try (padrão) também cria planos completos, mas pode reutilizar um plano recentemente aprovado para um breve acompanhamento; Strict constrói um plano completo a cada passo. Tente voltar para uma curva somente leitura se a intenção ou o planejamento permanecerem inválidos após um reparo; Paradas rigorosas antes das ferramentas.",
+  'st.display.plan_before_act.desc': "Os modos Act e Dev sempre executam uma verificação estruturada de intenção antes das ferramentas. Tentar (padrão) também cria planos completos, mas pode reutilizar um plano aprovado recentemente em um acompanhamento curto; Estrito cria um plano completo a cada turno. Tentar repete uma vez e, se a intenção ou o planejamento ainda forem inválidos, continua no modo Act com um aviso; Estrito para antes das ferramentas.",
   'st.display.plan_before_act.try': "Tente planejar (padrão)",
   'st.display.plan_before_act.strict': "Planejamento rigoroso",
   'st.display.plan_before_act.off': "Desligado",

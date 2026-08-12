@@ -77,8 +77,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
     try { data = await res.json(); } catch {
       throw new Error('llama.cpp returned invalid JSON in chat response.');
     }
-    const choice = data.choices?.[0];
-    const message = choice?.message;
+    const message = this._chatCompletionMessage(data, 'llama.cpp');
 
     return {
       content: message?.content || '',

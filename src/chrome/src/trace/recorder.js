@@ -1,4 +1,5 @@
 import { normalizeRuntimeTraceConfig } from './runtime-config.js';
+import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
 
 /**
@@ -183,13 +184,27 @@ async function _appendEvent(runId, kind, data) {
   }
 }
 
-export function recordLLMRequest(runId, step, payload) {
-  // Payload is large (full message array + tool schemas). Only record when
-  // verboseTracing is on — in normal mode we just record the response.
-  return _appendEvent(runId, 'llm_request', { step, ...payload });
+export function recordLLMRequest(runId, step, payload, provenanceInput = null) {
+  // Never persist full prompts, message text, tool schemas, or tool names here.
+  // The optional fourth argument is reduced to content-free provenance only.
+  let promptProvenance = null;
+  if (provenanceInput) {
+    try {
+      promptProvenance = buildPromptTraceProvenance(
+        provenanceInput.messages,
+        provenanceInput.tools,
+        provenanceInput.runtimeMode,
+      );
+    } catch { /* provenance must never break a model request */ }
+  }
+  return _appendEvent(runId, 'llm_request', {
+    step,
+    ...payload,
+    ...(promptProvenance ? { promptProvenance } : {}),
+  });
 }
 
-export function recordLLMResponse(runId, step, { content, toolCalls, usage, latencyMs, model, phase }) {
+export function recordLLMResponse(runId, step, { content, toolCalls, usage, latencyMs, model, phase, attempt, repair }) {
   return _appendEvent(runId, 'llm_response', {
     step,
     content: content || null,
@@ -204,6 +219,8 @@ export function recordLLMResponse(runId, step, { content, toolCalls, usage, late
     // Carry the phase label (e.g. 'planner') so a pre-loop planner call recorded
     // at step 0 is distinguishable from the agent loop's first step-0 response.
     ...(phase ? { phase } : {}),
+    ...(Number.isInteger(attempt) ? { attempt } : {}),
+    ...(repair === true ? { repair: true } : {}),
   });
 }
 

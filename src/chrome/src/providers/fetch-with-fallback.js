@@ -34,6 +34,7 @@ let _timeoutInitialized = false;
 let _storageListener = null;
 const TIMEOUT_FLOOR_MS = 5000;        // 5s — anything lower than this is a typo
 const TIMEOUT_CEILING_MS = 600000;    // 10 min — well past any reasonable first-byte wait
+const OFFSCREEN_FORM_DATA_CHUNK_BYTES = 256 * 1024;
 
 async function _ensureTimeoutInitialized() {
   if (_timeoutInitialized) return;
@@ -158,19 +159,29 @@ export async function fetchWithFallback(url, options = {}) {
  * chunks in one burst.)
  */
 async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal) {
+  const preparedBody = _prepareOffscreenRequestBody(fetchOptions.body);
   return await new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: 'offscreen-fetch-stream' });
     let settled = false;           // true once headers are in (or we've failed)
     let streamController = null;   // non-null while the body is streaming
+    let bodyUploadStarted = false;
+    let pendingBodyChunkAck = null;
     const encoder = new TextEncoder();
 
     const callerAbortError = () => callerSignal?.reason instanceof Error
       ? callerSignal.reason
       : new DOMException('The operation was aborted', 'AbortError');
     const cleanupCallerSignal = () => callerSignal?.removeEventListener('abort', onCallerAbort);
+    const rejectPendingBodyChunk = (error) => {
+      if (!pendingBodyChunkAck) return;
+      const pending = pendingBodyChunkAck;
+      pendingBodyChunkAck = null;
+      pending.reject(error);
+    };
     const onCallerAbort = () => {
       const error = callerAbortError();
       clearTimeout(timeoutId);
+      rejectPendingBodyChunk(error);
       if (!settled) {
         settled = true;
         cleanupCallerSignal();
@@ -187,26 +198,36 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
       try { port.disconnect(); } catch {}
     };
 
-    const timeoutId = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanupCallerSignal();
-      try { port.disconnect(); } catch {}
-      reject(new Error(`offscreen proxy timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    let timeoutId = null;
+    const armTimeout = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (settled) return;
+        const error = new Error(`offscreen proxy timed out after ${timeoutMs}ms`);
+        settled = true;
+        cleanupCallerSignal();
+        rejectPendingBodyChunk(error);
+        try { port.disconnect(); } catch {}
+        reject(error);
+      }, timeoutMs);
+    };
+    armTimeout();
 
     const failBeforeHeaders = (message, { bothFailed = false } = {}) => {
       if (settled) return;
       settled = true;
+      const error = Object.assign(new Error(message), { bothFailed });
       clearTimeout(timeoutId);
       cleanupCallerSignal();
+      rejectPendingBodyChunk(error);
       try { port.disconnect(); } catch {}
-      reject(Object.assign(new Error(message), { bothFailed }));
+      reject(error);
     };
 
     port.onDisconnect.addListener(() => {
       clearTimeout(timeoutId);
       cleanupCallerSignal();
+      rejectPendingBodyChunk(new Error('offscreen proxy disconnected'));
       if (streamController) {
         const sc = streamController;
         streamController = null;
@@ -223,6 +244,43 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
     callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
 
     port.onMessage.addListener((msg) => {
+      if (msg?.type === 'form-data-ready') {
+        if (!preparedBody.blobEntries || bodyUploadStarted || settled) return;
+        bodyUploadStarted = true;
+        armTimeout();
+        _uploadFormDataBlobs(port, preparedBody.blobEntries, {
+          callerSignal,
+          isSettled: () => settled,
+          waitForAck(entryIndex, sequence, send) {
+            return new Promise((resolveAck, rejectAck) => {
+              pendingBodyChunkAck = { entryIndex, sequence, resolve: resolveAck, reject: rejectAck };
+              try {
+                send();
+              } catch (error) {
+                pendingBodyChunkAck = null;
+                rejectAck(error);
+              }
+            });
+          },
+        }).then(() => {
+          if (settled) return;
+          armTimeout();
+          port.postMessage({ type: 'form-data-complete' });
+        }).catch((error) => {
+          failBeforeHeaders(`offscreen proxy body upload failed: ${error.message}`);
+        });
+        return;
+      }
+      if (msg?.type === 'form-data-chunk-ack') {
+        const pending = pendingBodyChunkAck;
+        if (!pending
+            || pending.entryIndex !== msg.entryIndex
+            || pending.sequence !== msg.sequence) return;
+        pendingBodyChunkAck = null;
+        armTimeout();
+        pending.resolve();
+        return;
+      }
       if (msg?.type === 'headers') {
         if (settled) return;
         settled = true;
@@ -300,10 +358,76 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
         url,
         method: fetchOptions.method || 'POST',
         headers: fetchOptions.headers || {},
-        body: fetchOptions.body || undefined,
+        ...preparedBody.message,
       });
     } catch (e) {
       failBeforeHeaders(`offscreen proxy postMessage failed: ${e.message}`);
     }
   });
+}
+
+function _prepareOffscreenRequestBody(body) {
+  if (!(typeof FormData !== 'undefined' && body instanceof FormData)) {
+    return { message: { body: body || undefined }, blobEntries: null };
+  }
+
+  const formDataEntries = [];
+  const blobEntries = [];
+  for (const [name, value] of body.entries()) {
+    if (typeof value === 'string') {
+      formDataEntries.push({ name, kind: 'text', value });
+      continue;
+    }
+    if (!(typeof Blob !== 'undefined' && value instanceof Blob)) {
+      throw new Error(`Unsupported FormData value for offscreen proxy field ${name}`);
+    }
+    const entryIndex = formDataEntries.length;
+    formDataEntries.push({
+      name,
+      kind: 'blob',
+      type: value.type || 'application/octet-stream',
+      filename: typeof value.name === 'string' && value.name ? value.name : 'blob',
+    });
+    blobEntries.push({ entryIndex, blob: value });
+  }
+  return {
+    message: { bodyType: 'form-data-chunked', formDataEntries },
+    blobEntries,
+  };
+}
+
+async function _uploadFormDataBlobs(port, blobEntries, {
+  callerSignal,
+  isSettled,
+  waitForAck,
+}) {
+  let sequence = 0;
+  for (const { entryIndex, blob } of blobEntries) {
+    for (let offset = 0; offset < blob.size; offset += OFFSCREEN_FORM_DATA_CHUNK_BYTES) {
+      if (isSettled() || callerSignal?.aborted) {
+        throw callerSignal?.reason instanceof Error
+          ? callerSignal.reason
+          : new DOMException('The operation was aborted', 'AbortError');
+      }
+      const bytes = new Uint8Array(await blob
+        .slice(offset, offset + OFFSCREEN_FORM_DATA_CHUNK_BYTES)
+        .arrayBuffer());
+      const currentSequence = sequence++;
+      await waitForAck(entryIndex, currentSequence, () => port.postMessage({
+        type: 'form-data-chunk',
+        entryIndex,
+        sequence: currentSequence,
+        value: _bytesToBase64(bytes),
+      }));
+    }
+  }
+}
+
+function _bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }

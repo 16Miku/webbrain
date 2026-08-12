@@ -1170,6 +1170,38 @@ body {
   display: none;
 }
 
+.composer-toast.memory-update-cue {
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-input));
+  color: var(--text-primary);
+}
+
+.composer-toast.memory-update-cue-enter {
+  animation: memory-update-cue-enter 480ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes memory-update-cue-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 34%, transparent);
+  }
+  55% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 8%, transparent);
+  }
+  100% {
+    transform: translateY(0);
+    box-shadow: var(--shadow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-toast.memory-update-cue-enter {
+    animation: none;
+  }
+}
+
 /* Page Inspection Banner */
 #inspection-banner {
   display: flex;

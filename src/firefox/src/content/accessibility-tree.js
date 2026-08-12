@@ -956,6 +956,7 @@
         filter: effFilter,
         maxDepth: opts.maxDepth,
         maxChars: effMaxChars,
+        ...(refId ? { ref_id: refId } : {}),
       };
       const viewport = { width: window.innerWidth, height: window.innerHeight };
       const lines = [];

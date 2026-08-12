@@ -28,7 +28,7 @@ export class LoopDetector {
     this.recentNavUrls = new Map(); // tabId -> [normalized URL, ...]
     // A model can walk ref_1, ref_2, … forever while every call looks unique
     // to the exact-argument loop detector. Track that semantic read pattern.
-    this.axReadStates = new Map(); // tabId -> { total, suspicious, nextPage, seenPages, warned }
+    this.axReadStates = new Map(); // tabId -> { total, suspicious, nextPage, scopeKey, seenPages, warned }
     // Scroll calls can keep returning success even when no pane moved. Track
     // repeated dead-end attempts separately so changing the amount or
     // interleaving reads cannot evade the generic loop detector.
@@ -302,35 +302,45 @@ export class LoopDetector {
       total: 0,
       suspicious: 0,
       nextPage: null,
+      scopeKey: null,
       seenPages: new Set(),
       warned: false,
     };
+    const scopeKeyFor = (value = {}) => JSON.stringify({
+      filter: String(value?.filter || 'all'),
+      maxDepth: Number.isFinite(Number(value?.maxDepth)) ? Number(value.maxDepth) : null,
+      maxChars: Number.isFinite(Number(value?.maxChars)) ? Number(value.maxChars) : null,
+      refId: typeof value?.ref_id === 'string' ? value.ref_id.trim() : '',
+    });
     const page = Number(args?.page || 1);
     const hasRef = typeof args?.ref_id === 'string' && args.ref_id.trim() !== '';
-    const sequentialPage = !hasRef
-      && previous.total > 0
+    const currentScopeKey = scopeKeyFor(args);
+    const currentPageKey = `${currentScopeKey}|${page}`;
+    const sequentialPage = previous.total > 0
       && Number.isFinite(previous.nextPage)
       && page === previous.nextPage
-      && !previous.seenPages.has(page);
-    const repeatedRootOrPage = !hasRef && previous.total > 0 && !sequentialPage;
+      && currentScopeKey === previous.scopeKey
+      && !previous.seenPages.has(currentPageKey);
+    const repeatedRootOrPage = previous.total > 0 && !sequentialPage;
     const content = String(result?.pageContent || '').trim();
     const meaningfulLines = content ? content.split(/\r?\n/).filter(line => line.trim()).length : 0;
-    const suspicious = hasRef || repeatedRootOrPage || (hasRef && meaningfulLines <= 1);
+    const suspicious = !sequentialPage && (hasRef || repeatedRootOrPage || (hasRef && meaningfulLines <= 1));
 
     const state = {
       total: previous.total + 1,
       suspicious: previous.suspicious + (suspicious ? 1 : 0),
       nextPage: Number.isFinite(Number(result?.nextPage)) ? Number(result.nextPage) : null,
+      scopeKey: scopeKeyFor(result?.continuationArgs || args),
       seenPages: new Set(previous.seenPages),
       warned: previous.warned,
     };
-    state.seenPages.add(page);
+    state.seenPages.add(currentPageKey);
     this.axReadStates.set(tabId, state);
 
-    // A root read followed by the exact returned nextPage can legitimately span
-    // large applications. Keep the consecutive-read cap for every other AX
-    // pattern, but do not stop a valid sequential pagination step.
-    if (state.suspicious >= 6 || (state.total >= 12 && (state.suspicious > 0 || !sequentialPage))) {
+    // A root or anchored-subtree read followed by the exact returned nextPage
+    // can legitimately span large applications. Keep the consecutive-read cap
+    // for every other AX pattern, but do not stop a valid sequential step.
+    if (state.suspicious >= 6 || (state.total >= 12 && !sequentialPage)) {
       this.axReadStates.delete(tabId);
       return {
         kind: 'stop',

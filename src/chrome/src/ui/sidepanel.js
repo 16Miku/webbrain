@@ -4424,14 +4424,15 @@ async function applyActiveRunState(numericTabId, state) {
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
     const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
-    const replayGapBeforeSeq = Number(runAssistantEl.dataset.replayGapBeforeSeq || 0);
+    const replayGapNoted = runAssistantEl.dataset.replayGapNoted === 'true'
+      || Number(runAssistantEl.dataset.replayGapBeforeSeq || 0) > 0;
     if (unavailableBeforeSeq > lastRenderedSeq
-        && unavailableBeforeSeq > replayGapBeforeSeq) {
+        && !replayGapNoted) {
       addRunProgressReplayGapNote();
       // Keep replay-loss notice deduplication separate from the rendered-event
       // cursor. A terminal snapshot can be fully acknowledged (and therefore
       // absent from events) while finalContent still needs to be restored.
-      runAssistantEl.dataset.replayGapBeforeSeq = String(unavailableBeforeSeq);
+      runAssistantEl.dataset.replayGapNoted = 'true';
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
@@ -6902,7 +6903,7 @@ function showBusySlashCommandNotice() {
   showComposerToast(t('sp.slash.busy_only_oob'), { duration: 5000 });
 }
 
-function showComposerToast(message, { duration = 2600 } = {}) {
+function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
   if (!message) return;
   let toast = document.getElementById('composer-toast');
   if (!toast) {
@@ -6915,10 +6916,19 @@ function showComposerToast(message, { duration = 2600 } = {}) {
   }
   if (isSystemHtml(message)) toast.innerHTML = message.__systemHtml;
   else toast.textContent = message;
+  toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
+  if (effect === 'memory') {
+    toast.classList.add('memory-update-cue');
+    if (!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      void toast.offsetWidth;
+      toast.classList.add('memory-update-cue-enter');
+    }
+  }
   toast.classList.remove('hidden');
   clearTimeout(composerToastTimer);
   composerToastTimer = setTimeout(() => {
     toast.classList.add('hidden');
+    toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
   }, duration);
 }
 
@@ -8284,6 +8294,13 @@ hydrateRecordingFromBackground();
 
 // --- Listen for Agent Updates ---
 
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'user_memory_created'
+      || document.visibilityState === 'hidden') return;
+  showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
+});
+
 // Recorder broadcasts — independent of the per-tab agent_update flow.
 // These are intentionally NOT scoped by tabId because the recording banner
 // is global (a panel on any tab in the window should reflect that a record
@@ -8759,6 +8776,8 @@ function handleAgentUpdateMessage(msg) {
         const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
+      } else if (data?.code === 'planner_failed_continue_act') {
+        showComposerToast(data?.message || t('sp.plan.intent_unavailable'), { duration: 10000 });
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {

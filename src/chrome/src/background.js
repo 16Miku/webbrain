@@ -40,6 +40,11 @@ import {
   normalizeSelectionAction,
   createContextMenuStorage,
 } from './context-menu-storage.js';
+import {
+  getSelectionShortcutLocalization,
+  normalizeSelectionShortcutLocale,
+  selectionTranslationLanguageLabel,
+} from './selection-shortcut-i18n.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import {
@@ -193,6 +198,12 @@ const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+let selectionShortcutLocale = 'en';
+const selectionShortcutLocaleReady = chrome.storage.local.get({ wbLocale: 'en' })
+  .then((stored) => {
+    selectionShortcutLocale = normalizeSelectionShortcutLocale(stored?.wbLocale);
+  })
+  .catch(() => {});
 
 function getContextMenuPromptStore() {
   return chrome.storage?.session || chrome.storage?.local || null;
@@ -215,8 +226,11 @@ const tabChatHandoff = createTabChatHandoffCoordinator(chrome.storage.session, {
   },
 });
 
-function createContextMenus() {
+async function createContextMenus() {
+  await selectionShortcutLocaleReady;
   if (!chrome.contextMenus?.create) return;
+  const localization = getSelectionShortcutLocalization(selectionShortcutLocale);
+  const strings = localization.strings;
 
   const create = (item) => {
     chrome.contextMenus.create(item, () => {
@@ -231,26 +245,31 @@ function createContextMenus() {
     void chrome.runtime.lastError;
     create({
       id: CONTEXT_MENU_ASK_SELECTION_ID,
-      title: 'Ask WebBrain about this',
+      title: strings.askSelection,
       contexts: ['selection'],
     });
-    create({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open side panel to chat', contexts: ['selection'] });
+    create({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.openChat, contexts: ['selection'] });
     create({ id: 'webbrain-selection-separator-1', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    for (const [action, title] of [
-      ['summarize', 'Summarize'],
-      ['explain', 'Explain'],
-      ['quiz', 'Quiz me'],
-      ['proofread', 'Proofread'],
-      ['humanize', 'Humanize'],
+    for (const [action, key] of [
+      ['summarize', 'summarize'],
+      ['explain', 'explain'],
+      ['quiz', 'quiz'],
+      ['proofread', 'proofread'],
+      ['humanize', 'humanize'],
     ]) {
-      create({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title, contexts: ['selection'] });
+      create({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings[key], contexts: ['selection'] });
     }
-    create({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to', contexts: ['selection'] });
+    create({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.translateTo, contexts: ['selection'] });
     for (const [code, title] of Object.entries(SELECTION_TRANSLATION_LANGUAGES)) {
-      create({ id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`, parentId: CONTEXT_MENU_TRANSLATE_ID, title, contexts: ['selection'] });
+      create({
+        id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`,
+        parentId: CONTEXT_MENU_TRANSLATE_ID,
+        title: selectionTranslationLanguageLabel(code, localization.locale) || title,
+        contexts: ['selection'],
+      });
     }
     create({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    create({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Ask about this', contexts: ['selection'] });
+    create({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
   });
 }
 
@@ -609,6 +628,13 @@ async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operatio
   });
 }
 
+function notifyUserMemoryCreated() {
+  chrome.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'user_memory_created',
+  }).catch(() => {});
+}
+
 function scheduleUserMemoryExtractionDrain(delayMs = USER_MEMORY_EXTRACTION_DELAY_MS) {
   if (userMemoryExtractionTimer) clearTimeout(userMemoryExtractionTimer);
   userMemoryExtractionTimer = setTimeout(() => {
@@ -701,7 +727,10 @@ async function drainUserMemoryExtractionQueue() {
         });
         const operations = parseUserMemoryExtractionResult(result?.content || '');
         const applied = await applyUserMemoryExtractionOperationsToCurrentStore(job.id, operations);
-        if (applied.changed) await syncAgentUserMemoryFromStorage();
+        if (applied.changed) {
+          await syncAgentUserMemoryFromStorage();
+          if (applied.created) notifyUserMemoryCreated();
+        }
       } catch (error) {
         if (agent._isCostAllowanceError?.(error)) {
           await removeUserMemoryExtractionJob(job.id);
@@ -905,7 +934,7 @@ async function showFirstInstallGuide(details) {
 // Initialize on install
 chrome.runtime.onInstalled.addListener(async (details) => {
   await showFirstInstallGuide(details);
-  createContextMenus();
+  await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
   await loadClarifyTimeout();
@@ -917,7 +946,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // Also load on startup
 chrome.runtime.onStartup?.addListener(async () => {
-  createContextMenus();
+  await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
   await loadClarifyTimeout();
@@ -928,6 +957,10 @@ chrome.runtime.onStartup?.addListener(async () => {
 
 // Listen for setting changes
 chrome.storage.onChanged.addListener((changes) => {
+  if (changes.wbLocale) {
+    selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
+    createContextMenus().catch(() => {});
+  }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl) {
@@ -1267,10 +1300,10 @@ async function handleContextMenuAsk(info, tab) {
   let text = '';
   let selectionAction = '';
   if (menuItemId === CONTEXT_MENU_GENERIC_ASK_ID) {
-    text = buildContextMenuPrompt(info.selectionText);
+    text = buildContextMenuPrompt(info.selectionText, selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_ACTION_PREFIX)) {
     selectionAction = normalizeSelectionAction(menuItemId.slice(CONTEXT_MENU_ACTION_PREFIX.length));
-    text = buildSelectionPrompt(info.selectionText, selectionAction);
+    text = buildSelectionPrompt(info.selectionText, selectionAction, '', selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_TRANSLATE_PREFIX)) {
     selectionAction = 'translate';
     text = buildSelectionPrompt(info.selectionText, 'translate', '', menuItemId.slice(CONTEXT_MENU_TRANSLATE_PREFIX.length));
@@ -1298,6 +1331,11 @@ async function handleContextMenuAsk(info, tab) {
 
 chrome.contextMenus?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION') return;
+  sendResponse({ ok: true, ...getSelectionShortcutLocalization(msg.locale) });
 });
 
 // Selection-shortcut clicks originate in a content script. Keep this listener

@@ -6,7 +6,7 @@ workflow. These files have different privacy and compatibility properties.
 | Command or UI | File | Format | Treat as sensitive? |
 |---|---|---|---|
 | `/export` | `webbrain-chat-<timestamp>.md` | Conversation Markdown | Yes. It contains visible chat and system messages. |
-| `/export --traces` | `webbrain-traces-<timestamp>.md` | Recorded tool-chain Markdown | Yes. It can contain prompts, model output, tool arguments, URLs, and results. |
+| `/export --traces` | `webbrain-traces-<timestamp>.md` | Recorded tool-chain Markdown | Yes. It can contain user prompts, model output, tool arguments, URLs, and results. Raw system prompts are not embedded. |
 | `/export --config` | `webbrain-config-<timestamp>.json` | `webbrain-config/1` | **Yes. It is plaintext and can contain API keys, profile data, and user memory.** |
 | `/workflow --export <id>` | `<name>.webbrain-workflow.json` | `webbrain-workflow/1` | Review before sharing. Runtime values are omitted, but saved targets and URL scopes remain. |
 | Traces page **Export JSON** | `webbrain-trace-<model>-<run-id>.json` | `webbrain-trace/1` | Yes. It contains the raw recorded run and may include screenshots. |
@@ -36,7 +36,14 @@ the exporting extension version but has no schema identifier.
 `/export --traces` exports recorded runs associated with the current
 conversation. Tracing must have been enabled when the runs occurred. Each turn
 contains its recording version when available, model and status metadata, model
-responses, tool calls, arguments, and rendered results.
+responses, tool calls, arguments, rendered results, the allowlisted runtime
+snapshot, and privacy-safe prompt provenance. Provenance identifies the
+controlled prompt variant and records character counts plus declared prompt and
+tool policy revisions. It also reports whether the prompt/runtime envelope
+matched the effective mode; it does not embed or fingerprint raw system-prompt
+text, message text, tool schemas, or tool names. Policy revisions identify the
+controlled code path and are bumped when its prompt or tool-exposure rules
+change; they do not vary with private request content.
 
 Screenshots, vision sub-calls, and internal trace notes are omitted from this
 Markdown format. The export may be marked partial or truncated when the browser

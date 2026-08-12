@@ -116,6 +116,35 @@ function exportedRunStatus(run, events = []) {
   return status;
 }
 
+function renderRuntimeMetadata(run) {
+  const config = run?.runtimeConfig && typeof run.runtimeConfig === 'object' && !Array.isArray(run.runtimeConfig)
+    ? run.runtimeConfig
+    : null;
+  const mode = oneLine(run?.mode || config?.mode || '');
+  if (!mode && !config) return '';
+  const details = [mode ? `mode=${mode}` : '', config ? `config=${JSON.stringify(config)}` : '']
+    .filter(Boolean)
+    .join(' · ');
+  return `- ⚙️ Runtime: \`${details}\`\n`;
+}
+
+function renderPromptProvenance(value) {
+  if (!value || typeof value !== 'object') return '';
+  const parts = [
+    value.systemPromptVariant ? `prompt ${oneLine(value.systemPromptVariant)}` : '',
+    Number.isInteger(value.promptPolicyRevision) ? `prompt policy r${value.promptPolicyRevision}` : '',
+    Number.isFinite(value.systemPromptChars) ? `${value.systemPromptChars} system chars` : '',
+    Number.isFinite(value.messageChars) ? `${value.messageChars} total message chars` : '',
+    Number.isInteger(value.toolPolicyRevision) ? `tool policy r${value.toolPolicyRevision}` : '',
+    value.runtimeEnvelopeMode ? `runtime envelope ${oneLine(value.runtimeEnvelopeMode)}` : 'runtime envelope missing',
+  ].filter(Boolean);
+  if (value.runtimeEnvelopeMatches === true) parts.push('envelope aligned');
+  else if (value.runtimeEnvelopeMatches === false) parts.push('envelope mismatch');
+  if (value.systemPromptMatchesRuntime === true) parts.push('system mode aligned');
+  else if (value.systemPromptMatchesRuntime === false) parts.push('system mode mismatch');
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
+
 export function tracesToMarkdown(runsWithEvents, {
   title = 'WebBrain Conversation — tool chain',
   notes = [],
@@ -142,6 +171,7 @@ export function tracesToMarkdown(runsWithEvents, {
     ].filter(Boolean).join(' · ');
     md += `## Turn ${turnCount}${user ? ` — ${user}` : ''}\n`;
     if (meta) md += `_${meta}_\n`;
+    md += renderRuntimeMetadata(run);
     const attachmentMetadata = renderAttachmentMetadata(run.attachments);
     if (attachmentMetadata) md += `- 📎 User attachments: ${attachmentMetadata}\n`;
     md += '\n';
@@ -154,7 +184,7 @@ export function tracesToMarkdown(runsWithEvents, {
           Number.isFinite(d.imageBlockCount) ? `${d.imageBlockCount} image block${d.imageBlockCount === 1 ? '' : 's'}` : '',
           Number.isFinite(d.documentBlockCount) ? `${d.documentBlockCount} document block${d.documentBlockCount === 1 ? '' : 's'}` : '',
         ].filter(Boolean).join(' · ');
-        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}\n`;
+        md += `- 🧠 Model request: ${Number(d.messageCount) || 0} messages · ${Number(d.toolsCount) || 0} tools${media ? ` · ${media}` : ''}${renderPromptProvenance(d.promptProvenance)}\n`;
       } else if (ev.kind === 'llm_response') {
         const content = String(d.content || '').trim();
         if (!content) continue;
@@ -183,6 +213,15 @@ export function tracesToMarkdown(runsWithEvents, {
         const details = [oneLine(d.context), oneLine(d.model), Number.isFinite(d.latencyMs) ? `${d.latencyMs} ms` : '']
           .filter(Boolean).join(' · ');
         md += `- 👁 Vision sub-call${details ? ` (${details})` : ''}: ${outcome}\n`;
+      } else if (ev.kind === 'note' && d.note === 'planner_attempt_failed') {
+        const attempt = Number(d.extra?.attempt) || 1;
+        const phase = oneLine(d.extra?.phase || 'planner');
+        const failureKind = oneLine(d.extra?.failureKind || 'provider');
+        md += `- ⚠️ ${phase} attempt ${attempt} failed · kind=${failureKind}\n`;
+      } else if (ev.kind === 'note' && d.note === 'planner_failed_continue_act') {
+        const attempts = Number(d.extra?.attempts) || 2;
+        const reason = oneLine(d.extra?.reason || 'invalid_output');
+        md += `- ⚠️ Planning failed after ${attempts} attempts · continued in Act mode · reason=${reason}\n`;
       } else if (ev.kind === 'note' && /screenshot|vision|attachment|visual/i.test(String(d.note || ''))) {
         md += `- ℹ️ ${oneLine(d.note)}\n`;
       }

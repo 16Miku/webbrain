@@ -4,6 +4,84 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [29.0.1] - 2026-08-11
+
+### Changed
+- dist: rebuild submission zips for v29.0.0
+- fix: refine settings control order
+- docs: add 29.0.0 changelog
+- 29.0.0
+- Clean up settings organization
+
+## [29.0.0] - 2026-08-12
+
+### Changed
+- Reorganized Settings to surface frequently used controls and group advanced options more clearly.
+
+## [28.2.3] - 2026-08-11
+
+### Changed
+- Add active provider filter
+
+## [28.2.2] - 2026-08-11
+
+### Changed
+- fix streaming multipart offscreen uploads
+- fix transcription runtime fallback transport
+- fix chrome multipart offscreen fallback
+- fix multimodal provider validation
+- Fix anchored accessibility pagination
+- Reset protected gallery state after URL reads
+- Fix planner retry error handling
+- Handle protected Chrome Web Store pages
+- Fix planner provider compatibility and Act fallback
+
+## [28.2.1] - 2026-08-11
+
+### Changed
+- version up
+- fix: hide localized context menu instructions
+- blog: publish EXL3 + SparkInfer on Blackwell lite post
+- blog: add EXL3 + SparkInfer on Blackwell lite post (scheduled)
+- Apply suggestions from code review
+- feat: localize selection shortcuts
+- fix: dedupe run progress replay gaps
+- test(memory): cover newly formed memory cues
+- style(memory): animate the Firefox memory cue
+- feat(memory): render the Firefox memory cue
+- feat(memory): notify the Firefox side panel
+- feat(memory): mirror new-memory tracking in Firefox
+- style(memory): animate the Chrome memory cue
+- feat(memory): render the Chrome memory cue
+- feat(memory): notify the Chrome side panel
+- feat(memory): track newly formed memories
+
+## [28.2.0] - 2026-08-11
+
+### Changed
+- Localized the selection shortcut and native context-menu items across all 23 supported interface languages in Chrome and Firefox, including action names, translation targets, status messages, right-to-left layout, and live language changes.
+- Localized shortcut-generated prompts so responses follow the active interface language without exposing model-only language instructions in the visible conversation.
+
+### Fixed
+- Smoothed the effects of bounded run memory by showing a replay-gap notice only once per run, even as acknowledged event boundaries advance, while continuing to restore completed output after side-panel reconnects.
+
+## [28.1.5] - 2026-08-11
+
+### Changed
+- fix: defer download intent normalization
+- fix: recover planner localization and download intent
+- test(onboarding): cover install guide transition
+- fix(onboarding): advance Firefox install guide
+- fix(onboarding): advance Chromium install guide
+
+## [28.1.4] - 2026-08-11
+
+### Changed
+- version up
+- fix: harden runtime mode recovery and trace diagnostics
+- Apply suggestions from code review
+- fix: localize Cloud Sync settings
+
 ## [28.1.2] - 2026-08-11
 
 ### Changed

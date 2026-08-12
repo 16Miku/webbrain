@@ -290,6 +290,7 @@ export function applyUserMemoryExtractionOperations(storeInput, operations, opts
   const threshold = Number.isFinite(Number(opts.threshold)) ? Number(opts.threshold) : USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD;
   let store = normalizeUserMemoryStore(storeInput, { now: ts });
   let changed = false;
+  let created = false;
   const applied = [];
   for (const op of Array.isArray(operations) ? operations : []) {
     if (!op || op.confidence < threshold) continue;
@@ -314,10 +315,11 @@ export function applyUserMemoryExtractionOperations(storeInput, operations, opts
     if (result?.changed) {
       store = result.store;
       changed = true;
+      if (op.op === 'add' && !result.deduped) created = true;
       applied.push({ op: op.op, id: result.record?.id || op.id });
     }
   }
-  return { store, changed, applied };
+  return { store, changed, created, applied };
 }
 
 export function createUserMemoryStore(storageArea, opts = {}) {
