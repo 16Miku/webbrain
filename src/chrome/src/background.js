@@ -2499,6 +2499,9 @@ async function handleMessage(msg, sender) {
     case 'chat': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
+      if (msg.standaloneChat === true && msg.workflowId) {
+        throw new Error('Saved workflows are unavailable in standalone Ask mode.');
+      }
       assertRunCanStart(tabId, msg);
       const isWorkflowRun = !!msg.workflowId;
       const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');

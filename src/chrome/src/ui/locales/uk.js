@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",
   "sp.workflows.run_prompt": "Запустити збережений сценарій «{name}»",
+  "sp.workflows.standalone_unavailable": "Це окреме вікно працює лише в режимі «Запитати». Відкрийте WebBrain на бічній панелі, щоб запускати збережені сценарії в режимі «Діяти».",
   "sp.workflows.parameters_for": "Введіть параметри для «{name}». Значення використовуються лише для цього запуску.",
   "sp.workflows.parameter_required": "Поле «{name}» обов’язкове.",
   "sp.slash.save_workflow": "Зберегти останній успішний записаний запуск",

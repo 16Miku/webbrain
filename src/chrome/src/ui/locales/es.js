@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",
   "sp.workflows.run_prompt": "Ejecutar el flujo guardado «{name}»",
+  "sp.workflows.standalone_unavailable": "Esta ventana independiente solo admite el modo Preguntar. Abre WebBrain en el panel lateral para ejecutar flujos guardados en el modo Actuar.",
   "sp.workflows.parameters_for": "Introduce los parámetros de «{name}». Los valores solo se usan en esta ejecución.",
   "sp.workflows.parameter_required": "«{name}» es obligatorio.",
   "sp.slash.save_workflow": "Guardar la última ejecución registrada correctamente",

@@ -4,6 +4,11 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [30.0.0] - 2026-08-12
+
+### Changed
+- Expanded the side panel into a standalone window.
+
 ## [29.0.2] - 2026-08-12
 
 ### Changed

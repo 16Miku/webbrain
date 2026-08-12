@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "Enregistrer vos actions comme workflow sauvegardé",
   "sp.slash.run_workflow": "Exécuter un workflow enregistré par ID",
   "sp.workflows.run_prompt": "Exécuter le workflow enregistré « {name} »",
+  "sp.workflows.standalone_unavailable": "Cette fenêtre autonome est réservée au mode Demander. Ouvrez WebBrain dans le panneau latéral pour exécuter des workflows enregistrés en mode Agir.",
   "sp.workflows.parameters_for": "Saisissez les paramètres de « {name} ». Les valeurs ne servent qu’à cette exécution.",
   "sp.workflows.parameter_required": "« {name} » est obligatoire.",
   "sp.slash.save_workflow": "Enregistrer la dernière exécution réussie et tracée",

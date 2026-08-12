@@ -63,6 +63,8 @@ import {
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
 
+const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+
 // Hydrate the theme from browser.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
 // or page, sync it in here) and subscribe to live changes so the panel
@@ -3361,8 +3363,10 @@ function renderSavedWorkflowManager(manager, workflows, tabId) {
 
     const actions = document.createElement('div');
     actions.className = 'workflow-card-actions';
+    if (!isStandaloneWindow) {
+      actions.append(savedWorkflowManagerActionButton('run', t('sp.scheduled.run_now'), workflow.name));
+    }
     actions.append(
-      savedWorkflowManagerActionButton('run', t('sp.scheduled.run_now'), workflow.name),
       savedWorkflowManagerActionButton('rename', t('sp.workflows.rename'), workflow.name),
       savedWorkflowManagerActionButton('export', t('st.memory.export'), workflow.name),
       savedWorkflowManagerActionButton('delete', t('sp.scheduled.delete'), workflow.name),
@@ -3694,8 +3698,15 @@ function requestSavedWorkflowFile(tabId) {
 
 const boundWorkflowParameterForms = new WeakSet();
 
+function rejectStandaloneWorkflowRun() {
+  if (!isStandaloneWindow) return false;
+  showComposerToast(t('sp.workflows.standalone_unavailable'), { duration: 6000 });
+  return true;
+}
+
 async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
   if (!workflow?.id || currentTabId !== tabId) return false;
+  if (rejectStandaloneWorkflowRun()) return false;
   if (!(await ensureActMode())) return false;
   inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
   autoResizeInput();
@@ -3788,6 +3799,7 @@ function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
 }
 
 async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
+  if (rejectStandaloneWorkflowRun()) return false;
   try {
     const res = await sendToBackground('get_saved_workflow', { id: String(id || '').trim() });
     if (currentTabId !== tabId) return;
@@ -7410,6 +7422,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 }
 
 function modeForMessageText(text) {
+  if (isStandaloneWindow) return 'ask';
   const invocation = parseSlashInvocation(text);
   if (invocation?.command?.value === '/ask' || invocation?.command?.value === '/plan') return 'ask';
   if (invocation?.command?.value === '/act') return 'act';
@@ -7427,6 +7440,18 @@ function reportTrailingRunCaptureError(directive, error, tabId) {
 }
 
 async function sendMessage(extraChatParams = {}) {
+  if (isStandaloneWindow) {
+    if (extraChatParams?.workflowId) {
+      rejectStandaloneWorkflowRun();
+      return false;
+    }
+    const retryOptions = extraChatParams?.__retry;
+    extraChatParams = {
+      ...(extraChatParams || {}),
+      __mode: 'ask',
+      ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
+    };
+  }
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
   const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
@@ -10166,6 +10191,7 @@ function showContinueButton(options = {}) {
 }
 
 async function continueAgent(options = {}) {
+  if (isStandaloneWindow) options = { ...options, mode: 'ask' };
   const tabId = currentTabId;
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
   if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
@@ -11019,7 +11045,7 @@ function positionModeHighlight(btn, { instant = false } = {}) {
 }
 
 function setMode(mode) {
-  if (mode !== 'ask' && mode !== 'act' && mode !== 'dev') mode = 'ask';
+  mode = normalizeAgentMode(mode);
   agentMode = mode;
 
   modeAskBtn.classList.toggle('active', mode === 'ask');
@@ -11037,6 +11063,11 @@ function setMode(mode) {
 
   updateActWarning();
   resetInputPlaceholderRotation();
+}
+
+function normalizeAgentMode(mode) {
+  if (isStandaloneWindow) return 'ask';
+  return mode === 'act' || mode === 'dev' ? mode : 'ask';
 }
 
 async function ensureActMode() {
@@ -12062,8 +12093,6 @@ historyBtn?.addEventListener('click', () => {
 settingsBtn.addEventListener('click', () => {
   browser.runtime.openOptionsPage();
 });
-
-const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 
 function standaloneWindowBounds(display = window.screen) {
   const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);

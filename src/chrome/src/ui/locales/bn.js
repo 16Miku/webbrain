@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "আপনার কাজগুলো সংরক্ষিত ওয়ার্কফ্লো হিসেবে রেকর্ড করুন",
   'sp.slash.run_workflow': "আইডি দ্বারা একটি সংরক্ষিত ওয়ার্কফ্লো চালান",
   'sp.workflows.run_prompt': "সংরক্ষিত ওয়ার্কফ্লো চালান \"{name}\"",
+  "sp.workflows.standalone_unavailable": "এই স্বতন্ত্র উইন্ডোটি শুধু Ask মোডের জন্য। Act মোডে সংরক্ষিত ওয়ার্কফ্লো চালাতে সাইড প্যানেলে WebBrain খুলুন।",
   'sp.workflows.parameters_for': "\"{name}\" এর জন্য পরামিতি লিখুন। মান শুধুমাত্র এই রানের জন্য ব্যবহার করা হয়.",
   'sp.workflows.parameter_required': "\"{name}\" প্রয়োজন৷",
   'sp.slash.save_workflow': "সর্বশেষ সফল রেকর্ড করা রান সংরক্ষণ করুন",

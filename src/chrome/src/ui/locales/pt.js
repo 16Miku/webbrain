@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "Grave suas ações como um fluxo de trabalho salvo",
   'sp.slash.run_workflow': "Execute um fluxo de trabalho salvo por ID",
   'sp.workflows.run_prompt': "Execute o fluxo de trabalho salvo “{name}”",
+  "sp.workflows.standalone_unavailable": "Esta janela independente funciona apenas no modo Perguntar. Abra o WebBrain no painel lateral para executar fluxos de trabalho salvos no modo Agir.",
   'sp.workflows.parameters_for': "Insira os parâmetros para “{name}”. Os valores são usados ​​apenas para esta execução.",
   'sp.workflows.parameter_required': "“{name}” é necessário.",
   'sp.slash.save_workflow': "Salve a última execução registrada com sucesso",

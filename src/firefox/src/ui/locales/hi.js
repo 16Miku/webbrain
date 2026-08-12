@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "अपने कार्यों को सहेजे गए वर्कफ़्लो के रूप में रिकॉर्ड करें",
   'sp.slash.run_workflow': "आईडी द्वारा सहेजा गया वर्कफ़्लो चलाएँ",
   'sp.workflows.run_prompt': "सहेजे गए वर्कफ़्लो \"{name}\" चलाएँ",
+  "sp.workflows.standalone_unavailable": "यह स्वतंत्र विंडो केवल पूछें मोड के लिए है। सहेजे गए वर्कफ़्लो को क्रिया मोड में चलाने के लिए WebBrain को साइड पैनल में खोलें।",
   'sp.workflows.parameters_for': "\"{name}\" के लिए पैरामीटर दर्ज करें। मानों का उपयोग केवल इस रन के लिए किया जाता है।",
   'sp.workflows.parameter_required': "\"{name}\" आवश्यक है।",
   'sp.slash.save_workflow': "नवीनतम सफल रिकॉर्ड किए गए रन को सहेजें",

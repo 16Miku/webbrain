@@ -21725,6 +21725,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
       {
         currentTabId: 92,
+        rejectStandaloneWorkflowRun: () => false,
         ensureActMode: async () => false,
         inputEl: workflowInput,
         t: () => 'workflow prompt',
@@ -28286,9 +28287,12 @@ test('standalone window transport, sizing, and translations are mirrored', async
   const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
 
   for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const markup = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    const bootstrap = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/theme-bootstrap.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     assert.match(panel, /isStandaloneWindow \? \{ standaloneChat: true \} : \{\}/, `${label}: standalone flag is not sent with chat_start`);
     assert.equal(
       [...background.matchAll(/msg\.standaloneChat === true \? \{ standaloneChat: true \} : \{\}/g)].length,
@@ -28301,6 +28305,52 @@ test('standalone window transport, sizing, and translations are mirrored', async
     assert.match(panel, /availableWidth \* 0\.9/, `${label}: popup width is not derived from available screen size`);
     assert.match(panel, /availableHeight \* 0\.9/, `${label}: popup height is not derived from available screen size`);
     assert.doesNotMatch(panel, /type: 'popup',\s*width: 400,\s*height: 600/, `${label}: popup retained fixed compact dimensions`);
+    assert.match(markup, /id="btn-expand"[\s\S]*?<svg data-icon="external-link"[\s\S]*?M10 14 21 3[\s\S]*?M18 13v6/, `${label}: standalone launcher does not use the external-window icon`);
+    assert.doesNotMatch(markup, /id="btn-expand"[\s\S]*?M9 21H3v-6[\s\S]*?M3 21l7-7/, `${label}: standalone launcher still uses the maximize icon`);
+    assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?setAttribute\('data-standalone', 'true'\)/, `${label}: standalone mode is not marked before first paint`);
+    assert.match(css, /html\[data-standalone="true"\] #mode-toggle \{\s*display: none;/, `${label}: standalone window still shows the mode selector`);
+    assert.match(panel, /function normalizeAgentMode\(mode\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: standalone mode is not pinned to Ask`);
+    assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
+    assert.match(panel, /function modeForMessageText\(text\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: slash commands can change standalone mode`);
+    assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{\s*if \(isStandaloneWindow\) \{\s*if \(extraChatParams\?\.workflowId\) \{\s*rejectStandaloneWorkflowRun\(\);\s*return false;[\s\S]*?__mode: 'ask',[\s\S]*?__retry: \{ \.\.\.retryOptions, mode: 'ask' \}/, `${label}: standalone starts, retries, or workflow replays can escape Ask mode`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\) \{\s*if \(isStandaloneWindow\) options = \{ \.\.\.options, mode: 'ask' \};/, `${label}: standalone continuations can escape Ask mode`);
+    assert.match(panel, /if \(!isStandaloneWindow\) \{\s*actions\.append\(savedWorkflowManagerActionButton\('run'/, `${label}: standalone workflow manager still exposes its Act-only Run action`);
+    assert.match(panel, /function rejectStandaloneWorkflowRun\(\) \{\s*if \(!isStandaloneWindow\) return false;\s*showComposerToast\(t\('sp\.workflows\.standalone_unavailable'\), \{ duration: 6000 \}\);\s*return true;/, `${label}: standalone workflow rejection has no actionable user message`);
+    assert.match(panel, /async function prepareSavedWorkflowRun\(id, tabId = currentTabId\) \{\s*if \(rejectStandaloneWorkflowRun\(\)\) return false;/, `${label}: standalone workflow preparation is not blocked`);
+    assert.match(background, /if \(msg\.standaloneChat === true && msg\.workflowId\) \{\s*throw new Error\('Saved workflows are unavailable in standalone Ask mode\.'\);/, `${label}: background accepts forged standalone workflow runs`);
+
+    const workflowStart = panel.indexOf('async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {');
+    const workflowEnd = panel.indexOf('\n\nasync function submitSavedWorkflowParameters', workflowStart);
+    assert.ok(workflowStart >= 0 && workflowEnd > workflowStart, `${label}: saved workflow launcher missing`);
+    let workflowSends = 0;
+    let actModeRequests = 0;
+    const workflowToasts = [];
+    const workflowInput = { value: 'keep this draft' };
+    const startSavedWorkflowRun = vm.runInNewContext(
+      `(() => { ${panel.slice(workflowStart, workflowEnd)}; return startSavedWorkflowRun; })()`,
+      {
+        currentTabId: 92,
+        isStandaloneWindow: true,
+        rejectStandaloneWorkflowRun: () => {
+          workflowToasts.push('standalone Ask-only message');
+          return true;
+        },
+        ensureActMode: async () => { actModeRequests += 1; return true; },
+        inputEl: workflowInput,
+        t: () => 'workflow prompt',
+        autoResizeInput: () => {},
+        sendMessage: async () => { workflowSends += 1; return true; },
+      },
+    );
+    assert.equal(
+      await startSavedWorkflowRun({ id: 'workflow_standalone_guard', name: 'Blocked workflow' }, {}, 92),
+      false,
+      `${label}: standalone saved workflow launch should be rejected`,
+    );
+    assert.equal(actModeRequests, 0, `${label}: standalone workflow should stop before requesting Act mode`);
+    assert.equal(workflowSends, 0, `${label}: standalone workflow should not reach sendMessage`);
+    assert.equal(workflowInput.value, 'keep this draft', `${label}: rejected standalone workflow should preserve the composer draft`);
+    assert.deepEqual(workflowToasts, ['standalone Ask-only message'], `${label}: standalone workflow rejection should notify the user once`);
   }
 
   for (const locale of localeCodes) {
@@ -28308,8 +28358,11 @@ test('standalone window transport, sizing, and translations are mirrored', async
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, `src/firefox/src/ui/locales/${locale}.js`)).href)).default;
     assert.equal(firefoxLocale['sp.btn.expand'], chromeLocale['sp.btn.expand'], `${locale}: expand translation differs across browsers`);
     assert.ok(chromeLocale['sp.btn.expand']?.trim(), `${locale}: expand translation is empty`);
+    assert.equal(firefoxLocale['sp.workflows.standalone_unavailable'], chromeLocale['sp.workflows.standalone_unavailable'], `${locale}: standalone workflow message differs across browsers`);
+    assert.ok(chromeLocale['sp.workflows.standalone_unavailable']?.trim(), `${locale}: standalone workflow message is empty`);
     if (locale !== 'en') {
       assert.notEqual(chromeLocale['sp.btn.expand'], english['sp.btn.expand'], `${locale}: expand label fell back to English`);
+      assert.notEqual(chromeLocale['sp.workflows.standalone_unavailable'], english['sp.workflows.standalone_unavailable'], `${locale}: standalone workflow message fell back to English`);
     }
   }
 });

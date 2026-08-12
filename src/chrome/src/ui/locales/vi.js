@@ -134,6 +134,7 @@ export default {
   "sp.slash.teach": "Ghi lại thao tác của bạn thành quy trình đã lưu",
   'sp.slash.run_workflow': "Chạy quy trình công việc đã lưu theo ID",
   'sp.workflows.run_prompt': "Chạy quy trình làm việc đã lưu “{name}”",
+  "sp.workflows.standalone_unavailable": "Cửa sổ độc lập này chỉ dành cho chế độ Hỏi. Hãy mở WebBrain trong bảng bên để chạy quy trình đã lưu ở chế độ Hành động.",
   'sp.workflows.parameters_for': "Nhập thông số cho “{name}”. Các giá trị chỉ được sử dụng cho lần chạy này.",
   'sp.workflows.parameter_required': "Cần có “{name}”.",
   'sp.slash.save_workflow': "Lưu lần chạy được ghi thành công mới nhất",

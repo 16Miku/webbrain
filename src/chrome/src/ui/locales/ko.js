@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "작업을 저장된 워크플로로 기록",
   "sp.slash.run_workflow": "ID로 저장된 워크플로 실행",
   "sp.workflows.run_prompt": "저장된 워크플로 “{name}” 실행",
+  "sp.workflows.standalone_unavailable": "이 독립 실행형 창은 질문 모드 전용입니다. 저장된 워크플로를 실행 모드로 실행하려면 사이드 패널에서 WebBrain을 여세요.",
   "sp.workflows.parameters_for": "“{name}”의 매개변수를 입력하세요. 값은 이번 실행에만 사용됩니다.",
   "sp.workflows.parameter_required": "“{name}”은(는) 필수입니다.",
   "sp.slash.save_workflow": "가장 최근에 성공한 기록 실행 저장",

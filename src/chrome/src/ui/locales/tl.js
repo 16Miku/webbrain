@@ -807,6 +807,7 @@ export default {
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",
   "sp.workflows.run_prompt": "Patakbuhin ang naka-save na workflow na “{name}”",
+  "sp.workflows.standalone_unavailable": "Para lang sa mode na Magtanong ang hiwalay na window na ito. Buksan ang WebBrain sa side panel para patakbuhin ang mga naka-save na workflow sa mode na Kumilos.",
   "sp.workflows.parameters_for": "Ilagay ang mga parameter para sa “{name}”. Para sa run na ito lang gagamitin ang mga value.",
   "sp.workflows.parameter_required": "Kailangan ang “{name}”.",
   "sp.slash.save_workflow": "I-save ang pinakabagong matagumpay na naitalang run",
