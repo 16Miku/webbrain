@@ -8385,6 +8385,165 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _coordinateReconciliationDiagnostic(point, resolution, clickPath, fallbackReason) {
+    const target = resolution?.success === true ? resolution.semanticTarget : null;
+    const resolved = clickPath === 'semantic';
+    const role = String(target?.role || '').slice(0, 32);
+    const name = String(target?.name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const targetMetadata = {
+      ...(role ? { role } : {}),
+      ...(name ? { name } : {}),
+    };
+    return {
+      canonicalPoint: { x: Number(point.x), y: Number(point.y) },
+      semanticTargetResolved: resolved,
+      ...(Object.keys(targetMetadata).length ? { target: targetMetadata } : {}),
+      clickPath,
+      fallbackReason,
+    };
+  }
+
+  _withCoordinateReconciliation(result, diagnostic) {
+    return diagnostic && result && typeof result === 'object'
+      ? { ...result, coordinateReconciliation: diagnostic }
+      : result;
+  }
+
+  async _resolveCoordinateVisualTarget(tabId, point) {
+    const send = () => chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'resolve_visual_target',
+      params: { x: Number(point.x), y: Number(point.y) },
+    });
+    try {
+      try {
+        return await this._withIndicatorsHidden(tabId, send);
+      } catch {
+        await this._injectCoreContentScripts(tabId);
+        return await this._withIndicatorsHidden(tabId, send);
+      }
+    } catch {
+      return { success: false };
+    }
+  }
+
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null) {
+    const interactionUrl = await this._currentUrl(tabId);
+    const clickProgressBefore = await this._clickProgressSnapshot(tabId);
+    const sideEffectWatch = this._beginClickAxSideEffectWatch(tabId);
+    let baseline = null;
+    const captureBaseline = async () => {
+      baseline = await this._captureClickAxObservation(
+        tabId,
+        clickProgressBefore,
+        sideEffectWatch,
+        Date.now(),
+      );
+    };
+    let contentArgs = axScope?.documentToken
+      ? {
+          ...args,
+          expectedDocumentToken: axScope.documentToken,
+          ...(axScope.pageUrl ? { expectedPageUrl: axScope.pageUrl } : {}),
+        }
+      : args;
+    if (dispatchBinding?.token) {
+      contentArgs = { ...contentArgs, dispatchBinding };
+    }
+    const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
+      ? { frameId: dispatchBinding.frameId }
+      : undefined;
+    const send = () => chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'click_ax',
+      params: contentArgs,
+    }, messageOptions);
+
+    try {
+      let response;
+      try {
+        await captureBaseline();
+        response = await send();
+      } catch {
+        try {
+          await this._injectCoreContentScripts(tabId);
+          await captureBaseline();
+          response = await send();
+        } catch (error) {
+          return { error: `Failed to communicate with page: ${error.message}` };
+        }
+      }
+      response = await this._settleContentFilePickerGuard(tabId, response);
+      if (response?.documentToken && (
+        response.documentChanged === true
+        || response.routeChanged === true
+        || response.staleRef === true
+      )) {
+        this._rememberAxScope(tabId, response.documentToken, response.refScopeUrl || '');
+      }
+      response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
+      const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
+      if (response) delete response._clickAxAfterSnapshot;
+      await this._annotateClickProgress(
+        tabId,
+        'click_ax',
+        args,
+        response,
+        clickProgressBefore,
+        { afterSnapshot: observedAfterSnapshot },
+      );
+      this._recordInteractionRect(tabId, 'click_ax', response, interactionUrl);
+      this._annotateCredentialField('click_ax', response);
+      this._clearUploadSelectorRecoveryAfterInspection(tabId, 'click_ax', response);
+      return response;
+    } finally {
+      sideEffectWatch?.stop();
+    }
+  }
+
+  async _reconcileCoordinateClick(tabId, point) {
+    const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    const target = resolution?.semanticTarget;
+    const semanticEligible = resolution?.success === true
+      && target?.eligibility === 'semantic-button'
+      && target?.role === 'button'
+      && typeof target?.ref_id === 'string'
+      && /^ref_\d+$/.test(target.ref_id);
+    if (semanticEligible) {
+      const result = await this._dispatchClickAx(
+        tabId,
+        { ref_id: target.ref_id },
+        { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
+      );
+      return {
+        result: {
+          ...result,
+          coordinateReconciliation: this._coordinateReconciliationDiagnostic(
+            point,
+            resolution,
+            'semantic',
+            'none',
+          ),
+        },
+        diagnostic: null,
+      };
+    }
+    const fallbackReason = resolution?.success !== true
+      ? 'resolver-error'
+      : target
+        ? 'coordinate-only-target'
+        : 'no-target';
+    return {
+      result: null,
+      diagnostic: this._coordinateReconciliationDiagnostic(
+        point,
+        resolution,
+        'coordinate-fallback',
+        fallbackReason,
+      ),
+    };
+  }
+
   /**
    * Coerce storage / settings values for image budget (issue #311). Rejects
    * corrupted or out-of-range values so provider payloads never see e.g.
@@ -17572,6 +17731,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    let coordinatePoint = null;
+    let coordinateDiagnostic = null;
     // Canonicalize coordinate clicks before toolbar recovery probes them.
     // The preflight binding and the eventual dispatch must resolve the same
     // CSS-pixel point, especially when the model clicked a downscaled image.
@@ -17586,7 +17747,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const mapped = this._screenshotClickCoords(tabId, args);
-      if (mapped?.converted) args = { ...args, x: mapped.x, y: mapped.y };
+      if (mapped && (mapped.converted || args.from_screenshot === true)) {
+        args = { ...args, x: mapped.x, y: mapped.y };
+      }
+      if (args.from_screenshot === true && mapped) {
+        coordinatePoint = { x: mapped.x, y: mapped.y };
+      }
     }
     const richTextToolbarBlock = await this._richTextToolbarToolBlock(
       tabId,
@@ -17596,6 +17762,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     );
     if (richTextToolbarBlock) return richTextToolbarBlock;
     const dispatchBinding = dispatchContext.dispatchBinding || null;
+    if (coordinatePoint && dispatchBinding?.token) {
+      coordinateDiagnostic = this._coordinateReconciliationDiagnostic(
+        coordinatePoint,
+        null,
+        'coordinate-fallback',
+        'bound-coordinate-target',
+      );
+    }
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
@@ -20583,8 +20757,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'click' && !dispatchBinding?.token) {
       try {
-        await cdpClient.attach(tabId);
-
         const duplicateSubmit = await guardRecentSubmitClick(
           this._recentSubmitClicks,
           tabId,
@@ -20595,6 +20767,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           },
         );
         if (duplicateSubmit) return duplicateSubmit;
+
+        if (coordinatePoint) {
+          const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint);
+          if (reconciled.result) return reconciled.result;
+          coordinateDiagnostic = reconciled.diagnostic;
+        }
+
+        await cdpClient.attach(tabId);
 
         // ── Global SELECT guard ─────────────────────────────────────────
         // Inject a capture-phase mousedown+click listener that prevents
@@ -21526,6 +21706,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return await this._annotateClickProgress(tabId, 'click', args, selResult, progressBeforeSel);
         }
         if (args.x != null && args.y != null) {
+          return this._withCoordinateReconciliation(await (async () => {
           // Check if the element at these coordinates is or is near a <select>.
           const coordTagCheck = await cdpClient.evaluate(tabId, `
             (() => {
@@ -21585,7 +21766,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 const opts = Array.from(el.options).map(o => o.text.trim());
                 return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
               }
-
               // Find the real input target
               let target = null;
 
@@ -21718,11 +21898,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           const coordResponse = { success: true, method: 'cdp-coords', x: args.x, y: args.y };
           return await this._annotateClickProgress(tabId, 'click', args, coordResponse, progressBeforeCoord);
+          })(), coordinateDiagnostic);
         }
         // index-based: fall through to content-script path which knows the
         // interactive-elements ordering.
       } catch (e) {
-        return { success: false, error: `Click failed: ${e.message}` };
+        return this._withCoordinateReconciliation(
+          { success: false, error: `Click failed: ${e.message}` },
+          coordinateDiagnostic,
+        );
       }
     }
 
@@ -22435,36 +22619,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } catch { /* tab lookup failures are non-fatal — fall through */ }
 
+    if (name === 'click_ax') {
+      return this._dispatchClickAx(tabId, args, this._lastAxScopes.get(tabId), dispatchBinding);
+    }
+
     const interactionUrl = (
-      name === 'click' || name === 'click_ax' || name === 'set_checked' ||
+      name === 'click' || name === 'set_checked' ||
       name === 'type_ax' || name === 'set_field'
     ) ? await this._currentUrl(tabId) : '';
 
     if (name === 'scroll') {
       args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
     }
-    const clickProgressBefore = (name === 'click' || name === 'click_ax')
+    const clickProgressBefore = name === 'click'
       ? await this._clickProgressSnapshot(tabId)
       : '';
-    // Start network/download listeners early so synchronous click work is not
-    // missed, but stamp the click_ax safety window only immediately before the
-    // content-script message that actually runs el.click(). Otherwise a slow
-    // executeScript inject can push the synthetic click outside the 400ms
-    // attribution window and skip the network veto.
-    const clickAxSideEffectWatch = name === 'click_ax' ? this._beginClickAxSideEffectWatch(tabId) : null;
-    let clickAxBaseline = null;
-    const captureClickAxBaseline = async () => {
-      if (name !== 'click_ax') return;
-      clickAxBaseline = await this._captureClickAxObservation(
-        tabId,
-        clickProgressBefore,
-        clickAxSideEffectWatch,
-        Date.now(),
-      );
-    };
 
     const axScope = this._lastAxScopes.get(tabId);
-    let contentArgs = (name === 'click_ax' || name === 'set_checked') && axScope?.documentToken
+    let contentArgs = name === 'set_checked' && axScope?.documentToken
       ? {
           ...args,
           expectedDocumentToken: axScope.documentToken,
@@ -22481,19 +22653,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
+    const messageOptions = DISPATCH_BINDING_TOOLS.has(name)
+      && dispatchBinding?.token
+      && Number.isInteger(dispatchBinding.frameId)
+      ? { frameId: dispatchBinding.frameId }
+      : undefined;
+    const sendContentAction = () => chrome.tabs.sendMessage(tabId, {
+      target: 'content',
+      action,
+      params: contentArgs,
+    }, messageOptions);
+    const dispatchContentAction = sendContentAction;
+
+    let response;
     try {
-      let response;
-      try {
-        await captureClickAxBaseline();
-        response = await chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action,
-          params: contentArgs,
-        }, DISPATCH_BINDING_TOOLS.has(name)
-          && dispatchBinding?.token
-          && Number.isInteger(dispatchBinding.frameId)
-          ? { frameId: dispatchBinding.frameId }
-          : undefined);
+        response = await dispatchContentAction();
       } catch (e) {
         // Content script might not be injected — try injecting it.
         // accessibility-tree.js must load first so content.js's
@@ -22501,23 +22675,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // window.__generateAccessibilityTree and window.__wb_ax_lookup.
         try {
           await this._injectCoreContentScripts(tabId);
-          // Re-stamp after inject so the safety window does not include the
-          // injection gap (which can exceed 400ms on cold tabs).
-          await captureClickAxBaseline();
-          response = await chrome.tabs.sendMessage(tabId, {
-            target: 'content',
-            action,
-            params: contentArgs,
-          }, DISPATCH_BINDING_TOOLS.has(name)
-            && dispatchBinding?.token
-            && Number.isInteger(dispatchBinding.frameId)
-            ? { frameId: dispatchBinding.frameId }
-            : undefined);
+          response = await dispatchContentAction();
         } catch (e2) {
-          return { error: `Failed to communicate with page: ${e2.message}` };
+          return this._withCoordinateReconciliation(
+            { error: `Failed to communicate with page: ${e2.message}` },
+            coordinateDiagnostic,
+          );
         }
       }
-      if (name === 'click' || name === 'click_ax') {
+      if (name === 'click') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }
       if (response?.documentToken && (
@@ -22532,24 +22698,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           delete response.refScopeUrl;
         }
       }
-      if (name === 'click_ax') {
-        response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, clickAxBaseline);
-      }
       if (name === 'set_checked') {
         response = await this._completeSetCheckedWithCdp(tabId, args, response, contentArgs);
       }
       if (name === 'type_ax' || name === 'set_field') {
         response = await this._maybeFallbackFieldWithCdp(tabId, name, args, response);
       }
-      const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
-      if (response) delete response._clickAxAfterSnapshot;
       await this._annotateClickProgress(
         tabId,
         name,
         args,
         response,
         clickProgressBefore,
-        { afterSnapshot: observedAfterSnapshot },
       );
       this._recordInteractionRect(tabId, name, response, interactionUrl);
       this._annotateCredentialField(name, response);
@@ -22557,10 +22717,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response = applyReadPageWindow(response, args);
       }
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
-      return response;
-    } finally {
-      clickAxSideEffectWatch?.stop();
-    }
+    return this._withCoordinateReconciliation(response, coordinateDiagnostic);
   }
 
   /**

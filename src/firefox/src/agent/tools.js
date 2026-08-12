@@ -1562,6 +1562,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 
 Available tools:
 - inspect_viewport: Read-only visual inspection when appearance or rendered pixels matter.
+- After visual inspection, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
 - read_page: Read the current page content
 - get_window_info / resize_window: Inspect or resize the browser window for recording/layout tasks.
 - get_interactive_elements: List all clickable/interactive elements
@@ -1800,6 +1801,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE}
 TOOLS — use only these:
 - get_accessibility_tree: PREFERRED read. Flat-text tree with roles, names, and stable ref_ids. Use filter:"visible" by default.
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
+- After inspect_viewport, act on a screenshot-derived point with click({x,y,from_screenshot:true}); WebBrain converts image pixels to CSS pixels mechanically.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
 - read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. new_tab({url}) only opens a background reference tab and never retargets the run; promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
 - get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.

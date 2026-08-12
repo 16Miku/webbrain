@@ -10494,6 +10494,711 @@ test('screenshot click scale: from_screenshot converts image px to CSS px', () =
   }
 });
 
+test('visual target resolution stays private across Chrome and Firefox tools and prompts', () => {
+  for (const [label, getTools, prompts] of [
+    ['chrome', getToolsForModeCh, [
+      SYSTEM_PROMPT_ASK_CH,
+      SYSTEM_PROMPT_ACT_CH,
+      SYSTEM_PROMPT_ACT_MID_CH,
+      SYSTEM_PROMPT_ACT_COMPACT_CH,
+      SYSTEM_PROMPT_DEV_APPENDIX_CH,
+    ]],
+    ['firefox', getToolsForModeFx, [
+      SYSTEM_PROMPT_ASK_FX,
+      SYSTEM_PROMPT_ACT_FX,
+      SYSTEM_PROMPT_ACT_MID_FX,
+      SYSTEM_PROMPT_ACT_COMPACT_FX,
+      SYSTEM_PROMPT_DEV_APPENDIX_FX,
+    ]],
+  ]) {
+    const namesFor = (mode, tier) => new Set(
+      getTools(mode, { tier }).map(tool => tool.function.name),
+    );
+    for (const [mode, tiers] of [
+      ['ask', ['compact', 'mid', 'full']],
+      ['act', ['compact', 'mid', 'full']],
+      ['dev', ['compact', 'mid', 'full']],
+    ]) {
+      for (const tier of tiers) {
+        assert.equal(namesFor(mode, tier).has('resolve_visual_target'), false, `${label}: ${mode}/${tier} must omit visual target resolution`);
+      }
+    }
+    const promptText = prompts.join('\n');
+    assert.doesNotMatch(promptText, /resolve_visual_target/, `${label}: prompts must not mention the private resolver`);
+    assert.match(promptText, /click\(\{x,y,from_screenshot:true\}\)/, `${label}: prompts must route screenshot points through click directly`);
+  }
+});
+
+async function runCoordinateSemanticCase({
+  label,
+  AgentClass,
+  globalKey,
+  resolverResponse,
+  clickAxResponse = null,
+  cachedAxScope = null,
+  chromeAttachError = null,
+  dispatchBinding = null,
+}) {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const originalCdpAttach = cdpClientCh.attach;
+  const resolveParams = [];
+  const clickAxParams = [];
+  const fallbackParams = [];
+  const sendMessage = async (_tabId, message) => {
+    if (message.type === 'WB_HIDE_FOR_TOOL_USE' || message.type === 'WB_SHOW_AFTER_TOOL_USE') return {};
+    if (message.action === 'resolve_visual_target') {
+      resolveParams.push(message.params);
+      return resolverResponse;
+    }
+    if (message.action === 'click_ax') {
+      clickAxParams.push(message.params);
+      return clickAxResponse || { success: true, method: 'click_ax', ref_id: message.params.ref_id };
+    }
+    if (message.action === 'click') {
+      fallbackParams.push(message.params);
+      return { success: true, method: 'coordinate-fallback' };
+    }
+    throw new Error(`${label}: unexpected content message ${message.action || message.type}`);
+  };
+  const tabs = {
+    get: async () => ({ url: 'https://example.test/' }),
+    sendMessage,
+  };
+  globalThis[globalKey] = globalKey === 'chrome'
+    ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+    : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+  try {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 8811 : 8812;
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._recentSubmitClicks = null;
+    agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    if (cachedAxScope) agent._lastAxScopes.set(tabId, cachedAxScope);
+    if (label === 'chrome') {
+      cdpClientCh.attach = async () => {
+        if (chromeAttachError) throw new Error(chromeAttachError);
+      };
+      agent._currentUrl = async () => 'https://example.test/';
+      agent._clickProgressSnapshot = async () => '';
+      agent._annotateClickProgress = async (_tabId, _name, _args, response) => response;
+      agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
+      agent._captureClickAxObservation = async () => ({});
+      agent._maybeFallbackClickAxWithCdp = async (_tabId, _args, response) => response;
+      agent._recordInteractionRect = () => {};
+    }
+    const mapScreenshotCoords = agent._screenshotClickCoords.bind(agent);
+    let mappingCalls = 0;
+    agent._screenshotClickCoords = (...args) => {
+      mappingCalls += 1;
+      return mapScreenshotCoords(...args);
+    };
+    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+    const result = await agent.executeTool(tabId, 'click', {
+      x: 784,
+      y: 441,
+      from_screenshot: true,
+    }, null, dispatchBinding ? { dispatchBinding } : undefined);
+    return { result, mappingCalls, resolveParams, clickAxParams, fallbackParams };
+  } finally {
+    cdpClientCh.attach = originalCdpAttach;
+    if (globalKey === 'chrome') {
+      if (previousChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = previousChrome;
+    } else if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+}
+
+test('coordinate semantic reconciliation: toolbar-bound coordinate dispatch stays coordinate-only and diagnostic', async () => {
+  const dispatchBinding = { token: 'toolbar-coordinate-binding', frameId: 7 };
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: { success: true },
+      dispatchBinding,
+    });
+    assert.equal(observed.mappingCalls, 1, `${label}: bound coordinate mapping must run exactly once`);
+    assert.deepEqual(observed.resolveParams, [], `${label}: a preserved toolbar binding must not be replaced by resolver targeting`);
+    assert.equal(observed.fallbackParams.length, 1, `${label}: bound coordinate click must keep content coordinate dispatch`);
+    assert.deepEqual(observed.result.coordinateReconciliation, {
+      canonicalPoint: { x: 1280, y: 720 },
+      semanticTargetResolved: false,
+      clickPath: 'coordinate-fallback',
+      fallbackReason: 'bound-coordinate-target',
+    });
+  }
+});
+
+test('coordinate semantic reconciliation: screenshot click converts once and routes eligible buttons through click_ax', async () => {
+  const semanticTarget = {
+    ref_id: 'ref_1231',
+    role: 'button',
+    name: 'SVG parent action',
+    eligibility: 'semantic-button',
+  };
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: {
+        success: true,
+        semanticTarget,
+        documentToken: 'resolver-document-token',
+        refScopeUrl: 'https://example.test/current-route',
+      },
+      cachedAxScope: {
+        documentToken: 'stale-document-token',
+        pageUrl: 'https://example.test/previous-route',
+      },
+    });
+    assert.equal(observed.mappingCalls, 1, `${label}: coordinate mapping must run exactly once`);
+    assert.deepEqual(observed.resolveParams, [{ x: 1280, y: 720 }], `${label}: resolver must receive the canonical CSS point`);
+    assert.deepEqual(observed.clickAxParams, [{
+      ref_id: 'ref_1231',
+      expectedDocumentToken: 'resolver-document-token',
+      expectedPageUrl: 'https://example.test/current-route',
+    }], `${label}: semantic button must route through click_ax with its resolver scope`);
+    assert.equal(observed.fallbackParams.length, 0);
+    assert.deepEqual(observed.result.coordinateReconciliation, {
+      canonicalPoint: { x: 1280, y: 720 },
+      semanticTargetResolved: true,
+      target: { role: 'button', name: 'SVG parent action' },
+      clickPath: 'semantic',
+      fallbackReason: 'none',
+    });
+  }
+});
+
+test('coordinate semantic reconciliation: Chrome semantic buttons do not require coordinate CDP attachment', async () => {
+  const observed = await runCoordinateSemanticCase({
+    label: 'chrome',
+    AgentClass: AgentCh,
+    globalKey: 'chrome',
+    resolverResponse: {
+      success: true,
+      semanticTarget: {
+        ref_id: 'ref_904',
+        role: 'button',
+        name: 'Semantic action without CDP',
+        eligibility: 'semantic-button',
+      },
+      documentToken: 'resolver-token',
+      refScopeUrl: 'https://example.test/',
+    },
+    chromeAttachError: 'synthetic debugger already attached',
+  });
+
+  assert.deepEqual(observed.resolveParams, [{ x: 1280, y: 720 }]);
+  assert.equal(observed.clickAxParams[0].ref_id, 'ref_904');
+  assert.equal(observed.result.success, true);
+  assert.equal(observed.result.method, 'click_ax');
+});
+
+test('coordinate semantic reconciliation: canvas miss and resolver error keep the coordinate fallback', async () => {
+  for (const [resolverResponse, fallbackReason] of [
+    [{ success: true }, 'no-target'],
+    [{ success: false, error: 'synthetic resolver failure', rawDom: '<button>secret</button>' }, 'resolver-error'],
+  ]) {
+    for (const [label, AgentClass, globalKey] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      const observed = await runCoordinateSemanticCase({ label, AgentClass, globalKey, resolverResponse });
+      assert.equal(observed.mappingCalls, 1, `${label}: fallback coordinate mapping must run exactly once`);
+      assert.deepEqual(observed.resolveParams, [{ x: 1280, y: 720 }]);
+      assert.deepEqual(observed.clickAxParams, []);
+      assert.equal(observed.fallbackParams.length, label === 'firefox' ? 1 : 0);
+      assert.deepEqual(observed.result.coordinateReconciliation, {
+        canonicalPoint: { x: 1280, y: 720 },
+        semanticTargetResolved: false,
+        clickPath: 'coordinate-fallback',
+        fallbackReason,
+      });
+      assert.equal(JSON.stringify(observed.result.coordinateReconciliation).includes('synthetic resolver failure'), false);
+      assert.equal(JSON.stringify(observed.result.coordinateReconciliation).includes('rawDom'), false);
+    }
+  }
+});
+
+test('coordinate semantic reconciliation: coordinate-only semantic targets preserve coordinate behavior', async () => {
+  const observed = await runCoordinateSemanticCase({
+    label: 'firefox',
+    AgentClass: AgentFx,
+    globalKey: 'browser',
+    resolverResponse: {
+      success: true,
+      semanticTarget: {
+        ref_id: 'ref_902',
+        role: 'textbox',
+        name: 'Label behavior unchanged'.repeat(40),
+        eligibility: 'coordinate-only',
+      },
+    },
+  });
+  assert.deepEqual(observed.clickAxParams, []);
+  assert.equal(observed.fallbackParams.length, 1);
+  assert.deepEqual(observed.result.coordinateReconciliation, {
+    canonicalPoint: { x: 1280, y: 720 },
+    semanticTargetResolved: false,
+    target: { role: 'textbox', name: 'Label behavior unchanged'.repeat(40).slice(0, 120) },
+    clickPath: 'coordinate-fallback',
+    fallbackReason: 'coordinate-only-target',
+  });
+  assert.equal(JSON.stringify(observed.result.coordinateReconciliation).includes('ref_902'), false);
+});
+
+test('coordinate semantic reconciliation: plain legacy coordinates never invoke the resolver or emit diagnostics', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const originalCdpAttach = cdpClientCh.attach;
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const contentClicks = [];
+    const tabs = {
+      get: async () => ({ url: 'https://example.test/' }),
+      sendMessage: async (_tabId, message) => {
+        if (message.action === 'click') {
+          contentClicks.push(message.params);
+          return { success: true, method: 'legacy-coordinate' };
+        }
+        throw new Error(`${label}: unexpected content message ${message.action || message.type}`);
+      },
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 8821 : 8822;
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._recentSubmitClicks = null;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      let resolverCalls = 0;
+      agent._resolveCoordinateVisualTarget = async () => {
+        resolverCalls += 1;
+        return { success: true };
+      };
+      const mapCoordinates = agent._screenshotClickCoords.bind(agent);
+      let mappingCalls = 0;
+      agent._screenshotClickCoords = (...args) => {
+        mappingCalls += 1;
+        return mapCoordinates(...args);
+      };
+      agent._setScreenshotClickScale(tabId, 2, 2);
+      if (label === 'chrome') {
+        cdpClientCh.attach = async () => { throw new Error('stop after legacy routing check'); };
+      }
+      const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441 });
+      assert.equal(mappingCalls, 1, `${label}: legacy coordinate validation should remain single-pass`);
+      assert.equal(resolverCalls, 0, `${label}: plain coordinate clicks must not enter reconciliation`);
+      assert.equal(Object.hasOwn(result, 'coordinateReconciliation'), false, `${label}: legacy results must keep their old shape`);
+      if (label === 'firefox') {
+        assert.deepEqual(contentClicks, [{ x: 784, y: 441 }], 'Firefox must dispatch the unchanged legacy point');
+      }
+    } finally {
+      cdpClientCh.attach = originalCdpAttach;
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('coordinate semantic reconciliation: stale semantic dispatch never retries by coordinate', async () => {
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const observed = await runCoordinateSemanticCase({
+      label,
+      AgentClass,
+      globalKey,
+      resolverResponse: {
+        success: true,
+        semanticTarget: { ref_id: 'ref_905', role: 'button', name: 'Rerendered action', eligibility: 'semantic-button' },
+        documentToken: 'resolver-token',
+        refScopeUrl: 'https://example.test/',
+      },
+      clickAxResponse: { success: false, dispatched: false, noDispatch: true, staleRef: true, error: 'stale ref_id' },
+    });
+    assert.equal(observed.clickAxParams.length, 1, `${label}: AX dispatch should start once`);
+    assert.equal(observed.fallbackParams.length, 0, `${label}: coordinate retry is forbidden after AX dispatch begins`);
+    assert.equal(observed.result.success, false);
+    assert.equal(observed.result.staleRef, true);
+    assert.equal(observed.result.coordinateReconciliation.clickPath, 'semantic');
+    assert.equal(observed.result.coordinateReconciliation.fallbackReason, 'none');
+  }
+});
+
+test('click_ax preserves rich-text toolbar dispatch bindings after helper extraction', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const messages = [];
+    const tabs = {
+      get: async () => ({ url: 'https://example.test/' }),
+      sendMessage: async (_tabId, message, options) => {
+        messages.push({ message, options });
+        return { success: true, ref_id: 'ref_906' };
+      },
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+    try {
+      const agent = new AgentClass({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      if (label === 'chrome') {
+        agent._currentUrl = async () => 'https://example.test/';
+        agent._clickProgressSnapshot = async () => '';
+        agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
+        agent._captureClickAxObservation = async () => ({});
+        agent._maybeFallbackClickAxWithCdp = async (_tabId, _args, response) => response;
+        agent._annotateClickProgress = async () => {};
+        agent._recordInteractionRect = () => {};
+      }
+      const dispatchBinding = { token: 'toolbar-binding', frameId: 7, ref_id: 'ref_906' };
+      await agent.executeTool(90, 'click_ax', { ref_id: 'ref_906' }, null, { dispatchBinding });
+      const clickMessage = messages.find(entry => entry.message.action === 'click_ax');
+      assert.deepEqual(clickMessage?.message.params.dispatchBinding, dispatchBinding, `${label}: click_ax binding was dropped`);
+      assert.deepEqual(clickMessage?.options, { frameId: 7 }, `${label}: click_ax frame binding was dropped`);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('public click_ax preserves the complete pre-extraction dispatch and post-processing contract', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const events = [];
+    const response = {
+      success: true,
+      ref_id: 'ref_907',
+      documentToken: 'fresh-document-token',
+      refScopeUrl: 'https://example.test/fresh-route',
+      routeChanged: true,
+    };
+    const tabs = {
+      get: async () => ({ url: 'https://example.test/fresh-route' }),
+      sendMessage: async (_tabId, message) => {
+        if (message.action !== 'click_ax') throw new Error(`${label}: unexpected ${message.action}`);
+        events.push('dispatch');
+        assert.equal(message.params.expectedDocumentToken, 'cached-document-token');
+        assert.equal(message.params.expectedPageUrl, 'https://example.test/cached-route');
+        return response;
+      },
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 8831 : 8832;
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._lastAxScopes.set(tabId, {
+        documentToken: 'cached-document-token',
+        pageUrl: 'https://example.test/cached-route',
+      });
+      agent._settleContentFilePickerGuard = async (_tabId, value) => {
+        events.push('file-picker-settle');
+        return value;
+      };
+      agent._annotateCredentialField = (toolName, value) => {
+        events.push('credential-annotation');
+        assert.equal(toolName, 'click_ax');
+        assert.equal(value, response);
+      };
+      agent._clearUploadSelectorRecoveryAfterInspection = (_tabId, toolName, value) => {
+        events.push('upload-recovery-clear');
+        assert.equal(toolName, 'click_ax');
+        assert.equal(value, response);
+      };
+      if (label === 'chrome') {
+        agent._currentUrl = async () => {
+          events.push('current-url');
+          return 'https://example.test/fresh-route';
+        };
+        agent._clickProgressSnapshot = async () => {
+          events.push('progress-before');
+          return 'before';
+        };
+        agent._beginClickAxSideEffectWatch = () => ({
+          stop() { events.push('side-effect-watch-stop'); },
+        });
+        agent._captureClickAxObservation = async () => {
+          events.push('baseline');
+          return { snapshot: 'before' };
+        };
+        agent._maybeFallbackClickAxWithCdp = async (_tabId, clickArgs, value) => {
+          events.push('cdp-fallback');
+          assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
+          value._clickAxAfterSnapshot = 'after';
+          return value;
+        };
+        agent._annotateClickProgress = async (_tabId, toolName, clickArgs, value, before, options) => {
+          events.push('progress-verify');
+          assert.equal(toolName, 'click_ax');
+          assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
+          assert.equal(value, response);
+          assert.equal(before, 'before');
+          assert.deepEqual(options, { afterSnapshot: 'after' });
+        };
+        agent._recordInteractionRect = (_tabId, toolName, value, url) => {
+          events.push('interaction-rect');
+          assert.equal(toolName, 'click_ax');
+          assert.equal(value, response);
+          assert.equal(url, 'https://example.test/fresh-route');
+        };
+      }
+
+      const result = await agent.executeTool(tabId, 'click_ax', { ref_id: 'ref_907' });
+      assert.equal(result.documentToken, 'fresh-document-token', `${label}: click_ax response token must remain public`);
+      assert.equal(result.refScopeUrl, 'https://example.test/fresh-route', `${label}: click_ax scope URL must remain public`);
+      assert.deepEqual(agent._lastAxScopes.get(tabId), {
+        documentToken: 'fresh-document-token',
+        pageUrl: 'https://example.test/fresh-route',
+      });
+      for (const required of ['dispatch', 'file-picker-settle', 'credential-annotation', 'upload-recovery-clear']) {
+        assert.equal(events.includes(required), true, `${label}: missing old click_ax stage ${required}`);
+      }
+      if (label === 'chrome') {
+        for (const required of ['baseline', 'cdp-fallback', 'progress-verify', 'interaction-rect', 'side-effect-watch-stop']) {
+          assert.equal(events.includes(required), true, `chrome: missing old click_ax stage ${required}`);
+        }
+        assert.equal(Object.hasOwn(result, '_clickAxAfterSnapshot'), false);
+      }
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('coordinate semantic reconciliation: Chrome label fallback keeps the existing input redirect', async () => {
+  const previousChrome = globalThis.chrome;
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    armFileInputClickGuard: cdpClientCh.armFileInputClickGuard,
+    dispatchMouseEvent: cdpClientCh.dispatchMouseEvent,
+    consumeFileInputClickGuard: cdpClientCh.consumeFileInputClickGuard,
+  };
+  const clickAxParams = [];
+  const dispatched = [];
+  let evaluateCall = 0;
+  globalThis.chrome = {
+    ...(previousChrome || {}),
+    tabs: {
+      ...(previousChrome?.tabs || {}),
+      get: async () => ({ url: 'https://example.test/' }),
+      query: async () => [],
+      sendMessage: async (_tabId, message) => {
+        if (message.type === 'WB_HIDE_FOR_TOOL_USE' || message.type === 'WB_SHOW_AFTER_TOOL_USE') return {};
+        if (message.action === 'resolve_visual_target') {
+          return {
+            success: true,
+            semanticTarget: {
+              ref_id: 'ref_903',
+              role: 'textbox',
+              name: 'Label behavior unchanged',
+              eligibility: 'coordinate-only',
+            },
+          };
+        }
+        if (message.action === 'click_ax') {
+          clickAxParams.push(message.params);
+          return { success: true };
+        }
+        throw new Error(`chrome: unexpected content message ${message.action || message.type}`);
+      },
+    },
+  };
+  cdpClientCh.attach = async () => {};
+  cdpClientCh.evaluate = async () => {
+    evaluateCall += 1;
+    if (evaluateCall === 1) return { result: { value: undefined } }; // select guard injection
+    if (evaluateCall === 2) return { result: { value: { isSelect: false } } }; // coordinate select probe
+    if (evaluateCall === 3) return { result: { value: { x: 1390, y: 748, tag: 'INPUT' } } }; // label redirect
+    if (evaluateCall === 4) return { result: { value: null } }; // post-click select probe
+    throw new Error(`unexpected CDP evaluate call ${evaluateCall}`);
+  };
+  cdpClientCh.armFileInputClickGuard = async () => {};
+  cdpClientCh.dispatchMouseEvent = async (_tabId, type, x, y) => { dispatched.push({ type, x, y }); };
+  cdpClientCh.consumeFileInputClickGuard = async () => ({ blocked: false });
+
+  try {
+    const agent = new AgentCh({});
+    const tabId = 8813;
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => '';
+    agent._annotateClickProgress = async (_tabId, _name, _args, response) => response;
+    agent._redirectTargetBlankClick = async () => ({ redirected: false });
+    agent._showAgentTarget = () => {};
+    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+    const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441, from_screenshot: true });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(clickAxParams, []);
+    assert.deepEqual(dispatched, [
+      { type: 'mouseMoved', x: 1390, y: 748 },
+      { type: 'mousePressed', x: 1390, y: 748 },
+      { type: 'mouseReleased', x: 1390, y: 748 },
+    ]);
+    assert.deepEqual(result.coordinateReconciliation, {
+      canonicalPoint: { x: 1280, y: 720 },
+      semanticTargetResolved: false,
+      target: { role: 'textbox', name: 'Label behavior unchanged' },
+      clickPath: 'coordinate-fallback',
+      fallbackReason: 'coordinate-only-target',
+    });
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('coordinate semantic reconciliation: Chrome canvas fallback preserves the legacy nearby-input heuristic', async () => {
+  const previousChrome = globalThis.chrome;
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    armFileInputClickGuard: cdpClientCh.armFileInputClickGuard,
+    dispatchMouseEvent: cdpClientCh.dispatchMouseEvent,
+    consumeFileInputClickGuard: cdpClientCh.consumeFileInputClickGuard,
+  };
+  const dispatched = [];
+  let inputFocusCalls = 0;
+  let evaluateCall = 0;
+  const input = {
+    tagName: 'INPUT',
+    focus: () => { inputFocusCalls += 1; },
+    scrollIntoView: () => {},
+    getBoundingClientRect: () => ({ left: 1300, top: 730, width: 180, height: 36 }),
+    parentElement: null,
+  };
+  const grid = {
+    tagName: 'DIV',
+    querySelector: () => input,
+    parentElement: null,
+  };
+  const card = {
+    tagName: 'SECTION',
+    querySelector: () => null,
+    parentElement: grid,
+  };
+  const targetArea = {
+    tagName: 'DIV',
+    querySelector: () => null,
+    parentElement: card,
+  };
+  const canvas = {
+    tagName: 'CANVAS',
+    closest: () => null,
+    querySelector: () => null,
+    parentElement: targetArea,
+  };
+  const document = { elementFromPoint: () => canvas };
+
+  globalThis.chrome = {
+    ...(previousChrome || {}),
+    tabs: {
+      ...(previousChrome?.tabs || {}),
+      get: async () => ({ url: 'https://example.test/' }),
+      query: async () => [],
+      sendMessage: async (_tabId, message) => {
+        if (message.type === 'WB_HIDE_FOR_TOOL_USE' || message.type === 'WB_SHOW_AFTER_TOOL_USE') return {};
+        if (message.action === 'resolve_visual_target') {
+          return { success: true, cssPoint: { x: 1280, y: 720 } };
+        }
+        throw new Error(`chrome: unexpected content message ${message.action || message.type}`);
+      },
+    },
+  };
+  cdpClientCh.attach = async () => {};
+  cdpClientCh.evaluate = async (_tabId, expression) => {
+    evaluateCall += 1;
+    if (evaluateCall === 1) return { result: { value: undefined } }; // select guard injection
+    if (evaluateCall === 2) return { result: { value: { isSelect: false } } }; // coordinate select probe
+    if (evaluateCall === 3) {
+      const value = Function('document', `return (${expression});`)(document);
+      return { result: { value } };
+    }
+    if (evaluateCall === 4) return { result: { value: null } }; // post-click select probe
+    throw new Error(`unexpected CDP evaluate call ${evaluateCall}`);
+  };
+  cdpClientCh.armFileInputClickGuard = async () => {};
+  cdpClientCh.dispatchMouseEvent = async (_tabId, type, x, y) => { dispatched.push({ type, x, y }); };
+  cdpClientCh.consumeFileInputClickGuard = async () => ({ blocked: false });
+
+  try {
+    const agent = new AgentCh({});
+    const tabId = 8814;
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => '';
+    agent._annotateClickProgress = async (_tabId, _name, _args, response) => response;
+    agent._redirectTargetBlankClick = async () => ({ redirected: false });
+    agent._showAgentTarget = () => {};
+    agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
+    const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441, from_screenshot: true });
+
+    assert.equal(inputFocusCalls, 1, 'canvas fallback must preserve the old nearby-input focus heuristic');
+    assert.deepEqual(dispatched, [
+      { type: 'mouseMoved', x: 1390, y: 748 },
+      { type: 'mousePressed', x: 1390, y: 748 },
+      { type: 'mouseReleased', x: 1390, y: 748 },
+    ]);
+    assert.deepEqual(result.coordinateReconciliation, {
+      canonicalPoint: { x: 1280, y: 720 },
+      semanticTargetResolved: false,
+      clickPath: 'coordinate-fallback',
+      fallbackReason: 'no-target',
+    });
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('chrome screenshot tool saves pre-budget data URL when save:true', () => {
   // Structural: save path must prefer saveDataUrl (full CSS) over budgeted dataUrl.
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');

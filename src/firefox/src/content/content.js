@@ -3653,6 +3653,29 @@
           return { error: 'Failed to build accessibility tree: ' + (e && e.message || String(e)) };
         }
       },
+      'resolve_visual_target': () => {
+        try {
+          const x = Number(msg.params?.x);
+          const y = Number(msg.params?.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return { success: false, error: 'x and y must be finite numbers' };
+          }
+          if (typeof window.__wb_ax_resolve_visual_target !== 'function') {
+            return { success: false, error: 'accessibility-tree.js not injected' };
+          }
+          const semanticTarget = window.__wb_ax_resolve_visual_target(x, y);
+          return semanticTarget
+            ? {
+                success: true,
+                semanticTarget,
+                documentToken: _axDocumentToken(),
+                refScopeUrl: location.href,
+              }
+            : { success: true };
+        } catch (e) {
+          return { success: false, error: e?.message || String(e) };
+        }
+      },
       'resolve_form_field_refs': () => {
         try {
           if (typeof window.__wb_ax_ref !== 'function') {
