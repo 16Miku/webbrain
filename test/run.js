@@ -5601,6 +5601,7 @@ test('planner and intent gates arm whole-thread coverage for trace-derived Gmail
   const plan = {
     request_kind: 'execute',
     requires_state_change: false,
+    requires_download: false,
     requires_submission: false,
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
@@ -52954,6 +52955,7 @@ function planOnlyTerminalFixture() {
   return JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
+    requires_download: false,
     read_scope: 'visible_page',
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
@@ -52995,6 +52997,7 @@ function plannerIntentFixture({
   return JSON.stringify({
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
+    requires_download: false,
     requires_submission: requiresSubmission,
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
@@ -54932,6 +54935,7 @@ test('full planner carries explicit app-state evidence authorization', async () 
       agent._chatWithCostAllowance = async () => ({
         content: plannerFixtureJson({
           requires_state_change: true,
+          requires_download: false,
           allows_app_state_tool_evidence: true,
           summary: 'Write the requested note to the WebBrain scratchpad',
         }),
@@ -55007,6 +55011,7 @@ test('planner intent preserves Act and canonical execution fields when localized
           content: JSON.stringify({
             request_kind: 'execute',
             requires_state_change: false,
+            requires_download: false,
             requires_submission: false,
             allows_planner_shaped_result: false,
             allows_app_state_tool_evidence: true,
@@ -61044,6 +61049,7 @@ test('planner: parse and format structured plan', () => {
   const planOnly = parsePlanFromContent(JSON.stringify({
     request_kind: 'plan_only',
     requires_state_change: true,
+    requires_download: false,
     read_scope: 'none',
     summary: 'Describe a monitor plan',
     steps: [{ id: '1', action: 'Describe the cadence.' }],
@@ -61062,6 +61068,7 @@ test('planner: parse and format structured plan', () => {
   const respond = parsePlanFromContent(JSON.stringify({
     request_kind: 'respond',
     requires_state_change: true,
+    requires_download: false,
     read_scope: 'none',
     summary: 'Return the draft already present in working context',
     steps: [],
@@ -61083,6 +61090,7 @@ test('planner: parse and format structured plan', () => {
     const clarifyBeforeSubmit = parse(JSON.stringify({
       request_kind: 'clarify',
       requires_state_change: false,
+      requires_download: false,
       requires_submission: true,
       read_scope: 'none',
       summary: 'Ask for the missing answer before submitting the form.',
@@ -61107,6 +61115,7 @@ test('planner: canonical fields recover missing and partial localization without
   const tracePlan = JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
+    requires_download: false,
     requires_submission: false,
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: true,
@@ -61154,6 +61163,7 @@ test('planner: canonical fields recover missing and partial localization without
     const malformedClarification = parse(JSON.stringify({
       request_kind: 'clarify',
       requires_state_change: false,
+      requires_download: false,
       requires_submission: false,
       read_scope: 'none',
       summary: 'Ask the user which account should receive the transfer.',
@@ -61180,6 +61190,7 @@ test('planner: parse JSON inside markdown fence', () => {
     const missingStructuredScope = parse(JSON.stringify({
       request_kind: 'execute',
       requires_state_change: false,
+      requires_download: false,
       summary: 'Read the current page.',
       steps: [{ id: '1', action: 'Read the page.' }],
       localized: { locale: 'en', summary: 'Read the current page.', steps: [{ id: '1', action: 'Read the page.' }], risks: [] },
@@ -61188,6 +61199,7 @@ test('planner: parse JSON inside markdown fence', () => {
     const invalidResponseScope = parse(JSON.stringify({
       request_kind: 'respond',
       requires_state_change: false,
+      requires_download: false,
       read_scope: 'complete_thread',
       summary: 'Use the existing conversation context.',
       steps: [],
@@ -61420,6 +61432,7 @@ function plannerFixtureJson(overrides = {}) {
   return JSON.stringify({
     request_kind: 'execute',
     requires_state_change: false,
+    requires_download: false,
     requires_submission: false,
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
@@ -61460,6 +61473,7 @@ test('planner routes existing-context artifact requests to a tool-free response'
             content: plannerFixtureJson({
               request_kind: 'respond',
               requires_state_change: false,
+              requires_download: false,
               summary: 'Return the pending draft from existing context',
               steps: [],
               localized: {
@@ -61508,6 +61522,7 @@ test('full planner rechecks read-only follow-ups against existing assistant cont
       const fullExecute = plannerFixtureJson({
         request_kind: 'execute',
         requires_state_change: false,
+        requires_download: false,
         summary: 'Read the issue and revise the response.',
         confidence: 0.99,
         steps: [
@@ -61527,6 +61542,7 @@ test('full planner rechecks read-only follow-ups against existing assistant cont
       const respond = plannerFixtureJson({
         request_kind: 'respond',
         requires_state_change: false,
+        requires_download: false,
         summary: 'Revise the existing draft from conversation context.',
         steps: [],
         localized: {
@@ -61607,6 +61623,7 @@ test('full planner keeps explicit fresh reads executable after follow-up recheck
       const execute = plannerFixtureJson({
         request_kind: 'execute',
         requires_state_change: false,
+        requires_download: false,
         summary: 'Reread the current issue and revise the response.',
         confidence: 0.99,
         steps: [
@@ -61660,6 +61677,7 @@ test('full planner propagates terminal intent recheck failures', async () => {
       const fullExecute = plannerFixtureJson({
         request_kind: 'execute',
         requires_state_change: false,
+        requires_download: false,
         summary: 'Read the issue and revise the response.',
         confidence: 0.99,
         steps: [
@@ -61723,6 +61741,7 @@ test('planner rechecks tool-dependent respond and plan-only intents before routi
             plannerFixtureJson({
               request_kind: requestKind,
               requires_state_change: false,
+              requires_download: false,
               summary: 'Read the open email and draft a response.',
               steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
               localized: {
@@ -61735,6 +61754,7 @@ test('planner rechecks tool-dependent respond and plan-only intents before routi
             plannerFixtureJson({
               request_kind: 'execute',
               requires_state_change: false,
+              requires_download: false,
               summary: 'Read the open email and draft a response.',
               steps: [
                 { id: '1', action: 'Read the open email.', tools: ['read_page'] },
@@ -61837,6 +61857,7 @@ test('planner consistency repair preserves submit intent across one direct clari
         const responses = [false, true].map(requiresSubmission => plannerFixtureJson({
           request_kind: 'execute',
           requires_state_change: true,
+          requires_download: false,
           requires_submission: requiresSubmission,
           summary: 'Fill the remaining application answers and submit the form.',
           confidence: 0.99,
@@ -61905,6 +61926,7 @@ test('planner submit clarification does not cross page boundaries', async () => 
         const response = plannerFixtureJson({
           request_kind: 'execute',
           requires_state_change: true,
+          requires_download: false,
           requires_submission: false,
           summary: 'Fill the different form without submitting it.',
           confidence: 0.99,
@@ -61973,6 +61995,7 @@ test('planner stays in Act when repaired respond intent still lists tools', asyn
           const inconsistentRespond = plannerFixtureJson({
             request_kind: 'respond',
             requires_state_change: false,
+            requires_download: false,
             summary: 'Read the open email and draft a response.',
             steps: [{ id: '1', action: 'Read the open email.', tools: ['read_page'] }],
             localized: {
@@ -62030,6 +62053,7 @@ test('planner consistency repair preserves an explicit plan-only request', async
       const planOnly = plannerFixtureJson({
         request_kind: 'plan_only',
         requires_state_change: false,
+        requires_download: false,
         summary: 'Outline how to review the open email later.',
         steps: [{ id: '1', action: 'Plan a later email read.', tools: ['read_page'] }],
         localized: {
@@ -62084,6 +62108,7 @@ test('planner validates semantic skill ids and activates approved skills before 
           content: JSON.stringify({
             request_kind: 'execute',
             requires_state_change: true,
+            requires_download: false,
             read_scope: 'visible_page',
             summary: 'Download the requested public video.',
             confidence: 0.99,
@@ -62373,6 +62398,7 @@ test('reviewed plan edits preserve only explicitly approved submission metadata'
           content: plannerFixtureJson({
             confidence: 0.99,
             requires_state_change: true,
+            requires_download: false,
             requires_submission: true,
             summary: 'Fill and submit the form.',
             steps: [{ id: '1', action: 'Fill and submit the form.', tools: ['set_field', 'click'] }],
@@ -74375,6 +74401,7 @@ test('execute protocol suppresses planner payloads, rejects false Ask claims, an
   const plannerPayload = JSON.stringify({
     request_kind: 'execute',
     requires_state_change: true,
+    requires_download: false,
     summary: 'Fill the form.',
     steps: [{ id: '1', action: 'Type the value.' }],
     localized: { locale: 'tr', summary: 'Formu doldur.', steps: [] },
