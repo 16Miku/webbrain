@@ -95,6 +95,8 @@ export default {
   "sp.clear.action_warning": "מנקה את ההיסטוריה",
   "sp.selection_scope.title": "טקסט נבחר בלבד",
   "sp.selection_scope.description": "התחילו שיחה חדשה כדי לגשת לדף או למסך.",
+  "sp.selection_scope.context_title": "טקסט נבחר + ידע כללי",
+  "sp.selection_scope.context_description": "משתמש בטקסט הנבחר ובידע של המודל. הדף, הכלים, הקבצים והשיחה הקודמת אינם זמינים.",
   "sp.input.selection_placeholder": "שאלו על הטקסט שנבחר...",
   "sp.mode.ask": "שאל",
   "sp.mode.ask.title": "שאל שאלות על הדף - לא בוצעו שינויים",

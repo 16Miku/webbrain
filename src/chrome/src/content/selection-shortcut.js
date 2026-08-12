@@ -27,7 +27,7 @@
   const LOCALIZATION_KEYS = Object.freeze([
     'askSelection', 'openChat', 'summarize', 'explain', 'quiz',
     'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
-    'askQuestion', 'sendQuestion', 'hideShortcut', 'sentManual', 'sendFailed',
+    'askQuestion', 'sendQuestion', 'generalKnowledge', 'hideShortcut', 'sentManual', 'sendFailed',
   ]);
 
   let enabled = true;
@@ -41,6 +41,7 @@
   let shortcut = null;
   let popup = null;
   let question = null;
+  let generalKnowledge = null;
   let sendButton = null;
   let interfaceLanguage = resolveInterfaceLanguage('');
   let localization = null;
@@ -123,6 +124,8 @@ host.lang = localization.locale;
     question.setAttribute('aria-label', strings.askQuestion);
     question.placeholder = strings.askQuestion;
     sendButton.setAttribute('aria-label', strings.sendQuestion);
+    const generalKnowledgeLabel = shadow.querySelector('.knowledge-option span');
+    if (generalKnowledgeLabel) generalKnowledgeLabel.textContent = strings.generalKnowledge;
     const hideButton = shadow.querySelector('.hide');
     if (hideButton) hideButton.textContent = strings.hideShortcut;
   }
@@ -209,7 +212,7 @@ host.lang = localization.locale;
           color:var(--text); box-shadow:var(--shadow); pointer-events:auto;
           font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         }
-        .actions { display:grid; gap:2px; }
+        .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px; }
         .action,.hide {
           width:100%; border:0; border-radius:10px; background:transparent;
           color:var(--text); text-align:start; cursor:pointer;
@@ -232,9 +235,14 @@ host.lang = localization.locale;
         .send:hover:not(:disabled) { background:var(--accent-strong); }
         .send:disabled { opacity:.38; cursor:default; }
         .send svg { width:15px; height:15px; }
+        .knowledge-option {
+          display:flex; align-items:flex-start; gap:8px; margin:8px 2px 2px;
+          color:var(--muted); font-size:13px; cursor:pointer;
+        }
+        .knowledge-option input { margin:2px 0 0; accent-color:var(--accent); }
         .divider { height:1px; margin:10px 0 4px; background:var(--border); }
         .hide { padding:9px 12px; color:var(--muted); font-size:13px; }
-        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible {
+        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.knowledge-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
         .toast {
@@ -272,6 +280,10 @@ host.lang = localization.locale;
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11M11 6l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
+          <label class="knowledge-option">
+            <input type="checkbox">
+            <span>Use general knowledge</span>
+          </label>
           <div class="divider"></div>
           <button class="hide" type="button">Hide selection shortcut</button>
         </div>
@@ -283,6 +295,7 @@ host.lang = localization.locale;
     shortcut = shadow.querySelector('.shortcut');
     popup = shadow.querySelector('.popup');
     question = shadow.querySelector('textarea');
+    generalKnowledge = shadow.querySelector('.knowledge-option input');
     sendButton = shadow.querySelector('.send');
     toast = shadow.querySelector('.toast');
     applyLocalization();
@@ -376,6 +389,7 @@ host.lang = localization.locale;
     snapshot = nextSnapshot;
     popup.hidden = true;
     question.value = '';
+    generalKnowledge.checked = false;
     sendButton.disabled = true;
     shortcut.hidden = false;
     positionShortcut();
@@ -396,6 +410,7 @@ host.lang = localization.locale;
     if (!popup) return;
     popup.hidden = true;
     question.value = '';
+    generalKnowledge.checked = false;
     sendButton.disabled = true;
     clearSelectionHighlight();
     if (restoreFocus && shortcut && !shortcut.hidden) shortcut.focus();
@@ -407,13 +422,14 @@ host.lang = localization.locale;
     if (shortcut) shortcut.hidden = true;
     if (popup) popup.hidden = true;
     if (question) question.value = '';
+    if (generalKnowledge) generalKnowledge.checked = false;
     if (sendButton) sendButton.disabled = true;
   }
 
   function destroySurface() {
     hideToast();
     host?.remove();
-    host = shadow = highlightLayer = shortcut = popup = question = sendButton = toast = null;
+    host = shadow = highlightLayer = shortcut = popup = question = generalKnowledge = sendButton = toast = null;
     snapshot = null;
   }
 
@@ -444,6 +460,7 @@ host.lang = localization.locale;
       action,
       selectionText: snapshot.text,
       question: action === 'custom' ? String(customQuestion).trim() : undefined,
+      allowGeneralKnowledge: action === 'custom' ? generalKnowledge?.checked === true : undefined,
       language: action === 'custom' ? undefined : (language || interfaceLanguage),
     };
     submitting = true;
@@ -525,6 +542,9 @@ host.lang = localization.locale;
     openPopup,
     submitPreset: (action) => submitSelection(action, '', interfaceLanguage),
     submitCustom: (value) => submitSelection('custom', value),
+    setGeneralKnowledge: (value) => {
+      if (generalKnowledge) generalKnowledge.checked = value === true;
+    },
     hideShortcut: disableShortcut,
     getState: () => ({
       enabled,
@@ -545,6 +565,8 @@ host.lang = localization.locale;
         : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
+      generalKnowledgeChecked: generalKnowledge?.checked === true,
+      generalKnowledgeLabel: shadow?.querySelector('.knowledge-option span')?.textContent || '',
       direction: host?.dir || 'ltr',
       summarizeLabel: shadow?.querySelector('[data-action="summarize"]')?.textContent || '',
       explainLabel: shadow?.querySelector('[data-action="explain"]')?.textContent || '',

@@ -131,6 +131,8 @@ export default {
   "sp.clear.action_warning": "Menghapus riwayat",
   "sp.selection_scope.title": "Hanya teks yang dipilih",
   "sp.selection_scope.description": "Mulai percakapan baru untuk mengakses halaman atau layar.",
+  "sp.selection_scope.context_title": "Teks pilihan + pengetahuan umum",
+  "sp.selection_scope.context_description": "Menggunakan teks pilihan dan pengetahuan model. Halaman, alat, file, dan percakapan sebelumnya tetap tidak tersedia.",
   "sp.input.selection_placeholder": "Tanyakan tentang teks yang dipilih...",
 
   'sp.mode.ask': 'Tanya',

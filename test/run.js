@@ -490,21 +490,25 @@ const { historyTextFromElement: historyTextFromElementFx } = await import(
 );
 const {
   CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_CH,
+  SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_CH,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
   buildContextMenuPrompt: buildContextMenuPromptCh,
   buildSelectionPrompt: buildSelectionPromptCh,
   createContextMenuStorage: createContextMenuStorageCh,
   formatSelectionPromptForDisplay: formatSelectionPromptForDisplayCh,
+  normalizeSelectionSourceGrounding: normalizeSelectionSourceGroundingCh,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/context-menu-storage.js').replace(/\\/g, '/')
 );
 const {
   CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_FX,
+  SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_FX,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
   buildContextMenuPrompt: buildContextMenuPromptFx,
   buildSelectionPrompt: buildSelectionPromptFx,
   createContextMenuStorage: createContextMenuStorageFx,
   formatSelectionPromptForDisplay: formatSelectionPromptForDisplayFx,
+  normalizeSelectionSourceGrounding: normalizeSelectionSourceGroundingFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/context-menu-storage.js').replace(/\\/g, '/')
 );
@@ -20182,6 +20186,8 @@ test('all locales translate the new-conversation and selected-text scope UI', as
         'sp.clear.action_warning',
         'sp.selection_scope.title',
         'sp.selection_scope.description',
+        'sp.selection_scope.context_title',
+        'sp.selection_scope.context_description',
         'sp.input.selection_placeholder',
       ]) {
         assert.equal(typeof locale[key], 'string', `${label}/${filename}: missing ${key}`);
@@ -20892,8 +20898,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     const narrowBannerRuleIndex = css.indexOf('.selection-scope-banner {', baseBannerRuleIndex + 1);
     assert.ok(baseBannerRuleIndex >= 0 && narrowBannerRuleIndex > baseBannerRuleIndex, `${label}: narrow selected-text layout should follow and override the base banner grid`);
 
-    assert.match(panel, /const selectionGroundedTabs = new Set\(\);/, `${label}: selected-text state should be isolated per tab`);
-    assert.match(panel, /function applyConversationScopeState\(tabId, state\) \{[\s\S]*?hasOwnProperty\.call\(state, 'sourceGrounding'\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: sidepanel should consume structural source-grounding state`);
+    assert.match(panel, /const selectionGroundingByTab = new Map\(\);/, `${label}: selected-text policy should be isolated per tab`);
+    assert.match(panel, /function applyConversationScopeState\(tabId, state\) \{[\s\S]*?hasOwnProperty\.call\(state, 'sourceGrounding'\)[\s\S]*?normalizeSelectionSourceGrounding\(state\.sourceGrounding\)/, `${label}: sidepanel should consume allowlisted structural source-grounding state`);
     assert.match(panel, /async function hydrateChatHistoryIdentity[\s\S]*?applyConversationScopeState\(numericTabId, identity\);/, `${label}: scope state should restore with conversation identity`);
     assert.match(panel, /async function refreshConversationScopeState[\s\S]*?sendToBackground\('agent_run_state'[\s\S]*?applyConversationScopeState\(numericTabId, state\);[\s\S]*?return state;/, `${label}: scope refresh should apply only authoritative background state`);
     assert.match(panel, /async function restoreActiveRunState[\s\S]*?refreshConversationScopeState\(numericTabId\);[\s\S]*?applyActiveRunState/, `${label}: active-run restoration should reuse the authoritative scope refresh`);
@@ -20903,12 +20909,12 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(background, /setConversationScopeChangeListener\(\(tabId, state\) => \{[\s\S]*?action: 'agent_update'[\s\S]*?type: 'conversation_scope'[\s\S]*?data: state/, `${label}: background should forward independent scope changes to open sidepanels`);
     assert.match(panel, /function handleAgentUpdateMessage\(msg\) \{\s*if \(msg\.type === 'conversation_scope'\) \{\s*applyConversationScopeState\(msg\.tabId, msg\.data\);\s*return;/, `${label}: sidepanel should apply scope broadcasts before run rendering guards`);
     assert.match(panel, /async function sendRunWithReconnect[\s\S]*?onState: state => \{[\s\S]*?applyConversationScopeState\(tabId, state\);[\s\S]*?return applyActiveRunState\(tabId, state\);/, `${label}: detached run probes should reconcile scope before returning journal-only results`);
-    assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true\);/, `${label}: context-menu selection should reveal the notice without waiting for model output`);
+    assert.match(panel, /if \(sourceGrounding\) setSelectionGroundedForTab\(tabId, true, sourceGrounding\);/, `${label}: context-menu selection should reveal its exact policy without waiting for model output`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
     assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
-    assert.match(panel, /function rejectSelectionScopedMode\(mode,[\s\S]*?mode !== 'act' && mode !== 'dev'[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return true;/, `${label}: restored controls should share one selected-scope mode guard`);
+    assert.match(panel, /function rejectSelectionScopedMode\(mode,[\s\S]*?mode !== 'act' && mode !== 'dev'[\s\S]*?normalizeSelectionSourceGrounding\(sourceGrounding\)[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return true;/, `${label}: restored controls should share one selected-scope mode guard`);
     assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?if \(rejectSelectionScopedMode\(mode\)\) return;[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(/, `${label}: subscription resume should reject restored Act or Dev mode before continuing`);
     assert.match(panel, /function bindErrorRetryButton\(btn\) \{[\s\S]*?rejectSelectionScopedMode\(payload\.mode, currentTabId, payload\.sourceGrounding\)[\s\S]*?setMode\(payload\.mode\);[\s\S]*?sendMessage\(/, `${label}: error retry should reject restored Act or Dev mode before resubmitting`);
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
@@ -20980,6 +20986,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       {
         currentTabId: 92,
         SELECTION_ONLY_SOURCE_GROUNDING: sourceGrounding,
+        normalizeSelectionSourceGrounding: (value) => value === sourceGrounding ? value : '',
         isSelectionGroundedForTab: () => true,
         showComposerToast: (message) => restoredModeToasts.push(message),
         t: () => 'selected-text scope warning',
@@ -21034,7 +21041,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
       ['active', 91, sourceGrounding],
     ], `${label}: detached state probes should apply scope before active run UI`);
 
-    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded \? SELECTION_ONLY_SOURCE_GROUNDING : null/, `${label}: agent should report only the structural selected-text scope marker`);
+    assert.match(agent, /async getConversationState\(tabId, mode = null\)[\s\S]*?sourceGrounding: selectionGrounded[\s\S]*?normalizeSelectionSourceGrounding\(scope\?\.sourceGrounding\)[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING[\s\S]*?: null/, `${label}: agent should report the exact allowlisted selected-text policy with a legacy fallback`);
     assert.match(background, /case 'ensure_conversation_id':[\s\S]*?agent\.getConversationState\(tabId, msg\.mode \|\| 'ask'\)/, `${label}: identity hydration should return scope state`);
     assert.match(background, /case 'agent_run_state':[\s\S]*?agent\.getConversationState\(tabId\)[\s\S]*?agent\.activeRunState\(tabId\)/, `${label}: reconnect polling should return scope state`);
   }
@@ -27257,9 +27264,30 @@ test('background opens context-menu UI before awaiting prompt save', () => {
 });
 
 test('selection shortcut builds allowlisted prompts with an untrusted selection boundary', () => {
-  for (const [label, buildSelectionPrompt, buildContextMenuPrompt] of [
-    ['chrome', buildSelectionPromptCh, buildContextMenuPromptCh],
-    ['firefox', buildSelectionPromptFx, buildContextMenuPromptFx],
+  for (const [
+    label,
+    buildSelectionPrompt,
+    buildContextMenuPrompt,
+    selectionOnlyGrounding,
+    selectionContextGrounding,
+    normalizeSourceGrounding,
+  ] of [
+    [
+      'chrome',
+      buildSelectionPromptCh,
+      buildContextMenuPromptCh,
+      SELECTION_ONLY_SOURCE_GROUNDING_CH,
+      SELECTION_CONTEXT_SOURCE_GROUNDING_CH,
+      normalizeSelectionSourceGroundingCh,
+    ],
+    [
+      'firefox',
+      buildSelectionPromptFx,
+      buildContextMenuPromptFx,
+      SELECTION_ONLY_SOURCE_GROUNDING_FX,
+      SELECTION_CONTEXT_SOURCE_GROUNDING_FX,
+      normalizeSelectionSourceGroundingFx,
+    ],
   ]) {
     for (const [action, instruction] of [
       ['summarize', 'Summarize this selected text clearly and concisely.'],
@@ -27283,6 +27311,25 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
     const custom = buildSelectionPrompt('page data', 'custom', 'What does this imply?');
     assert.ok(custom.startsWith('Please answer this user question about the selected text:\nWhat does this imply?'), `${label}: custom question should stay outside the page-data boundary`);
     assert.ok(custom.indexOf('What does this imply?') < custom.indexOf('<untrusted_page_content'), `${label}: custom question should precede the untrusted selection`);
+    const broaderCustom = buildSelectionPrompt(
+      'The passage mentions cross-platform frameworks.',
+      'custom',
+      'Which frameworks exist?',
+      '',
+      selectionContextGrounding,
+    );
+    assert.match(broaderCustom, /You may use your intrinsic model knowledge/, `${label}: broader custom questions should explicitly permit intrinsic knowledge`);
+    assert.match(broaderCustom, /Do not use the live page, screenshots, tools, attachments, or earlier conversation/, `${label}: broader custom questions should retain the narrow context boundary`);
+    assert.doesNotMatch(broaderCustom, /Use only the text inside the selection block as source material/, `${label}: broader custom questions should not retain the selection-only source contract`);
+    assert.match(broaderCustom, /<untrusted_page_content id="ctx-[^"]+">\nThe passage mentions cross-platform frameworks\.\n<\/untrusted_page_content>/, `${label}: broader selection context must remain inside the untrusted boundary`);
+    assert.equal(
+      buildSelectionPrompt('page data', 'summarize', '', '', selectionContextGrounding),
+      '',
+      `${label}: fixed actions must not accept the broader grounding policy`,
+    );
+    assert.equal(normalizeSourceGrounding(selectionOnlyGrounding), selectionOnlyGrounding, `${label}: selection-only policy should normalize`);
+    assert.equal(normalizeSourceGrounding(selectionContextGrounding), selectionContextGrounding, `${label}: selection-context policy should normalize`);
+    assert.equal(normalizeSourceGrounding('screenshot_only'), '', `${label}: unknown source policies should be rejected`);
     assert.equal(buildSelectionPrompt('page data', 'custom', '   '), '', `${label}: blank custom questions should be rejected`);
     assert.equal(buildSelectionPrompt('page data', 'invented-action'), '', `${label}: unknown action ids should be rejected`);
     assert.equal(buildSelectionPrompt('page data', '__proto__'), '', `${label}: inherited object keys should not bypass the action allowlist`);
@@ -27312,7 +27359,7 @@ test('selection shortcut localizations cover every interface locale with browser
     'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
   ];
   const expectedKeys = [
-    'askAbout', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
+    'askAbout', 'askQuestion', 'askSelection', 'explain', 'generalKnowledge', 'hideShortcut',
     'humanize', 'openChat', 'proofread', 'quiz', 'sendFailed', 'sendQuestion',
     'sentManual', 'summarize', 'translate', 'translateTo',
   ];
@@ -27545,6 +27592,62 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.ok(persistedScope?.anchorFingerprint, `${label}: selected-text boundary should be durable`);
       assert.ok(Array.isArray(persistedScope?.excludedFingerprints), `${label}: excluded pre-selection history should be durable`);
     }
+  }
+});
+
+test('selection-context grounding persists intrinsic-knowledge scope without exposing prior context', async () => {
+  for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_CONTEXT_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_CONTEXT_SOURCE_GROUNDING_FX],
+  ]) {
+    const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
+    const tabId = label === 'chrome' ? 9648 : 9649;
+    const messages = [
+      { role: 'system', content: 'system rules' },
+      { role: 'user', content: 'PRIOR PAGE AND ATTACHMENT SECRET' },
+      { role: 'assistant', content: 'Prior page answer.' },
+    ];
+    agent._hydrate = async () => {};
+    agent._persist = () => {};
+    agent.conversationIds.set(tabId, `${label}-selection-context`);
+    agent.conversations.set(tabId, messages);
+
+    const openingOptions = agent._selectionGroundedRunOptions(tabId, messages, {
+      sourceGrounding,
+      selectionAction: 'custom',
+    });
+    const anchor = {
+      role: 'user',
+      content: buildSelectionPrompt(
+        'This passage mentions cross-platform frameworks.',
+        'custom',
+        'Which frameworks exist?',
+        '',
+        sourceGrounding,
+      ),
+    };
+    messages.push(anchor);
+    agent._finalizeSelectionGroundingScope(tabId, messages, anchor);
+    messages.push({ role: 'assistant', content: 'Flutter, React Native, and Tauri are examples.' });
+
+    const followOptions = agent._selectionGroundedRunOptions(tabId, messages, {});
+    assert.equal(followOptions.sourceGrounding, sourceGrounding, `${label}: follow-up should retain the broader policy`);
+    assert.equal((await agent.getConversationState(tabId)).sourceGrounding, sourceGrounding, `${label}: persisted state should report the broader policy`);
+
+    const priorMessageSet = agent._selectionGroundingPriorMessageSet(tabId, messages);
+    const followUp = { role: 'user', content: 'Which one is best for desktop apps?' };
+    messages.push(followUp);
+    const modelView = agent._messagesForSourceGroundedRun(
+      messages,
+      followOptions,
+      followUp,
+      priorMessageSet,
+    );
+    const serialized = JSON.stringify(modelView);
+    assert.match(String(modelView[0]?.content), /intrinsic model knowledge/, `${label}: broader scope note should authorize intrinsic knowledge`);
+    assert.match(serialized, /cross-platform frameworks/, `${label}: selected anchor should remain available on follow-up`);
+    assert.match(serialized, /Which one is best for desktop apps/, `${label}: trusted follow-up should remain available`);
+    assert.doesNotMatch(serialized, /PRIOR PAGE AND ATTACHMENT SECRET|Prior page answer/, `${label}: broader scope must still exclude pre-selection context`);
   }
 });
 
@@ -27955,8 +28058,8 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     assert.match(
       panel,
-      /const requestedSourceGrounding = retryOptions\?\.sourceGrounding \?\? chatExtraParams\.sourceGrounding;[\s\S]*?requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING/,
-      `${label}: retries should retain allowlisted source grounding`,
+      /const requestedSourceGrounding = retryOptions\?\.sourceGrounding \?\? chatExtraParams\.sourceGrounding;[\s\S]*?normalizeSelectionSourceGrounding\(requestedSourceGrounding\)/,
+      `${label}: retries should retain either allowlisted selection grounding policy`,
     );
     assert.match(
       panel,
@@ -27975,8 +28078,8 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     );
     assert.match(
       panel,
-      /dataset\.retrySourceGrounding[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING/,
-      `${label}: rendered retry controls should preserve the selection boundary`,
+      /dataset\.retrySourceGrounding[\s\S]*?normalizeSelectionSourceGrounding/,
+      `${label}: rendered retry controls should preserve either allowlisted selection boundary`,
     );
     assert.match(
       panel,
@@ -28007,8 +28110,8 @@ test('sidepanel preserves selection-only grounding across retries and attachment
     const agent = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
     assert.match(
       agent,
-      /const selectionOnly = runOptions\?\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING;[\s\S]*?const sourceBoundAttachments = selectionOnly \? \[\] : attachments;/,
-      `${label}: agent trust boundary should reject explicit attachments on selection-only runs`,
+      /const selectionOnly = isSelectionSourceGrounding\(runOptions\?\.sourceGrounding\);[\s\S]*?const sourceBoundAttachments = selectionOnly \? \[\] : attachments;/,
+      `${label}: agent trust boundary should reject explicit attachments under either selection policy`,
     );
     assert.match(
       agent,
@@ -28144,10 +28247,12 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /const STORAGE_KEY = 'selectionShortcutEnabled';/, `${label}: content script should use the persistent setting`);
     assert.match(content, /const LOCALE_STORAGE_KEY = 'wbLocale';/, `${label}: content script should use the plugin interface language`);
     assert.match(content, /data-action="translate">Translate<\/button>/, `${label}: floating popup should expose one-click Translate`);
+    assert.match(content, /class="knowledge-option"[\s\S]*?<input type="checkbox">[\s\S]*?<span>Use general knowledge<\/span>/, `${label}: custom question UI should expose an explicit conservative-default knowledge choice`);
     assert.doesNotMatch(content, /class="language-select"|class="translate-view"/, `${label}: floating Translate should not open a second screen`);
     assert.match(content, /submitSelection\(button\.dataset\.action, '', interfaceLanguage\)/, `${label}: every floating preset should submit directly in the plugin language`);
     assert.match(content, /const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';/, `${label}: floating shortcuts should request their labels from the extension background`);
     assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
+    assert.match(content, /allowGeneralKnowledge: action === 'custom' \? generalKnowledge\?\.checked === true : undefined/, `${label}: only custom questions should submit the broader grounding choice`);
     assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?button\.textContent = strings\[action\];/, `${label}: localization should update direction and visible labels on the existing surface`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
     assert.match(content, /border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?color:var\(--accent\);/, `${label}: shortcut should use the WebBrain purple treatment`);
@@ -28178,8 +28283,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /Object\.entries\(SELECTION_TRANSLATION_LANGUAGES\)/, `${label}: native Translate submenu should list every supported language`);
     assert.match(background, /selectionTranslationLanguageLabel\(code, localization\.locale\) \|\| title/, `${label}: native translation targets should use localized language names with an English fallback`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
-    assert.match(background, /sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING/, `${label}: selected-text payloads should carry structural source grounding`);
-    assert.match(background, /msg\.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING\s*\?\s*\{\s*sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,/, `${label}: only allowlisted grounding should reach agent run options`);
+    assert.match(background, /const sourceGrounding = selectionAction === 'custom' && msg\.allowGeneralKnowledge === true[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: only custom questions should opt into broader structural grounding`);
+    assert.match(background, /\.\.\.\(normalizeSelectionSourceGrounding\(msg\.sourceGrounding\)[\s\S]*?sourceGrounding: normalizeSelectionSourceGrounding\(msg\.sourceGrounding\),/, `${label}: only allowlisted grounding should reach agent run options`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'humanize'\]/, `${label}: native submenu should include localized Humanize`);
     assert.match(background, /changes\.wbLocale[\s\S]*?selectionShortcutLocale = normalizeSelectionShortcutLocale\(changes\.wbLocale\.newValue\);[\s\S]*?createContextMenus\(\)\.catch/, `${label}: changing the interface locale should rebuild native context menus`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, selectionAction, '', selectionShortcutLocale\)/, `${label}: native fixed actions should request the interface response language`);
@@ -28308,9 +28413,9 @@ function createContextMenuPromptHarness(createHandler, prompt, sendMessage, opti
 }
 
 test('context-menu prompt transport preserves only allowlisted selection grounding', async () => {
-  for (const [label, createHandler, sourceGrounding] of [
-    ['chrome', createContextMenuPromptHandlerCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
-    ['firefox', createContextMenuPromptHandlerFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  for (const [label, createHandler, sourceGrounding, contextGrounding] of [
+    ['chrome', createContextMenuPromptHandlerCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, SELECTION_CONTEXT_SOURCE_GROUNDING_CH],
+    ['firefox', createContextMenuPromptHandlerFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, SELECTION_CONTEXT_SOURCE_GROUNDING_FX],
   ]) {
     const prompt = {
       id: `${label}-grounded`,
@@ -28333,6 +28438,19 @@ test('context-menu prompt transport preserves only allowlisted selection groundi
     assert.equal(contextMenuClaim.promptId, prompt.id, `${label}: run-start ownership should stay prompt-scoped`);
     assert.equal(typeof contextMenuClaim.claimantId, 'string', `${label}: run-start ownership should include the panel claimant`);
     assert.equal(typeof __onContextMenuClaimRejected, 'function', `${label}: reservation loss should remain locally retryable`);
+
+    const contextPrompt = {
+      id: `${label}-selection-context`,
+      tabId: 6,
+      text: 'Which frameworks exist?',
+      sourceGrounding: contextGrounding,
+      selectionAction: 'custom',
+    };
+    const broader = createContextMenuPromptHarness(createHandler, contextPrompt, async () => true);
+    broader.handler.acceptContextMenuPrompt(contextPrompt);
+    await waitMicrotasks(3);
+    assert.equal(broader.sends[0].extra.sourceGrounding, contextGrounding, `${label}: explicit selection-context policy should survive sidepanel transport`);
+    assert.equal(broader.sends[0].extra.selectionAction, 'custom', `${label}: broader policy should retain the custom action provenance`);
 
     const invalidPrompt = {
       id: `${label}-invalid-grounding`,

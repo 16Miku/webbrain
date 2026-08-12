@@ -97,6 +97,8 @@ export default {
   "sp.clear.action_warning": "تاریخچه را پاک می‌کند",
   "sp.selection_scope.title": "فقط متن انتخاب‌شده",
   "sp.selection_scope.description": "برای دسترسی به صفحه یا نمایشگر، مکالمه جدیدی شروع کنید.",
+  "sp.selection_scope.context_title": "متن انتخاب‌شده + دانش عمومی",
+  "sp.selection_scope.context_description": "از متن انتخاب‌شده و دانش مدل استفاده می‌کند. صفحه، ابزارها، فایل‌ها و گفت‌وگوی قبلی همچنان در دسترس نیستند.",
   "sp.input.selection_placeholder": "درباره متن انتخاب‌شده بپرسید...",
 
   'sp.mode.ask': "بپرسید",

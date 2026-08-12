@@ -97,6 +97,8 @@ export default {
   "sp.clear.action_warning": "ইতিহাস মুছে দেয়",
   "sp.selection_scope.title": "শুধু নির্বাচিত লেখা",
   "sp.selection_scope.description": "পৃষ্ঠা বা স্ক্রিন অ্যাক্সেস করতে একটি নতুন কথোপকথন শুরু করুন।",
+  "sp.selection_scope.context_title": "নির্বাচিত লেখা + সাধারণ জ্ঞান",
+  "sp.selection_scope.context_description": "নির্বাচিত লেখা ও মডেলের জ্ঞান ব্যবহার করে। পৃষ্ঠা, টুল, ফাইল ও আগের কথোপকথন অনুপলব্ধ থাকে।",
   "sp.input.selection_placeholder": "নির্বাচিত লেখা সম্পর্কে জিজ্ঞাসা করুন...",
 
   'sp.mode.ask': "জিজ্ঞাসা করুন",
