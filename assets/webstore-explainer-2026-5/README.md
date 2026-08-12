@@ -40,7 +40,7 @@ Files (1280×800):
 - 04-any-llm.png: Model picker, cropped to the provider dropdown
 - 05-plan-before-act.png: Plan review with Approve/Adjust before actions run
 - 06-launch-offer.png: WebBrain Cloud $5/mo (reg. $8), Save 35%
-- 07-social-proof.png: 700+ GitHub stars, ~40 contributors, MIT — repo bar with contributor avatars
+- 07-social-proof.png: 700+ GitHub stars, 40+ contributors, MIT — repo bar with contributor avatars
 
 Light-background alternates of the two dark slides (originals kept, use whichever fits the gallery):
 - 01-hero-light.png
