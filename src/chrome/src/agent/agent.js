@@ -8362,20 +8362,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _coordinateReconciliationDiagnostic(point, resolution, clickPath, fallbackReason) {
     const target = resolution?.success === true ? resolution.semanticTarget : null;
-    const ref = typeof target?.ref_id === 'string' && /^ref_\d+$/.test(target.ref_id)
-      ? target.ref_id.slice(0, 32)
-      : '';
-    const resolved = !!ref;
+    const resolved = clickPath === 'semantic';
+    const role = String(target?.role || '').slice(0, 32);
+    const name = String(target?.name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const targetMetadata = {
+      ...(role ? { role } : {}),
+      ...(name ? { name } : {}),
+    };
     return {
       canonicalPoint: { x: Number(point.x), y: Number(point.y) },
       semanticTargetResolved: resolved,
-      ...(resolved ? {
-        target: {
-          role: String(target.role || '').slice(0, 32),
-          name: String(target.name || '').replace(/\s+/g, ' ').trim().slice(0, 120),
-          ref,
-        },
-      } : {}),
+      ...(Object.keys(targetMetadata).length ? { target: targetMetadata } : {}),
       clickPath,
       fallbackReason,
     };
@@ -8471,6 +8468,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { afterSnapshot: observedAfterSnapshot },
       );
       this._recordInteractionRect(tabId, 'click_ax', response, interactionUrl);
+      this._annotateCredentialField('click_ax', response);
+      this._clearUploadSelectorRecoveryAfterInspection(tabId, 'click_ax', response);
       return response;
     } finally {
       sideEffectWatch?.stop();
@@ -17562,8 +17561,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const mapped = this._screenshotClickCoords(tabId, args);
-      if (mapped) {
+      if (mapped && (mapped.converted || args.from_screenshot === true)) {
         args = { ...args, x: mapped.x, y: mapped.y };
+      }
+      if (args.from_screenshot === true && mapped) {
         coordinatePoint = { x: mapped.x, y: mapped.y };
       }
     }
@@ -21579,8 +21580,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 const opts = Array.from(el.options).map(o => o.text.trim());
                 return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
               }
-              if (el.tagName === 'CANVAS') return null;
-
               // Find the real input target
               let target = null;
 

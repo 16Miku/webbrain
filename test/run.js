@@ -10663,7 +10663,7 @@ test('coordinate semantic reconciliation: screenshot click converts once and rou
     assert.deepEqual(observed.result.coordinateReconciliation, {
       canonicalPoint: { x: 1280, y: 720 },
       semanticTargetResolved: true,
-      target: { role: 'button', name: 'SVG parent action', ref: 'ref_1231' },
+      target: { role: 'button', name: 'SVG parent action' },
       clickPath: 'semantic',
       fallbackReason: 'none',
     });
@@ -10740,11 +10740,74 @@ test('coordinate semantic reconciliation: coordinate-only semantic targets prese
   assert.equal(observed.fallbackParams.length, 1);
   assert.deepEqual(observed.result.coordinateReconciliation, {
     canonicalPoint: { x: 1280, y: 720 },
-    semanticTargetResolved: true,
-    target: { role: 'textbox', name: 'Label behavior unchanged'.repeat(40).slice(0, 120), ref: 'ref_902' },
+    semanticTargetResolved: false,
+    target: { role: 'textbox', name: 'Label behavior unchanged'.repeat(40).slice(0, 120) },
     clickPath: 'coordinate-fallback',
     fallbackReason: 'coordinate-only-target',
   });
+  assert.equal(JSON.stringify(observed.result.coordinateReconciliation).includes('ref_902'), false);
+});
+
+test('coordinate semantic reconciliation: plain legacy coordinates never invoke the resolver or emit diagnostics', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const originalCdpAttach = cdpClientCh.attach;
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const contentClicks = [];
+    const tabs = {
+      get: async () => ({ url: 'https://example.test/' }),
+      sendMessage: async (_tabId, message) => {
+        if (message.action === 'click') {
+          contentClicks.push(message.params);
+          return { success: true, method: 'legacy-coordinate' };
+        }
+        throw new Error(`${label}: unexpected content message ${message.action || message.type}`);
+      },
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 8821 : 8822;
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._recentSubmitClicks = null;
+      agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+      let resolverCalls = 0;
+      agent._resolveCoordinateVisualTarget = async () => {
+        resolverCalls += 1;
+        return { success: true };
+      };
+      const mapCoordinates = agent._screenshotClickCoords.bind(agent);
+      let mappingCalls = 0;
+      agent._screenshotClickCoords = (...args) => {
+        mappingCalls += 1;
+        return mapCoordinates(...args);
+      };
+      agent._setScreenshotClickScale(tabId, 2, 2);
+      if (label === 'chrome') {
+        cdpClientCh.attach = async () => { throw new Error('stop after legacy routing check'); };
+      }
+      const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441 });
+      assert.equal(mappingCalls, 1, `${label}: legacy coordinate validation should remain single-pass`);
+      assert.equal(resolverCalls, 0, `${label}: plain coordinate clicks must not enter reconciliation`);
+      assert.equal(Object.hasOwn(result, 'coordinateReconciliation'), false, `${label}: legacy results must keep their old shape`);
+      if (label === 'firefox') {
+        assert.deepEqual(contentClicks, [{ x: 784, y: 441 }], 'Firefox must dispatch the unchanged legacy point');
+      }
+    } finally {
+      cdpClientCh.attach = originalCdpAttach;
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
 });
 
 test('coordinate semantic reconciliation: stale semantic dispatch never retries by coordinate', async () => {
@@ -10810,6 +10873,121 @@ test('click_ax preserves rich-text toolbar dispatch bindings after helper extrac
       const clickMessage = messages.find(entry => entry.message.action === 'click_ax');
       assert.deepEqual(clickMessage?.message.params.dispatchBinding, dispatchBinding, `${label}: click_ax binding was dropped`);
       assert.deepEqual(clickMessage?.options, { frameId: 7 }, `${label}: click_ax frame binding was dropped`);
+    } finally {
+      if (globalKey === 'chrome') {
+        if (previousChrome === undefined) delete globalThis.chrome;
+        else globalThis.chrome = previousChrome;
+      } else if (previousBrowser === undefined) delete globalThis.browser;
+      else globalThis.browser = previousBrowser;
+    }
+  }
+});
+
+test('public click_ax preserves the complete pre-extraction dispatch and post-processing contract', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  for (const [label, AgentClass, globalKey] of [
+    ['chrome', AgentCh, 'chrome'],
+    ['firefox', AgentFx, 'browser'],
+  ]) {
+    const events = [];
+    const response = {
+      success: true,
+      ref_id: 'ref_907',
+      documentToken: 'fresh-document-token',
+      refScopeUrl: 'https://example.test/fresh-route',
+      routeChanged: true,
+    };
+    const tabs = {
+      get: async () => ({ url: 'https://example.test/fresh-route' }),
+      sendMessage: async (_tabId, message) => {
+        if (message.action !== 'click_ax') throw new Error(`${label}: unexpected ${message.action}`);
+        events.push('dispatch');
+        assert.equal(message.params.expectedDocumentToken, 'cached-document-token');
+        assert.equal(message.params.expectedPageUrl, 'https://example.test/cached-route');
+        return response;
+      },
+    };
+    globalThis[globalKey] = globalKey === 'chrome'
+      ? { ...(previousChrome || {}), tabs: { ...(previousChrome?.tabs || {}), ...tabs } }
+      : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
+    try {
+      const agent = new AgentClass({});
+      const tabId = label === 'chrome' ? 8831 : 8832;
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._lastAxScopes.set(tabId, {
+        documentToken: 'cached-document-token',
+        pageUrl: 'https://example.test/cached-route',
+      });
+      agent._settleContentFilePickerGuard = async (_tabId, value) => {
+        events.push('file-picker-settle');
+        return value;
+      };
+      agent._annotateCredentialField = (toolName, value) => {
+        events.push('credential-annotation');
+        assert.equal(toolName, 'click_ax');
+        assert.equal(value, response);
+      };
+      agent._clearUploadSelectorRecoveryAfterInspection = (_tabId, toolName, value) => {
+        events.push('upload-recovery-clear');
+        assert.equal(toolName, 'click_ax');
+        assert.equal(value, response);
+      };
+      if (label === 'chrome') {
+        agent._currentUrl = async () => {
+          events.push('current-url');
+          return 'https://example.test/fresh-route';
+        };
+        agent._clickProgressSnapshot = async () => {
+          events.push('progress-before');
+          return 'before';
+        };
+        agent._beginClickAxSideEffectWatch = () => ({
+          stop() { events.push('side-effect-watch-stop'); },
+        });
+        agent._captureClickAxObservation = async () => {
+          events.push('baseline');
+          return { snapshot: 'before' };
+        };
+        agent._maybeFallbackClickAxWithCdp = async (_tabId, clickArgs, value) => {
+          events.push('cdp-fallback');
+          assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
+          value._clickAxAfterSnapshot = 'after';
+          return value;
+        };
+        agent._annotateClickProgress = async (_tabId, toolName, clickArgs, value, before, options) => {
+          events.push('progress-verify');
+          assert.equal(toolName, 'click_ax');
+          assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
+          assert.equal(value, response);
+          assert.equal(before, 'before');
+          assert.deepEqual(options, { afterSnapshot: 'after' });
+        };
+        agent._recordInteractionRect = (_tabId, toolName, value, url) => {
+          events.push('interaction-rect');
+          assert.equal(toolName, 'click_ax');
+          assert.equal(value, response);
+          assert.equal(url, 'https://example.test/fresh-route');
+        };
+      }
+
+      const result = await agent.executeTool(tabId, 'click_ax', { ref_id: 'ref_907' });
+      assert.equal(result.documentToken, 'fresh-document-token', `${label}: click_ax response token must remain public`);
+      assert.equal(result.refScopeUrl, 'https://example.test/fresh-route', `${label}: click_ax scope URL must remain public`);
+      assert.deepEqual(agent._lastAxScopes.get(tabId), {
+        documentToken: 'fresh-document-token',
+        pageUrl: 'https://example.test/fresh-route',
+      });
+      for (const required of ['dispatch', 'file-picker-settle', 'credential-annotation', 'upload-recovery-clear']) {
+        assert.equal(events.includes(required), true, `${label}: missing old click_ax stage ${required}`);
+      }
+      if (label === 'chrome') {
+        for (const required of ['baseline', 'cdp-fallback', 'progress-verify', 'interaction-rect', 'side-effect-watch-stop']) {
+          assert.equal(events.includes(required), true, `chrome: missing old click_ax stage ${required}`);
+        }
+        assert.equal(Object.hasOwn(result, '_clickAxAfterSnapshot'), false);
+      }
     } finally {
       if (globalKey === 'chrome') {
         if (previousChrome === undefined) delete globalThis.chrome;
@@ -10894,8 +11072,8 @@ test('coordinate semantic reconciliation: Chrome label fallback keeps the existi
     ]);
     assert.deepEqual(result.coordinateReconciliation, {
       canonicalPoint: { x: 1280, y: 720 },
-      semanticTargetResolved: true,
-      target: { role: 'textbox', name: 'Label behavior unchanged', ref: 'ref_903' },
+      semanticTargetResolved: false,
+      target: { role: 'textbox', name: 'Label behavior unchanged' },
       clickPath: 'coordinate-fallback',
       fallbackReason: 'coordinate-only-target',
     });
@@ -10906,7 +11084,7 @@ test('coordinate semantic reconciliation: Chrome label fallback keeps the existi
   }
 });
 
-test('coordinate semantic reconciliation: Chrome canvas fallback keeps the original pixel coordinate', async () => {
+test('coordinate semantic reconciliation: Chrome canvas fallback preserves the legacy nearby-input heuristic', async () => {
   const previousChrome = globalThis.chrome;
   const originalCdp = {
     attach: cdpClientCh.attach,
@@ -10992,11 +11170,11 @@ test('coordinate semantic reconciliation: Chrome canvas fallback keeps the origi
     agent._setScreenshotClickScale(tabId, 2560 / 1568, 1440 / 882);
     const result = await agent.executeTool(tabId, 'click', { x: 784, y: 441, from_screenshot: true });
 
-    assert.equal(inputFocusCalls, 0, 'canvas fallback must not focus an input in a sibling container');
+    assert.equal(inputFocusCalls, 1, 'canvas fallback must preserve the old nearby-input focus heuristic');
     assert.deepEqual(dispatched, [
-      { type: 'mouseMoved', x: 1280, y: 720 },
-      { type: 'mousePressed', x: 1280, y: 720 },
-      { type: 'mouseReleased', x: 1280, y: 720 },
+      { type: 'mouseMoved', x: 1390, y: 748 },
+      { type: 'mousePressed', x: 1390, y: 748 },
+      { type: 'mouseReleased', x: 1390, y: 748 },
     ]);
     assert.deepEqual(result.coordinateReconciliation, {
       canonicalPoint: { x: 1280, y: 720 },
