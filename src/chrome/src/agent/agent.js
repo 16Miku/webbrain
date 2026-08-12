@@ -5942,6 +5942,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
+          download: capabilities.includes(Capability.DOWNLOAD),
         });
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
@@ -9497,6 +9498,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         proceed: true,
         requestKind: 'execute',
         requiresStateChange: true,
+        requiresDownload: fastPathPlan.id === 'download-media',
         progressLedgerPolicy: 'auto',
         progressAction: null,
       };
@@ -9934,6 +9936,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _plannerCompletionGateFields(plan) {
+    return {
+      requiresDownload: plan?.requires_download === true,
+    };
+  }
+
+  async _tracePlannerCompletionRequirementCorrection(runId, plan, phase) {
+    if (!runId || plan?.completion_requirement_correction !== 'download_requires_state_change') return;
+    try {
+      await trace.recordNote(runId, 0, 'planner_completion_requirement_corrected', {
+        phase: phase === 'planner' ? 'planner' : 'intent',
+        requirement: 'download',
+        requiresStateChange: true,
+      });
+    } catch {}
+  }
+
   _plannerProgressLedgerGateFieldsFromApprovedPlanText(text) {
     const match = String(text || '').match(
       /^\s*-\s*Progress ledger:\s*(yes|no|auto)(?:\s*\(([^)\r\n]+)\))?\s*$/im,
@@ -9958,6 +9977,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (match[1].toLowerCase() === 'yes') return true;
     if (match[1].toLowerCase() === 'no') return false;
     return null;
+  }
+
+  _plannerDownloadGateFieldFromApprovedPlanText(text) {
+    return /^\s*-\s*Download required:\s*yes\s*$/im.test(String(text || ''));
   }
 
   _plannerReadScopeFromApprovedPlanText(text) {
@@ -10320,6 +10343,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? this._plannerIntentRecheckFallback()
           : this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
       }
+      await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'intent');
       if (plan.request_kind === 'respond') {
         return {
           proceed: true,
@@ -10347,6 +10371,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: plan.scheduling?.tool || null,
+        ...this._plannerCompletionGateFields(plan),
         ...this._plannerProgressLedgerGateFields(plan),
       };
     } catch (e) {
@@ -10524,6 +10549,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? this._strictPlannerFailure(onUpdate)
           : this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
       }
+      await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
       if (this._shouldRecheckReadOnlyFollowUpIntent(plan, historyDigest, followUpContext)) {
         const intentGate = await this._runPlannerIntentGate(
           tabId,
@@ -10590,6 +10616,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
           requiredSchedulingTool: plan.scheduling?.tool || null,
+          ...this._plannerCompletionGateFields(plan),
           ...this._plannerProgressLedgerGateFields(plan),
         };
       }
@@ -10625,10 +10652,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const approvedStepsChanged = verbosePlanEdited
         && this._approvedPlanStepsText(approvedText) !== this._approvedPlanStepsText(verboseMarkdown);
       const approvedReadScopeStepsChanged = !!editedText && (
-        verbosePlanEdited
+        choice?.markdownMode === 'verbose'
           ? approvedStepsChanged
           : this._compactApprovedPlanStepsChanged(plan, approvedText)
       );
+      const approvedDownloadMetadata = verbosePlanEdited
+        ? this._plannerDownloadGateFieldFromApprovedPlanText(approvedText)
+        : plan.requires_download === true;
+      const approvedRequiresDownload = approvedDownloadMetadata === true
+        && !approvedReadScopeStepsChanged;
       // The visible metadata remains authoritative for unrelated edits, but a
       // changed Steps section can remove the action that justified the
       // planner's original positive submit intent while leaving its generated
@@ -10644,6 +10676,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const approvedReadScope = approvedReadScopeStepsChanged && approvedReadScopeMetadata === 'complete_thread'
         ? 'none'
         : approvedReadScopeMetadata;
+      const approvedRequiresStateChange = !approvedRequiresDownload
+        && plan.completion_requirement_correction === 'download_requires_state_change'
+        ? false
+        : plan.requires_state_change === true;
       const approvedScratchpadText = formatPlanScratchpad(plan, approvedText, canonicalVerboseMarkdown);
       this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: approvedReadScope });
       return {
@@ -10652,11 +10688,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         planId,
         skillIds: approvedSkillIds,
         requestKind: 'execute',
-        requiresStateChange: plan.requires_state_change === true,
+        requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
+        requiresDownload: approvedRequiresDownload,
         ...approvedProgressLedger,
       };
     } catch (e) {
@@ -14471,7 +14508,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const enabled = this._isActionMode(mode)
       && runOptions?.cloudRun !== true
       && requestKind === 'execute';
-    const requiresStateChange = typeof gateOutcome?.requiresStateChange === 'boolean'
+    const requiresDownload = gateOutcome?.requiresDownload === true;
+    const requiresStateChange = requiresDownload
+      ? true
+      : typeof gateOutcome?.requiresStateChange === 'boolean'
       ? gateOutcome.requiresStateChange
       : null;
     const requiresSubmission = typeof gateOutcome?.requiresSubmission === 'boolean'
@@ -14490,6 +14530,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried?.requestKind === 'execute'
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
+      && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
@@ -14498,6 +14539,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind,
       requiresStateChange,
       requiresSubmission,
+      requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
       requiredSchedulingTool,
@@ -14506,6 +14548,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // the immediately preceding run; ordinary user turns always start at 0.
       successfulTaskToolCalls: carryMatches ? carried.successfulTaskToolCalls : 0,
       successfulConsequentialToolCalls: carryMatches ? carried.successfulConsequentialToolCalls : 0,
+      successfulDownloadToolCalls: carryMatches ? (carried.successfulDownloadToolCalls || 0) : 0,
+      pendingDownloadIds: carryMatches && Array.isArray(carried.pendingDownloadIds)
+        ? [...carried.pendingDownloadIds]
+        : [],
       successfulRequiredSchedulingToolCalls: carryMatches
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
@@ -14574,7 +14620,69 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return capabilities.some(capability => mutationCapabilities.has(capability));
   }
 
-  _markPlanExecutionToolCall(tabId, name, result, { consequential = false } = {}) {
+  _isSuccessfulDownloadEvidence(name, result) {
+    if (!this._isSuccessfulExecutionEvidence(result)) return false;
+    if (name === 'screenshot' || name === 'full_page_screenshot') {
+      return result?.savedFile?.downloadId != null && result.savedFile.state === 'complete';
+    }
+    if (name === 'download_files' || name === 'download_file') {
+      return Array.isArray(result?.downloads)
+        && result.downloads.some(item => (
+          item?.success === true
+          && item.downloadId != null
+          && item.state === 'complete'
+        ));
+    }
+    if (name === 'download_resource_from_page') {
+      return result?.downloadId != null && result.state === 'complete';
+    }
+    if (name === 'download_social_media') {
+      return Number(result?.completedCount || 0) > 0
+        || (result?.savedFile?.downloadId != null && result.savedFile.state === 'complete');
+    }
+    return result?.downloadId != null && result.state === 'complete';
+  }
+
+  _pendingDownloadIdsFromResult(name, result) {
+    if (!result || typeof result !== 'object' || result.denied || result.cancelled) return [];
+    if (name === 'download_files' || name === 'download_file') {
+      return (Array.isArray(result.downloads) ? result.downloads : [])
+        .filter(item => (
+          item?.downloadId != null
+          && item.state !== 'complete'
+          && item.state !== 'interrupted'
+          && item.success !== false
+        ))
+        .map(item => item.downloadId);
+    }
+    if (result.downloadId != null
+        && result.state !== 'complete'
+        && result.state !== 'interrupted'
+        && (result.pending === true || result.success === true)) {
+      return [result.downloadId];
+    }
+    return [];
+  }
+
+  _confirmPendingDownloadEvidence(state, result) {
+    if (!state?.requiresDownload
+        || !Array.isArray(state.pendingDownloadIds)
+        || state.pendingDownloadIds.length === 0
+        || !this._isSuccessfulExecutionEvidence(result)
+        || !Array.isArray(result?.downloads)) return false;
+    const completedIds = new Set(
+      result.downloads
+        .filter(item => item?.id != null && item.state === 'complete')
+        .map(item => String(item.id)),
+    );
+    if (completedIds.size === 0) return false;
+    const remaining = state.pendingDownloadIds.filter(id => !completedIds.has(String(id)));
+    if (remaining.length === state.pendingDownloadIds.length) return false;
+    state.pendingDownloadIds = remaining;
+    return true;
+  }
+
+  _markPlanExecutionToolCall(tabId, name, result, { consequential = false, download = false } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     const requestedAppStateTool = state?.allowsAppStateToolEvidence === true
       && this.constructor.EXECUTION_APP_STATE_TOOLS.has(name);
@@ -14586,6 +14694,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // on the completion invariant's required follow-up page observation.
     const unverifiedFindText = name === 'find_text'
       && (result?.found !== true || result?.verified !== true || result?.inconclusive === true);
+    if (state?.enabled && download) {
+      const pendingIds = this._pendingDownloadIdsFromResult(name, result);
+      state.pendingDownloadIds = [...new Set([...state.pendingDownloadIds, ...pendingIds])];
+    }
+    const confirmedPendingDownload = name === 'list_downloads'
+      && this._confirmPendingDownloadEvidence(state, result);
     if (!state?.enabled
         || name === 'done'
         || (this.constructor.EXECUTION_META_TOOLS.has(name) && !requestedAppStateTool)
@@ -14593,7 +14707,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
+    if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {
+      state.successfulDownloadToolCalls += 1;
+    }
     if (consequential
+        || confirmedPendingDownload
         || requiredScheduleSucceeded
         || (requestedAppStateTool && this.constructor.EXECUTION_APP_STATE_WRITE_TOOLS.has(name))) {
       state.successfulConsequentialToolCalls += 1;
@@ -14610,21 +14728,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : state.successfulConsequentialToolCalls > 0;
     const schedulingEvidenceSatisfied = !state.requiredSchedulingTool
       || state.successfulRequiredSchedulingToolCalls > 0;
-    return taskEvidenceSatisfied && schedulingEvidenceSatisfied;
+    const downloadEvidenceSatisfied = !state.requiresDownload
+      || state.successfulDownloadToolCalls > 0;
+    return taskEvidenceSatisfied && schedulingEvidenceSatisfied && downloadEvidenceSatisfied;
   }
 
   _storeContinuationExecutionEvidence(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
-    if (guard?.enabled && (guard.successfulTaskToolCalls > 0 || guard.successfulConsequentialToolCalls > 0)) {
+    if (guard?.enabled && (
+      guard.successfulTaskToolCalls > 0
+      || guard.successfulConsequentialToolCalls > 0
+      || guard.pendingDownloadIds.length > 0
+    )) {
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
         requestKind: guard.requestKind,
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
+        requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
         successfulTaskToolCalls: guard.successfulTaskToolCalls,
         successfulConsequentialToolCalls: guard.successfulConsequentialToolCalls,
+        successfulDownloadToolCalls: guard.successfulDownloadToolCalls,
+        pendingDownloadIds: [...guard.pendingDownloadIds],
         successfulRequiredSchedulingToolCalls: guard.successfulRequiredSchedulingToolCalls,
         completionSubmitState: submit ? {
           originatingUrl: submit.originatingUrl || '',
@@ -14748,6 +14875,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const missingRequiredSchedulingTool = !terminalFailure
       && !!state.requiredSchedulingTool
       && state.successfulRequiredSchedulingToolCalls === 0;
+    const missingRequiredDownload = !terminalFailure
+      && state.requiresDownload === true
+      && state.successfulDownloadToolCalls === 0;
     const missingEvidence = !terminalFailure && !this._executionEvidenceSatisfied(state);
     const unknownMutationIntent = state.requiresStateChange == null;
     // Every plain Act/Dev terminal gets one protocol recovery regardless of
@@ -14758,6 +14888,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!invalidPlainFinal && !invalidDone) return null;
     if (runtimeModeContradiction
         && !missingRequiredSchedulingTool
+        && !missingRequiredDownload
         && !state.runtimeModeCorrectionAttempted) {
       state.recoveryAttempted = true;
       state.runtimeModeCorrectionAttempted = true;
@@ -14779,6 +14910,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? '[PLAN EXECUTION BLOCK: No current user stop was received. The previous response echoed a stale local cancellation status from conversation history. That status is UI metadata, not an instruction or task result. Continue the active task with permitted tools. If complete or blocked, call done with an explicit outcome; do not repeat the cancellation status or return plain text.]'
           : missingRequiredSchedulingTool
           ? `[PLAN EXECUTION BLOCK: The approved plan requires a successful ${state.requiredSchedulingTool} call before this task can finish successfully. A one-time read, scroll, send, or other action does not create the scheduled work. Call ${state.requiredSchedulingTool} with the user's requested timing and verify success:true plus scheduled:true. If the schedule is unsupported or still lacks required timing, call done with outcome partial or failed and explain the exact limitation; do not claim it was scheduled.]`
+          : missingRequiredDownload
+          ? '[PLAN EXECUTION BLOCK: This task requires a file to be downloaded before it can finish successfully. Finding a URL, link, button, or media source is only read evidence. Use an authorized tool call with the DOWNLOAD capability and verify that it returned successful download evidence. If permission is denied or no file can be saved, call done with outcome partial or failed and explain the limitation; do not claim the file was downloaded.]'
           : unknownMutationIntent
           ? '[PLAN EXECUTION BLOCK: Planning failed, so the runtime could not determine whether this task requires a state change. Continue with normally permitted tools. A success outcome now requires a verified consequential tool call; if the useful result is read-only or no safe consequential action is needed, deliver that result with done outcome partial instead of claiming success. Do not invent or perform a mutation merely to satisfy this guard.]'
           : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',
@@ -14787,6 +14920,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (missingRequiredSchedulingTool) {
       return {
         failure: `[Agent stopped because the approved plan required ${state.requiredSchedulingTool}, but no successful matching scheduling call was verified after one recovery nudge. The task may have performed one-time actions, but the requested future work was not scheduled.]`,
+        status: 'required_tool_missing',
+      };
+    }
+    if (missingRequiredDownload) {
+      return {
+        failure: '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
         status: 'required_tool_missing',
       };
     }

@@ -53859,6 +53859,58 @@ test('completion words do not mask mixed progress plus plan terminals', () => {
   }
 });
 
+test('download-required execution accepts only completed download evidence', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8635 + index;
+    const state = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresDownload: true,
+    });
+    assert.equal(state.requiresStateChange, true, `${AgentClass.name}: download did not force consequential evidence`);
+
+    agent._markPlanExecutionToolCall(tabId, 'navigate', { success: true }, { consequential: true });
+    agent._markPlanExecutionToolCall(
+      tabId,
+      'download_social_media',
+      { success: true, completedCount: 0, urls: ['https://cdn.example/video.mp4'] },
+      { consequential: true, download: true },
+    );
+    assert.equal(
+      agent._executionEvidenceSatisfied(state),
+      false,
+      `${AgentClass.name}: unrelated mutation or media URL completed a download task`,
+    );
+
+    agent._markPlanExecutionToolCall(tabId, 'download_resource_from_page', {
+      success: true,
+      downloadId: 11,
+      state: 'in_progress',
+      pending: true,
+    }, { consequential: true, download: true });
+    assert.equal(agent._executionEvidenceSatisfied(state), false, `${AgentClass.name}: pending download counted as complete`);
+    agent._markPlanExecutionToolCall(tabId, 'list_downloads', {
+      success: true,
+      downloads: [{ id: 11, state: 'complete' }],
+    });
+    assert.equal(state.successfulDownloadToolCalls, 1, `${AgentClass.name}: completed pending download was not confirmed`);
+    assert.equal(agent._executionEvidenceSatisfied(state), true, `${AgentClass.name}: completed download did not satisfy the guard`);
+
+    const completedTabId = tabId + 20;
+    const completedState = agent._startPlanExecutionGuard(completedTabId, 'act', {
+      requestKind: 'execute',
+      requiresDownload: true,
+    });
+    agent._markPlanExecutionToolCall(completedTabId, 'download_files', {
+      success: true,
+      downloads: [{ success: true, downloadId: 14, state: 'complete' }],
+    }, { consequential: true, download: true });
+    assert.equal(completedState.successfulDownloadToolCalls, 1, `${AgentClass.name}: completed batch download was not counted`);
+    assert.equal(agent._executionEvidenceSatisfied(completedState), true, `${AgentClass.name}: completed batch download was rejected`);
+  }
+});
+
 test('planner-bypassed managed cloud runs never enable the execution guard', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -61109,6 +61161,45 @@ test('planner: parse and format structured plan', () => {
     assert.equal(clarifyBeforeSubmit?.requires_submission, true, 'clarify must retain the eventual user-authorized submit intent');
     assert.equal(clarifyBeforeSubmit?.read_scope, 'none', 'clarify must never retain a page-read scope');
   }
+});
+
+test('planner preserves structured download completion and corrects state-change intent', () => {
+  const raw = JSON.stringify({
+    request_kind: 'execute',
+    requires_state_change: false,
+    requires_download: true,
+    requires_submission: false,
+    allows_planner_shaped_result: false,
+    allows_app_state_tool_evidence: false,
+    read_scope: 'visible_page',
+    summary: 'Save the requested report.',
+    confidence: 0.95,
+    steps: [{ id: '1', action: 'Download the requested report.', tools: ['download_files'] }],
+    memory: { use_scratchpad: false, scratchpad_notes: [], use_progress_ledger: false, progress_action: null },
+    scheduling: null,
+    risks: [],
+    localized: {
+      locale: 'en',
+      summary: 'Save the requested report.',
+      steps: [{ id: '1', action: 'Download the requested report.' }],
+      risks: [],
+    },
+    mode: 'act',
+  });
+
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    const plan = parse(raw, { requireIntent: true, locale: 'en' });
+    assert.equal(plan?.requires_download, true, `${label}: structured download requirement was lost`);
+    assert.equal(plan?.requires_state_change, true, `${label}: download did not force state-change completion`);
+    assert.equal(
+      plan?.completion_requirement_correction,
+      'download_requires_state_change',
+      `${label}: planner inconsistency was not recorded`,
+    );
+  }
+
+  const markdown = formatPlanMarkdown(parsePlanFromContent(raw), { verbose: true });
+  assert.match(markdown, /Download required:\s*yes/i, 'review metadata omitted the download requirement');
 });
 
 test('planner: canonical fields recover missing and partial localization without changing execution metadata', () => {

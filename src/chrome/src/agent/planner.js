@@ -556,18 +556,26 @@ export function normalizePlan(obj, opts = {}) {
   const requiresSubmission = submissionBearingPlan
     ? (hasRequiresSubmission ? obj.requires_submission === true : null)
     : false;
+  const requiresDownload = executablePlan && obj.requires_download === true;
+  const completionRequirementCorrection = requiresDownload
+    && hasRequiresStateChange
+    && obj.requires_state_change === false
+    ? 'download_requires_state_change'
+    : null;
   const requiresStateChange = executablePlan
     ? (
       !!obj.requires_state_change
       || requiresSubmission === true
       || !!normalizedScheduling
-      || !!obj.requires_download
+      || requiresDownload
     )
     : false;
   return {
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    requires_download: requiresDownload,
+    completion_requirement_correction: completionRequirementCorrection,
     allows_planner_shaped_result: requestKind === 'execute' && obj.allows_planner_shaped_result === true,
     allows_app_state_tool_evidence: requestKind === 'execute' && obj.allows_app_state_tool_evidence === true,
     read_scope: requestKind === 'execute' || (!opts.requireIntent && requestKind === null)
@@ -633,6 +641,7 @@ function formatPlanConfidence(plan) {
 function appendPlanExecutionMetadata(lines, plan) {
   lines.push('### Completion requirements');
   lines.push(`- Submission required: ${plan.requires_submission === true ? 'yes' : (plan.requires_submission === false ? 'no' : 'auto')}`);
+  lines.push(`- Download required: ${plan.requires_download === true ? 'yes' : 'no'}`);
   lines.push(`- Read scope: ${normalizeReadScope(plan.read_scope) || 'none'}`);
   lines.push('');
 
