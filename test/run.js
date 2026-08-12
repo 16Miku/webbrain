@@ -5646,6 +5646,43 @@ test('whole-thread reads require deterministic terminal page coverage in both br
     assert.equal(gmailState.expansionConfirmed, true, `${label}: fresh Collapse all evidence was not recorded`);
     assert.equal(runtime.readCompletenessBlock(gmailState), null, `${label}: expanded, fully paged trusted Gmail thread remained blocked`);
 
+    let missingRootState = runtime.createReadCompletenessState(`${label}-gmail-missing-root`, true, true, 'gmail');
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
+      filter: 'visible', maxDepth: 12, maxChars: 12000,
+    }, {
+      pageContent: 'trusted root discovery',
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+    });
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', expandedPage1Args, {
+      pageContent: 'main\n button "Collapse all"\n listitem "Oldest message"',
+      page: 1,
+      totalChars: 2400,
+      hasMore: true,
+      truncated: true,
+      nextPage: 2,
+      continuationArgs: { ...expandedPage1Args, page: 2 },
+      conversationRootRefId: gmailRootRef,
+      conversationExpansionState: 'expanded',
+    });
+    const beforeMissingRoot = missingRootState;
+    missingRootState = runtime.recordReadCompleteness(missingRootState, 'get_accessibility_tree', {
+      ...expandedPage1Args, page: 2,
+    }, {
+      pageContent: 'detached thread page two',
+      page: 2,
+      totalChars: 2400,
+      hasMore: false,
+      truncated: false,
+      continuationArgs: null,
+    });
+    assert.equal(runtime.readCompletenessMadeProgress(beforeMissingRoot, missingRootState), false, `${label}: missing Gmail root metadata was credited as progress`);
+    assert.equal(missingRootState.conversationRootRefId, '', `${label}: missing Gmail root metadata retained the stale root`);
+    assert.equal(missingRootState.expansionConfirmed, false, `${label}: missing Gmail root metadata retained expansion trust`);
+    assert.deepEqual(missingRootState.treePages, [], `${label}: missing Gmail root metadata retained stale pages`);
+    assert.equal(missingRootState.treeCoverageComplete, false, `${label}: missing Gmail root metadata retained completed coverage`);
+    assert.match(runtime.readCompletenessBlock(missingRootState), /First call get_accessibility_tree[\s\S]*document root/i, `${label}: missing Gmail root metadata did not restart discovery`);
+
     let changedRootState = runtime.createReadCompletenessState(`${label}-gmail-root-change`, true, true, 'gmail');
     changedRootState = runtime.recordReadCompleteness(changedRootState, 'get_accessibility_tree', {
       filter: 'visible', maxDepth: 12, maxChars: 12000,

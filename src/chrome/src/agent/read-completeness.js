@@ -146,17 +146,36 @@ function sameTreeScope(left, right) {
   return JSON.stringify(normalizedTreeScope(left)) === JSON.stringify(normalizedTreeScope(right));
 }
 
+function restartGmailRootDiscovery(state) {
+  return {
+    ...state,
+    sawEligibleRead: false,
+    complete: false,
+    treeCoverageComplete: false,
+    expansionConfirmed: false,
+    treeKey: '',
+    treePages: [],
+    treeTerminalPage: null,
+    conversationRootRefId: '',
+    pendingTool: '',
+    continuationArgs: null,
+  };
+}
+
 function gmailAccessibilityTreeState(state, args, result) {
-  if (result?.error || typeof result?.pageContent !== 'string') return state;
+  const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
   const resultRootRefId = typeof result?.conversationRootRefId === 'string'
     ? result.conversationRootRefId.trim()
     : '';
-  const currentRootRefId = resultRootRefId || state.conversationRootRefId;
-  if (!currentRootRefId) return state;
-
   const previousRootRefId = state.conversationRootRefId;
+  if (!resultRootRefId && previousRootRefId && (
+    requestedRefId === previousRootRefId
+    || (!result?.error && typeof result?.pageContent === 'string')
+  )) return restartGmailRootDiscovery(state);
+  if (result?.error || typeof result?.pageContent !== 'string' || !resultRootRefId) return state;
+  const currentRootRefId = resultRootRefId;
+
   const rootChanged = !!previousRootRefId && previousRootRefId !== currentRootRefId;
-  const requestedRefId = typeof args?.ref_id === 'string' ? args.ref_id.trim() : '';
   const trustedThreadRead = requestedRefId === currentRootRefId;
   const expansionEvidenceState = rootChanged
     ? { ...state, expansionConfirmed: false }

@@ -1156,6 +1156,14 @@ async function readTrustedGmailThreadPages(page, sourcePath, label) {
   if (spoofOnlyExpansion.conversationExpansionState != null) {
     throw new Error(`${label}: message-body Expand all spoofed expansion evidence`);
   }
+  const detachedRootRead = await page.evaluate(() => {
+    const current = window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+    document.getElementById('active-thread').remove();
+    return window.__generateAccessibilityTree('all', 15, 1200, current.conversationRootRefId, 1);
+  });
+  if (!/no longer connected/i.test(String(detachedRootRead.error || '')) || detachedRootRead.pageContent) {
+    throw new Error(`${label}: a detached Gmail conversation ref remained readable`);
+  }
   return pages.map(result => ({
     page: result.page,
     totalChars: result.totalChars,

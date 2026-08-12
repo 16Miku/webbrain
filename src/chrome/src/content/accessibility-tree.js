@@ -1026,10 +1026,10 @@
           };
         }
         const el = weak.deref();
-        if (!el) {
+        if (!el || !el.isConnected) {
           delete window.__wbElementMap[refId];
           return {
-            error: `Element with ref_id '${refId}' no longer exists. It may have been removed from the page. Call get_accessibility_tree without ref_id to get the current page state.`,
+            error: `Element with ref_id '${refId}' is no longer connected to the page. Call get_accessibility_tree without ref_id to get the current page state.`,
             pageContent: '',
             viewport,
           };
