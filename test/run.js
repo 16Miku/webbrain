@@ -327,10 +327,10 @@ const { transcribeAudio } = await import(
 // network-tools.js references chrome.* inside a try/catch at module load, so
 // it imports cleanly under Node — the storage init silently no-ops and
 // validateFetchUrl / registrableDomain are pure functions.
-const { validateFetchUrl, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
+const { validateFetchUrl, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, downloadResourceFromPage: downloadResourceFromPageCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/network/network-tools.js').replace(/\\/g, '/')
 );
-const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
+const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, downloadResourceFromPage: downloadResourceFromPageFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/network/network-tools.js').replace(/\\/g, '/')
 );
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
@@ -449,6 +449,8 @@ const {
   PLANNER_API_REPLAY_RULE,
   PLANNER_RESPONSE_ONLY_RULES,
   READ_SCOPE_SYSTEM_PROMPT,
+  PLANNER_RESPONSE_JSON_SCHEMA,
+  PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
   buildPlannerSystemPrompt,
   buildPlannerIntentMessages,
   buildReadScopeMessages,
@@ -468,6 +470,8 @@ const {
   PLANNER_API_REPLAY_RULE: PLANNER_API_REPLAY_RULE_FX,
   PLANNER_RESPONSE_ONLY_RULES: PLANNER_RESPONSE_ONLY_RULES_FX,
   READ_SCOPE_SYSTEM_PROMPT: READ_SCOPE_SYSTEM_PROMPT_FX,
+  PLANNER_RESPONSE_JSON_SCHEMA: PLANNER_RESPONSE_JSON_SCHEMA_FX,
+  PLANNER_INTENT_RESPONSE_JSON_SCHEMA: PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX,
   buildPlannerSystemPrompt: buildPlannerSystemPromptFx,
   buildPlannerMessages: buildPlannerMessagesFx,
   buildPlannerIntentMessages: buildPlannerIntentMessagesFx,
@@ -53221,6 +53225,7 @@ function plannerIntentFixture({
   requestKind = 'execute',
   requiresStateChange = false,
   requiresSubmission = false,
+  requiresDownload = false,
   allowsPlannerShapedResult = false,
   allowsAppStateToolEvidence = false,
   readScope = null,
@@ -53234,6 +53239,7 @@ function plannerIntentFixture({
     request_kind: requestKind,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
+    completion_requirements: { download: requiresDownload },
     allows_planner_shaped_result: allowsPlannerShapedResult,
     allows_app_state_tool_evidence: allowsAppStateToolEvidence,
     read_scope: readScope || (requestKind === 'execute' ? 'visible_page' : 'none'),
@@ -54094,6 +54100,105 @@ test('completion words do not mask mixed progress plus plan terminals', () => {
   }
 });
 
+test('download-required execution accepts only completed DOWNLOAD-capability evidence', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8635 + index;
+    const state = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresDownload: true,
+    });
+    assert.equal(state.requiresStateChange, true, `${AgentClass.name}: download did not force consequential evidence`);
+
+    agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
+    agent._markPlanExecutionToolCall(tabId, 'click_ax', { success: true }, { consequential: true });
+    agent._markPlanExecutionToolCall(
+      tabId,
+      'download_social_media',
+      { success: true, completedCount: 0, urls: ['https://cdn.example/video.mp4'] },
+      { consequential: true, download: true },
+    );
+    assert.equal(agent._executionEvidenceSatisfied(state), false, `${AgentClass.name}: read/click/URL evidence completed a download task`);
+    assert.equal(state.successfulDownloadToolCalls, 0, `${AgentClass.name}: media resolution counted as a saved file`);
+
+    agent._markPlanExecutionToolCall(tabId, 'list_downloads', {
+      success: true,
+      downloads: [{ id: 999, state: 'complete' }],
+    });
+    assert.equal(state.successfulDownloadToolCalls, 0, `${AgentClass.name}: unrelated historical download counted as task evidence`);
+
+    const rejected = [
+      { success: true, downloads: [{ success: true, downloadId: 11, state: 'in_progress' }] },
+      { success: false, downloads: [{ success: false, downloadId: 12, state: 'interrupted' }] },
+      { success: false, denied: true, error: 'permission denied' },
+      { success: false, pending: true, downloadId: 13, state: 'in_progress' },
+    ];
+    for (const result of rejected) {
+      agent._markPlanExecutionToolCall(tabId, 'download_files', result, { consequential: true, download: true });
+    }
+    assert.equal(state.successfulDownloadToolCalls, 0, `${AgentClass.name}: incomplete or denied download counted as complete`);
+
+    agent._markPlanExecutionToolCall(tabId, 'list_downloads', {
+      success: true,
+      downloads: [{ id: 11, state: 'complete' }],
+    });
+    assert.equal(state.successfulDownloadToolCalls, 1, `${AgentClass.name}: follow-up verification of the task download was rejected`);
+    assert.equal(agent._executionEvidenceSatisfied(state), true, `${AgentClass.name}: verified pending download did not satisfy the guard`);
+
+    const followUpTabId = tabId + 20;
+    const followUpState = agent._startPlanExecutionGuard(followUpTabId, 'act', {
+      requestKind: 'execute',
+      requiresDownload: true,
+    });
+    agent._markPlanExecutionToolCall(followUpTabId, 'read_page', { success: true });
+
+    const firstDecision = agent._planOnlyTerminalDecision(
+      followUpTabId,
+      'The file is ready.',
+      { viaDone: true, outcome: 'success' },
+    );
+    assert.equal(firstDecision?.retry, true, `${AgentClass.name}: missing download evidence bypassed recovery`);
+    assert.match(firstDecision?.nudge || '', /requires a file to be downloaded/i, `${AgentClass.name}: download recovery was not specific`);
+
+    agent._markPlanExecutionToolCall(followUpTabId, 'download_files', {
+      success: true,
+      downloads: [{ success: true, downloadId: 14, state: 'complete' }],
+    }, { consequential: true, download: true });
+    assert.equal(followUpState.successfulDownloadToolCalls, 1, `${AgentClass.name}: completed download was not counted`);
+    assert.equal(agent._executionEvidenceSatisfied(followUpState), true, `${AgentClass.name}: completed download did not satisfy the guard`);
+    assert.equal(
+      agent._planOnlyTerminalDecision(followUpTabId, 'The file was downloaded.', { viaDone: true, outcome: 'success' }),
+      null,
+      `${AgentClass.name}: verified download was rejected`,
+    );
+  }
+});
+
+test('download evidence recognizes completed core, screenshot, social, and skill results', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const accepted = [
+      ['download_resource_from_page', { success: true, downloadId: 21, state: 'complete' }],
+      ['screenshot', { success: true, savedFile: { downloadId: 22, state: 'complete' } }],
+      ['download_social_media', { success: true, completedCount: 1 }],
+      ['download_public_media', { success: true, downloadId: 23, state: 'complete' }],
+    ];
+    for (const [name, result] of accepted) {
+      assert.equal(agent._isSuccessfulDownloadEvidence(name, result), true, `${AgentClass.name}: ${name} completion rejected`);
+    }
+    const rejected = [
+      ['download_resource_from_page', { success: true, downloadId: 31 }],
+      ['screenshot', { success: true, savedFile: { downloadId: 32, state: 'in_progress' } }],
+      ['download_social_media', { success: true, completedCount: 0 }],
+      ['download_public_media', { success: true, downloadId: 33, state: 'in_progress', pending: true }],
+    ];
+    for (const [name, result] of rejected) {
+      assert.equal(agent._isSuccessfulDownloadEvidence(name, result), false, `${AgentClass.name}: ${name} incomplete result accepted`);
+    }
+  }
+});
+
 test('planner-bypassed managed cloud runs never enable the execution guard', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -54183,6 +54288,38 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: continuation repeated a consequential action`,
     );
     assert.equal(responses.length, 0, `${AgentClass.name}: continuation entered recovery`);
+  }
+});
+
+test('trusted continuation carries completed download evidence only for the same requirement', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8647 + index;
+    const conversationId = `download_continuation_${index}`;
+    const gate = {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresDownload: true,
+    };
+    agent.conversationIds.set(tabId, conversationId);
+    agent._startPlanExecutionGuard(tabId, 'act', gate);
+    agent._markPlanExecutionToolCall(tabId, 'download_resource_from_page', {
+      success: true,
+      downloadId: 41,
+      state: 'complete',
+    }, { consequential: true, download: true });
+    agent._storeContinuationExecutionEvidence(tabId);
+
+    const continued = agent._startPlanExecutionGuard(tabId, 'act', gate, { trustedContinuation: true });
+    assert.equal(continued.successfulDownloadToolCalls, 1, `${AgentClass.name}: trusted continuation lost download evidence`);
+    assert.equal(agent._executionEvidenceSatisfied(continued), true, `${AgentClass.name}: carried download evidence was unusable`);
+
+    agent._storeContinuationExecutionEvidence(tabId);
+    const changedRequirement = agent._startPlanExecutionGuard(tabId, 'act', {
+      ...gate,
+      requiresDownload: false,
+    }, { trustedContinuation: true });
+    assert.equal(changedRequirement.successfulDownloadToolCalls, 0, `${AgentClass.name}: mismatched requirement reused download evidence`);
   }
 });
 
@@ -55246,6 +55383,7 @@ test('planner intent preserves Act and canonical execution fields when localized
             request_kind: 'execute',
             requires_state_change: false,
             requires_submission: false,
+            completion_requirements: { download: true },
             allows_planner_shaped_result: false,
             allows_app_state_tool_evidence: true,
             read_scope: 'visible_page',
@@ -55277,8 +55415,47 @@ test('planner intent preserves Act and canonical execution fields when localized
       assert.equal(gate.proceed, true, `${AgentClass.name}: recoverable localization blocked execution`);
       assert.equal(gate.requestKind, 'execute', `${AgentClass.name}: download intent was downgraded`);
       assert.equal(gate.plannerFailedContinueAct, undefined, `${AgentClass.name}: valid download plan was marked as a planner failure`);
-      assert.equal(gate.requiresStateChange, false, `${AgentClass.name}: localization recovery changed canonical execution metadata`);
+      assert.equal(gate.requiresStateChange, true, `${AgentClass.name}: download completion did not correct state-change evidence`);
+      assert.equal(gate.requiresDownload, true, `${AgentClass.name}: compact planner dropped download completion metadata`);
       assert.equal(warning, '', `${AgentClass.name}: recoverable localization emitted a planner failure warning`);
+    }
+  });
+});
+
+test('full planner carries download completion metadata into the execution guard', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const agent = new AgentClass({ getActive: () => ({ name: 'planner-test', model: 'planner-test' }) });
+      agent.setScheduledRunPolicy(8920 + index, {
+        requireConsequentialConfirmation: false,
+        autoApprovePlanReview: true,
+      });
+      agent._chatWithCostAllowance = async () => ({
+        content: plannerFixtureJson({
+          requires_state_change: false,
+          completion_requirements: { download: true },
+          summary: 'Download the selected video.',
+          steps: [{ id: '1', action: 'Download the selected video.', tools: ['download_files'] }],
+        }),
+      });
+      const gate = await agent._runPlannerGate(
+        8920 + index,
+        { role: 'user', content: 'Download the selected video.' },
+        () => {},
+        null,
+        null,
+        '',
+        { tabUrl: 'https://example.com/video', tabTitle: 'Video' },
+        'try',
+        'act',
+        { locale: 'en' },
+      );
+      assert.equal(gate.proceed, true, `${AgentClass.name}: download plan was blocked`);
+      assert.equal(gate.requiresStateChange, true, `${AgentClass.name}: full planner did not correct state-change evidence`);
+      assert.equal(gate.requiresDownload, true, `${AgentClass.name}: full planner dropped download completion metadata`);
+      const guard = agent._startPlanExecutionGuard(8930 + index, 'act', gate);
+      assert.equal(guard.requiresStateChange, true, `${AgentClass.name}: guard did not treat download as state-changing`);
+      assert.equal(guard.requiresDownload, true, `${AgentClass.name}: guard lost download requirement`);
     }
   });
 });
@@ -58540,6 +58717,71 @@ test('download_files treats interrupted browser downloads as failed (chrome & fi
   }
 });
 
+test('download_resource_from_page waits for browser-reported completion (chrome & firefox)', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = {
+      runtime: { lastError: null },
+      scripting: {
+        async executeScript() {
+          return [{ result: { ok: true, url: 'https://example.com/report.pdf', isBlob: false, crossOrigin: false } }];
+        },
+      },
+      downloads: {
+        download(_options, callback) { callback(8101); },
+        search(_query, callback) {
+          callback([{
+            id: 8101,
+            filename: '/Users/test/Downloads/report.pdf',
+            state: 'complete',
+            bytesReceived: 10,
+            totalBytes: 10,
+          }]);
+        },
+      },
+    };
+    const chromeResult = await downloadResourceFromPageCh(42, { selector: '#report' });
+    assert.equal(chromeResult.success, true);
+    assert.equal(chromeResult.downloadId, 8101);
+    assert.equal(chromeResult.state, 'complete');
+
+    globalThis.browser = {
+      storage: {
+        local: { async get() { return { downloadDirectory: '' }; } },
+      },
+      tabs: {
+        async executeScript() {
+          return [{ ok: true, url: 'https://example.com/report.pdf', isBlob: false, crossOrigin: false }];
+        },
+      },
+      downloads: {
+        async download() { return 8102; },
+        async search() {
+          return [{
+            id: 8102,
+            filename: '/Users/test/Downloads/report.pdf',
+            state: 'interrupted',
+            error: 'NETWORK_FAILED',
+            bytesReceived: 4,
+            totalBytes: 10,
+          }];
+        },
+      },
+    };
+    const firefoxResult = await downloadResourceFromPageFx(42, { selector: '#report' });
+    assert.equal(firefoxResult.success, false);
+    assert.equal(firefoxResult.downloadId, 8102);
+    assert.equal(firefoxResult.state, 'interrupted');
+    assert.match(firefoxResult.error, /interrupted.*NETWORK_FAILED/i);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('upload_file schema accepts downloadId and no longer hard-requires filePath (chrome)', () => {
   const tools = getToolsForModeCh('act', {});
   const up = tools.find(t => t.function?.name === 'upload_file');
@@ -61403,6 +61645,88 @@ test('planner: canonical fields recover missing and partial localization without
   }
 });
 
+test('planner schemas require structured download completion metadata in both browsers', () => {
+  for (const [label, schema] of [
+    ['chrome full', PLANNER_RESPONSE_JSON_SCHEMA],
+    ['chrome intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA],
+    ['firefox full', PLANNER_RESPONSE_JSON_SCHEMA_FX],
+    ['firefox intent', PLANNER_INTENT_RESPONSE_JSON_SCHEMA_FX],
+  ]) {
+    assert.ok(schema.required.includes('completion_requirements'), `${label}: completion requirements are optional`);
+    const completion = schema.properties.completion_requirements;
+    assert.equal(completion?.type, 'object', `${label}: completion requirements are not structured`);
+    assert.equal(completion?.additionalProperties, false, `${label}: completion requirements accept undeclared fields`);
+    assert.deepEqual(completion?.required, ['download'], `${label}: download requirement is optional`);
+    assert.equal(completion?.properties?.download?.type, 'boolean', `${label}: download requirement is not boolean`);
+  }
+});
+
+test('planner download completion metadata is language-neutral and does not infer from prose', () => {
+  const cases = [
+    { task: 'download this video', download: true, locale: 'en' },
+    { task: 'save the selected media locally', download: true, locale: 'en' },
+    { task: 'find the URL to download the report', download: false, locale: 'en' },
+    { task: 'find the download link', download: false, locale: 'en' },
+    { task: 'explain how to download the report', download: false, locale: 'en' },
+    { task: '把这个视频下载到本地', download: true, locale: 'zh-CN' },
+    { task: '查找报告的下载链接', download: false, locale: 'zh-CN' },
+  ];
+  for (const [label, parse] of [['chrome', parsePlanFromContent], ['firefox', parsePlanFromContentFx]]) {
+    for (const fixture of cases) {
+      const raw = JSON.parse(plannerIntentFixture({
+        requiresDownload: fixture.download,
+        locale: fixture.locale,
+        localizedSummary: fixture.task,
+        localizedSteps: [fixture.task],
+      }));
+      // Keep canonical prose deliberately identical. Only the structured field
+      // may determine the completion requirement.
+      raw.summary = 'Handle the requested resource safely.';
+      raw.steps = [{ id: '1', action: 'Handle the requested resource safely.' }];
+      const plan = parse(JSON.stringify(raw), { requireIntent: true, locale: fixture.locale });
+      assert.equal(plan?.completion_requirements?.download, fixture.download, `${label}: ${fixture.task}`);
+      assert.equal(plan?.requires_state_change, fixture.download, `${label}: state-change correction for ${fixture.task}`);
+      assert.equal(
+        plan?.completion_requirement_correction,
+        fixture.download ? 'download_requires_state_change' : null,
+        `${label}: correction marker for ${fixture.task}`,
+      );
+    }
+
+    const legacy = parse(JSON.stringify({
+      request_kind: 'execute',
+      requires_state_change: false,
+      requires_submission: false,
+      read_scope: 'visible_page',
+      summary: 'Download this report and save it locally.',
+      steps: [{ id: '1', action: 'Download this report and save it locally.' }],
+      localized: {
+        locale: 'en',
+        summary: 'Download this report and save it locally.',
+        steps: [{ id: '1', action: 'Download this report and save it locally.' }],
+        risks: [],
+      },
+    }), { requireIntent: true, locale: 'en' });
+    assert.equal(legacy?.completion_requirements?.download, false, `${label}: legacy prose armed download evidence`);
+    assert.equal(legacy?.requires_state_change, false, `${label}: legacy prose changed execution intent`);
+  }
+});
+
+test('planner correction trace payload is content-free in both browsers', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    const start = source.indexOf('async _tracePlannerCompletionRequirementCorrection(');
+    const end = source.indexOf('\n  }', start);
+    assert.ok(start >= 0 && end > start, `${browser}: correction trace helper missing`);
+    const helper = source.slice(start, end + 4);
+    const payload = /planner_completion_requirement_corrected',\s*\{([\s\S]*?)\n\s*\}\);/.exec(helper)?.[1] || '';
+    assert.match(payload, /phase:/, `${browser}: trace omitted planner phase`);
+    assert.match(payload, /requirement:\s*'download'/, `${browser}: trace omitted requirement kind`);
+    assert.match(payload, /requiresStateChange:\s*true/, `${browser}: trace omitted runtime correction`);
+    assert.doesNotMatch(payload, /summary|steps|content|userMessage|localized|plan\?\./, `${browser}: trace exports planner text`);
+  }
+});
+
 test('planner: parse JSON inside markdown fence', () => {
   const fenced = 'Here is the plan:\n```json\n{"summary":"Go back","steps":[],"memory":{"use_scratchpad":false,"scratchpad_notes":[],"use_progress_ledger":false,"progress_action":null},"scheduling":null,"risks":[],"mode":"act"}\n```';
   const plan = parsePlanFromContent(fenced);
@@ -61659,6 +61983,7 @@ function plannerFixtureJson(overrides = {}) {
     request_kind: 'execute',
     requires_state_change: false,
     requires_submission: false,
+    completion_requirements: { download: false },
     allows_planner_shaped_result: false,
     allows_app_state_tool_evidence: false,
     read_scope: requestKind === 'execute' ? 'visible_page' : 'none',
@@ -62680,6 +63005,89 @@ test('reviewed plan edits preserve only explicitly approved submission metadata'
         text => text.replace(/Submission required:\s*yes/i, 'Submission required: no'),
       );
       assert.equal(negated.requiresSubmission, false, `${label}: negated verbose submission metadata was ignored`);
+    }
+  });
+});
+
+test('reviewed plan step edits clear stale download completion metadata', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const runReviewedPlan = async (tabId, markdownMode, editPlan) => {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-download-edit-test',
+          name: 'planner-download-edit-test',
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._chatWithCostAllowance = async () => ({
+          content: plannerFixtureJson({
+            confidence: 0.99,
+            requires_state_change: false,
+            completion_requirements: { download: true },
+            summary: 'Download the report.',
+            steps: [{ id: '1', action: 'Download the report.', tools: ['download_files'] }],
+            localized: {
+              locale: 'en',
+              summary: 'Download the report.',
+              steps: [{ id: '1', action: 'Download the report.' }],
+              risks: [],
+            },
+          }),
+        });
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown, _onUpdate, verboseMarkdown) => ({
+          action: 'approve',
+          editedText: editPlan(markdownMode === 'verbose' ? verboseMarkdown : compactMarkdown),
+          markdownMode,
+        });
+        return agent._runPlannerGate(
+          tabId,
+          { role: 'user', content: 'Download the report.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://example.test/report', tabTitle: 'Report' },
+          'try',
+          'act',
+          { locale: 'en' },
+        );
+      };
+
+      const unchanged = await runReviewedPlan(label === 'chrome' ? 9242 : 9243, 'verbose', text => text);
+      assert.equal(unchanged.requiresDownload, true, `${label}: unchanged plan lost its download requirement`);
+      assert.equal(unchanged.requiresStateChange, true, `${label}: unchanged download stopped requiring a state change`);
+
+      const unrelated = await runReviewedPlan(
+        label === 'chrome' ? 9244 : 9245,
+        'verbose',
+        text => text.replace(/Confidence:\s*99%/i, 'Confidence: 98%'),
+      );
+      assert.equal(unrelated.requiresDownload, true, `${label}: unrelated edit dropped download metadata`);
+
+      const compactSteps = await runReviewedPlan(
+        label === 'chrome' ? 9246 : 9247,
+        'compact',
+        text => text.replace(/^1\. Download the report\..*$/im, '1. Find the report link.'),
+      );
+      assert.equal(compactSteps.requiresDownload, false, `${label}: compact step edit retained stale download metadata`);
+      assert.equal(compactSteps.requiresStateChange, false, `${label}: compact step edit retained a download-only mutation requirement`);
+
+      const verboseSteps = await runReviewedPlan(
+        label === 'chrome' ? 9248 : 9249,
+        'verbose',
+        text => text.replace(/^1\. Download the report\..*$/im, '1. Find the report link.'),
+      );
+      assert.equal(verboseSteps.requiresDownload, false, `${label}: verbose step edit retained stale download metadata`);
+      assert.equal(verboseSteps.requiresStateChange, false, `${label}: verbose step edit retained a download-only mutation requirement`);
+
+      const removed = await runReviewedPlan(
+        label === 'chrome' ? 9250 : 9251,
+        'verbose',
+        text => text.replace(/(?:^|\n)\s*-\s*Download required:.*(?=\n|$)/i, ''),
+      );
+      assert.equal(removed.requiresDownload, false, `${label}: removed download metadata stayed required`);
+      assert.equal(removed.requiresStateChange, false, `${label}: removed download metadata retained a download-only mutation requirement`);
     }
   });
 });
@@ -64495,6 +64903,7 @@ test('planner gate: trusted recommended media action skips planner and pins read
       );
 
       assert.equal(outcome.proceed, true, `${label} should proceed`);
+      assert.equal(outcome.requiresDownload, true, `${label} media fast path should require completed download evidence`);
       assert.equal(plannerCalls, 0, `${label} should skip the planner call`);
       assert.equal(agent.plannerFollowUpSkipTabs.has(tabId), false, `${label} should not arm the ordinary planner follow-up skip`);
 
@@ -64635,6 +65044,7 @@ test('planner gate: trusted WebBrain social promotion actions skip planner and p
         );
 
         assert.equal(outcome.proceed, true, `${label} ${fixture.name} should proceed`);
+        assert.equal(outcome.requiresDownload, false, `${label} ${fixture.name} should not gain a download requirement`);
         assert.equal(plannerCalls, 0, `${label} ${fixture.name} should skip the planner call`);
         const messages = agent.conversations.get(tabId);
         const idx = agent._findScratchpadIndex(messages);
