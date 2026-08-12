@@ -118,8 +118,8 @@ host.lang = localization.locale;
     shortcut.title = strings.askSelection;
     popup.setAttribute('aria-label', strings.askSelection);
     for (const action of ['summarize', 'explain', 'quiz', 'proofread', 'humanize', 'translate']) {
-      const button = shadow.querySelector(`[data-action="${action}"]`);
-      if (button) button.textContent = strings[action];
+      const label = shadow.querySelector(`[data-action="${action}"] .action-label`);
+      if (label) label.textContent = strings[action];
     }
     question.setAttribute('aria-label', strings.askQuestion);
     question.placeholder = strings.askQuestion;
@@ -214,10 +214,20 @@ host.lang = localization.locale;
         }
         .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px; }
         .action,.hide {
-          width:100%; border:0; border-radius:10px; background:transparent;
+          border:0; border-radius:10px; background:transparent;
           color:var(--text); text-align:start; cursor:pointer;
         }
-        .action { padding:10px 12px; font-size:15px; font-weight:550; }
+        .action {
+          width:100%; min-width:0; display:flex; align-items:center; gap:9px;
+          padding:10px 12px; font-size:15px; font-weight:550;
+        }
+        .action-icon {
+          width:17px; height:17px; flex:0 0 17px; color:var(--accent);
+          fill:none; stroke:currentColor; stroke-width:1.7;
+          stroke-linecap:round; stroke-linejoin:round;
+        }
+        .action-label { min-width:0; }
+        .action:hover .action-icon { color:var(--accent-strong); }
         .action:hover,.hide:hover { background:var(--hover); }
         .question-wrap { position:relative; margin-top:8px; }
         textarea {
@@ -241,7 +251,11 @@ host.lang = localization.locale;
         }
         .knowledge-option input { margin:2px 0 0; accent-color:var(--accent); }
         .divider { height:1px; margin:10px 0 4px; background:var(--border); }
-        .hide { padding:9px 12px; color:var(--muted); font-size:13px; }
+        .hide-row { display:flex; }
+        .hide {
+          width:auto; margin-left:auto; padding:5px 8px;
+          color:var(--muted); font-size:12px; line-height:1.25;
+        }
         .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.knowledge-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
@@ -267,12 +281,44 @@ host.lang = localization.locale;
       <div class="popup" role="dialog" aria-label="Ask WebBrain about selected text" hidden>
         <div class="main-view">
           <div class="actions">
-            <button class="action" type="button" data-action="summarize">Summarize</button>
-            <button class="action" type="button" data-action="explain">Explain</button>
-            <button class="action" type="button" data-action="quiz">Quiz me</button>
-            <button class="action" type="button" data-action="proofread">Proofread</button>
-            <button class="action" type="button" data-action="humanize">Humanize</button>
-            <button class="action" type="button" data-action="translate">Translate</button>
+            <button class="action" type="button" data-action="summarize">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M4 5h12M4 9h9M4 13h12M4 17h7"/>
+              </svg>
+              <span class="action-label">Summarize</span>
+            </button>
+            <button class="action" type="button" data-action="explain">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M6.5 11.5a5 5 0 1 1 7 0c-.9.8-1.3 1.6-1.4 2.5H7.9c-.1-.9-.5-1.7-1.4-2.5ZM8.2 17h3.6M8 14h4"/>
+              </svg>
+              <span class="action-label">Explain</span>
+            </button>
+            <button class="action" type="button" data-action="quiz">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="10" r="7"/>
+                <path d="M7.8 7.8a2.5 2.5 0 0 1 4.8 1c0 1.8-2.6 2.1-2.6 3.7M10 15.5h.01"/>
+              </svg>
+              <span class="action-label">Quiz me</span>
+            </button>
+            <button class="action" type="button" data-action="proofread">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.3 11.8l1.6 1.6 3.5-3.7"/>
+              </svg>
+              <span class="action-label">Proofread</span>
+            </button>
+            <button class="action" type="button" data-action="humanize">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="7" r="2.5"/>
+                <path d="M4.8 16.5C5.6 13.5 7.4 12 10 12s4.4 1.5 5.2 4.5"/>
+              </svg>
+              <span class="action-label">Humanize</span>
+            </button>
+            <button class="action" type="button" data-action="translate">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M3.5 5h9M8 3v2M5.2 8.5c1.2 2 3 3.6 5.4 4.7M11.2 7.5c-1 2.6-3.2 4.8-6.5 6.5M12.5 16.5l2.8-7 2.8 7M13.5 14h3.6"/>
+              </svg>
+              <span class="action-label">Translate</span>
+            </button>
           </div>
           <div class="question-wrap">
             <textarea maxlength="2000" rows="3" aria-label="Ask WebBrain a question" placeholder="Ask WebBrain…"></textarea>
@@ -281,11 +327,13 @@ host.lang = localization.locale;
             </button>
           </div>
           <label class="knowledge-option">
-            <input type="checkbox">
+            <input type="checkbox" checked>
             <span>Use general knowledge</span>
           </label>
           <div class="divider"></div>
-          <button class="hide" type="button">Hide selection shortcut</button>
+          <div class="hide-row">
+            <button class="hide" type="button">Hide this</button>
+          </div>
         </div>
       </div>
       <div class="toast" role="status" aria-live="polite" hidden></div>
@@ -389,7 +437,7 @@ host.lang = localization.locale;
     snapshot = nextSnapshot;
     popup.hidden = true;
     question.value = '';
-    generalKnowledge.checked = false;
+    generalKnowledge.checked = true;
     sendButton.disabled = true;
     shortcut.hidden = false;
     positionShortcut();
@@ -410,7 +458,7 @@ host.lang = localization.locale;
     if (!popup) return;
     popup.hidden = true;
     question.value = '';
-    generalKnowledge.checked = false;
+    generalKnowledge.checked = true;
     sendButton.disabled = true;
     clearSelectionHighlight();
     if (restoreFocus && shortcut && !shortcut.hidden) shortcut.focus();
@@ -422,7 +470,7 @@ host.lang = localization.locale;
     if (shortcut) shortcut.hidden = true;
     if (popup) popup.hidden = true;
     if (question) question.value = '';
-    if (generalKnowledge) generalKnowledge.checked = false;
+    if (generalKnowledge) generalKnowledge.checked = true;
     if (sendButton) sendButton.disabled = true;
   }
 
@@ -563,14 +611,19 @@ host.lang = localization.locale;
       translateRect: popup && !popup.hidden
         ? shadow.querySelector('[data-action="translate"]')?.getBoundingClientRect().toJSON() || null
         : null,
+      hideRect: popup && !popup.hidden
+        ? shadow.querySelector('.hide')?.getBoundingClientRect().toJSON() || null
+        : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
       generalKnowledgeChecked: generalKnowledge?.checked === true,
       generalKnowledgeLabel: shadow?.querySelector('.knowledge-option span')?.textContent || '',
+      hideLabel: shadow?.querySelector('.hide')?.textContent || '',
+      actionIconCount: shadow?.querySelectorAll('.action > .action-icon').length || 0,
       direction: host?.dir || 'ltr',
-      summarizeLabel: shadow?.querySelector('[data-action="summarize"]')?.textContent || '',
-      explainLabel: shadow?.querySelector('[data-action="explain"]')?.textContent || '',
-      quizLabel: shadow?.querySelector('[data-action="quiz"]')?.textContent || '',
+      summarizeLabel: shadow?.querySelector('[data-action="summarize"] .action-label')?.textContent || '',
+      explainLabel: shadow?.querySelector('[data-action="explain"] .action-label')?.textContent || '',
+      quizLabel: shadow?.querySelector('[data-action="quiz"] .action-label')?.textContent || '',
     }),
   };
 })();

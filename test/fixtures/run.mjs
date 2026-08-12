@@ -604,7 +604,11 @@ for (const [label, sourcePath, manualOpen] of [
   test(`${label}: selection shortcut localizes labels, direction, and fixed-action language`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
     const localized = await selectFixtureText(page);
-    if (localized.summarizeLabel !== '总结' || localized.explainLabel !== '解释' || localized.quizLabel !== '测验我' || localized.direction !== 'ltr') {
+    if (localized.summarizeLabel !== '总结'
+        || localized.explainLabel !== '解释'
+        || localized.quizLabel !== '测验我'
+        || localized.actionIconCount !== 6
+        || localized.direction !== 'ltr') {
       throw new Error(`Chinese shortcut localization mismatch: ${JSON.stringify(localized)}`);
     }
 
@@ -618,27 +622,43 @@ for (const [label, sourcePath, manualOpen] of [
     await page.evaluate(() => window.__setSelectionShortcutLocale('ar'));
     await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().direction === 'rtl');
     const rtl = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
-    if (rtl.summarizeLabel !== 'تلخيص') {
+    if (rtl.summarizeLabel !== 'تلخيص' || rtl.actionIconCount !== 6) {
       throw new Error(`live Arabic localization mismatch: ${JSON.stringify(rtl)}`);
     }
   });
 
-  test(`${label}: custom selection questions opt into general knowledge explicitly`, async (page) => {
+  test(`${label}: custom selection questions use general knowledge by default and retain opt-out`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
     const initial = await selectFixtureText(page);
-    if (initial.generalKnowledgeChecked || initial.generalKnowledgeLabel !== '使用通用知识') {
-      throw new Error(`general-knowledge choice should be localized and off by default: ${JSON.stringify(initial)}`);
+    if (!initial.generalKnowledgeChecked
+        || initial.generalKnowledgeLabel !== '使用通用知识'
+        || initial.hideLabel !== '隐藏此项') {
+      throw new Error(`selection choices should be localized with general knowledge on by default: ${JSON.stringify(initial)}`);
     }
     await page.evaluate(() => {
-      window.__webbrainSelectionShortcut.setGeneralKnowledge(true);
-      return window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？');
+      window.__webbrainSelectionShortcut.setGeneralKnowledge(false);
+      return window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。');
     });
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
-    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
-    if (submitted.action !== 'custom'
-        || submitted.question !== '现在有哪些跨平台框架？'
-        || submitted.allowGeneralKnowledge !== true) {
-      throw new Error(`broader custom question lost its explicit scope choice: ${JSON.stringify(submitted)}`);
+    const optedOut = await page.evaluate(() => window.__selectionMessages[0]);
+    if (optedOut.action !== 'custom'
+        || optedOut.question !== '仅根据选中内容回答。'
+        || optedOut.allowGeneralKnowledge !== false) {
+      throw new Error(`custom question lost its general-knowledge opt-out: ${JSON.stringify(optedOut)}`);
+    }
+
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().submitting);
+    const nextSelection = await selectFixtureText(page);
+    if (!nextSelection.generalKnowledgeChecked) {
+      throw new Error(`a new selection should restore the default-on knowledge choice: ${JSON.stringify(nextSelection)}`);
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？'));
+    await page.waitForFunction(() => window.__selectionMessages.length === 2);
+    const submittedWithDefault = await page.evaluate(() => window.__selectionMessages[1]);
+    if (submittedWithDefault.action !== 'custom'
+        || submittedWithDefault.question !== '现在有哪些跨平台框架？'
+        || submittedWithDefault.allowGeneralKnowledge !== true) {
+      throw new Error(`default-on general knowledge was not submitted: ${JSON.stringify(submittedWithDefault)}`);
     }
   });
 
@@ -677,6 +697,12 @@ for (const [label, sourcePath, manualOpen] of [
     const openState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!openState.questionRect || openState.highlightRectCount < 1) {
       throw new Error(`popup should preserve a visual marker for the selected text: ${JSON.stringify(openState)}`);
+    }
+    if (!openState.hideRect
+        || openState.hideLabel !== 'Hide this'
+        || openState.hideRect.width >= openState.translateRect.width
+        || Math.abs(openState.hideRect.right - openState.translateRect.right) > 0.5) {
+      throw new Error(`Hide this should be a compact right-aligned footer action: ${JSON.stringify(openState)}`);
     }
     await page.mouse.click(
       openState.questionRect.left + openState.questionRect.width / 2,
