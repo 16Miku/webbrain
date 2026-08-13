@@ -26333,8 +26333,8 @@ test('settings warns on missing or short API keys and shows the Ollama localhost
     assert.match(settings, /const MIN_API_KEY_LENGTH = 12;/, `${label}: conservative API-key minimum missing`);
     assert.match(
       settings,
-      /function providerApiKeyWarning\(id, config\) \{[\s\S]*?data-key="apiKey"[\s\S]*?const keyIsOptional = providersData\[id\]\?\.category === 'local';[\s\S]*?apiKey\.length < MIN_API_KEY_LENGTH[\s\S]*?aria-invalid[\s\S]*?st\.providers\.api_key_warning/,
-      `${label}: API-key warning should cover required empty keys and short non-empty keys while allowing empty local auth`,
+      /function providerApiKeyWarning\(id, config\) \{[\s\S]*?data-key="apiKey"[\s\S]*?const keyIsOptional = providersData\[id\]\?\.category === 'local' && config\.requiresApiKey !== true;[\s\S]*?apiKey\.length < MIN_API_KEY_LENGTH[\s\S]*?aria-invalid[\s\S]*?st\.providers\.api_key_warning/,
+      `${label}: API-key warning should allow ordinary empty local auth while enforcing authenticated local proxies`,
     );
     assert.match(
       settings,
@@ -40228,7 +40228,7 @@ console.log('\nprovider categorization');
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -40526,7 +40526,7 @@ test('tri-state local vision controls and pre-enrichment preparation stay mirror
 
 test('inferContextWindow: model-aware cloud/router defaults and local 16k fallback', () => {
   for (const infer of [inferContextWindowCh, inferContextWindowFx]) {
-    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
     for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
@@ -41541,7 +41541,7 @@ test('listProviderModels sends saved API keys for auth-enabled OpenAI-compatible
 
   try {
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+      for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
         const mgr = new PM();
         const config = {
           ...mgr._defaultConfigs()[id],
@@ -42268,7 +42268,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(Object.keys(defaults).length, 104, `${label}: expected 28 original + 76 new providers`);
+    assert.equal(Object.keys(defaults).length, 105, `${label}: expected 29 original + 76 catalog providers`);
     for (const id of expectedIds) {
       const config = defaults[id];
       assert.ok(config, `${label}: missing ${id}`);
@@ -43067,13 +43067,103 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const mgr = new PM();
     const defaults = mgr._defaultConfigs();
-    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const id of ['jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
       assert.ok(defaults[id], `${PM.name}: missing default config for ${id}`);
       assert.equal(defaults[id].type, 'openai', `${PM.name}: ${id} should use OpenAI-compatible provider`);
       assert.equal(defaults[id].category, 'local', `${PM.name}: ${id} should be local`);
       assert.equal(defaults[id].enabled, true, `${PM.name}: ${id} should default to enabled`);
-      assert.ok(defaults[id].baseUrl?.startsWith('http://localhost:'), `${PM.name}: ${id} should use localhost by default`);
+      assert.match(defaults[id].baseUrl || '', /^http:\/\/(?:localhost|127\.0\.0\.1):/, `${PM.name}: ${id} should use a loopback host by default`);
     }
+  }
+});
+
+test('_defaultConfigs: generic local OpenAI-compatible proxy is safe and configurable', () => {
+  for (const [label, PM, settingsRel] of [
+    ['chrome', ProviderManagerCh, 'src/chrome/src/ui/settings.js'],
+    ['firefox', ProviderManagerFx, 'src/firefox/src/ui/settings.js'],
+  ]) {
+    const config = new PM()._defaultConfigs().local_openai_proxy;
+    assert.ok(config, `${label}: missing generic local proxy provider`);
+    assert.equal(config.type, 'openai', `${label}: proxy should reuse the OpenAI-compatible adapter`);
+    assert.equal(config.category, 'local', `${label}: proxy endpoint should appear under Local`);
+    assert.equal(config.label, 'Local OpenAI-compatible Proxy');
+    assert.equal(config.providerName, 'local-openai-proxy');
+    assert.equal(config.model, '', `${label}: users must choose a proxy-exposed model`);
+    assert.equal(config.requiresModel, true, `${label}: proxy requests need an explicit model`);
+    assert.equal(config.contextWindow, 16384, `${label}: proxy should inherit the conservative local context default`);
+    assert.equal(config.apiKey, '', `${label}: no shared credential should ship`);
+    assert.equal(config.requiresApiKey, true, `${label}: proxy authentication must be required`);
+    assert.equal(config.supportsAskStreaming, true, `${label}: compatible proxy should use Ask streaming with fallback`);
+    assert.equal(config.supportsVision, false, `${label}: unknown proxy models should default to text-only`);
+    assert.equal(config.enabled, true, `${label}: provider card should be available on upgrade`);
+
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    const block = settings.slice(
+      settings.indexOf('local_openai_proxy: {'),
+      settings.indexOf('azure_openai: {'),
+    );
+    assert.match(block, /key: 'baseUrl'/, `${label}: proxy Base URL field missing`);
+    assert.match(block, /key: 'apiKey'/, `${label}: proxy API key field missing`);
+    assert.match(block, /key: 'model'/, `${label}: proxy model field missing`);
+    assert.match(block, /CONTEXT_WINDOW_FIELD/, `${label}: proxy context field missing`);
+    assert.match(block, /key: 'supportsVision'/, `${label}: proxy vision override missing`);
+    assert.match(block, /PROMPT_TIER_FIELD/, `${label}: proxy prompt tier field missing`);
+  }
+});
+
+test('generic local proxy requires authentication and supports non-streaming chat', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, PM] of [
+      ['chrome', ProviderManagerCh],
+      ['firefox', ProviderManagerFx],
+    ]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().local_openai_proxy;
+      const missingKeyProvider = manager._createProvider('local_openai_proxy', {
+        ...defaults,
+        model: 'test-model',
+      });
+      let fetchCount = 0;
+      globalThis.fetch = async () => {
+        fetchCount += 1;
+        throw new Error('unauthenticated request should not be sent');
+      };
+      await assert.rejects(
+        missingKeyProvider.chat([{ role: 'user', content: 'hello' }]),
+        /Local OpenAI-compatible Proxy API key is required/,
+        `${label}: chat should fail closed without the proxy client key`,
+      );
+      manager.providers.set('local_openai_proxy', missingKeyProvider);
+      assert.deepEqual(
+        await manager.listProviderModels('local_openai_proxy'),
+        { ok: false, error: 'Local OpenAI-compatible Proxy API key is required' },
+        `${label}: model listing should fail closed without the proxy client key`,
+      );
+      assert.equal(fetchCount, 0, `${label}: missing-key calls must stop before fetch`);
+
+      let request = null;
+      globalThis.fetch = async (url, init) => {
+        request = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'proxy answer' } }],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const provider = manager._createProvider('local_openai_proxy', {
+        ...defaults,
+        apiKey: 'strong-local-proxy-key',
+        model: 'account-model',
+      });
+      const result = await provider.chat([{ role: 'user', content: 'hello' }]);
+      assert.equal(result.content, 'proxy answer', `${label}: chat response mismatch`);
+      assert.equal(request.url, 'http://127.0.0.1:8317/v1/chat/completions');
+      assert.equal(request.headers.Authorization, 'Bearer strong-local-proxy-key');
+      assert.equal(request.body.model, 'account-model');
+      assert.deepEqual(request.body.messages, [{ role: 'user', content: 'hello' }]);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -43409,6 +43499,7 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     'sglang',
     'localai',
     'gpt4all',
+    'local_openai_proxy',
     'azure_openai',
     'anthropic',
     'gemini',
@@ -43428,7 +43519,10 @@ test('documented built-in providers opt into interactive Ask streaming', () => {
     for (const id of enabledIds) {
       assert.equal(defaults[id].supportsAskStreaming, true, `${PM.name}/${id}: default capability missing`);
       assert.equal(
-        manager._createProvider(id, defaults[id])._supportsInteractiveAskStreaming(),
+        manager._createProvider(id, {
+          ...defaults[id],
+          model: defaults[id].model || 'test-model',
+        })._supportsInteractiveAskStreaming(),
         true,
         `${PM.name}/${id}: provider should expose interactive Ask streaming`,
       );
@@ -43986,6 +44080,7 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
     'sglang',
     'localai',
     'gpt4all',
+    'local_openai_proxy',
     'gemini',
     'mistral',
     'deepseek',
@@ -44011,7 +44106,11 @@ test('OpenAI-compatible Ask providers consume text, tool, usage, and DONE fixtur
           `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } })}\n\n`,
           'data: [DONE]\n\n',
         ].join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
-        const provider = manager._createProvider(id, defaults[id]);
+        const provider = manager._createProvider(id, {
+          ...defaults[id],
+          model: defaults[id].model || 'test-model',
+          apiKey: defaults[id].requiresApiKey ? 'strong-test-proxy-key' : defaults[id].apiKey,
+        });
         const chunks = [];
         for await (const chunk of provider.chatStream([{ role: 'user', content: 'hello' }])) chunks.push(chunk);
         assert.deepEqual(chunks, [
@@ -45250,6 +45349,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
       { category: 'local', providerName: 'sglang' },
       { category: 'local', providerName: 'localai' },
       { category: 'local', providerName: 'gpt4all' },
+      { category: 'local', providerName: 'local-openai-proxy' },
       { category: 'local', providerName: 'openai' },
     ]) {
       const provider = new Provider(config);
@@ -45262,7 +45362,7 @@ test('OpenAI-compatible local streams do not request usage metadata', () => {
 
 test('OpenAI-compatible local providers always use legacy request token fields', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
+    for (const providerName of ['ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
       const provider = new Provider({
         category: 'local',
         providerName,

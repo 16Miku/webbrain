@@ -128,6 +128,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   _headers() {
     const headers = { 'Content-Type': 'application/json' };
     const providerName = (this.config.providerName || '').toLowerCase();
+    if (this.config.requiresApiKey && !String(this.config.apiKey || '').trim()) {
+      throw new Error(`${this.config.label || this.name} API key is required.`);
+    }
     if (this.config.apiKey) {
       if (this.config.apiKeyHeader === 'x-goog-api-key') {
         headers['x-goog-api-key'] = String(this.config.apiKey);

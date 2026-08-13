@@ -45,6 +45,7 @@ class BaseLLMProvider {
 | `sglang` | `openai` | local | (loaded model) | Yes (default on) |
 | `localai` | `openai` | local | (loaded model) | Auto metadata / override |
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
+| `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -69,8 +70,8 @@ class BaseLLMProvider {
 
 WebBrain also ships 76 disabled-by-default provider cards sourced from the
 OpenCode provider catalog snapshot at commit
-`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the 28 original
-cards, Settings contains **104 built-in providers**.
+`62e4641235d7847dadc60da37cca8a023dd54fc1`. Together with the 29 original
+cards, Settings contains **105 built-in providers**.
 
 | IDs |
 |---|
@@ -144,8 +145,9 @@ duplicate request.
 
 ### Local Providers
 
-Seven local providers are enabled by default with no API key needed unless the
-local server was started with auth:
+Nine local endpoint providers are enabled by default. The model runtimes need no
+API key unless the server was started with auth; the generic proxy card requires
+a client key so it does not encourage an unauthenticated subscription bridge:
 
 - **llama.cpp**: `http://localhost:8080` — runs `llama-server -m model.gguf`
 - **Ollama**: `http://localhost:11434/v1` — `ollama serve`, or `ollama launch webbrain --model <model>`
@@ -154,6 +156,73 @@ local server was started with auth:
 - **vLLM**: `http://localhost:8000/v1` — vLLM's OpenAI-compatible server
 - **SGLang**: `http://localhost:30000/v1` — SGLang's OpenAI-compatible server
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
+- **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
+- **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
+  authenticated local gateway; the model and proxy client API key are required
+
+#### Subscription proxy example (CLIProxyAPI)
+
+The generic **Local OpenAI-compatible Proxy** card can connect WebBrain to a
+separately managed [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+instance. CLIProxyAPI exposes OpenAI-compatible model listing, Chat Completions,
+and tool calling while keeping upstream OAuth credentials outside WebBrain.
+
+Install CLIProxyAPI using its [official quick start](https://help.router-for.me/introduction/quick-start),
+or build it from source:
+
+```bash
+git clone https://github.com/router-for-me/CLIProxyAPI.git
+cd CLIProxyAPI
+go build -o cli-proxy-api ./cmd/server
+cp config.example.yaml config.yaml
+```
+
+Generate a client key (for example, `openssl rand -hex 32`), then edit the
+active configuration file before starting the proxy:
+
+```yaml
+host: "127.0.0.1"
+port: 8317
+api-keys:
+  - "replace-with-a-strong-random-local-key"
+```
+
+Authenticate one or more upstream accounts. The source-build commands are:
+
+```bash
+./cli-proxy-api --config ./config.yaml --codex-login   # ChatGPT/Codex account
+./cli-proxy-api --config ./config.yaml --claude-login  # Claude account
+```
+
+Gemini CLI OAuth requires CLIProxyAPI v7's
+[official Gemini CLI plugin](https://github.com/router-for-me/cpa-plugin-gemini-cli).
+Enable trusted plugins, install `gemini-cli` from CLIProxyAPI's official Plugin
+Store (the official registry is built in), and restart the proxy before running
+it with `--geminicli-login`; see the upstream
+[plugin management guide](https://help.router-for.me/management/api#plugins).
+Finally, start the source build with
+`./cli-proxy-api --config ./config.yaml` (Homebrew/systemd users should restart
+the installed service instead). Login flags, plugin packaging, and service paths
+can change, so check the linked upstream quick start when commands differ.
+
+Then open **Settings → Providers → Local OpenAI-compatible Proxy**, keep the
+Base URL at `http://127.0.0.1:8317/v1`, enter the same client API key, click
+**Load Models**, choose a model, and run **Test Connection**. The proxy's
+current official flows cover ChatGPT/Codex and Claude OAuth; Gemini CLI OAuth
+is supplied through its official plugin. Available models and quotas still
+depend on the connected account.
+
+Keep this integration on loopback. CLIProxyAPI's empty-host default listens on
+all IPv4 and IPv6 interfaces, TLS is off by default, and an empty `api-keys`
+list permits unauthenticated requests. Do not expose the proxy to a LAN or the
+public internet. This is an experimental, community-supported compatibility
+path that may change when provider authentication policies change; official
+provider API keys remain the stable option.
+
+The proxy process is local, but inference is not necessarily local: WebBrain's
+request context is forwarded to whichever upstream account the proxy selects.
+WebBrain stores only the proxy client key; upstream OAuth credentials remain in
+CLIProxyAPI.
 
 Ollama, llama.cpp, LM Studio, and LocalAI default to `visionMode: auto`. WebBrain asks
 the selected server for model capability metadata before enrichment and sends

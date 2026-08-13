@@ -86,8 +86,11 @@ vllm serve your-model --port 8000                     # vLLM    → :8000/v1
 python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
-LM Studio (`:1234/v1`), Jan (`:1337/v1`), and LocalAI (`:8080/v1`) work the same
-way. Load a model with **at least a 16k-token context window** — 8k works only
+LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
+(`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
+also supports authenticated loopback gateways such as CLIProxyAPI; see the
+[secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
+Load a model with **at least a 16k-token context window** — 8k works only
 with the Compact tier, and 4k is too small for the system prompt plus tool
 schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
 Studio, and auto-compacts the conversation as it fills up. For Ollama,
@@ -101,7 +104,7 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **104 built-in provider cards** with base URLs and default models
+Settings ships **105 built-in provider cards** with base URLs and default models
 pre-filled — see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
 ## Features
@@ -185,7 +188,7 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
 | [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
 | [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
-| [Providers and models](docs/providers-and-models.md)                                                                     | All 104 provider cards, local setup, tiers               |
+| [Providers and models](docs/providers-and-models.md)                                                                     | All 105 provider cards, local setup, tiers               |
 | [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
 | [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
 | [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |

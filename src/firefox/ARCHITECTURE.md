@@ -442,7 +442,7 @@ Plus the legacy handlers: `read_page`, `click`, `type_text`, `press_keys`, `scro
 ## Provider System
 
 Identical to Chrome at the provider-class and configuration layer:
-WebBrain Cloud, seven local backends, Azure OpenAI, AWS Bedrock, Anthropic, and
+WebBrain Cloud, nine local endpoints, Azure OpenAI, AWS Bedrock, Anthropic, and
 the current direct-cloud/router OpenAI-compatible configs use the same message
 format and conversion logic. The canonical current ID and default-model table
 is maintained in
