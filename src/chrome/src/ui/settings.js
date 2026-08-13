@@ -2118,7 +2118,7 @@ function providerApiKeyWarning(id, config) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="apiKey"]`);
   if (!input) return '';
   const apiKey = String(config.apiKey || '').trim();
-  const keyIsOptional = providersData[id]?.category === 'local';
+  const keyIsOptional = providersData[id]?.category === 'local' && config.requiresApiKey !== true;
   const looksInvalid = apiKey ? apiKey.length < MIN_API_KEY_LENGTH : !keyIsOptional;
   input.setAttribute('aria-invalid', looksInvalid ? 'true' : 'false');
   return looksInvalid ? t('st.providers.api_key_warning') : '';
@@ -2400,6 +2400,16 @@ function renderProviders() {
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:4891/v1' },
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'loaded model' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    local_openai_proxy: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
+        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'required — use the proxy client API key' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model exposed by the proxy' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2734,7 +2744,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all'];
+        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy'];
         const canLoadModels = localModelProviders.includes(id) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';

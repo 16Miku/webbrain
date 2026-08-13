@@ -539,7 +539,7 @@ class BaseProvider {
 | `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Enabled by default, configurable |
 | OpenAI-compatible configs | Provider-specific `/v1` endpoint | Model-name regex or explicit config |
 
-`ProviderManager` seeds WebBrain Cloud, seven local backends, Azure OpenAI, AWS
+`ProviderManager` seeds WebBrain Cloud, nine local endpoints, Azure OpenAI, AWS
 Bedrock, direct cloud providers, and router providers. The canonical current ID
 and default-model table is maintained in
 [`docs/providers-and-models.md`](../../docs/providers-and-models.md).
