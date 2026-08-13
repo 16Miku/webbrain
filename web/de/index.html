@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "Sendet WebBrain das gesamte DOM an das KI-Modell?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nein. WebBrain sendet standardmäßig weder rohes HTML noch einen rohen DOM-Dump. Zunächst werden die URL und der Titel der Seite, passende Website-Hinweise und bei aktivierter Bildverarbeitung optional ein Screenshot des sichtbaren Bereichs verwendet. Wenn eine Aufgabe Seiteninhalte benötigt, liest WebBrain sie bei Bedarf als reduzierten semantischen Accessibility Tree oder als extrahierten Text. Die Lesevorgänge werden, wo sinnvoll, nach Sichtbarkeit gefiltert, in der Zeichenzahl begrenzt und paginiert. Der Zugriff auf den rohen Seitenquelltext ist nur im Dev-Modus verfügbar."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Wie hält WebBrain Cloud-LLM-Rechnungen unter Kontrolle?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>Unterstützt WebBrain einen Dry-Run-Modus?</summary>
       <p>Ab Version <strong>7.0.0</strong>, noch nicht. Der Dry-Run-Modus ist geplant und bereits auf der Roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Sendet WebBrain das gesamte DOM an das KI-Modell?</summary>
+      <p>Nein. WebBrain sendet standardmäßig weder rohes HTML noch einen rohen DOM-Dump. Zunächst werden die URL und der Titel der Seite, passende Website-Hinweise und bei aktivierter Bildverarbeitung optional ein Screenshot des sichtbaren Bereichs verwendet.</p><p>Wenn eine Aufgabe Seiteninhalte benötigt, liest WebBrain sie bei Bedarf als reduzierten semantischen Accessibility Tree oder als extrahierten Text. Die Lesevorgänge werden, wo sinnvoll, nach Sichtbarkeit gefiltert, in der Zeichenzahl begrenzt und paginiert. Der Zugriff auf den rohen Seitenquelltext ist nur im Dev-Modus verfügbar.</p>
     </details>
 
     <details class="faq-item">

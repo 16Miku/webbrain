@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "Apakah WebBrain mengirim seluruh DOM ke model AI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan. Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Bagaimana WebBrain menjaga tagihan LLM cloud tetap terkendali?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>Apakah WebBrain mendukung mode dry-run?</summary>
       <p>Per <strong>7.0.0</strong>, belum. Mode dry-run direncanakan dan sudah ada di roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Apakah WebBrain mengirim seluruh DOM ke model AI?</summary>
+      <p>Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan.</p><p>Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev.</p>
     </details>
 
     <details class="faq-item">

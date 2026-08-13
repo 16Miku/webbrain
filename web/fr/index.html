@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain envoie-t-il l’intégralité du DOM au modèle d’IA ?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Non. Par défaut, WebBrain n’envoie ni le HTML brut ni une copie brute du DOM. Il commence par l’URL et le titre de la page, les indications correspondant au site et, si la vision est activée, une capture facultative de la zone visible. Lorsqu’une tâche nécessite le contenu de la page, WebBrain le lit à la demande sous forme d’arbre d’accessibilité sémantique réduit ou de texte extrait. Les lectures sont filtrées selon la visibilité lorsque c’est pertinent, limitées en nombre de caractères et paginées. L’accès au code source brut de la page est réservé au mode Dev."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Comment WebBrain garde-t-il sous contrôle les factures des LLM cloud ?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>WebBrain prend-il en charge un mode dry-run ?</summary>
       <p>À partir de la version <strong>7.0.0</strong>, pas encore. Le mode dry-run est prévu et figure déjà sur la feuille de route.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain envoie-t-il l’intégralité du DOM au modèle d’IA ?</summary>
+      <p>Non. Par défaut, WebBrain n’envoie ni le HTML brut ni une copie brute du DOM. Il commence par l’URL et le titre de la page, les indications correspondant au site et, si la vision est activée, une capture facultative de la zone visible.</p><p>Lorsqu’une tâche nécessite le contenu de la page, WebBrain le lit à la demande sous forme d’arbre d’accessibilité sémantique réduit ou de texte extrait. Les lectures sont filtrées selon la visibilité lorsque c’est pertinent, limitées en nombre de caractères et paginées. L’accès au code source brut de la page est réservé au mode Dev.</p>
     </details>
 
     <details class="faq-item">
