@@ -203,7 +203,7 @@ export function validateCloudOutput(value, schema) {
       }
       const valid = shorthand === 'any'
         || (shorthand === 'string' && typeof item === 'string')
-        || (shorthand === 'number' && typeof item === 'number' && !Number.isNaN(item))
+        || (shorthand === 'number' && Number.isFinite(item))
         || (shorthand === 'integer' && Number.isInteger(item))
         || (shorthand === 'boolean' && typeof item === 'boolean')
         || (shorthand === 'object' && isObject(item))
@@ -272,7 +272,7 @@ export function validateCloudOutput(value, schema) {
         if (type === 'array') return Array.isArray(item);
         if (type === 'object') return isObject(item);
         if (type === 'integer') return Number.isInteger(item);
-        if (type === 'number') return typeof item === 'number' && !Number.isNaN(item);
+        if (type === 'number') return Number.isFinite(item);
         if (type === 'null') return item === null;
         return typeof item === type;
       });
@@ -284,9 +284,17 @@ export function validateCloudOutput(value, schema) {
       if (Number.isInteger(spec.maxLength) && length > spec.maxLength) push(path, `expected at most ${spec.maxLength} characters`);
       if (typeof spec.pattern === 'string' && !new RegExp(spec.pattern).test(item)) push(path, `expected to match ${JSON.stringify(spec.pattern)}`);
     }
-    if (typeof item === 'number' && Number.isFinite(item)) {
-      if (typeof spec.minimum === 'number' && item < spec.minimum) push(path, `expected at least ${spec.minimum}`);
-      if (typeof spec.maximum === 'number' && item > spec.maximum) push(path, `expected at most ${spec.maximum}`);
+    // JSON has no Infinity literal, but a parser can still overflow a numeral
+    // like 1e400 into a non-finite value. Such a value is never a valid JSON
+    // instance, so reject it explicitly — a constraint-only schema (no `type`)
+    // would otherwise let Infinity slip past minimum/maximum.
+    if (typeof item === 'number' && (typeof spec.minimum === 'number' || typeof spec.maximum === 'number')) {
+      if (!Number.isFinite(item)) {
+        push(path, 'expected a finite number');
+      } else {
+        if (typeof spec.minimum === 'number' && item < spec.minimum) push(path, `expected at least ${spec.minimum}`);
+        if (typeof spec.maximum === 'number' && item > spec.maximum) push(path, `expected at most ${spec.maximum}`);
+      }
     }
     if (Array.isArray(item)) {
       if (Number.isInteger(spec.minItems) && item.length < spec.minItems) push(path, `expected at least ${spec.minItems} items`);
