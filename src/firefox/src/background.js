@@ -567,12 +567,12 @@ function publicTeacherSession(session) {
 async function notifyTeacherState(tabId, session) {
   if (tabId == null) return false;
   try {
-    await browser.tabs.sendMessage(tabId, {
+    const response = await browser.tabs.sendMessage(tabId, {
       target: 'content',
       action: 'teacher_state',
       state: publicTeacherSession(session),
     });
-    return true;
+    return response?.teacherCaptureReady === true;
   } catch {
     return false;
   }

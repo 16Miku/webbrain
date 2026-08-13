@@ -1837,6 +1837,13 @@
       el = document.elementFromPoint(params.x, params.y);
     }
 
+    // A selector miss is a discovery failure, not a changed bound target. Do
+    // not consume the one-shot toolbar binding when no element was resolved;
+    // the caller's advised re-read/retry must still be able to bind a target.
+    if (params.selector && !el) {
+      return { success: false, dispatched: false, error: 'Element not found' };
+    }
+
     if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
       return {
         success: false,

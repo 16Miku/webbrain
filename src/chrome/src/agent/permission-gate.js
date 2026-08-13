@@ -104,6 +104,8 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'download_resource_from_page',
   'download_files',
   'download_file',
+  // Upload results can echo page-controlled input labels and accept metadata.
+  'upload_file',
   // hover returns the element's accessible name (aria-label/title/innerText).
   'hover',
   // list_downloads returns each download's url + filename; the filename can

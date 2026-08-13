@@ -10,16 +10,15 @@
 
 /** Tools that change page or browser state, gating auto-screenshots and
  *  unknown-outcome normalization as well as loop detection. */
-export const STATE_CHANGE_TOOLS = new Set(['navigate', 'promote_iframe', 'new_tab', 'go_back', 'go_forward', 'click', 'click_ax', 'set_checked', 'type_text', 'type_ax', 'set_field', 'iframe_type', 'press_keys', 'scroll', 'hover', 'drag_drop', 'inject_css', 'remove_injected_css', 'patch_element', 'revert_patch', 'execute_js', 'inspect_event_listeners', 'highlight_element', 'execute_webmcp_tool']);
+export const STATE_CHANGE_TOOLS = new Set(['navigate', 'promote_iframe', 'new_tab', 'go_back', 'go_forward', 'click', 'click_ax', 'set_checked', 'iframe_click', 'type_text', 'type_ax', 'set_field', 'iframe_type', 'press_keys', 'scroll', 'hover', 'drag_drop', 'inject_css', 'remove_injected_css', 'patch_element', 'revert_patch', 'execute_js', 'inspect_event_listeners', 'highlight_element', 'execute_webmcp_tool']);
 
 /**
  * Everything the failed-action loop counters treat as a browser mutation.
- * Adds the remaining frame- and upload-scoped tools that act on the page but are not
+ * Adds the remaining upload- and challenge-scoped tools that act on the page but are not
  * part of the auto-screenshot state-change set.
  */
 export const BROWSER_MUTATION_TOOLS = new Set([
   ...STATE_CHANGE_TOOLS,
-  'iframe_click',
   'upload_file',
   'solve_captcha',
 ]);

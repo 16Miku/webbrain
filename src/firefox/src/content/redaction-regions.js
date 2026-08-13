@@ -152,6 +152,7 @@
 
   function waitForExactChildFrameRect(params) {
     const token = String(params?.token || '');
+    const expectedChildOrigin = String(params?.expectedChildOrigin || '');
     if (!token) return Promise.resolve({ found: false });
     return new Promise(resolve => {
       // A single claim is answered after this quiet window so a second frame
@@ -193,11 +194,24 @@
         }
         return frames;
       };
+      const hasOpaqueSandboxOrigin = frame => {
+        const sandboxValue = frame?.getAttribute?.('sandbox');
+        return sandboxValue != null
+          && !String(sandboxValue).toLowerCase().split(/\s+/).includes('allow-same-origin');
+      };
       const onMessage = event => {
         if (event?.data?.__webbrainExactFrameRectToken !== token) return;
         const frame = reachableFrames()
           .find(candidate => candidate.contentWindow === event.source);
         if (!frame) return;
+        // The token is necessarily transported across the page/content-script
+        // boundary. Bind it to the exact child window and its origin. Sandboxed
+        // frames without allow-same-origin (and their descendants) have an
+        // opaque "null" origin, so accept that value only from the matching
+        // frame after the background has verified the sandbox chain.
+        const opaqueSandboxClaim = event.origin === 'null'
+          && (params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame));
+        if (expectedChildOrigin && event.origin !== expectedChildOrigin && !opaqueSandboxClaim) return;
         // The agent announces this token to exactly one child frame, so a
         // second distinct claimant is a frame answering for a token that was
         // never sent to it. Resolving the first arrival would let it decide
@@ -212,7 +226,9 @@
           contentionTimer = setTimeout(() => resolveClaim(), CLAIM_CONTENTION_MS);
           return;
         }
-        resolveClaim();
+        // Duplicate delivery from the same frame is not independent evidence.
+        // Keep the full contention window open so a different claimant still
+        // has a chance to make this lookup fail closed.
       };
       const resolveClaim = () => {
         const frame = claimedFrame;
@@ -250,6 +266,7 @@
             name: frame.getAttribute?.('name') || null,
             role: frame.getAttribute?.('role') || null,
           },
+          childOriginOpaque: params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame),
         });
       };
       window.addEventListener('message', onMessage);
@@ -259,9 +276,13 @@
 
   function announceExactChildFrame(params) {
     const token = String(params?.token || '');
+    const parentOrigin = String(params?.parentOrigin || '');
     if (!token || window.parent === window) return { announced: false };
     try {
-      window.parent.postMessage({ __webbrainExactFrameRectToken: token }, '*');
+      window.parent.postMessage(
+        { __webbrainExactFrameRectToken: token },
+        parentOrigin || '*',
+      );
       return { announced: true };
     } catch { return { announced: false }; }
   }

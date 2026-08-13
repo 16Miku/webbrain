@@ -50,8 +50,8 @@ assert.equal(googleFormsScenario.verify.scheduledJobs.definitions[1].afterSecond
 assert.equal(googleFormsScenario.session_settings.scheduledRequireConsequentialConfirmation, false);
 assert.match(googleFormsScenario.task, /after_seconds=0/);
 assert.match(googleFormsScenario.task, /after_seconds=60/);
-assert.match(smokeWorkflow, /- "src\/chrome\/src\/background\.js"/);
-assert.match(smokeWorkflow, /- "src\/chrome\/src\/offscreen\/cloud-bridge\.js"/);
+assert.match(smokeWorkflow, /^\s{2}workflow_dispatch:\s*$/m);
+assert.doesNotMatch(smokeWorkflow, /^\s{2}(?:push|schedule):\s*$/m);
 // A job killed by its own timeout skips every cleanup path and leaks the cloud
 // browser session it was driving, so each workflow's timeout must cover the
 // serial budget of the widest pack it can run. Deriving that here means adding
