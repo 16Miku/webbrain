@@ -70,18 +70,15 @@ function normalizeRecord(page = {}) {
 export function mergeWikipediaRecords(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
-  const richerExtract = String(incoming.extract || '').length >= String(existing.extract || '').length
-    ? incoming.extract
-    : existing.extract;
+  const existingHasRevision = Number(existing.revision) > 0;
+  const incomingHasRevision = Number(incoming.revision) > 0;
+  const preferIncoming = incomingHasRevision !== existingHasRevision
+    ? incomingHasRevision
+    : String(incoming.extract || '').length >= String(existing.extract || '').length;
+  const contentRecord = preferIncoming ? incoming : existing;
   return {
-    ...existing,
-    ...incoming,
-    extract: richerExtract,
-    pageid: incoming.pageid || existing.pageid || null,
-    url: incoming.url || existing.url,
-    revision: incoming.revision || existing.revision || null,
-    license: incoming.license || existing.license || 'CC BY-SA 4.0',
-    modified: incoming.modified || existing.modified,
+    ...contentRecord,
+    updatedAt: Math.max(Number(existing.updatedAt) || 0, Number(incoming.updatedAt) || 0) || contentRecord.updatedAt,
   };
 }
 

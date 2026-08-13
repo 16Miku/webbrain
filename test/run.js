@@ -21004,7 +21004,7 @@ test('Wikipedia skill retrieves cached passages when the network is unavailable'
   }
 });
 
-test('Wikipedia cache merge preserves richer downloaded introductions', () => {
+test('Wikipedia cache merge preserves text and matching revision provenance', () => {
   for (const [label, runtime] of [
     ['chrome', WikipediaOfflineCh],
     ['firefox', WikipediaOfflineFx],
@@ -21032,6 +21032,26 @@ test('Wikipedia cache merge preserves richer downloaded introductions', () => {
     const merged = runtime.mergeWikipediaRecords(downloaded, searchHit);
     assert.equal(merged.extract, downloaded.extract, `${label}: online search degraded the offline introduction`);
     assert.equal(merged.revision, downloaded.revision, `${label}: online search discarded snapshot revision metadata`);
+
+    const newerSummary = {
+      ...downloaded,
+      extract: 'A shorter introduction from the current article revision.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing?oldid=67890',
+      revision: 67890,
+      modified: 'Current introduction normalized to plain text by WebBrain.',
+    };
+    const mergedRevision = runtime.mergeWikipediaRecords(downloaded, newerSummary);
+    assert.equal(mergedRevision.extract, downloaded.extract, `${label}: merge did not retain the selected longer introduction`);
+    assert.equal(mergedRevision.revision, downloaded.revision, `${label}: merge attached a revision that does not match the retained text`);
+    assert.equal(mergedRevision.url, downloaded.url, `${label}: merge attached a source URL that does not match the retained text`);
+
+    const longSearchHit = {
+      ...searchHit,
+      extract: `${downloaded.extract} A long revisionless search excerpt must not replace revision-bearing text.`,
+    };
+    const mergedSearch = runtime.mergeWikipediaRecords(downloaded, longSearchHit);
+    assert.equal(mergedSearch.extract, downloaded.extract, `${label}: revisionless search text replaced a revision-bearing introduction`);
+    assert.equal(mergedSearch.revision, downloaded.revision, `${label}: revisionless search text broke snapshot provenance`);
   }
 });
 
