@@ -1046,6 +1046,19 @@
     return candidates[0]?.candidate || null;
   }
 
+  function gmailConversationExpansionControlState(control) {
+    // Gmail's accessible label is localized, but these semantic jsname values
+    // remain stable across UI languages. Keep the English names as a fallback
+    // for older/alternate Gmail markup that does not expose jsname.
+    const jsname = String(control?.getAttribute?.('jsname') || '').trim();
+    if (jsname === 'xvWlrc') return 'expanded';
+    if (jsname === 'tRarif') return 'collapsed';
+    const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
+    if (name === 'Collapse all') return 'expanded';
+    if (name === 'Expand all') return 'collapsed';
+    return null;
+  }
+
   function detectGmailConversationExpansionState(conversationRoot) {
     if (!isGmailConversationRoute() || !conversationRoot) return null;
     let collapsed = false;
@@ -1056,9 +1069,9 @@
         // buttons. Only Gmail chrome outside message/article containers can
         // provide the structured expansion evidence used by the agent guard.
         if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
-        const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
-        if (name === 'Collapse all') return 'expanded';
-        if (name === 'Expand all') collapsed = true;
+        const state = gmailConversationExpansionControlState(control);
+        if (state === 'expanded') return state;
+        if (state === 'collapsed') collapsed = true;
       }
     } catch (e) {}
     return collapsed ? 'collapsed' : null;
@@ -1072,8 +1085,7 @@
         // Only Gmail chrome outside untrusted message bodies may be invoked.
         // This deliberately cannot turn an Ask-mode read into a general click.
         if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
-        const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
-        if (name === 'Expand all') return control;
+        if (gmailConversationExpansionControlState(control) === 'collapsed') return control;
       }
     } catch (e) {}
     return null;

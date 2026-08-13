@@ -6177,6 +6177,7 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   assert.match(chromeSource, /conversationRootRefId/, 'trusted Gmail conversation-root metadata is not returned');
   assert.match(chromeSource, /candidate\.closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body landmarks can spoof the trusted Gmail conversation root');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
+  assert.match(chromeSource, /function gmailConversationExpansionControlState\(control\) \{[\s\S]*?jsname === 'xvWlrc'[\s\S]*?jsname === 'tRarif'[\s\S]*?name === 'Collapse all'[\s\S]*?name === 'Expand all'/, 'Gmail expansion detection still depends exclusively on English labels');
   assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
   for (const [label, getTools, prompt] of [

@@ -1078,7 +1078,7 @@ const gmailThreadScopeFixture = `<!doctype html>
     ${Array.from({ length: 72 }, (_, index) => {
       const number = String(index + 1).padStart(3, '0');
       const injected = index === 0
-        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button aria-label="Expand all">Expand all</button></main>'
+        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button></main>'
         : '';
       return `<article class="adn" role="listitem" aria-label="Thread message ${number}">${injected}<p>Message ${number}: project details, decisions, context, and follow-up.</p></article>`;
     }).join('')}
@@ -1365,6 +1365,7 @@ test('accessibility tree (Firefox): Gmail trusted thread metadata and pagination
 });
 
 const collapsedGmailThreadFixture = `<!doctype html>
+  <meta charset="utf-8">
   <style>
     body { margin: 0; font: 16px sans-serif; }
     main { display: block; width: 900px; min-height: 600px; }
@@ -1373,10 +1374,10 @@ const collapsedGmailThreadFixture = `<!doctype html>
   </style>
   <main id="active-thread" aria-label="Collapsed project thread">
     <h1>Collapsed project thread</h1>
-    <button id="expand-all" aria-label="Expand all">Expand all</button>
+    <button id="expand-all" jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button>
     <article class="adn" role="listitem" aria-label="Latest message">
       <p>Latest visible project message.</p>
-      <button aria-label="Expand all">Untrusted message button</button>
+      <button jsname="tRarif" aria-label="Tümünü genişlet">Untrusted message button</button>
     </article>
     <article id="older-message" class="adn" role="listitem" aria-label="Older message" hidden>
       <p>Older collapsed decision that must be included.</p>
@@ -1386,8 +1387,9 @@ const collapsedGmailThreadFixture = `<!doctype html>
     document.getElementById('expand-all').addEventListener('click', () => {
       document.getElementById('older-message').hidden = false;
       const control = document.getElementById('expand-all');
-      control.setAttribute('aria-label', 'Collapse all');
-      control.textContent = 'Collapse all';
+      control.setAttribute('jsname', 'xvWlrc');
+      control.setAttribute('aria-label', 'Tümünü daralt');
+      control.textContent = 'Tümünü daralt';
     });
   </script>`;
 
@@ -1420,10 +1422,11 @@ async function readCollapsedGmailThread(page, browserKind) {
   }
   const state = await page.evaluate(() => ({
     topLevelLabel: document.getElementById('expand-all').getAttribute('aria-label'),
+    topLevelJsname: document.getElementById('expand-all').getAttribute('jsname'),
     olderHidden: document.getElementById('older-message').hidden,
   }));
-  if (state.topLevelLabel !== 'Collapse all' || state.olderHidden) {
-    throw new Error(`${browserKind}: whole-thread preparation did not reveal the trusted conversation`);
+  if (state.topLevelLabel !== 'Tümünü daralt' || state.topLevelJsname !== 'xvWlrc' || state.olderHidden) {
+    throw new Error(`${browserKind}: whole-thread preparation did not reveal the trusted conversation: ${JSON.stringify(state)}`);
   }
   return {
     pageContent: normalizeTreeRefs(result.pageContent),
