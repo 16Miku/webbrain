@@ -96,6 +96,27 @@ function reduceToBudget(messages, maxBytes, state) {
       content: '[Earlier message omitted from bounded session recovery snapshot.]',
     };
   }
+  // A compacted assistant message loses its tool_calls, which orphans the
+  // paired `tool` result messages that carry the same tool_call_id. Restoring
+  // such a snapshot into the live conversation makes the next provider call
+  // fail with "tool call ID not found", so drop every `tool` message whose id
+  // is no longer referenced by any remaining assistant tool_calls.
+  if (state.compacted) {
+    const presentCallIds = new Set();
+    for (const message of out) {
+      if (message?.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;
+      for (const call of message.tool_calls) {
+        if (call && typeof call.id === 'string') presentCallIds.add(call.id);
+      }
+    }
+    for (let index = out.length - 1; index >= 0; index--) {
+      const message = out[index];
+      if (message?.role === 'tool' && typeof message.tool_call_id === 'string' && !presentCallIds.has(message.tool_call_id)) {
+        state.compacted = true;
+        out.splice(index, 1);
+      }
+    }
+  }
   for (let index = keepRecentFrom; index < out.length && byteLength(out) > maxBytes; index++) {
     const message = out[index];
     if (!message || typeof message.content !== 'string' || message.content.length <= 4_000) continue;
