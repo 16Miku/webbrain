@@ -79,14 +79,16 @@ export class RichTextToolbarProbe {
       child = parent;
     }
     if (!child || child.frameId !== 0) return null;
+    const opaqueFrameIds = new Set();
     const exactChildRect = async edge => {
       const token = `wb-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
-      const parentOrigin = messageOrigin(edge.parent.url);
+      const parentOriginOpaque = opaqueFrameIds.has(edge.parent.frameId);
+      const parentOrigin = parentOriginOpaque ? '' : messageOrigin(edge.parent.url);
       const expectedChildOrigin = messageOrigin(edge.child.url);
       const parentResponse = chrome.tabs.sendMessage(tabId, {
         target: 'redaction-content',
         action: 'wait_for_exact_child_frame_rect',
-        params: { token, expectedChildOrigin, scrollIntoView: true },
+        params: { token, expectedChildOrigin, allowOpaqueChildOrigin: parentOriginOpaque, scrollIntoView: true },
       }, { frameId: edge.parent.frameId }).catch(() => null);
       await new Promise(resolve => setTimeout(resolve, 0));
       try {
@@ -103,6 +105,7 @@ export class RichTextToolbarProbe {
     let frameOwnerMeta = null;
     for (const edge of edges) {
       const exact = await exactChildRect(edge);
+      if (exact?.childOriginOpaque === true) opaqueFrameIds.add(edge.child.frameId);
       const parentTransform = transforms.get(edge.parent.frameId);
       const childSnapshot = snapshotById.get(edge.child.frameId);
       const childWidth = Number(childSnapshot?.viewport?.width);

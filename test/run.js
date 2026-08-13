@@ -1540,7 +1540,7 @@ test('exact iframe geometry claims stay source-bound, allow opaque sandbox origi
     const originBinding = source.indexOf('event.origin !== expectedChildOrigin', sourceBinding);
     assert.ok(sourceBinding >= 0 && originBinding > sourceBinding,
       `${browserName}: frame claims must bind the exact source before applying origin exceptions`);
-    assert.match(source, /event\.origin === 'null'[\s\S]*sandboxValue != null[\s\S]*!String\(sandboxValue\)[\s\S]*includes\('allow-same-origin'\)/,
+    assert.match(source, /event\.origin === 'null'[\s\S]*allowOpaqueChildOrigin === true \|\| hasOpaqueSandboxOrigin\(frame\)/,
       `${browserName}: opaque origins should be limited to sandboxed frames without allow-same-origin`);
     assert.match(source, /event\.origin !== expectedChildOrigin && !opaqueSandboxClaim/,
       `${browserName}: frame claims must verify the child origin`);
@@ -1554,7 +1554,7 @@ test('exact iframe geometry claims stay source-bound, allow opaque sandbox origi
 test('exact iframe geometry accepts null origins only for opaque sandboxed source frames', async () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
-    const claim = async ({ eventOrigin, sandboxValue }) => {
+    const claim = async ({ eventOrigin, sandboxValue, allowOpaqueChildOrigin = false }) => {
       let runtimeListener = null;
       let windowMessageListener = null;
       const timers = [];
@@ -1625,7 +1625,7 @@ test('exact iframe geometry accepts null origins only for opaque sandboxed sourc
         const pending = runtimeListener({
           target: 'redaction-content',
           action: 'wait_for_exact_child_frame_rect',
-          params: { token: 'opaque-token', expectedChildOrigin: 'https://child.test' },
+          params: { token: 'opaque-token', expectedChildOrigin: 'https://child.test', allowOpaqueChildOrigin },
         }, null, resolve);
         assert.equal(pending, true, `${browserName}: exact-frame request should stay asynchronous`);
       });
@@ -1655,11 +1655,85 @@ test('exact iframe geometry accepts null origins only for opaque sandboxed sourc
       false,
       `${browserName}: allow-same-origin frames should not use the opaque-origin exception`,
     );
+    const inheritedOpaque = await claim({
+      eventOrigin: 'null',
+      sandboxValue: null,
+      allowOpaqueChildOrigin: true,
+    });
+    assert.equal(inheritedOpaque.found, true,
+      `${browserName}: a child of an opaque sandbox frame should inherit the origin exception`);
+    assert.equal(inheritedOpaque.childOriginOpaque, true,
+      `${browserName}: inherited opacity should propagate to deeper descendants`);
     assert.equal(
       (await claim({ eventOrigin: 'https://child.test', sandboxValue: null })).found,
       true,
       `${browserName}: ordinary exact-origin claims should remain valid`,
     );
+  }
+});
+
+test('rich-text frame geometry uses wildcard delivery only for known opaque sandbox parents', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const announcements = [];
+      const waits = [];
+      const runtime = {
+        tabs: {
+          async sendMessage(_tabId, message, options) {
+            const frameId = options?.frameId;
+            if (message.action === 'get_redaction_regions') {
+              return { viewport: { width: 100, height: 100, scrollX: 0, scrollY: 0 } };
+            }
+            if (message.action === 'wait_for_exact_child_frame_rect') {
+              waits.push({ frameId, ...message.params });
+              return {
+                found: true,
+                childOriginOpaque: frameId === 0 || message.params.allowOpaqueChildOrigin === true,
+                outerRect: { x: 10, y: 10, w: 100, h: 100, pageX: 10, pageY: 10 },
+                contentRect: { x: 10, y: 10, w: 100, h: 100 },
+                ownerMeta: { tag: 'iframe' },
+              };
+            }
+            if (message.action === 'announce_exact_child_frame') {
+              announcements.push({ frameId, ...message.params });
+              return { announced: true };
+            }
+            throw new Error(`Unexpected action: ${message.action}`);
+          },
+        },
+      };
+      globalThis.chrome = build === 'chrome'
+        ? { ...runtime, scripting: { executeScript: async () => [] } }
+        : originalChrome;
+      globalThis.browser = build === 'firefox'
+        ? { ...runtime, tabs: { ...runtime.tabs, executeScript: async () => [] } }
+        : originalBrowser;
+      const { RichTextToolbarProbe } = await import(pathToFileURL(
+        path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`),
+      ).href);
+      const geometry = await new RichTextToolbarProbe({}).frameGeometryToTop(77, [
+        { frameId: 0, parentFrameId: -1, url: 'https://top.test/' },
+        { frameId: 1, parentFrameId: 0, url: 'https://middle.test/sandboxed' },
+        { frameId: 2, parentFrameId: 1, url: 'https://child.test/editor' },
+      ], 2, { x: 5, y: 6, w: 20, h: 10 });
+
+      assert.ok(geometry?.annotationRect, `${build}: nested geometry should resolve`);
+      assert.equal(announcements[0]?.parentOrigin, 'https://top.test',
+        `${build}: ordinary parents should retain exact-origin delivery`);
+      assert.equal(announcements[1]?.parentOrigin, '',
+        `${build}: opaque sandbox parents should request wildcard delivery`);
+      assert.equal(waits[0]?.allowOpaqueChildOrigin, false,
+        `${build}: the top-level receiver should not enable inherited opacity`);
+      assert.equal(waits[1]?.allowOpaqueChildOrigin, true,
+        `${build}: an opaque receiver should accept and propagate null child origins`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 

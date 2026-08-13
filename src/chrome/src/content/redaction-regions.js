@@ -194,6 +194,11 @@
         }
         return frames;
       };
+      const hasOpaqueSandboxOrigin = frame => {
+        const sandboxValue = frame?.getAttribute?.('sandbox');
+        return sandboxValue != null
+          && !String(sandboxValue).toLowerCase().split(/\s+/).includes('allow-same-origin');
+      };
       const onMessage = event => {
         if (event?.data?.__webbrainExactFrameRectToken !== token) return;
         const frame = reachableFrames()
@@ -201,12 +206,11 @@
         if (!frame) return;
         // The token is necessarily transported across the page/content-script
         // boundary. Bind it to the exact child window and its origin. Sandboxed
-        // frames without allow-same-origin have an opaque "null" origin, so
-        // accept that value only from the matching sandboxed frame.
-        const sandboxValue = frame.getAttribute?.('sandbox');
+        // frames without allow-same-origin (and their descendants) have an
+        // opaque "null" origin, so accept that value only from the matching
+        // frame after the background has verified the sandbox chain.
         const opaqueSandboxClaim = event.origin === 'null'
-          && sandboxValue != null
-          && !String(sandboxValue).toLowerCase().split(/\s+/).includes('allow-same-origin');
+          && (params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame));
         if (expectedChildOrigin && event.origin !== expectedChildOrigin && !opaqueSandboxClaim) return;
         // The agent announces this token to exactly one child frame, so a
         // second distinct claimant is a frame answering for a token that was
@@ -262,6 +266,7 @@
             name: frame.getAttribute?.('name') || null,
             role: frame.getAttribute?.('role') || null,
           },
+          childOriginOpaque: params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame),
         });
       };
       window.addEventListener('message', onMessage);
