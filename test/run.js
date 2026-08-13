@@ -20948,6 +20948,9 @@ test('Wikipedia skill retrieves cached passages when the network is unavailable'
       title: 'Alan Turing',
       extract: 'Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.',
       url: 'https://en.wikipedia.org/wiki/Alan_Turing',
+      revision: 12345,
+      license: 'CC BY-SA 4.0',
+      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
     },
     {
       pageid: 19668,
@@ -20986,6 +20989,49 @@ test('Wikipedia skill retrieves cached passages when the network is unavailable'
     assert.equal(result.data.pages[0].title, 'Alan Turing', `${label}: lexical retrieval ranked the wrong article`);
     assert.match(result.data.pages[0].excerpt, /cryptanalyst/, `${label}: fallback omitted the retrieved passage`);
     assert.equal(result.data.pages[0].url, records[0].url, `${label}: fallback omitted source attribution URL`);
+
+    const summary = await runtime.executeWikipediaSkillTool({
+      ...tool,
+      name: 'get_wikipedia_summary',
+    }, { titles: 'Alan Turing' }, {
+      store,
+      executeOnline: async () => ({ success: false, error: 'Skill tool request failed: offline' }),
+    });
+    const page = Object.values(summary.data.query.pages)[0];
+    assert.equal(page.lastrevid, records[0].revision, `${label}: offline summary omitted revision metadata`);
+    assert.equal(page.license, records[0].license, `${label}: offline summary omitted license metadata`);
+    assert.equal(page.modified, records[0].modified, `${label}: offline summary omitted modification notice`);
+  }
+});
+
+test('Wikipedia cache merge preserves richer downloaded introductions', () => {
+  for (const [label, runtime] of [
+    ['chrome', WikipediaOfflineCh],
+    ['firefox', WikipediaOfflineFx],
+  ]) {
+    const downloaded = {
+      key: 'alan turing',
+      pageid: 1208,
+      title: 'Alan Turing',
+      extract: 'A long revision-bearing introduction downloaded by the background snapshot.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
+      revision: 12345,
+      license: 'CC BY-SA 4.0',
+      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
+    };
+    const searchHit = {
+      key: 'alan turing',
+      pageid: 1208,
+      title: 'Alan Turing',
+      extract: 'Short search excerpt.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
+      revision: null,
+      license: 'CC BY-SA 4.0',
+      modified: 'Introduction extracted and normalized to plain text by WebBrain.',
+    };
+    const merged = runtime.mergeWikipediaRecords(downloaded, searchHit);
+    assert.equal(merged.extract, downloaded.extract, `${label}: online search degraded the offline introduction`);
+    assert.equal(merged.revision, downloaded.revision, `${label}: online search discarded snapshot revision metadata`);
   }
 });
 

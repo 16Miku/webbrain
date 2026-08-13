@@ -13,7 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
-import { configureWikipediaOfflineSync, handleWikipediaOfflineAlarm } from './agent/wikipedia-offline.js';
+import { WIKIPEDIA_SYNC_ALARM, configureWikipediaOfflineSync, handleWikipediaOfflineAlarm } from './agent/wikipedia-offline.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -1023,7 +1023,7 @@ browser.storage.onChanged.addListener((changes) => {
 browser.alarms.onAlarm.addListener((alarm) => {
   handleWikipediaOfflineAlarm(alarm, browser, agent.customSkills).catch((error) => {
     console.warn('[WebBrain] Wikipedia offline sync failed:', error);
-    browser.alarms.create('wb_wikipedia_offline_sync', { delayInMinutes: 5 });
+    browser.alarms.create(WIKIPEDIA_SYNC_ALARM, { delayInMinutes: 5 });
   });
 });
 

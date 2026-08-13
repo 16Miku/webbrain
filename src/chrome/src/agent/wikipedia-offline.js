@@ -67,6 +67,24 @@ function normalizeRecord(page = {}) {
   };
 }
 
+export function mergeWikipediaRecords(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  const richerExtract = String(incoming.extract || '').length >= String(existing.extract || '').length
+    ? incoming.extract
+    : existing.extract;
+  return {
+    ...existing,
+    ...incoming,
+    extract: richerExtract,
+    pageid: incoming.pageid || existing.pageid || null,
+    url: incoming.url || existing.url,
+    revision: incoming.revision || existing.revision || null,
+    license: incoming.license || existing.license || 'CC BY-SA 4.0',
+    modified: incoming.modified || existing.modified,
+  };
+}
+
 export function createWikipediaStore(indexedDb = globalThis.indexedDB) {
   let databasePromise = null;
   const open = () => {
@@ -103,7 +121,9 @@ export function createWikipediaStore(indexedDb = globalThis.indexedDB) {
       const store = transaction.objectStore(ARTICLE_STORE);
       for (const value of records || []) {
         const record = normalizeRecord(value);
-        if (record) store.put(record);
+        if (!record) continue;
+        const request = store.get(record.key);
+        request.onsuccess = () => store.put(mergeWikipediaRecords(request.result, record));
       }
       await transactionDone(transaction);
     },
@@ -183,10 +203,14 @@ export function searchWikipediaRecords(records, query, limit = 5) {
 }
 
 function isBuiltInWikipediaTool(tool) {
-  return tool?.skillId === 'wikipedia'
-    && tool?.sourceType === 'built-in'
-    && tool?.sourceUrl === BUILT_IN_SOURCE
+  return isBuiltInWikipediaProvenance(tool, 'skillId')
     && (tool?.name === SEARCH_TOOL || tool?.name === SUMMARY_TOOL);
+}
+
+function isBuiltInWikipediaProvenance(value, idField = 'id') {
+  return value?.[idField] === 'wikipedia'
+    && value?.sourceType === 'built-in'
+    && value?.sourceUrl === BUILT_IN_SOURCE;
 }
 
 function recordsFromOnlineResult(toolName, result) {
@@ -238,6 +262,9 @@ function localResult(tool, records, status, originalError) {
             extract: record.excerpt,
             fullurl: record.url,
             canonicalurl: record.url,
+            lastrevid: record.revision,
+            license: record.license,
+            modified: record.modified,
           },
         },
       },
@@ -345,9 +372,7 @@ export async function syncWikipediaOfflineBatch(options = {}) {
 }
 
 export function hasBuiltInWikipediaSkill(skills) {
-  return (skills || []).some(skill => skill?.id === 'wikipedia'
-    && skill?.sourceType === 'built-in'
-    && skill?.sourceUrl === BUILT_IN_SOURCE);
+  return (skills || []).some(skill => isBuiltInWikipediaProvenance(skill));
 }
 
 export async function configureWikipediaOfflineSync(api, skills, options = {}) {
