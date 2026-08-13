@@ -245,7 +245,7 @@ export function parseUserMemoryExtractionResult(content) {
     id: item?.id ? String(item.id) : '',
     text: normalizeUserMemoryText(item?.text),
     kind: normalizeUserMemoryKind(item?.kind),
-    confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0,
+    confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 1,
   })).filter((item) => item.op !== 'none');
 }
 
