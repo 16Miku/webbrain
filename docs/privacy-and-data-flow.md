@@ -364,6 +364,21 @@ responses as untrusted unless the manifest says otherwise. Removing or
 disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
 for the full packaged catalog.
 
+Enabling the packaged Wikipedia skill additionally schedules a background,
+credentialless download from `en.wikipedia.org` before a model activates the
+skill. It fetches a revision-pinned catalog of about 1,000 core English topics
+and then downloads text-only article introductions in bounded batches. The
+extension stores those extracts, canonical source URLs, revision metadata, and
+a resumable cursor in its local `webbrain_wikipedia` IndexedDB database. Live
+Wikipedia searches and summaries may add returned article text to the same
+cache. This data is never uploaded by the cache module; when a later run uses
+an offline result, that passage enters the normal untrusted tool-result path
+and is sent to the user's configured LLM as part of the run. Removing the
+Wikipedia skill cancels the download and deletes its cache. Wikipedia text is
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); local results
+retain canonical article URLs for attribution.
+Images are not downloaded.
+
 ---
 
 ## Data Flow Diagrams

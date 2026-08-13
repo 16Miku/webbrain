@@ -13,6 +13,7 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { configureWikipediaOfflineSync, handleWikipediaOfflineAlarm } from './agent/wikipedia-offline.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -804,6 +805,9 @@ async function loadCustomSkills() {
     console.warn('[WebBrain] Packaged skills could not be refreshed', e);
   }
   agent.setCustomSkills(skills);
+  await configureWikipediaOfflineSync(browser, agent.customSkills).catch((error) => {
+    console.warn('[WebBrain] Wikipedia offline sync could not be configured:', error);
+  });
 }
 const customSkillsReady = loadCustomSkills();
 
@@ -992,6 +996,9 @@ browser.storage.onChanged.addListener((changes) => {
       });
     }
     refreshPrompts = true;
+    configureWikipediaOfflineSync(browser, agent.customSkills).catch((error) => {
+      console.warn('[WebBrain] Wikipedia offline sync could not be configured:', error);
+    });
   }
   if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
     loadCaptchaSolver()
@@ -1011,6 +1018,13 @@ browser.storage.onChanged.addListener((changes) => {
     });
   }
   if (refreshPrompts) agent._refreshSystemPrompts();
+});
+
+browser.alarms.onAlarm.addListener((alarm) => {
+  handleWikipediaOfflineAlarm(alarm, browser, agent.customSkills).catch((error) => {
+    console.warn('[WebBrain] Wikipedia offline sync failed:', error);
+    browser.alarms.create('wb_wikipedia_offline_sync', { delayInMinutes: 5 });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────

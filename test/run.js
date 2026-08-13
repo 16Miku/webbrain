@@ -336,6 +336,12 @@ const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDoma
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/firefox-restricted-domains.js').replace(/\\/g, '/')
 );
+const WikipediaOfflineCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
+const WikipediaOfflineFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/wikipedia-offline.js').replace(/\\/g, '/')
+);
 const TabChatPersistenceCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/ui/tab-chat-persistence.js').replace(/\\/g, '/')
 );
@@ -20932,6 +20938,174 @@ test('packaged Wikipedia skill is opt-in with read-only HTTP tools', () => {
     const names = defs.map((tool) => tool.function.name);
     assert.ok(names.includes('search_wikipedia'), `${label}: Wikipedia search tool missing from ask mode`);
     assert.ok(names.includes('get_wikipedia_summary'), `${label}: Wikipedia summary tool missing from ask mode`);
+  }
+});
+
+test('Wikipedia skill retrieves cached passages when the network is unavailable', async () => {
+  const records = [
+    {
+      pageid: 1208,
+      title: 'Alan Turing',
+      extract: 'Alan Turing was an English mathematician, computer scientist, logician, and cryptanalyst.',
+      url: 'https://en.wikipedia.org/wiki/Alan_Turing',
+    },
+    {
+      pageid: 19668,
+      title: 'Mercury',
+      extract: 'Mercury is the first planet from the Sun and the smallest planet in the Solar System.',
+      url: 'https://en.wikipedia.org/wiki/Mercury_(planet)',
+    },
+  ];
+  for (const [label, runtime] of [
+    ['chrome', WikipediaOfflineCh],
+    ['firefox', WikipediaOfflineFx],
+  ]) {
+    const store = {
+      async getAll() { return records; },
+      async get() { return null; },
+      async putMany() {},
+      async status() { return { articleCount: records.length, state: 'ready' }; },
+    };
+    const tool = {
+      name: 'search_wikipedia',
+      skillId: 'wikipedia',
+      skillName: 'Wikipedia',
+      sourceType: 'built-in',
+      sourceUrl: 'skills/wikipedia.md',
+    };
+    const result = await runtime.executeWikipediaSkillTool(tool, {
+      q: 'computer science cryptanalyst',
+      limit: 3,
+    }, {
+      store,
+      executeOnline: async () => ({ success: false, error: 'Skill tool request failed: offline' }),
+    });
+
+    assert.equal(result.success, true, `${label}: cached search should recover from a network failure`);
+    assert.equal(result.offline, true, `${label}: fallback should identify local-only retrieval`);
+    assert.equal(result.data.pages[0].title, 'Alan Turing', `${label}: lexical retrieval ranked the wrong article`);
+    assert.match(result.data.pages[0].excerpt, /cryptanalyst/, `${label}: fallback omitted the retrieved passage`);
+    assert.equal(result.data.pages[0].url, records[0].url, `${label}: fallback omitted source attribution URL`);
+  }
+});
+
+test('Wikipedia offline sync ingests one restart-safe catalog batch', async () => {
+  for (const [label, runtime] of [
+    ['chrome', WikipediaOfflineCh],
+    ['firefox', WikipediaOfflineFx],
+  ]) {
+    const metadata = new Map();
+    const stored = [];
+    const requested = [];
+    const store = {
+      async getMeta(key) { return metadata.get(key); },
+      async setMeta(key, value) { metadata.set(key, value); },
+      async putMany(records) { stored.push(...records); },
+    };
+    const fetchImpl = async (url) => {
+      requested.push(new URL(url));
+      if (requested.length === 1) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              parse: {
+                revid: runtime.WIKIPEDIA_CATALOG_REVISION,
+                links: Array.from({ length: 923 }, (_, index) => ({ ns: 0, title: `Article ${index + 1}` })),
+              },
+            };
+          },
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return {
+            query: {
+              pages: Array.from({ length: runtime.WIKIPEDIA_SYNC_BATCH_SIZE }, (_, index) => ({
+                pageid: index + 1,
+                title: `Article ${index + 1}`,
+                extract: `Summary ${index + 1}`,
+                canonicalurl: `https://en.wikipedia.org/wiki/Article_${index + 1}`,
+              })),
+            },
+          };
+        },
+      };
+    };
+
+    const state = await runtime.syncWikipediaOfflineBatch({ store, fetchImpl });
+    assert.equal(requested[0].searchParams.get('oldid'), String(runtime.WIKIPEDIA_CATALOG_REVISION), `${label}: catalog is not revision-pinned`);
+    assert.equal(requested[1].searchParams.get('explaintext'), '1', `${label}: sync should download text-only extracts`);
+    assert.equal(requested[1].searchParams.get('titles').split('|').length, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: sync batch was not bounded`);
+    assert.equal(stored.length, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: wrong article batch size persisted`);
+    assert.equal(state.cursor, runtime.WIKIPEDIA_SYNC_BATCH_SIZE, `${label}: restart cursor was not persisted`);
+    assert.equal(state.state, 'downloading', `${label}: partial corpus should remain resumable`);
+  }
+});
+
+test('Wikipedia online results extend the offline cache', async () => {
+  for (const [label, runtime] of [
+    ['chrome', WikipediaOfflineCh],
+    ['firefox', WikipediaOfflineFx],
+  ]) {
+    const stored = [];
+    const online = {
+      success: true,
+      status: 200,
+      data: {
+        query: {
+          pages: {
+            1208: {
+              pageid: 1208,
+              title: 'Alan Turing',
+              extract: 'Alan Turing was an English computer scientist.',
+              canonicalurl: 'https://en.wikipedia.org/wiki/Alan_Turing',
+              lastrevid: 12345,
+            },
+          },
+        },
+      },
+    };
+    const result = await runtime.executeWikipediaSkillTool({
+      name: 'get_wikipedia_summary',
+      skillId: 'wikipedia',
+      skillName: 'Wikipedia',
+      sourceType: 'built-in',
+      sourceUrl: 'skills/wikipedia.md',
+    }, { titles: 'Alan Turing' }, {
+      store: { async putMany(records) { stored.push(...records); } },
+      executeOnline: async () => online,
+    });
+
+    assert.equal(result, online, `${label}: online response shape should remain backward compatible`);
+    assert.equal(stored[0].title, 'Alan Turing', `${label}: live summary was not cached`);
+    assert.equal(stored[0].revision, 12345, `${label}: cached attribution omitted revision metadata`);
+    assert.equal(stored[0].license, 'CC BY-SA 4.0', `${label}: cached text omitted license metadata`);
+    assert.match(stored[0].modified, /extracted and normalized/i, `${label}: cached text omitted modification notice`);
+  }
+});
+
+test('Wikipedia offline data follows exact built-in skill enablement', async () => {
+  for (const [label, runtime] of [
+    ['chrome', WikipediaOfflineCh],
+    ['firefox', WikipediaOfflineFx],
+  ]) {
+    const calls = [];
+    let cleared = 0;
+    const api = { alarms: {
+      async create(name, options) { calls.push(['create', name, options]); },
+      async clear(name) { calls.push(['clear', name]); },
+    } };
+    const store = { async clear() { cleared += 1; } };
+    const enabled = [{ id: 'wikipedia', sourceType: 'built-in', sourceUrl: 'skills/wikipedia.md' }];
+    assert.deepEqual(await runtime.configureWikipediaOfflineSync(api, enabled, { store }), { enabled: true }, `${label}: built-in skill did not enable sync`);
+    assert.equal(calls[0][1], runtime.WIKIPEDIA_SYNC_ALARM, `${label}: wrong sync alarm configured`);
+
+    const sameIdCustomSkill = [{ id: 'wikipedia', sourceType: 'text', sourceUrl: '' }];
+    assert.deepEqual(await runtime.configureWikipediaOfflineSync(api, sameIdCustomSkill, { store }), { enabled: false }, `${label}: custom skill spoofed built-in sync`);
+    assert.equal(cleared, 1, `${label}: removing the built-in skill did not delete local data`);
+    assert.equal(calls.at(-1)[0], 'clear', `${label}: removing the built-in skill did not cancel sync`);
   }
 });
 
