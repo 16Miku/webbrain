@@ -20,6 +20,15 @@ function withDispatchBinding(probe, frameId = probe?.frameId) {
   };
 }
 
+function messageOrigin(url) {
+  try {
+    const origin = new URL(String(url || '')).origin;
+    return origin && origin !== 'null' ? origin : '';
+  } catch {
+    return '';
+  }
+}
+
 export class RichTextToolbarProbe {
   constructor(agent) {
     this.agent = agent;
@@ -72,17 +81,19 @@ export class RichTextToolbarProbe {
     if (!child || child.frameId !== 0) return null;
     const exactChildRect = async edge => {
       const token = `wb-frame-${Date.now()}-${secureRandomBase36Token(12)}`;
+      const parentOrigin = messageOrigin(edge.parent.url);
+      const expectedChildOrigin = messageOrigin(edge.child.url);
       const parentResponse = chrome.tabs.sendMessage(tabId, {
         target: 'redaction-content',
         action: 'wait_for_exact_child_frame_rect',
-        params: { token, scrollIntoView: true },
+        params: { token, expectedChildOrigin, scrollIntoView: true },
       }, { frameId: edge.parent.frameId }).catch(() => null);
       await new Promise(resolve => setTimeout(resolve, 0));
       try {
         await chrome.tabs.sendMessage(tabId, {
           target: 'redaction-content',
           action: 'announce_exact_child_frame',
-          params: { token },
+          params: { token, parentOrigin },
         }, { frameId: edge.child.frameId });
       } catch {}
       return parentResponse;
@@ -160,8 +171,8 @@ export class RichTextToolbarProbe {
   }
 
   async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex }) {
-    const matchIndex = Number.isInteger(Number(requestedMatchIndex)) && Number(requestedMatchIndex) >= 0
-      ? Number(requestedMatchIndex)
+    const matchIndex = Number.isInteger(requestedMatchIndex) && requestedMatchIndex >= 0
+      ? requestedMatchIndex
       : null;
     const counted = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
@@ -292,7 +303,7 @@ export class RichTextToolbarProbe {
       args: { selector, text: args?.text || '', matchIndex: args?.matchIndex },
     })))).filter(Boolean);
     if (!probes.length) return null;
-    const explicitMatchIndex = Number.isInteger(Number(args?.matchIndex)) && Number(args.matchIndex) >= 0;
+    const explicitMatchIndex = Number.isInteger(args?.matchIndex) && args.matchIndex >= 0;
     const matchedElementCount = probes.reduce((sum, probe) => (
       sum + (explicitMatchIndex ? 1 : Math.max(1, Number(probe.selectorMatchCount) || 1))
     ), 0);

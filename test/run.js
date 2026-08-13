@@ -1533,6 +1533,136 @@ test('redaction collectors filter offscreen fields and report incomplete region 
   }
 });
 
+test('exact iframe geometry claims stay source-bound, allow opaque sandbox origins, and keep their contention window', () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    const sourceBinding = source.indexOf('.find(candidate => candidate.contentWindow === event.source)');
+    const originBinding = source.indexOf('event.origin !== expectedChildOrigin', sourceBinding);
+    assert.ok(sourceBinding >= 0 && originBinding > sourceBinding,
+      `${browserName}: frame claims must bind the exact source before applying origin exceptions`);
+    assert.match(source, /event\.origin === 'null'[\s\S]*sandboxValue != null[\s\S]*!String\(sandboxValue\)[\s\S]*includes\('allow-same-origin'\)/,
+      `${browserName}: opaque origins should be limited to sandboxed frames without allow-same-origin`);
+    assert.match(source, /event\.origin !== expectedChildOrigin && !opaqueSandboxClaim/,
+      `${browserName}: frame claims must verify the child origin`);
+    assert.match(source, /parentOrigin \|\| '\*'/,
+      `${browserName}: child announcements must target a known parent origin when available`);
+    assert.match(source, /if \(!claimant\) \{[\s\S]*contentionTimer = setTimeout[\s\S]*return;[\s\S]*Duplicate delivery from the same frame/,
+      `${browserName}: duplicate same-source claims must not resolve before contention expires`);
+  }
+});
+
+test('exact iframe geometry accepts null origins only for opaque sandboxed source frames', async () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/content/redaction-regions.js`), 'utf8');
+    const claim = async ({ eventOrigin, sandboxValue }) => {
+      let runtimeListener = null;
+      let windowMessageListener = null;
+      const timers = [];
+      const setTestTimeout = (callback, delay) => {
+        const timer = { callback, delay, active: true };
+        timers.push(timer);
+        return timer;
+      };
+      const clearTestTimeout = timer => {
+        if (timer) timer.active = false;
+      };
+      const runTimer = delay => {
+        const timer = timers.find(candidate => candidate.active && candidate.delay === delay);
+        assert.ok(timer, `${browserName}: expected a ${delay}ms claim timer`);
+        timer.active = false;
+        timer.callback();
+      };
+      const childWindow = {};
+      const frame = {
+        contentWindow: childWindow,
+        isConnected: true,
+        tagName: 'IFRAME',
+        id: 'sandbox-child',
+        offsetWidth: 120,
+        offsetHeight: 80,
+        clientWidth: 120,
+        clientHeight: 80,
+        clientLeft: 0,
+        clientTop: 0,
+        getAttribute(name) {
+          if (name === 'sandbox') return sandboxValue;
+          return null;
+        },
+        getBoundingClientRect() {
+          return { left: 10, top: 20, right: 130, bottom: 100, width: 120, height: 80 };
+        },
+      };
+      const runtime = { onMessage: { addListener(listener) { runtimeListener = listener; } } };
+      const context = {
+        chrome: { runtime },
+        browser: browserName === 'firefox' ? { runtime } : undefined,
+        window: {
+          innerWidth: 800,
+          innerHeight: 600,
+          scrollX: 0,
+          scrollY: 0,
+          pageXOffset: 0,
+          pageYOffset: 0,
+          addEventListener(type, listener) {
+            if (type === 'message') windowMessageListener = listener;
+          },
+          removeEventListener(type, listener) {
+            if (type === 'message' && windowMessageListener === listener) windowMessageListener = null;
+          },
+        },
+        document: {
+          querySelectorAll(selector) {
+            if (selector === 'iframe, frame') return [frame];
+            return [];
+          },
+        },
+        setTimeout: setTestTimeout,
+        clearTimeout: clearTestTimeout,
+      };
+      vm.runInNewContext(source, context);
+      assert.equal(typeof runtimeListener, 'function', `${browserName}: collector listener should register`);
+      const resultPromise = new Promise(resolve => {
+        const pending = runtimeListener({
+          target: 'redaction-content',
+          action: 'wait_for_exact_child_frame_rect',
+          params: { token: 'opaque-token', expectedChildOrigin: 'https://child.test' },
+        }, null, resolve);
+        assert.equal(pending, true, `${browserName}: exact-frame request should stay asynchronous`);
+      });
+      assert.equal(typeof windowMessageListener, 'function', `${browserName}: message listener should register`);
+      windowMessageListener({
+        data: { __webbrainExactFrameRectToken: 'opaque-token' },
+        origin: eventOrigin,
+        source: childWindow,
+      });
+      const accepted = timers.some(timer => timer.active && timer.delay === 30);
+      runTimer(accepted ? 30 : 750);
+      return resultPromise;
+    };
+
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: 'allow-scripts' })).found,
+      true,
+      `${browserName}: an opaque sandbox frame should resolve its exact geometry`,
+    );
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: null })).found,
+      false,
+      `${browserName}: an unsandboxed frame should not bypass its expected origin`,
+    );
+    assert.equal(
+      (await claim({ eventOrigin: 'null', sandboxValue: 'allow-scripts allow-same-origin' })).found,
+      false,
+      `${browserName}: allow-same-origin frames should not use the opaque-origin exception`,
+    );
+    assert.equal(
+      (await claim({ eventOrigin: 'https://child.test', sandboxValue: null })).found,
+      true,
+      `${browserName}: ordinary exact-origin claims should remain valid`,
+    );
+  }
+});
+
 test('redaction collectors expose a per-frame overflow sentinel', () => {
   const visibleRect = { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 };
   for (const browserName of ['chrome', 'firefox']) {
@@ -1735,6 +1865,16 @@ test('ref-id action tools are state changes in both browser agents', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const name of ['click_ax', 'set_checked', 'type_ax', 'set_field']) {
       assert.equal(AgentClass.STATE_CHANGE_TOOLS.has(name), true, `${label} missing ${name} from STATE_CHANGE_TOOLS`);
+    }
+  }
+});
+
+test('iframe mutations require a stable frame scope in both browser tool schemas', () => {
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    for (const name of ['iframe_click', 'iframe_type']) {
+      const tool = getTools('act').find(item => item.function.name === name);
+      assert.ok(tool, `${label}: ${name} tool is missing`);
+      assert.equal(tool.function.parameters.required.includes('urlFilter'), true, `${label}: ${name} does not require urlFilter`);
     }
   }
 });
@@ -8355,7 +8495,7 @@ test('Enter SPA route changes reset dead-scroll state and defer queued ref reuse
   }
 });
 
-test('accessibility-tree ref enumeration nudges at three and stops at six', () => {
+test('accessibility-tree allows bounded unique ref drill-downs and still stops enumeration', () => {
   const d = new ConfiguredLoopDetector();
   const tab = 21;
   const root = d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { filter: 'visible' }, {
@@ -8366,10 +8506,16 @@ test('accessibility-tree ref enumeration nudges at three and stops at six', () =
   assert.equal(root.kind, 'none');
   assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_1' }, { pageContent: 'form [ref_1]\n textbox "Subject" [ref_2]' }).kind, 'none');
   assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_2' }, { pageContent: 'textbox "Subject" [ref_2]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_3' }, { pageContent: 'generic [ref_3]' }).kind, 'nudge');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_4' }, { pageContent: 'generic [ref_4]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_5' }, { pageContent: 'generic [ref_5]' }).kind, 'none');
-  assert.equal(d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_6' }, { pageContent: 'generic [ref_6]' }).kind, 'stop');
+  for (let ref = 3; ref <= 10; ref++) {
+    assert.equal(
+      d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: `ref_${ref}` }, { pageContent: `generic [ref_${ref}]` }).kind,
+      'none',
+    );
+  }
+  assert.equal(
+    d._checkAccessibilityReadLoop(tab, 'get_accessibility_tree', { ref_id: 'ref_11' }, { pageContent: 'generic [ref_11]' }).kind,
+    'stop',
+  );
 });
 
 test('accessibility-tree nextPage pagination past the read cap is not suspicious and other tools reset it', () => {
@@ -10207,12 +10353,14 @@ test('loop detection classifies mutating tools from each build tool list, not a 
     for (const name of ['read_page', 'extract_data', 'get_accessibility_tree', 'fetch_url', 'find_text', 'done']) {
       assert.equal(agent._isBrowserMutationTool(name), false, `${label}: ${name} must not count as a mutation`);
     }
-    // iframe_type now needs state-change screenshots for its toolbar safety
-    // preflight as well as its ordinary post-action evidence.
-    assert.equal(stateChangeTools.has('iframe_type'), true, `${label}: iframe_type must trigger state-change screenshots`);
-    // The remaining frame/upload tools act on the page but are not
+    // Iframe mutations need state-change screenshots for post-action evidence;
+    // iframe_type also uses them for its toolbar safety preflight.
+    for (const name of ['iframe_click', 'iframe_type']) {
+      assert.equal(stateChangeTools.has(name), true, `${label}: ${name} must trigger state-change screenshots`);
+    }
+    // The remaining upload/challenge tools act on the page but are not
     // auto-screenshot state changes, so the two sets must not be collapsed.
-    for (const name of ['iframe_click', 'upload_file', 'solve_captcha']) {
+    for (const name of ['upload_file', 'solve_captcha']) {
       assert.equal(stateChangeTools.has(name), false, `${label}: ${name} must stay out of STATE_CHANGE_TOOLS`);
       assert.equal(mutationTools.has(name), true, `${label}: ${name} must be a browser mutation`);
     }
@@ -16786,6 +16934,14 @@ test('completion invariant state machine enforces post-action observation with C
     assert.equal(iframeFormState.iframeFormVerificationDebt, false, `${label}: matching iframe verify_form did not clear form debt`);
     assert.equal(invariant.completionDoneBlock(iframeFormState, 'done', { outcome: 'success' }), null);
 
+    const unscopedIframeState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-unscoped-iframe-form`),
+      'iframe_type',
+      { selector: '#field', text: 'value' },
+      { success: true, dispatched: true, verified: true, frameId: 7, value: 'value' },
+    );
+    assert.equal(unscopedIframeState.iframeFormVerificationDebt, false, `${label}: an unscoped iframe edit created debt that verify_form cannot address`);
+
     let multiIframeState = invariant.createCompletionInvariantState(`${label}-multi-iframe-form`);
     multiIframeState = invariant.recordCompletionToolResult(
       multiIframeState,
@@ -16937,22 +17093,26 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'chrome',
       CompletionInvariantCh,
       'iframe_type',
-      { selector: '::invalid' },
-      await chromeAgent.executeTool(6401, 'iframe_type', { selector: '::invalid', text: 'x' }),
+      { urlFilter: 'example.test', selector: '::invalid' },
+      await chromeAgent.executeTool(6401, 'iframe_type', { urlFilter: 'example.test', selector: '::invalid', text: 'x' }),
     );
+
+    const unscopedChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
+    assertNoDebt('chrome', CompletionInvariantCh, 'iframe_type', { selector: '#field', text: 'x' }, unscopedChromeIframe);
+    assert.match(unscopedChromeIframe.error, /urlFilter is required/);
 
     chromeIframeTypeResponse = {
       success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
     };
-    const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { selector: '#field', text: 'x' });
+    const ambiguousChromeIframe = await chromeAgent.executeTool(6401, 'iframe_type', { urlFilter: 'example.test', selector: '#field', text: 'x' });
     assert.equal(ambiguousChromeIframe.dispatched, true, 'chrome: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
       CompletionInvariantCh.recordCompletionToolResult(
         CompletionInvariantCh.createCompletionInvariantState('chrome-ambiguous-iframe'),
         'iframe_type',
-        { selector: '#field', text: 'x' },
+        { urlFilter: 'example.test', selector: '#field', text: 'x' },
         ambiguousChromeIframe,
       ).verificationDebt,
       true,
@@ -17016,22 +17176,26 @@ test('pre-dispatch action failures opt out without weakening ambiguous iframe fa
       'firefox',
       CompletionInvariantFx,
       'iframe_type',
-      { selector: '::invalid' },
-      await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '::invalid', text: 'x' }),
+      { urlFilter: 'example.test', selector: '::invalid' },
+      await firefoxAgent.executeTool(6402, 'iframe_type', { urlFilter: 'example.test', selector: '::invalid', text: 'x' }),
     );
+
+    const unscopedFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
+    assertNoDebt('firefox', CompletionInvariantFx, 'iframe_type', { selector: '#field', text: 'x' }, unscopedFirefoxIframe);
+    assert.match(unscopedFirefoxIframe.error, /urlFilter is required/);
 
     firefoxIframeTypeResponse = {
       success: false,
       dispatched: true,
       error: 'event handler threw after target resolution',
     };
-    const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { selector: '#field', text: 'x' });
+    const ambiguousFirefoxIframe = await firefoxAgent.executeTool(6402, 'iframe_type', { urlFilter: 'example.test', selector: '#field', text: 'x' });
     assert.equal(ambiguousFirefoxIframe.dispatched, true, 'firefox: ambiguous iframe failure lost its dispatch marker');
     assert.equal(
       CompletionInvariantFx.recordCompletionToolResult(
         CompletionInvariantFx.createCompletionInvariantState('firefox-ambiguous-iframe'),
         'iframe_type',
-        { selector: '#field', text: 'x' },
+        { urlFilter: 'example.test', selector: '#field', text: 'x' },
         ambiguousFirefoxIframe,
       ).verificationDebt,
       true,
@@ -23311,7 +23475,7 @@ test('chrome offscreen helper recreates an evicted document after ready cache is
   }
 });
 
-test('chrome fetch fallback clears offscreen proxy timeout after success', async () => {
+test('chrome non-idempotent fetch uses one offscreen transport and clears its timeout', async () => {
   const previousChrome = globalThis.chrome;
   const previousFetch = globalThis.fetch;
   const previousSetTimeout = globalThis.setTimeout;
@@ -23327,7 +23491,9 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
   globalThis.clearTimeout = (handle) => {
     if (handle) handle.cleared = true;
   };
+  let directAttempts = 0;
   globalThis.fetch = async () => {
+    directAttempts += 1;
     throw new TypeError('Failed to fetch');
   };
   globalThis.chrome = {
@@ -23369,7 +23535,8 @@ test('chrome fetch fallback clears offscreen proxy timeout after success', async
 
     assert.equal(res.status, 200, 'chrome: fallback should synthesize the proxied response');
     assert.equal(await res.text(), '{"ok":true}', 'chrome: fallback response body should survive proxy conversion');
-    assert.equal(timers.length, 2, 'chrome: direct fetch and offscreen proxy should each install one timeout');
+    assert.equal(directAttempts, 0, 'chrome: a POST must not be replayed after a direct network failure');
+    assert.equal(timers.length, 1, 'chrome: the single offscreen transport should install one timeout');
     assert.equal(timers.every((timer) => timer.cleared), true, 'chrome: offscreen proxy timeout should be cleared after success');
   } finally {
     globalThis.setTimeout = previousSetTimeout;
@@ -25630,6 +25797,67 @@ test('tab-chat persistence never evicts other chats when shared quota remains ex
     assert.equal(values[newKey], undefined, `${label}: failed current snapshot should not be advertised as stored`);
     assert.equal(values.unrelatedSessionState, 'keep', `${label}: non-chat session state must not be evicted`);
     assert.equal(warnings.length, 1, `${label}: failed bounded persistence should warn once`);
+  }
+});
+
+test('tab-chat quota recovery removes only a provably closed tab chat', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, persistence, runtimeKey] of [
+      ['chrome', TabChatPersistenceCh, 'chrome'],
+      ['firefox', TabChatPersistenceFx, 'browser'],
+    ]) {
+      delete globalThis.chrome;
+      delete globalThis.browser;
+      globalThis[runtimeKey] = {
+        tabs: {
+          async get(tabId) {
+            if (tabId === 41) throw new Error('No tab with id: 41');
+            if (tabId === 40) throw new Error('Tabs API temporarily unavailable');
+            return { id: tabId };
+          },
+        },
+      };
+      const quota = 1200 * 1024;
+      const values = { unrelatedSessionState: 'keep' };
+      const unknownKey = persistence.TAB_CHAT_PREFIX + '40';
+      const staleKey = persistence.TAB_CHAT_PREFIX + '41';
+      const openKey = persistence.TAB_CHAT_PREFIX + '42';
+      const currentKey = persistence.TAB_CHAT_PREFIX + '43';
+      values[unknownKey] = 'u'.repeat(750 * 1024);
+      values[staleKey] = 's'.repeat(700 * 1024);
+      values[openKey] = 'o'.repeat(300 * 1024);
+      const storageBytes = next => Object.entries(next)
+        .reduce((total, [storedKey, value]) => total + storedKey.length + String(value).length, 0);
+      const storageArea = {
+        async get() { return { ...values }; },
+        async set(patch) {
+          const next = { ...values, ...patch };
+          if (storageBytes(next) > quota) throw new Error('QUOTA_BYTES exceeded');
+          Object.assign(values, patch);
+        },
+        async remove(key) { delete values[key]; },
+      };
+
+      const result = await persistence.persistTabChatToSession(
+        storageArea,
+        currentKey,
+        `<div>${'current '.repeat(80 * 1024)}</div>`,
+      );
+      assert.equal(result.ok, true, `${label}: stale closed-tab data should unblock persistence`);
+      assert.deepEqual(result.evictedKeys, [staleKey], `${label}: only the closed tab should be reclaimed`);
+      assert.equal(values[staleKey], undefined, `${label}: closed tab chat was retained`);
+      assert.equal(values[unknownKey]?.length > 0, true, `${label}: a tab with unknown liveness was evicted`);
+      assert.equal(values[openKey]?.length > 0, true, `${label}: open tab chat was evicted`);
+      assert.equal(typeof values[currentKey], 'string', `${label}: current compact snapshot was not stored`);
+      assert.equal(values.unrelatedSessionState, 'keep', `${label}: unrelated session state changed`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -40036,6 +40264,8 @@ test('inspect_event_listeners walks from open shadow roots through their hosts',
 });
 
 test('Chrome Dev mutation and state-change classifications cover the new toolkit', () => {
+  assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('upload_file'), true, 'chrome: upload results must remain inside the untrusted boundary');
+  assert.equal(UNTRUSTED_CONTENT_TOOLS.has('upload_file'), true, 'firefox: upload results must remain inside the untrusted boundary');
   for (const name of ['inject_css', 'remove_injected_css', 'patch_element', 'revert_patch', 'inspect_event_listeners', 'highlight_element']) {
     assert.equal(capabilityForCh(name, {}), CapabilityCh.DEV_PATCH, `${name} should require the Dev patch capability`);
     assert.equal(AgentCh.STATE_CHANGE_TOOLS.has(name), true, `${name} should trigger state-change screenshots`);
@@ -40052,6 +40282,38 @@ test('Chrome Dev mutation and state-change classifications cover the new toolkit
   }
   assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('inspect_event_listeners'), true);
   assert.equal(UNTRUSTED_CONTENT_TOOLS_CH.has('highlight_element'), true);
+});
+
+test('toolbar retry guards fail closed without consuming unresolved targets', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const content = fs.readFileSync(path.join(ROOT, `src/${build}/src/content/content.js`), 'utf8');
+    const clickStart = content.indexOf('function clickElement(');
+    const selectorMiss = content.indexOf('if (params.selector && !el)', clickStart);
+    const consumeBinding = content.indexOf('_consumeDispatchBinding(params.dispatchBinding?.token, el)', clickStart);
+    assert.ok(clickStart >= 0 && selectorMiss > clickStart && selectorMiss < consumeBinding,
+      `${build}: selector misses must return before consuming a dispatch binding`);
+
+    const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    const toolBlockStart = agent.indexOf('async _richTextToolbarToolBlock(');
+    const retryProbe = agent.indexOf('this._probeRichTextToolbarRetryTarget(', toolBlockStart);
+    const unresolvedBranch = agent.indexOf('if (!probe?.resolved)', retryProbe);
+    const refBlock = agent.indexOf('this._richTextToolbarGuard.blockRef(', unresolvedBranch);
+    const unresolvedFallback = agent.indexOf('return DISPATCH_BINDING_TOOLS.has(toolName)', refBlock);
+    assert.ok(
+      toolBlockStart >= 0
+      && retryProbe > toolBlockStart
+      && unresolvedBranch > retryProbe
+      && refBlock > unresolvedBranch
+      && refBlock < unresolvedFallback,
+      `${build}: unresolved probes must enforce known blocked refs before the generic fallback`,
+    );
+
+    const probe = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`), 'utf8');
+    assert.match(probe, /const explicitMatchIndex = Number\.isInteger\(args\?\.matchIndex\) && args\.matchIndex >= 0/,
+      `${build}: null matchIndex must not select iframe match zero`);
+    assert.match(probe, /const matchIndex = Number\.isInteger\(requestedMatchIndex\) && requestedMatchIndex >= 0/,
+      `${build}: the legacy iframe fallback must also treat null matchIndex as omitted`);
+  }
 });
 
 test('HLS implicit-IV derivation does not 32-bit-truncate the media sequence', () => {
@@ -40358,7 +40620,7 @@ test('llama.cpp, LM Studio, and LocalAI migrate to tri-state vision alongside Ol
       const migratedOff = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: false } })[id];
       assert.equal(migratedOff.visionMode, 'off');
       const migratedAuto = manager._migrateStoredProviderConfigs({ [id]: { model: 'fixed', supportsVision: true } })[id];
-      assert.equal(migratedAuto.visionMode, 'auto');
+      assert.equal(migratedAuto.visionMode, 'on');
       const migratedBlank = manager._migrateStoredProviderConfigs({
         [id]: { model: '', visionMode: 'auto', visionDetection: { supportsVision: true } },
       })[id];
@@ -41009,7 +41271,7 @@ test('Ollama vision detection fails closed and ignores stale responses', async (
       assert.equal(mgr.getActive().supportsVision, false, `${label}: metadata failure should fail closed`);
       assert.equal(mgr.getActive().config.visionDetection, null, `${label}: metadata failure must not persist text-only detection`);
       await mgr.prepareActiveProviderCapabilities();
-      assert.equal(fetchCalls, 2, `${label}: a failed key should still be checked only once per worker lifetime`);
+      assert.equal(fetchCalls, 3, `${label}: a failed key should be evicted so a later turn can retry`);
 
       await mgr.updateProvider('ollama', { model: 'malformed-model' });
       const malformed = await mgr.prepareActiveProviderCapabilities();
@@ -41020,7 +41282,7 @@ test('Ollama vision detection fails closed and ignores stale responses', async (
       const timedOut = await mgr.prepareActiveProviderCapabilities();
       assert.equal(timedOut.ok, false, `${label}: a metadata timeout should fail closed`);
       assert.equal(mgr.getActive().supportsVision, false, `${label}: a timed-out turn must remain text-only`);
-      assert.equal(fetchCalls, 4, `${label}: each distinct model should receive one metadata request`);
+      assert.equal(fetchCalls, 5, `${label}: distinct models and the retried failed key should each issue metadata requests`);
 
       const managerSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/providers/manager.js`), 'utf8');
       assert.match(managerSource, /OLLAMA_VISION_METADATA_TIMEOUT_MS\s*=\s*3000/,
@@ -42096,8 +42358,8 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       globalThis[runtimeKey] = makeRuntime(legacyVisionOnStorage);
       const legacyVisionOnManager = new PM();
       await legacyVisionOnManager.load();
-      assert.equal(legacyVisionOnManager.providers.get('ollama')?.config.visionMode, 'auto', `${label}: legacy vision=true should migrate to auto detection`);
-      assert.equal(legacyVisionOnManager.providers.get('ollama')?.supportsVision, false, `${label}: auto mode should fail closed before metadata detection`);
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.config.visionMode, 'on', `${label}: legacy vision=true should remain an explicit override`);
+      assert.equal(legacyVisionOnManager.providers.get('ollama')?.supportsVision, true, `${label}: migrated on mode should preserve working vision`);
 
       const legacyVisionMissingStorage = {
         webbrainDeviceGuid: validGuid,
@@ -47093,7 +47355,7 @@ test('approved submit confirmation is one-time and skips generic click always gr
   }
 });
 
-test('approved iframe submit keeps host gate fail-closed without urlFilter', async () => {
+test('iframe submit without urlFilter fails before confirmation or dispatch', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 5115;
@@ -47142,12 +47404,14 @@ test('approved iframe submit keeps host gate fail-closed without urlFilter', asy
       1,
     );
 
-    assert.equal(submitPrompts, 1, `${AgentClass.name}: expected submit confirmation before iframe host gate`);
+    assert.equal(submitPrompts, 0, `${AgentClass.name}: invalid iframe args should not request submit confirmation`);
     assert.equal(executed, false, `${AgentClass.name}: iframe submit ran without a target host gate`);
     assert.equal(messages.length, 1, `${AgentClass.name}: expected fail-closed tool result`);
     const denied = JSON.parse(messages[0].content);
-    assert.equal(denied.denied, true, `${AgentClass.name}: fail-closed result should be denied`);
-    assert.match(denied.error, /urlFilter/, `${AgentClass.name}: error should tell the model to provide urlFilter`);
+    assert.equal(denied.success, false, `${AgentClass.name}: invalid iframe args should fail`);
+    assert.equal(denied.invalidArguments, true, `${AgentClass.name}: failure should identify invalid arguments`);
+    assert.equal(denied.noDispatch, true, `${AgentClass.name}: invalid iframe args should be marked no-dispatch`);
+    assert.match(denied.detail, /urlFilter/, `${AgentClass.name}: detail should identify the missing urlFilter`);
   }
 });
 
@@ -59062,6 +59326,11 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [{ name: 'click', args: { text: 'Save' } }],
     },
     {
+      label: 'bare-key repair does not rewrite string contents',
+      raw: 'call:click{text:<|"|>Keep, status: pending<|"|>}',
+      expected: [{ name: 'click', args: { text: 'Keep, status: pending' } }],
+    },
+    {
       label: 'bare JSON with string arguments',
       raw: '{"name":"read_page","arguments":"[]"}',
       expected: [{ name: 'read_page', args: [] }],
@@ -59092,6 +59361,14 @@ test('text tool-call parser is production code with format and allowlist coverag
     {
       label: 'whole-response one-line JSON array preserves order',
       raw: ' \n[{"name":"read_page","arguments":{}},{"name":"click","arguments":{"text":"Go"}}]\n ',
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click', args: { text: 'Go' } },
+      ],
+    },
+    {
+      label: 'recognized tool wrapper accepts an atomic compact array',
+      raw: '<tool_call>[{"name":"read_page","arguments":{}},{"name":"click","arguments":{"text":"Go"}}]</tool_call>',
       expected: [
         { name: 'read_page', args: {} },
         { name: 'click', args: { text: 'Go' } },
@@ -59178,6 +59455,11 @@ test('text tool-call parser is production code with format and allowlist coverag
       parser.parseToolCallsFromText('x'.repeat(10001), allowed),
       [],
       'oversized model text was parsed',
+    );
+    assert.deepEqual(
+      parser.parseToolCallsFromText('call:click{text:<|"|>unterminated}', allowed),
+      [],
+      'malformed fallback arguments dispatched an empty-argument action',
     );
 
     // A parsed call replaces the model's prose entirely (the caller sets
@@ -62315,7 +62597,10 @@ test('Chrome iframe_click fallback never treats the top document as an iframe ta
     };
     const agent = new AgentCh({});
     agent._probeRichTextToolbarIframeTarget = async () => null;
-    const result = await agent.executeTool(42, 'iframe_click', { selector: 'button[type=submit]' });
+    const result = await agent.executeTool(42, 'iframe_click', {
+      urlFilter: 'host.example',
+      selector: 'button[type=submit]',
+    });
     assert.equal(result.success, false);
     assert.equal(result.noDispatch, true);
     assert.equal(result.matchCount, 0);
@@ -62946,6 +63231,15 @@ test('planner: canonical fields recover missing and partial localization without
       partial?.localized.risks,
       ['First canonical risk', 'İkinci risk'],
       `${label}: localized risk holes shifted translations away from their canonical positions`,
+    );
+
+    partialLocalization.risks = ['', 'Second canonical risk'];
+    partialLocalization.localized.risks = ['Wrong shifted translation', 'Correct second risk'];
+    const blankCanonical = parse(JSON.stringify(partialLocalization), { requireIntent: true, locale: 'tr' });
+    assert.deepEqual(
+      blankCanonical?.localized.risks,
+      ['Correct second risk'],
+      `${label}: filtering a blank canonical risk shifted the localized risk index`,
     );
 
     const malformedClarification = parse(JSON.stringify({
@@ -70249,6 +70543,7 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
     assert.match(panel, /sendToBackground\('capture_viewport_screenshot', \{ tabId \}\)[\s\S]*stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*modelRedactionReady:[\s\S]*modelDataUrl:[\s\S]*addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\)/, `${label}: /screenshot must retain the capture-bound model copy before rendering its result card`);
     assert.match(panel, /source: 'slash_screenshot'[\s\S]*redactionSnapshotReady: redactionSnapshotReady === true,[\s\S]*modelRedactionReady: modelRedactionReady === true,[\s\S]*modelDataUrl[\s\S]*getPendingAttachmentsForTab\(numericTabId\)\.push\(attachment\)[\s\S]*renderAttachmentPreviews\(\)/, `${label}: slash screenshot must retain capture-time privacy data and model pixels in the tab-scoped pending attachment list`);
     assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
+    assert.match(panel, /pendingScreenshotIdsBeforeLoad[\s\S]*!pendingScreenshotIdsBeforeLoad\.has\(attachment\.stagedAttachmentId\)/, `${label}: a screenshot captured during restore must remain pending`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
     assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);
     assert.match(panel, /userEl = addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the visible prompt and actual send attachment set`);
@@ -71729,6 +72024,7 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
     assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
     assert.match(background, /scheduler\.isRunning\(tabId\)/);
+    assert.match(background, /response\?\.teacherCaptureReady === true/, `${build}: teacher start must require the capture script's acknowledgement`);
     assert.match(background, /compileWorkflowFromDemonstration/);
 
     const scheduler = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/scheduler.js`), 'utf8');
@@ -71739,6 +72035,7 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(capture, /event\.isTrusted/);
     assert.match(capture, /action: 'record_teacher_action'/);
     assert.match(capture, /action === 'flush_teacher_capture'/);
+    assert.match(capture, /sendResponse\(\{ teacherCaptureReady: true \}\)/, `${build}: teacher capture must acknowledge activation`);
     assert.match(capture, /document\.addEventListener\('submit'/);
     assert.match(capture, /event\.defaultPrevented/);
     assert.match(capture, /sendAction\(\{ \.\.\.pending\.action, submit: true \}\)/);
@@ -73834,6 +74131,17 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
         `${build}: hCaptcha compatibility token did not clear its exact manual gate`,
       );
     });
+  }
+});
+
+test('CAPTCHA gate identity compares malformed frame-path segments stably', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+    assert.match(
+      source,
+      /expectedPath\.some\(\(value, index\) => !Object\.is\(value, candidatePath\[index\]\)\)/,
+      `${build}: NaN frame-path segments can make a persisted CAPTCHA identity permanently unmatchable`,
+    );
   }
 });
 
@@ -76592,6 +76900,29 @@ test('OpenAI-compatible chat providers reject HTTP-200 error and non-completion 
   }
 });
 
+test('base chat completion ignores empty error metadata but preserves real errors', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const { BaseLLMProvider } = await import(pathToFileURL(
+      path.join(ROOT, `src/${build}/src/providers/base.js`),
+    ).href);
+    const provider = new BaseLLMProvider();
+    const message = { role: 'assistant', content: 'valid completion' };
+    assert.equal(
+      provider._chatCompletionMessage({ error: {}, choices: [{ message }] }),
+      message,
+      `${build}: empty error metadata overrode a valid completion`,
+    );
+    assert.throws(
+      () => provider._chatCompletionMessage({
+        error: { message: 'Quota exceeded.' },
+        choices: [{ message }],
+      }),
+      /Quota exceeded/,
+      `${build}: a completion choice masked a real provider error`,
+    );
+  }
+});
+
 test('dedicated vision descriptions suppress hidden reasoning and reuse one image for a bounded retry', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const vision = {
@@ -76866,7 +77197,7 @@ test('transcription runtime uses the Chrome offscreen fallback when direct fetch
 
     assert.equal(result.ok, true);
     assert.equal(result.text, 'fallback transcript');
-    assert.equal(directAttempts, 1);
+    assert.equal(directAttempts, 0);
     assert.equal(proxiedRequest.url, 'http://127.0.0.1:1234/v1/audio/transcriptions');
     assert.equal(proxiedRequest.bodyType, 'form-data-chunked');
     assert.equal(bodyChunkMessages.length, 1);

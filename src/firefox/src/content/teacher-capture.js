@@ -238,7 +238,10 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target !== 'content') return;
-    if (message.action === 'teacher_state') setState(message.state);
+    if (message.action === 'teacher_state') {
+      setState(message.state);
+      sendResponse({ teacherCaptureReady: true });
+    }
     if (message.action === 'flush_teacher_capture') {
       sendResponse({ teacherAction: active ? activeFieldAction() : null });
     }

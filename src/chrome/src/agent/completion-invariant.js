@@ -93,14 +93,17 @@ function normalizedIframeMatchIndex(value) {
 
 function iframeFormObligation(args = {}, result = {}) {
   const selector = String(args?.selector || '').trim();
+  const scope = normalizedIframeScope(args?.urlFilter);
   const finalValue = typeof result?.value === 'string'
     ? result.value
     : (typeof result?.frame?.value === 'string' ? result.frame.value : null);
-  if (!selector) return null;
+  // verify_form addresses iframe targets by urlFilter. Never create debt that
+  // the verification tool has no stable scope with which to discharge it.
+  if (!selector || !scope) return null;
   const matchMode = finalValue !== null || args?.clear === true ? 'exact' : 'suffix';
   const rawExpectedValue = String(finalValue ?? args?.text ?? '');
   return {
-    scope: normalizedIframeScope(args?.urlFilter),
+    scope,
     frameId: Number.isInteger(result?.frameId) ? result.frameId : null,
     selector,
     matchIndex: normalizedIframeMatchIndex(result?.matchIndex ?? args?.matchIndex),

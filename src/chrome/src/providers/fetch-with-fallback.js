@@ -35,6 +35,7 @@ let _storageListener = null;
 const TIMEOUT_FLOOR_MS = 5000;        // 5s — anything lower than this is a typo
 const TIMEOUT_CEILING_MS = 600000;    // 10 min — well past any reasonable first-byte wait
 const OFFSCREEN_FORM_DATA_CHUNK_BYTES = 256 * 1024;
+const IDEMPOTENT_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'TRACE']);
 
 async function _ensureTimeoutInitialized() {
   if (_timeoutInitialized) return;
@@ -82,6 +83,19 @@ async function _ensureTimeoutInitialized() {
 export async function fetchWithFallback(url, options = {}) {
   await _ensureTimeoutInitialized();
   const { timeoutMs = _cachedTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const canUseOffscreenProxy = typeof chrome !== 'undefined'
+    && typeof chrome?.runtime?.connect === 'function';
+
+  // A network-level fetch rejection does not prove that the server never
+  // received the request (CORS/PNA can reject after it was processed). Sending
+  // a POST/PATCH again through the proxy can therefore duplicate a billed
+  // generation or upload. Route non-idempotent requests through exactly one
+  // transport from the outset; only idempotent methods use direct-then-proxy.
+  if (!IDEMPOTENT_HTTP_METHODS.has(method) && canUseOffscreenProxy) {
+    await ensureOffscreen();
+    return _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSignal);
+  }
 
   // Fast path: try direct fetch first, with a connection-phase timeout.
   const controller = new AbortController();
@@ -119,6 +133,7 @@ export async function fetchWithFallback(url, options = {}) {
       );
     }
     if (directError.name === 'AbortError') throw directError;
+    if (!IDEMPOTENT_HTTP_METHODS.has(method)) throw directError;
 
     // Network error (Failed to fetch) — try offscreen proxy
     console.warn(

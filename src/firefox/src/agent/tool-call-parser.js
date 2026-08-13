@@ -117,6 +117,54 @@ function parseWholeResponseJsonArray(text, allowedNames) {
   return parsed;
 }
 
+/**
+ * Quote relaxed `key:` tokens only when they occur outside JSON strings and
+ * after an object boundary. A regular-expression replacement corrupts string
+ * values such as "Keep, status: pending" before JSON.parse sees them.
+ */
+function quoteBareJsonKeys(body) {
+  const source = String(body || '');
+  let output = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < source.length;) {
+    const char = source[i];
+    if (inString) {
+      output += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      output += char;
+      i++;
+      continue;
+    }
+    if (/\w/.test(char)) {
+      let previous = i - 1;
+      while (previous >= 0 && /\s/.test(source[previous])) previous--;
+      if (previous < 0 || source[previous] === '{' || source[previous] === ',') {
+        let keyEnd = i + 1;
+        while (keyEnd < source.length && /\w/.test(source[keyEnd])) keyEnd++;
+        let colon = keyEnd;
+        while (colon < source.length && /\s/.test(source[colon])) colon++;
+        if (source[colon] === ':') {
+          output += `"${source.slice(i, keyEnd)}"${source.slice(keyEnd, colon + 1)}`;
+          i = colon + 1;
+          continue;
+        }
+      }
+    }
+    output += char;
+    i++;
+  }
+  return output;
+}
+
 function toFallbackToolCalls(objects) {
   return objects.map((obj, index) => ({
     id: `fallback_call_${Date.now()}_${index}`,
@@ -166,6 +214,11 @@ export function parseToolCallsFromText(text, allowedNames) {
     let match;
     while ((match = re.exec(text)) !== null) {
       const inner = match[1].trim();
+      const wrappedArray = parseWholeResponseJsonArray(inner, allowedNames);
+      if (wrappedArray !== null) {
+        results.push(...wrappedArray);
+        continue;
+      }
       try {
         const obj = JSON.parse(inner);
         if (obj && obj.name && allowedNames.has(obj.name)) {
@@ -180,13 +233,11 @@ export function parseToolCallsFromText(text, allowedNames) {
         let argsBody = callMatch[2]
           .replace(/<\|"\|>/g, '"')
           .replace(/<\|'\\?\|>/g, "'");
-        argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
+        argsBody = quoteBareJsonKeys(argsBody);
         try {
           const args = JSON.parse(`{${argsBody}}`);
           results.push({ name: toolName, arguments: args });
-        } catch {
-          results.push({ name: toolName, arguments: {} });
-        }
+        } catch { /* malformed arguments must never dispatch */ }
       }
     }
   }
@@ -231,13 +282,11 @@ export function parseToolCallsFromText(text, allowedNames) {
       let argsBody = match[2]
         .replace(/<\|"\|>/g, '"')
         .replace(/<\|'\\?\|>/g, "'");
-      argsBody = argsBody.replace(/(?<=^|,)\s*(\w+)\s*:/g, '"$1":');
+      argsBody = quoteBareJsonKeys(argsBody);
       try {
         const args = JSON.parse(`{${argsBody}}`);
         results.push({ name: toolName, arguments: args });
-      } catch {
-        results.push({ name: toolName, arguments: {} });
-      }
+      } catch { /* malformed arguments must never dispatch */ }
     }
   }
 

@@ -242,7 +242,7 @@ function captchaCandidateMatchesGate(candidate, identity) {
   const candidatePath = captchaCandidateFramePath(candidate);
   if (
     expectedPath.length !== candidatePath.length
-    || expectedPath.some((value, index) => value !== candidatePath[index])
+    || expectedPath.some((value, index) => !Object.is(value, candidatePath[index]))
   ) return false;
 
   const expectedFieldIds = [identity.responseFieldId, identity.alsoResponseFieldId]
@@ -2324,6 +2324,13 @@ export class Agent extends LoopDetector {
     if (!RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)) return null;
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
     if (!probe?.resolved) {
+      const knownRefBlock = this._richTextToolbarGuard.blockRef(
+        tabId,
+        toolName,
+        args,
+        this._lastAxScopes.get(tabId)?.documentToken || '',
+      );
+      if (knownRefBlock) return knownRefBlock;
       return DISPATCH_BINDING_TOOLS.has(toolName)
         ? {
             success: false,
@@ -17918,7 +17925,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_click') {
       let dispatched = false;
       try {
-        const urlFilter = args.urlFilter || '';
+        const urlFilter = String(args.urlFilter || '').trim();
         const selector = args.selector;
         if (!selector) {
           return {
@@ -17926,6 +17933,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             dispatched: false,
             noDispatch: true,
             error: 'selector is required',
+          };
+        }
+        if (!urlFilter) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            error: 'urlFilter is required so the iframe target and permission scope remain stable',
           };
         }
         const hasExplicitMatchIndex = args.matchIndex !== undefined && args.matchIndex !== null;
@@ -18051,6 +18066,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let dispatched = false;
       try {
         const selector = args.selector;
+        const urlFilter = String(args.urlFilter || '').trim();
         const text = args.text || '';
         const clear = !!args.clear;
         if (!selector) {
@@ -18059,6 +18075,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             dispatched: false,
             noDispatch: true,
             error: 'selector is required',
+          };
+        }
+        if (!urlFilter) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            error: 'urlFilter is required so the iframe target and its verification scope remain stable',
           };
         }
         let binding = dispatchBinding;
@@ -18092,7 +18116,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             selector,
             text,
             clear,
-            urlFilter: args.urlFilter || '',
+            urlFilter,
             matchIndex: args.matchIndex,
           });
         }
