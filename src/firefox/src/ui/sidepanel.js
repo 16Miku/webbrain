@@ -5774,14 +5774,17 @@ function activeRetryPayloadForRequest(tabId, requestId = '') {
 
 function retryPayloadForRunAssistant(assistantEl) {
   const userEl = userMessageForRunAssistant(assistantEl);
-  const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
-  if (!String(text || '').trim()) return null;
+  const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
+  if (!displayText) return null;
+  const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
+  const text = internalPrompt || displayText;
   const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
   return {
     text,
+    displayText,
     mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
       ? assistantEl.dataset.runMode
       : agentMode,
@@ -7785,6 +7788,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
+    if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
     userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;

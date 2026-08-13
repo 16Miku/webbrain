@@ -24337,8 +24337,8 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
     assert.match(panel, /const restoredAllowanceCardMissing = !!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
     assert.match(panel, /type: 'run_complete',[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,/, `${label}: restored terminal cards should retain durable-turn proof`);
     assert.match(panel, /case 'run_complete':[\s\S]*?if \(textEl && parseCostAllowanceError\(data\.finalContent\)\)[\s\S]*?renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?\} else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored terminal allowance cards should render before the empty-text fallback guard`);
-    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct retry routing from persisted chat metadata`);
-    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);/, `${label}: fresh chats should persist retry metadata needed after a panel reload`);
+    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?dataset\.retryAgentPrompt[\s\S]*?displayText,[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct hidden-prompt retry routing from persisted chat metadata`);
+    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);[\s\S]*?if \(agentPrompt\) assistantEl\.dataset\.retryAgentPrompt = agentPrompt;/, `${label}: fresh chats should persist retry metadata and hidden prompts needed after a panel reload`);
     assert.match(panel, /activeRetryPayloadForRequest\(eventTabId, msg\.requestId\)[\s\S]*?\|\| retryPayloadForRunAssistant\(currentAssistantEl\)/, `${label}: restored terminal cards should use the reconstructed retry payload when live state is gone`);
     assert.match(panel, /const attachmentCount = Number\.isFinite\(Number\(retryPayload\.attachmentCount\)\)[\s\S]*?btn\.dataset\.retryAttachmentCount = String\(attachmentCount\);/, `${label}: reconstructed retries should preserve missing-attachment warnings`);
     assert.match(background, /async function sendAgentRunComplete\(tabId, snapshot = null\)[\s\S]*?snapshot\.kind === 'continue'[\s\S]*?agent\.hasDurableSubmittedTurn\([\s\S]*?submittedTurnDurable,/, `${label}: terminal UI events should treat continuations as resumable and carry durable-turn proof`);
@@ -26014,6 +26014,70 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     assert.match(panel, /const retryPayload = \{\s*text,\s*displayText: agentPrompt \? submittedText : text,/, `${label}: retries should retain the short label separately from the internal prompt`);
     assert.match(panel, /inputEl\.value = payload\.displayText;[\s\S]*?payload\.displayText !== payload\.text \? \{[\s\S]*?__agentPrompt: payload\.text,[\s\S]*?__agentDisplayText: payload\.displayText,[\s\S]*?__agentTabId: currentTabId,/, `${label}: retrying a recommended action should keep its hidden prompt bound to the visible label and tab`);
     assert.equal(captureIdx < initialGuardIdx && initialGuardIdx < firstSourceGuardIdx && firstSourceGuardIdx < ensureIdx && ensureIdx < staleGuardIdx && staleGuardIdx < secondSourceGuardIdx && secondSourceGuardIdx < inputIdx && inputIdx < sendIdx, true, `${label}: stale click guards must run before mutating the composer`);
+  }
+});
+
+test('sidepanel restored suggested-action retries preserve hidden prompts', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const retryStart = panel.indexOf('function retryPayloadForRunAssistant(assistantEl) {');
+    const retryEnd = panel.indexOf('\n}\n\nfunction userMessageForRunAssistant', retryStart);
+    const userStart = panel.indexOf('function userMessageForRunAssistant(assistantEl) {', retryEnd);
+    const userEnd = panel.indexOf('\n}\n\nfunction plannerRequestFailureUpdate', userStart);
+    assert.notEqual(retryStart, -1, `${label}: retry payload reconstruction helper missing`);
+    assert.notEqual(retryEnd, -1, `${label}: retry payload reconstruction boundary missing`);
+    assert.notEqual(userStart, -1, `${label}: run user-message lookup helper missing`);
+    assert.notEqual(userEnd, -1, `${label}: run user-message lookup boundary missing`);
+
+    let visibleText = 'Summarize this thread';
+    const retryPayloadForRunAssistant = Function(
+      'getComposerHistoryTextFromMessage',
+      'normalizeSelectionSourceGrounding',
+      'normalizeSelectionAction',
+      'agentMode',
+      `${panel.slice(retryStart, retryEnd + 2)}\n${panel.slice(userStart, userEnd + 2)}\nreturn retryPayloadForRunAssistant;`,
+    )(
+      () => visibleText,
+      value => String(value || '').trim(),
+      value => String(value || '').trim(),
+      'ask',
+    );
+
+    const internalPrompt = 'Read the complete active thread, follow every continuation, then summarize it.';
+    const userEl = {
+      previousElementSibling: null,
+      matches: selector => selector === '.message.user',
+    };
+    const assistantEl = {
+      previousElementSibling: userEl,
+      dataset: {
+        retryAgentPrompt: internalPrompt,
+        runMode: 'act',
+        retryApiMutationsAllowed: 'false',
+        retryForeground: 'true',
+        retrySourceGrounding: '',
+        retrySelectionAction: '',
+        retryAttachmentCount: '0',
+      },
+    };
+
+    const restored = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(restored.text, internalPrompt, `${label}: restored retry lost the internal suggested-action prompt`);
+    assert.equal(restored.displayText, visibleText, `${label}: restored retry exposed the internal prompt instead of retaining the short label`);
+    assert.equal(restored.mode, 'act', `${label}: restored retry lost its original mode`);
+    assert.equal(restored.foreground, true, `${label}: restored retry lost its foreground setting`);
+
+    delete assistantEl.dataset.retryAgentPrompt;
+    const ordinary = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(ordinary.text, visibleText, `${label}: ordinary restored retries should still use the visible user message`);
+    assert.equal(ordinary.displayText, visibleText, `${label}: ordinary restored retries should keep matching display text`);
+
+    visibleText = '';
+    assistantEl.dataset.retryAgentPrompt = internalPrompt;
+    assert.equal(retryPayloadForRunAssistant(assistantEl), null, `${label}: a hidden prompt without a visible user label should fail closed`);
   }
 });
 
