@@ -67427,7 +67427,7 @@ function loadPlanReviewAutosizeHelper(panelRel, runtime) {
     'document',
     'requestAnimationFrame',
     'cancelAnimationFrame',
-    `${block}\nreturn { autosizePlanReviewField, capturePlanReviewScrollSnapshot };`,
+    `${block}\nreturn { autosizePlanReviewField, autosizePlanReviewFields, schedulePlanReviewFieldsAutosize, handlePlanReviewContainerResize, capturePlanReviewScrollSnapshot };`,
   )(
     runtime.document,
     runtime.requestAnimationFrame,
@@ -67632,6 +67632,95 @@ test('plan review: textarea autosize preserves an active off-bottom scroll posit
       source,
       /summaryInput\.addEventListener\('beforeinput', \(\) => capturePlanReviewScrollSnapshot\(summaryInput\)\);/,
       `${file} should snapshot summary-editor scroll before the browser edits the value`,
+    );
+  }
+});
+
+test('plan review: structured fields reflow after detached mount and width changes', () => {
+  for (const file of [
+    'src/chrome/src/ui/sidepanel.js',
+    'src/firefox/src/ui/sidepanel.js',
+  ]) {
+    const frames = new Map();
+    let nextFrame = 1;
+    const document = { activeElement: null };
+    const runtime = {
+      document,
+      requestAnimationFrame(callback) {
+        const id = nextFrame++;
+        frames.set(id, callback);
+        return id;
+      },
+      cancelAnimationFrame(id) {
+        frames.delete(id);
+      },
+    };
+    const {
+      schedulePlanReviewFieldsAutosize,
+      handlePlanReviewContainerResize,
+    } = loadPlanReviewAutosizeHelper(file, runtime);
+    let connected = false;
+    let availableWidth = 420;
+    const fields = [
+      { tagName: 'TEXTAREA', style: {} },
+      { tagName: 'TEXTAREA', style: {} },
+    ];
+    for (const field of fields) {
+      Object.defineProperty(field, 'scrollHeight', {
+        get() {
+          if (!connected) return 0;
+          return availableWidth <= 240 ? 72 : 28;
+        },
+      });
+    }
+    const root = {
+      querySelectorAll(selector) {
+        assert.equal(selector, '.plan-review-summary-input, .plan-review-step-input', file);
+        return fields;
+      },
+    };
+    const flushFrames = () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback();
+    };
+
+    // Mount/bind can happen before the card is attached. The deferred frame
+    // must measure after attachment instead of pinning the one-line minimum.
+    schedulePlanReviewFieldsAutosize(root);
+    assert.equal(frames.size, 1, `${file} should defer initial measurement`);
+    connected = true;
+    flushFrames();
+    assert.deepEqual(fields.map(field => field.style.height), ['28px', '28px'], file);
+
+    // Narrowing wraps the same values, so both summary and step controls must
+    // be remeasured to reveal all lines.
+    availableWidth = 220;
+    handlePlanReviewContainerResize([{ target: root, contentRect: { width: 220, height: 100 } }]);
+    assert.equal(frames.size, 1, `${file} should schedule after a width change`);
+    flushFrames();
+    assert.deepEqual(fields.map(field => field.style.height), ['72px', '72px'], file);
+
+    // Textarea height changes also resize the observed container. Ignore that
+    // notification when its width is unchanged to prevent observer churn.
+    handlePlanReviewContainerResize([{ target: root, contentRect: { width: 220, height: 188 } }]);
+    assert.equal(frames.size, 0, `${file} should ignore height-only resize notifications`);
+
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(
+      source,
+      /function bindPlanReviewEditorControls\([\s\S]*?schedulePlanReviewFieldsAutosize\(card\);\s*\}/,
+      `${file} should schedule autosize from the initial and restored card binder`,
+    );
+    assert.match(
+      source,
+      /new ResizeObserver\(\(entries\) => \{[\s\S]*?handlePlanReviewContainerResize\(entries\)/,
+      `${file} should route container ResizeObserver entries through width deduplication`,
+    );
+    assert.match(
+      source,
+      /addEventListener\?\.\('resize', scheduleSidepanelResponsiveUpdates\)/,
+      `${file} should keep a window-resize fallback`,
     );
   }
 });

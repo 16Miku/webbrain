@@ -5059,6 +5059,8 @@ function setPlanReviewStructuredControlsDisabled(card, disabled) {
 
 const planReviewScrollRestoreFrames = new WeakMap();
 const planReviewScrollSnapshots = new WeakMap();
+const planReviewAutosizeFrames = new WeakMap();
+const planReviewContainerWidths = new WeakMap();
 
 function restorePlanReviewScrollTop(container, scrollTop) {
   const previousScrollBehavior = container.style.scrollBehavior;
@@ -5106,6 +5108,33 @@ function autosizePlanReviewField(el) {
     }
   });
   planReviewScrollRestoreFrames.set(el, frame);
+}
+
+function autosizePlanReviewFields(root) {
+  root?.querySelectorAll?.('.plan-review-summary-input, .plan-review-step-input')
+    .forEach(autosizePlanReviewField);
+}
+
+function schedulePlanReviewFieldsAutosize(root) {
+  if (!root?.querySelectorAll || planReviewAutosizeFrames.has(root)) return;
+  const frame = requestAnimationFrame(() => {
+    planReviewAutosizeFrames.delete(root);
+    autosizePlanReviewFields(root);
+  });
+  planReviewAutosizeFrames.set(root, frame);
+}
+
+function handlePlanReviewContainerResize(entries) {
+  for (const entry of entries || []) {
+    const root = entry?.target;
+    if (!root?.querySelectorAll) continue;
+    const width = Number(entry?.contentRect?.width);
+    if (Number.isFinite(width)) {
+      if (planReviewContainerWidths.get(root) === width) continue;
+      planReviewContainerWidths.set(root, width);
+    }
+    schedulePlanReviewFieldsAutosize(root);
+  }
 }
 
 function getPlanReviewDraftFromDom(card) {
@@ -5531,6 +5560,10 @@ function bindPlanReviewEditorControls(card, view) {
       try { input?.focus(); } catch {}
     });
   }
+
+  // Cards are initially mounted while detached, and restored cards can be
+  // rebound before layout settles. Measure on the next frame in both cases.
+  schedulePlanReviewFieldsAutosize(card);
 }
 
 function setPlanReviewRawEditing(card, enabled, { focus = false } = {}) {
@@ -10987,9 +11020,17 @@ chatNavigationDismissEl?.addEventListener('click', () => {
   setChatNavigationVisible(false);
 });
 
-globalThis.addEventListener?.('resize', scheduleChatNavigationUpdate);
+function scheduleSidepanelResponsiveUpdates() {
+  scheduleChatNavigationUpdate();
+  schedulePlanReviewFieldsAutosize(messagesEl);
+}
+
+globalThis.addEventListener?.('resize', scheduleSidepanelResponsiveUpdates);
 if (globalThis.ResizeObserver && messagesEl) {
-  const chatNavigationResizeObserver = new ResizeObserver(scheduleChatNavigationUpdate);
+  const chatNavigationResizeObserver = new ResizeObserver((entries) => {
+    scheduleChatNavigationUpdate();
+    handlePlanReviewContainerResize(entries);
+  });
   chatNavigationResizeObserver.observe(messagesEl);
 }
 
