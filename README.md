@@ -21,12 +21,13 @@
   <a href="docs/">Docs</a> ·
   <a href="https://webbrain.one">Website</a> ·
   <a href="https://discord.gg/cgC325ssfw">Discord</a> ·
+  <a href="https://www.producthunt.com/products/webbrain">Product Hunt</a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
 ![WebBrain reading a page, filling in a form, and fetching a file](assets/webbrain-demo.gif)
 
-WebBrain is a browser extension that puts an AI agent in a side panel next to
+WebBrain is a web browser extension that puts an AI agent in a side panel next to
 your tabs. Ask it about the page you're on, or hand it a task and let it click,
 type, and navigate its way through. It runs on the model you choose — a local
 llama.cpp or Ollama server, a frontier cloud API, or the managed default that
@@ -273,7 +274,7 @@ npx -y @webbrain/mcp-server
 
 Once the server is running, open **WebBrain → Settings → General → Advanced →
 Cloud bridge**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
-**Chromium only** — the control and bridge runtime use the extension's offscreen
+**Chromium only** — the control and bridge runtime use the extension's off-screen
 document, which the Firefox build does not have.
 
 If Settings reports **Connection error: WebSocket error**, nothing is normally
