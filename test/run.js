@@ -14202,6 +14202,36 @@ test('communication threads get reply, summary, and follow-up suggestions', () =
   }
 });
 
+test('recommended actions reject lookalike commerce hosts and short-link DM paths', () => {
+  for (const [label, buildRecommendedActions] of [['chrome', buildRecommendedActionsCh], ['firefox', buildRecommendedActionsFx]]) {
+    const ids = (pageInfo) => buildRecommendedActions(pageInfo).map((a) => a.id);
+
+    // A lookalike merchant host with a price signal must not trigger price
+    // comparison, while the real top-level host still does.
+    const priceSignal = { title: 'Product', description: 'Price $19.99 Add to Cart' };
+    assert.equal(ids({ url: 'https://amazon.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike amazon host got compare-price`);
+    assert.equal(ids({ url: 'https://ebay.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike ebay host got compare-price`);
+    assert.equal(ids({ url: 'https://mercadolibre.com.evil.test/', ...priceSignal }).includes('compare-price'), false,
+      `${label}: lookalike mercadolibre host got compare-price`);
+    assert.equal(ids({ url: 'https://www.amazon.com/', ...priceSignal }).includes('compare-price'), true,
+      `${label}: real amazon host lost compare-price`);
+    assert.equal(ids({ url: 'https://shopee.co.id/', ...priceSignal }).includes('compare-price'), true,
+      `${label}: real shopee country domain lost compare-price`);
+
+    // Bare /t short-link routes are not message threads.
+    const dmPills = (url) => ids({ url, title: 'page' }).filter((id) =>
+      ['draft-reply', 'summarize-thread', 'find-followups'].includes(id));
+    assert.deepEqual(dmPills('https://x.com/t'), [], `${label}: x.com/t got DM suggestions`);
+    assert.deepEqual(dmPills('https://reddit.com/t/top'), [], `${label}: reddit.com/t got DM suggestions`);
+    assert.ok(dmPills('https://www.instagram.com/direct/t/1784').includes('draft-reply'),
+      `${label}: instagram /direct/t thread lost DM suggestions`);
+    assert.ok(dmPills('https://x.com/messages').includes('draft-reply'),
+      `${label}: x.com/messages lost DM suggestions`);
+  }
+});
+
 test('focused compose boxes get rewrite suggestions', () => {
   const composePage = {
     url: 'https://x.com/compose/post',
