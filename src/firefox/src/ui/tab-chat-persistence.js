@@ -120,6 +120,28 @@ export function compactTabChatForPersist(html, budget = TAB_CHAT_PERSIST_BUDGET)
   return fallback.slice(0, boundedBudget);
 }
 
+async function tabChatKeyBelongsToOpenTab(storedKey) {
+  const rawTabId = String(storedKey || '').slice(TAB_CHAT_PREFIX.length);
+  const tabId = Number(rawTabId);
+  const tabs = globalThis.browser?.tabs || globalThis.chrome?.tabs;
+  // Without a tab API there is no proof that removal is safe.
+  if (!Number.isFinite(tabId) || !tabs?.get) return true;
+  try {
+    await tabs.get(tabId);
+    return true;
+  } catch (error) {
+    // Only the browser's explicit "tab does not exist" errors prove closure.
+    // A transient API/context failure leaves ownership unknown and must retain
+    // the other tab's chat.
+    const message = String(error?.message || error || '').toLowerCase();
+    return !(
+      /no tab with id\b/.test(message)
+      || /invalid tab id\b/.test(message)
+      || /no such tab\b/.test(message)
+    );
+  }
+}
+
 export async function persistTabChatToSession(storageArea, key, html, warn = console.warn) {
   const source = String(html || '');
   const initialValue = source.length > TAB_CHAT_PERSIST_BUDGET
@@ -137,6 +159,39 @@ export async function persistTabChatToSession(storageArea, key, html, warn = con
       // still fail. First retry this write with a tightly bounded stored copy.
       await storageArea.set({ [key]: retryValue });
       return { ok: true, degraded: true, recoveredFromQuota: true };
+    } catch (error) {
+      retryError = error;
+    }
+
+    try {
+      // Tab-close cleanup can be interrupted by a background-page shutdown.
+      // Reclaim only chats whose tab is provably gone; never delete another
+      // open tab's history merely to make the current write fit.
+      const stored = await storageArea.get(null);
+      const candidates = Object.entries(stored || {})
+        .filter(([storedKey, value]) => (
+          storedKey !== key
+          && storedKey.startsWith(TAB_CHAT_PREFIX)
+          && typeof value === 'string'
+        ))
+        .sort((a, b) => b[1].length - a[1].length);
+      const evictedKeys = [];
+      for (const [storedKey] of candidates) {
+        if (await tabChatKeyBelongsToOpenTab(storedKey)) continue;
+        await storageArea.remove(storedKey);
+        evictedKeys.push(storedKey);
+        try {
+          await storageArea.set({ [key]: retryValue });
+          return {
+            ok: true,
+            degraded: true,
+            recoveredFromQuota: true,
+            evictedKeys,
+          };
+        } catch (error) {
+          retryError = error;
+        }
+      }
     } catch (error) {
       retryError = error;
     }

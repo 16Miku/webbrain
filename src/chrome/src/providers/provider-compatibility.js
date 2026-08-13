@@ -64,6 +64,7 @@ export function normalizeOpenAICompatibleBaseUrl(value) {
 export function openAiCompatiblePayloadError(payload, maxLength = 500) {
   const error = payload?.error;
   if (!error) return '';
+  if (typeof error === 'object' && !Array.isArray(error) && Object.keys(error).length === 0) return '';
   const detail = typeof error === 'string'
     ? error
     : String(error.message || error.detail || JSON.stringify(error));

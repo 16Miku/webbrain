@@ -527,9 +527,13 @@ export function normalizePlan(obj, opts = {}) {
   const normalizedScheduling = tool === 'schedule_task' || tool === 'schedule_resume'
     ? { tool, hint: sanitizeText(scheduling.hint, 300) }
     : null;
-  const risks = Array.isArray(obj.risks)
-    ? obj.risks.map((risk) => sanitizeText(risk, 200)).filter(Boolean).slice(0, 6)
+  const riskEntries = Array.isArray(obj.risks)
+    ? obj.risks
+      .map((risk, sourceIndex) => ({ sourceIndex, text: sanitizeText(risk, 200) }))
+      .filter(entry => entry.text)
+      .slice(0, 6)
     : [];
+  const risks = riskEntries.map(entry => entry.text);
   const localizedInput = obj.localized && typeof obj.localized === 'object' ? obj.localized : {};
   const providedLocalizedSteps = Array.isArray(localizedInput.steps)
     ? localizedInput.steps.slice(0, 12).map((step, i) => ({
@@ -545,7 +549,7 @@ export function normalizePlan(obj, opts = {}) {
       || step.action,
   }));
   const providedLocalizedRisks = Array.isArray(localizedInput.risks)
-    ? localizedInput.risks.slice(0, 6).map((risk) => sanitizeText(risk, 200))
+    ? localizedInput.risks
     : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   if (opts.requireIntent) {
@@ -556,7 +560,9 @@ export function normalizePlan(obj, opts = {}) {
     locale: requestedLocale,
     summary: localizedSummary || summary,
     steps: localizedSteps,
-    risks: risks.map((risk, index) => providedLocalizedRisks[index] || risk),
+    risks: riskEntries.map(({ sourceIndex, text: risk }) => (
+      sanitizeText(providedLocalizedRisks[sourceIndex], 200) || risk
+    )),
   };
   const submissionBearingPlan = executablePlan || requestKind === 'clarify';
   const requiresSubmission = submissionBearingPlan

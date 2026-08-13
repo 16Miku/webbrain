@@ -14,7 +14,6 @@ import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 // fetch ever ran, so onboarding reported "no models" for a reachable server.)
 import { fetchWithFallback } from './fetch-with-fallback.js';
 import {
-  AUTO_VISION_PROVIDER_IDS,
   VISION_MODES,
   parseLlamaCppVisionSupport,
   parseLmStudioVisionSupport,
@@ -644,7 +643,9 @@ export class ProviderManager {
         ...migrated.ollama,
         visionMode: OLLAMA_VISION_MODES.has(migrated.ollama.visionMode)
           ? migrated.ollama.visionMode
-          : (legacySupportsVision === false ? 'off' : 'auto'),
+          : (legacySupportsVision === true
+            ? 'on'
+            : (legacySupportsVision === false ? 'off' : 'auto')),
       };
       delete migrated.ollama.supportsVision;
     }
@@ -652,14 +653,13 @@ export class ProviderManager {
       if (!visionProviderKind(id, config)) continue;
       const legacySupportsVision = config.supportsVision;
       const hasConfiguredModel = !!String(config.model || '').trim();
-      const isBuiltInAutoProvider = AUTO_VISION_PROVIDER_IDS.has(id);
       migrated[id] = {
         ...config,
         visionMode: VISION_MODES.has(config.visionMode)
           ? config.visionMode
           : (legacySupportsVision === false
             ? 'off'
-            : (legacySupportsVision === true && !isBuiltInAutoProvider ? 'on' : 'auto')),
+            : (legacySupportsVision === true ? 'on' : 'auto')),
         // With an empty Model field the server's loaded model can change
         // without a settings update, so never restore a persisted detection.
         visionDetection: hasConfiguredModel ? (config.visionDetection || null) : null,
@@ -981,6 +981,11 @@ export class ProviderManager {
       this._ollamaVisionChecks.set(identity.key, pending);
     }
     const result = await pending;
+    if (!result.ok && this._ollamaVisionChecks.get(identity.key) === pending) {
+      // A transient timeout, network failure, or malformed response must not
+      // pin this model to text-only for the service worker's entire lifetime.
+      this._ollamaVisionChecks.delete(identity.key);
+    }
     const current = this.providers.get(id);
     const currentIdentity = this._ollamaVisionIdentity(current?.config);
     if (!current || current.config.visionMode !== 'auto' || currentIdentity?.key !== identity.key) {

@@ -11975,6 +11975,11 @@ async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = ren
   updateAttachmentReadCount(numericTabId, 1);
   try {
     const results = Array.from(root.querySelectorAll?.('.screenshot-result') || []);
+    const pendingScreenshotIdsBeforeLoad = new Set(getPendingAttachmentsForTab(
+      numericTabId,
+      { create: false },
+    ).filter(attachment => attachment?.source === 'slash_screenshot')
+      .map(attachment => attachment.stagedAttachmentId));
     const storedAttachments = await loadStagedScreenshots(chrome.storage.local, numericTabId);
     if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
     const pendingStoredAttachments = storedAttachments.filter(attachment => attachment.deliveryState === 'pending');
@@ -12010,6 +12015,9 @@ async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = ren
     const pending = getPendingAttachmentsForTab(numericTabId).filter(attachment => (
       attachment?.source !== 'slash_screenshot'
       || restoredIds.has(attachment.stagedAttachmentId)
+      // A capture may finish while storage is being read. It is not part of
+      // this restore snapshot and must remain staged for the next message.
+      || !pendingScreenshotIdsBeforeLoad.has(attachment.stagedAttachmentId)
     ));
     for (const { result, attachment } of restored) {
       const image = result.querySelector('.screenshot-result-image');
