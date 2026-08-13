@@ -14841,6 +14841,19 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       [{ items: false }, [1], false],
       [{ anyOf: [false, { minLength: 3 }] }, 'abc', true],
       [{ anyOf: [false, { minLength: 3 }] }, 'a', false],
+      // A JSON numeral can overflow to Infinity (JSON.parse('1e400')). A
+      // non-finite number is never a valid JSON instance, so it must fail the
+      // type check and the minimum/maximum bounds instead of passing both.
+      [{ type: 'number', maximum: 100 }, Infinity, false],
+      [{ type: 'number', maximum: 100 }, -Infinity, false],
+      [{ type: 'number', minimum: 0 }, Infinity, false],
+      [{ type: 'number', minimum: 0 }, -Infinity, false],
+      [{ type: 'number' }, Infinity, false],
+      [{ type: 'number', maximum: 100 }, JSON.parse('1e400'), false],
+      // Constraint-only schemas have no type check, so the bounds themselves
+      // have to reject a non-finite instance.
+      [{ maximum: 100 }, Infinity, false],
+      [{ minimum: 0 }, -Infinity, false],
     ]) {
       assert.equal(
         cloudModule.validateCloudOutput(value, spec).ok,
@@ -14920,6 +14933,55 @@ test('done_json accepts free-form and shorthand output schemas it advertises', a
       false,
       `${label}: nullable optional widened past its declared type`,
     );
+  }
+});
+
+test('done_json and validateCloudOutput reject non-finite numbers instead of completing with null', async () => {
+  const cloudModules = [];
+  for (const label of ['chrome', 'firefox']) {
+    cloudModules.push(await import(
+      pathToFileURL(path.join(ROOT, `src/${label}/src/agent/cloud-output.js`)).href
+    ));
+  }
+  for (const [label, handle, cloudModule] of [
+    ['chrome', handleDoneJsonCh, cloudModules[0]],
+    ['firefox', handleDoneJsonFx, cloudModules[1]],
+  ]) {
+    const schema = {
+      type: 'object',
+      properties: { count: { type: 'number', maximum: 100 } },
+      required: ['count'],
+      additionalProperties: false,
+    };
+    const overflow = JSON.parse('1e400');
+    const underflow = JSON.parse('-1e400');
+
+    // A bounded number must not accept a numeral-overflow instance.
+    const first = handle({ outputSchema: schema, schemaRepairUsed: false }, {
+      result: { count: overflow },
+      summary: 's',
+    });
+    assert.equal(first.done, undefined, `[${label}] Infinity passed number maximum bounds`);
+    assert.equal(first.schemaValidationError, true, `[${label}] Infinity was not a schema failure`);
+    assert.equal(first.cloudResult, undefined, `[${label}] Infinity completed a run with a corrupt result`);
+
+    // The one repair attempt must not complete the run either.
+    const terminal = handle({ outputSchema: schema, schemaRepairUsed: true }, {
+      result: { count: underflow },
+      summary: 's',
+    });
+    assert.equal(terminal.done, true, `[${label}] -Infinity did not terminate the run after repair`);
+    assert.equal(terminal.cloudFailed, true, `[${label}] -Infinity completed a failed cloud run`);
+
+    // The shorthand number token has the same finiteness contract.
+    assert.equal(cloudModule.validateCloudOutput(overflow, 'number').ok, false,
+      `[${label}] shorthand number accepted Infinity`);
+    assert.equal(cloudModule.validateCloudOutput(underflow, 'number').ok, false,
+      `[${label}] shorthand number accepted -Infinity`);
+
+    // A finite value that respects the bounds still validates.
+    assert.equal(cloudModule.validateCloudOutput(100, { type: 'number', maximum: 100 }).ok, true,
+      `[${label}] a finite bound-respecting number was rejected`);
   }
 });
 
