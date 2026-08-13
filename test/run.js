@@ -6167,9 +6167,17 @@ test('accessibility-tree schema and prompts preserve exact whole-document contin
   assert.equal(chromeSource, firefoxSource, 'Chrome/Firefox accessibility paging drifted');
   assert.match(chromeSource, /const baseTreeScope = \{[\s\S]*?\.\.\.\(refId \? \{ ref_id: refId \} : \{\}\),[\s\S]*?\};/, 'anchored tree continuationArgs drop the subtree ref_id');
   assert.match(chromeSource, /tree_revision: treeRevision/, 'anchored tree continuationArgs do not bind a content revision');
+  assert.match(chromeSource, /const gmailSnapshotEligible = !!refId[\s\S]*?refId === conversationRootRefId[\s\S]*?effFilter === 'all'[\s\S]*?Number\(opts\.maxDepth\) >= 15;/, 'snapshot reuse is not limited to trusted complete Gmail thread reads');
+  assert.match(chromeSource, /gmailSnapshotEligible && requestedPage > 1 && requestedTreeRevision[\s\S]*?findTreeSnapshot/, 'trusted Gmail continuation pages do not reuse the bounded page-one snapshot');
+  assert.match(chromeSource, /gmailSnapshotEligible && \([\s\S]*?requestedPage === 1[\s\S]*?rememberTreeSnapshot/, 'trusted Gmail page one does not establish a fresh snapshot');
+  assert.match(chromeSource, /actionSignatures: actionableTreeSnapshotSignatures\(lines\)/, 'cached Gmail snapshots do not bind actionable refs to current semantics');
+  assert.match(chromeSource, /function snapshotActionsAreCurrent\(snapshot\) \{[\s\S]*?formatLine\(el, 0\) !== signature/, 'cached Gmail actions are not revalidated before ref reuse');
+  assert.match(chromeSource, /const restartArgs = \{\s*\.\.\.baseTreeScope,\s*page: 1,\s*\};/, 'revision recovery widens non-root subtree reads to the Gmail conversation root');
+  assert.match(chromeSource, /nextPage: 1,[\s\S]*?continuationArgs: restartArgs/, 'expired tree snapshots do not expose exact page-one recovery arguments');
   assert.match(chromeSource, /conversationRootRefId/, 'trusted Gmail conversation-root metadata is not returned');
   assert.match(chromeSource, /candidate\.closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body landmarks can spoof the trusted Gmail conversation root');
   assert.match(chromeSource, /conversationExpansionState/, 'Gmail expansion evidence is not returned as structured metadata');
+  assert.match(chromeSource, /function gmailConversationExpansionControlState\(control\) \{[\s\S]*?jsname === 'xvWlrc'[\s\S]*?jsname === 'tRarif'[\s\S]*?name === 'Collapse all'[\s\S]*?name === 'Expand all'/, 'Gmail expansion detection still depends exclusively on English labels');
   assert.match(chromeSource, /closest\('\[role="listitem"\],\[role="article"\],\.adn,\.ads'\)/, 'message-body controls can spoof Gmail expansion evidence');
 
   for (const [label, getTools, prompt] of [
@@ -24330,8 +24338,8 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
     assert.match(panel, /const restoredAllowanceCardMissing = !!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
     assert.match(panel, /type: 'run_complete',[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,/, `${label}: restored terminal cards should retain durable-turn proof`);
     assert.match(panel, /case 'run_complete':[\s\S]*?if \(textEl && parseCostAllowanceError\(data\.finalContent\)\)[\s\S]*?renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?\} else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored terminal allowance cards should render before the empty-text fallback guard`);
-    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct retry routing from persisted chat metadata`);
-    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);/, `${label}: fresh chats should persist retry metadata needed after a panel reload`);
+    assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?dataset\.retryAgentPrompt[\s\S]*?displayText,[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct hidden-prompt retry routing from persisted chat metadata`);
+    assert.match(panel, /assistantEl\.dataset\.retryApiMutationsAllowed = apiMutationsAllowedForSend \? 'true' : 'false';[\s\S]*?assistantEl\.dataset\.retryAttachmentCount = String\(attachmentsForSend\.length\);[\s\S]*?if \(agentPrompt\) assistantEl\.dataset\.retryAgentPrompt = agentPrompt;/, `${label}: fresh chats should persist retry metadata and hidden prompts needed after a panel reload`);
     assert.match(panel, /activeRetryPayloadForRequest\(eventTabId, msg\.requestId\)[\s\S]*?\|\| retryPayloadForRunAssistant\(currentAssistantEl\)/, `${label}: restored terminal cards should use the reconstructed retry payload when live state is gone`);
     assert.match(panel, /const attachmentCount = Number\.isFinite\(Number\(retryPayload\.attachmentCount\)\)[\s\S]*?btn\.dataset\.retryAttachmentCount = String\(attachmentCount\);/, `${label}: reconstructed retries should preserve missing-attachment warnings`);
     assert.match(background, /async function sendAgentRunComplete\(tabId, snapshot = null\)[\s\S]*?snapshot\.kind === 'continue'[\s\S]*?agent\.hasDurableSubmittedTurn\([\s\S]*?submittedTurnDurable,/, `${label}: terminal UI events should treat continuations as resumable and carry durable-turn proof`);
@@ -25974,10 +25982,10 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     const staleGuard = '!ok) return';
     const staleGuardIdx = body.indexOf(staleGuard);
     const secondSourceGuardIdx = body.indexOf(sourceGuard, firstSourceGuardIdx + 1);
-    const inputIdx = body.indexOf('inputEl.value = prompt;');
-    const sendIdx = body.indexOf('sendMessage(recommendedActionSendParams(action));');
+    const inputIdx = body.indexOf('inputEl.value = displayText;');
+    const sendIdx = body.indexOf('sendMessage(recommendedActionSendParams(action, { tabId, displayText }));');
     const sourceHelperMatch = panel.match(/async function recommendedActionSourceStillCurrent\(action, tabId\) \{([\s\S]*?)\n\}/);
-    const helperMatch = panel.match(/function recommendedActionSendParams\(action\) \{([\s\S]*?)\n\}/);
+    const helperMatch = panel.match(/function recommendedActionSendParams\(action, \{ tabId = null, displayText = '' \} = \{\}\) \{([\s\S]*?)\n\}/);
     assert.ok(sourceHelperMatch, `${label}: recommendedActionSourceStillCurrent missing`);
     assert.ok(helperMatch, `${label}: recommendedActionSendParams missing`);
     const sourceHelperBody = sourceHelperMatch[1];
@@ -25993,9 +26001,84 @@ test('sidepanel drops stale recommended-action clicks after async act-mode switc
     assert.match(sourceHelperBody, /const sourceUrl = typeof action\?\.sourceUrl === 'string' \? action\.sourceUrl : '';/, `${label}: source URL helper should read bound action source`);
     assert.match(sourceHelperBody, /const tab = await (chrome|browser)\.tabs\.get\(tabId\);[\s\S]*?return \(tab\?\.url \|\| ''\) === sourceUrl;/, `${label}: source URL helper should compare against the live tab URL`);
     assert.ok(helperBody.includes('const params = action?.runOptions ? { recommendedAction: action.runOptions } : {};'), `${label}: recommended-action send params should preserve trusted run options`);
+    assert.ok(helperBody.includes('params.__agentPrompt = action.prompt.trim();'), `${label}: recommended-action send params should retain the detailed internal prompt`);
+    assert.ok(helperBody.includes("params.__agentDisplayText = String(displayText || '').trim();"), `${label}: recommended-action send params should bind the visible label`);
+    assert.ok(helperBody.includes('params.__agentTabId = tabId;'), `${label}: recommended-action send params should bind the initiating tab`);
     assert.ok(helperBody.includes("if (['ask', 'act', 'dev'].includes(action?.mode)) {"), `${label}: recommended-action send params should only allow known modes`);
     assert.ok(helperBody.includes('params.__mode = action.mode;'), `${label}: recommended-action send params should pass the declared action mode`);
+    assert.match(body, /const displayText = typeof action === 'string'[\s\S]*?String\(action\?\.label \|\| prompt \|\| ''\)\.trim\(\)/, `${label}: recommended actions should render their short label instead of the internal prompt`);
+    assert.match(panel, /const agentPrompt = typeof chatExtraParams\.__agentPrompt === 'string'[\s\S]*?const agentDisplayText = typeof chatExtraParams\.__agentDisplayText === 'string'[\s\S]*?const agentTabId = Number\.isFinite\(rawAgentTabId\)[\s\S]*?delete chatExtraParams\.__agentPrompt;[\s\S]*?delete chatExtraParams\.__agentDisplayText;[\s\S]*?delete chatExtraParams\.__agentTabId;/, `${label}: hidden recommended-action context should be captured and removed from background extras`);
+    assert.match(panel, /await waitForVisibleSidePanelStateRefresh\(\);[\s\S]*?if \(agentPrompt && \([\s\S]*?!agentDisplayText[\s\S]*?!sameTabId\(currentTabId, agentTabId\)[\s\S]*?!sameTabId\(renderedTabId, agentTabId\)[\s\S]*?inputEl\.value\.trim\(\) !== agentDisplayText[\s\S]*?\)\) return false;/, `${label}: hidden prompts should fail closed when their tab or visible label changes during refresh`);
+    assert.match(panel, /if \(agentPrompt && isProcessing\) return false;[\s\S]*?if \(isProcessing\) \{/, `${label}: a hidden prompt should never enter the user-visible busy queue`);
+    assert.match(panel, /let text = inputEl\.value\.trim\(\);[\s\S]*?const submittedText = text;[\s\S]*?if \(!text\) \{[\s\S]*?if \(agentPrompt\) text = agentPrompt;/, `${label}: recommended actions should require a visible label before executing the hidden internal prompt`);
+    assert.match(panel, /addMessage\('user', agentPrompt \? submittedText : text,/, `${label}: recommended actions should persist only the short user-facing label in chat`);
+    assert.match(panel, /const retryPayload = \{\s*text,\s*displayText: agentPrompt \? submittedText : text,/, `${label}: retries should retain the short label separately from the internal prompt`);
+    assert.match(panel, /inputEl\.value = payload\.displayText;[\s\S]*?payload\.displayText !== payload\.text \? \{[\s\S]*?__agentPrompt: payload\.text,[\s\S]*?__agentDisplayText: payload\.displayText,[\s\S]*?__agentTabId: currentTabId,/, `${label}: retrying a recommended action should keep its hidden prompt bound to the visible label and tab`);
     assert.equal(captureIdx < initialGuardIdx && initialGuardIdx < firstSourceGuardIdx && firstSourceGuardIdx < ensureIdx && ensureIdx < staleGuardIdx && staleGuardIdx < secondSourceGuardIdx && secondSourceGuardIdx < inputIdx && inputIdx < sendIdx, true, `${label}: stale click guards must run before mutating the composer`);
+  }
+});
+
+test('sidepanel restored suggested-action retries preserve hidden prompts', () => {
+  for (const [label, panelRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const retryStart = panel.indexOf('function retryPayloadForRunAssistant(assistantEl) {');
+    const retryEnd = panel.indexOf('\n}\n\nfunction userMessageForRunAssistant', retryStart);
+    const userStart = panel.indexOf('function userMessageForRunAssistant(assistantEl) {', retryEnd);
+    const userEnd = panel.indexOf('\n}\n\nfunction plannerRequestFailureUpdate', userStart);
+    assert.notEqual(retryStart, -1, `${label}: retry payload reconstruction helper missing`);
+    assert.notEqual(retryEnd, -1, `${label}: retry payload reconstruction boundary missing`);
+    assert.notEqual(userStart, -1, `${label}: run user-message lookup helper missing`);
+    assert.notEqual(userEnd, -1, `${label}: run user-message lookup boundary missing`);
+
+    let visibleText = 'Summarize this thread';
+    const retryPayloadForRunAssistant = Function(
+      'getComposerHistoryTextFromMessage',
+      'normalizeSelectionSourceGrounding',
+      'normalizeSelectionAction',
+      'agentMode',
+      `${panel.slice(retryStart, retryEnd + 2)}\n${panel.slice(userStart, userEnd + 2)}\nreturn retryPayloadForRunAssistant;`,
+    )(
+      () => visibleText,
+      value => String(value || '').trim(),
+      value => String(value || '').trim(),
+      'ask',
+    );
+
+    const internalPrompt = 'Read the complete active thread, follow every continuation, then summarize it.';
+    const userEl = {
+      previousElementSibling: null,
+      matches: selector => selector === '.message.user',
+    };
+    const assistantEl = {
+      previousElementSibling: userEl,
+      dataset: {
+        retryAgentPrompt: internalPrompt,
+        runMode: 'act',
+        retryApiMutationsAllowed: 'false',
+        retryForeground: 'true',
+        retrySourceGrounding: '',
+        retrySelectionAction: '',
+        retryAttachmentCount: '0',
+      },
+    };
+
+    const restored = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(restored.text, internalPrompt, `${label}: restored retry lost the internal suggested-action prompt`);
+    assert.equal(restored.displayText, visibleText, `${label}: restored retry exposed the internal prompt instead of retaining the short label`);
+    assert.equal(restored.mode, 'act', `${label}: restored retry lost its original mode`);
+    assert.equal(restored.foreground, true, `${label}: restored retry lost its foreground setting`);
+
+    delete assistantEl.dataset.retryAgentPrompt;
+    const ordinary = retryPayloadForRunAssistant(assistantEl);
+    assert.equal(ordinary.text, visibleText, `${label}: ordinary restored retries should still use the visible user message`);
+    assert.equal(ordinary.displayText, visibleText, `${label}: ordinary restored retries should keep matching display text`);
+
+    visibleText = '';
+    assistantEl.dataset.retryAgentPrompt = internalPrompt;
+    assert.equal(retryPayloadForRunAssistant(assistantEl), null, `${label}: a hidden prompt without a visible user label should fail closed`);
   }
 });
 
@@ -27861,7 +27944,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(modeCaptureIdx < parseIdx && apiCaptureIdx < parseIdx, true, `${label}: stale-tab residual sends should not read visible-tab options after slash parsing`);
     assert.match(
       sendBody,
-      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, text\);[\s\S]*?return false;[\s\S]*?\}/,
+      /const tabId = currentTabId;[\s\S]*?text = await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?renderToCurrentTab = document\.visibilityState !== 'hidden'[\s\S]*?sameTabId\(currentTabId, tabId\)[\s\S]*?sameTabId\(renderedTabId, tabId\);[\s\S]*?if \(!renderToCurrentTab\) \{[\s\S]*?if \(text\) saveInputDraftForTab\(tabId, agentPrompt \? submittedText : text\);[\s\S]*?return false;[\s\S]*?\}/,
       `${label}: stale residual slash-command prompts should be preserved as drafts instead of hidden runs`,
     );
     assert.match(
@@ -27881,7 +27964,7 @@ test('sidepanel preserves stale residual slash-command prompts without hidden ru
     assert.equal(staleReturnIdx < sendIdx, true, `${label}: stale-tab residual guard must run before chat dispatch`);
     assert.match(
       sendBody,
-      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
+      /if \(renderToCurrentTab\) \{\s*setTabProcessing\(tabId, true\);\s*setTabAbortRequested\(tabId, false\);\s*syncSendButtonState\(\);[\s\S]*?addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?\}/,
       `${label}: stale-tab residual sends should not mutate or render chat UI in the currently visible tab`,
     );
     assert.doesNotMatch(
@@ -30084,7 +30167,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let text = inputEl\.value\.trim\(\);\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
       `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(
@@ -30346,7 +30429,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /resetChatNavigation\(\);\s*userEl = addMessage\('user', text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
+      /resetChatNavigation\(\);\s*userEl = addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*?attachments: attachmentsForSend,[\s\S]*?attachmentState:[\s\S]*?\}\);[\s\S]*?currentAssistantEl = assistantEl;\s*if \(beginReadingFirstTurn\(userEl, assistantEl\)\) \{\s*scrollChatToQuestion\(\{ smooth: false \}\);\s*\}/,
       `${label}: a submitted turn should enter reading-first mode and reveal its question before streaming`,
     );
     assert.match(
@@ -70068,7 +70151,7 @@ test('attachments: slash screenshots stage for the next turn and sent bubbles re
     assert.match(panel, /data-screenshot-attachment-id=[\s\S]*data-staged-screenshot=[\s\S]*actualSize !== size[\s\S]*function restoreStagedScreenshotAttachments[\s\S]*screenshot-attachment-note/, `${label}: staged screenshot cards must carry a byte-checked restore envelope and clear an unrecoverable staged claim`);
     assert.match(panel, /function rebindRestoredMessageControls\(\) \{[\s\S]*?restoreStagedScreenshotAttachments\(\);/, `${label}: restored chats must reconstruct valid staged screenshots before rebinding controls`);
     assert.match(panel, /function clearPendingAttachmentsForTab[\s\S]*?setScreenshotAttachmentStaged\(numericTabId, attachment, false\)[\s\S]*?pendingAttachmentsByTab\.delete/, `${label}: sending or clearing attachments must remove stale staged screenshot claims`);
-    assert.match(panel, /userEl = addMessage\('user', text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the actual send attachment set`);
+    assert.match(panel, /userEl = addMessage\('user', agentPrompt \? submittedText : text, \{[\s\S]*attachments: attachmentsForSend,[\s\S]*attachmentState:/, `${label}: user bubble must receive the visible prompt and actual send attachment set`);
     assert.match(panel, /function attachmentStateLabel[\s\S]*t\('sp\.attach\.state\.included'\)[\s\S]*t\('sp\.attach\.state\.not_sent'\)[\s\S]*t\('sp\.attach\.state\.unknown'\)[\s\S]*t\('sp\.attach\.state\.sending'\)/, `${label}: attachment bubble must localize delivery labels`);
     assert.match(panel, /function setMessageAttachmentState[\s\S]*item\.dataset\.deliveryState = state/, `${label}: attachment bubble delivery state must update after send outcome`);
     assert.match(panel, /sp\.screenshot\.staged_next_message[\s\S]*sp\.screenshot\.full_page_alt/, `${label}: screenshot result status and alt text must be localized`);
@@ -70206,7 +70289,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     );
     assert.match(
       source,
-      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = text;[\s\S]*?saveInputDraftForTab\(tabId, text\);/,
+      /const attachmentsRejected = attachmentsForSend\.length[\s\S]*?u\?\.type === 'attachment_rejected'\);[\s\S]*?if \(attachmentsRejected\) \{[\s\S]*?setMessageAttachmentState\(userEl, 'not-sent'\);[\s\S]*?restorePendingAttachmentsForTab\(tabId, attachmentsForSend\);[\s\S]*?if \(currentTabId === tabId && !inputEl\.value\.trim\(\)\) \{[\s\S]*?inputEl\.value = agentPrompt \? submittedText : text;[\s\S]*?saveInputDraftForTab\(tabId, agentPrompt \? submittedText : text\);/,
       `${label} should restore rejected attachments even after a tab switch and only overwrite an empty current-tab draft`,
     );
     assert.match(

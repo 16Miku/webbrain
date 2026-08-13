@@ -3612,7 +3612,7 @@
       // content_scripts puts it before content.js so window.__wb_ax_lookup
       // and window.__generateAccessibilityTree are defined by the time the
       // first message arrives.
-      'get_accessibility_tree': () => {
+      'get_accessibility_tree': async () => {
         try {
           if (typeof window.__generateAccessibilityTree !== 'function') {
             return { error: 'accessibility-tree.js not injected' };
@@ -3644,8 +3644,22 @@
               refScopeUrl,
             };
           }
+          // A complete, anchored Gmail thread read may reveal only Gmail's
+          // trusted top-level collapsed messages before building page 1. This
+          // keeps whole-thread reads complete in Ask as well as Act mode while
+          // exposing no general-purpose click capability to Ask mode.
+          const requestedPage = Math.max(1, Math.floor(Number(page) || 1));
+          const requestedDepth = maxDepth == null ? 15 : Number(maxDepth);
+          let conversationAutoExpanded = false;
+          if (ref_id && requestedPage === 1 && (filter || 'all') === 'all'
+              && Number.isFinite(requestedDepth) && requestedDepth >= 15
+              && typeof window.__wb_expand_gmail_conversation_for_read === 'function') {
+            const prepared = await window.__wb_expand_gmail_conversation_for_read(ref_id);
+            conversationAutoExpanded = prepared?.attempted === true && prepared?.expanded === true;
+          }
           return {
             ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision),
+            ...(conversationAutoExpanded ? { conversationAutoExpanded: true } : {}),
             documentToken,
             refScopeUrl,
           };
