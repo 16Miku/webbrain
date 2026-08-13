@@ -74,6 +74,7 @@
       // element with the same local traversal number.
       window.__wbElementMap = Object.create(null);
       window.__wbRefCounter = 0;
+      window.__wbAxTreeSnapshots = new Map();
       window.__wbAxRefScope = { pageUrl, id: mintRefScopeId() };
     }
     return window.__wbAxRefScope;
@@ -924,6 +925,71 @@
     return `fnv1a64:${hash.toString(16).padStart(16, '0')}`;
   }
 
+  const MAX_TREE_SNAPSHOTS = 3;
+
+  function treeSnapshotKey(scope, treeRevision) {
+    return JSON.stringify([
+      String(scope?.filter || 'all'),
+      Number(scope?.maxDepth),
+      Number(scope?.maxChars),
+      String(scope?.ref_id || ''),
+      String(treeRevision || ''),
+    ]);
+  }
+
+  function findTreeSnapshot(scope, treeRevision) {
+    if (!(window.__wbAxTreeSnapshots instanceof Map) || !treeRevision) return null;
+    const key = treeSnapshotKey(scope, treeRevision);
+    const snapshot = window.__wbAxTreeSnapshots.get(key) || null;
+    if (snapshot && !snapshotActionsAreCurrent(snapshot)) {
+      window.__wbAxTreeSnapshots.delete(key);
+      return null;
+    }
+    return snapshot;
+  }
+
+  function actionableTreeSnapshotSignatures(lines) {
+    const signatures = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const match = String(line || '').match(/\[(ref_\d+)\]/);
+      const refId = match?.[1];
+      if (!refId || seen.has(refId)) continue;
+      seen.add(refId);
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el)) continue;
+      signatures.push([refId, formatLine(el, 0)]);
+    }
+    return signatures;
+  }
+
+  function snapshotActionsAreCurrent(snapshot) {
+    if (!Array.isArray(snapshot?.actionSignatures)) return false;
+    for (const [refId, signature] of snapshot.actionSignatures) {
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el) || formatLine(el, 0) !== signature) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function rememberTreeSnapshot(scope, treeRevision, output, lines) {
+    if (!treeRevision || !scope?.ref_id) return;
+    if (!(window.__wbAxTreeSnapshots instanceof Map)) window.__wbAxTreeSnapshots = new Map();
+    const key = treeSnapshotKey(scope, treeRevision);
+    window.__wbAxTreeSnapshots.delete(key);
+    window.__wbAxTreeSnapshots.set(key, {
+      output,
+      lines: lines.slice(),
+      treeRevision,
+      actionSignatures: actionableTreeSnapshotSignatures(lines),
+    });
+    while (window.__wbAxTreeSnapshots.size > MAX_TREE_SNAPSHOTS) {
+      window.__wbAxTreeSnapshots.delete(window.__wbAxTreeSnapshots.keys().next().value);
+    }
+  }
+
   function isGmailThreadIdentifier(value) {
     const segment = String(value || '').split('?')[0];
     return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
@@ -980,6 +1046,19 @@
     return candidates[0]?.candidate || null;
   }
 
+  function gmailConversationExpansionControlState(control) {
+    // Gmail's accessible label is localized, but these semantic jsname values
+    // remain stable across UI languages. Keep the English names as a fallback
+    // for older/alternate Gmail markup that does not expose jsname.
+    const jsname = String(control?.getAttribute?.('jsname') || '').trim();
+    if (jsname === 'xvWlrc') return 'expanded';
+    if (jsname === 'tRarif') return 'collapsed';
+    const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
+    if (name === 'Collapse all') return 'expanded';
+    if (name === 'Expand all') return 'collapsed';
+    return null;
+  }
+
   function detectGmailConversationExpansionState(conversationRoot) {
     if (!isGmailConversationRoute() || !conversationRoot) return null;
     let collapsed = false;
@@ -990,12 +1069,57 @@
         // buttons. Only Gmail chrome outside message/article containers can
         // provide the structured expansion evidence used by the agent guard.
         if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
-        const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
-        if (name === 'Collapse all') return 'expanded';
-        if (name === 'Expand all') collapsed = true;
+        const state = gmailConversationExpansionControlState(control);
+        if (state === 'expanded') return state;
+        if (state === 'collapsed') collapsed = true;
       }
     } catch (e) {}
     return collapsed ? 'collapsed' : null;
+  }
+
+  function findGmailConversationExpandAll(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
+    try {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Only Gmail chrome outside untrusted message bodies may be invoked.
+        // This deliberately cannot turn an Ask-mode read into a general click.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (gmailConversationExpansionControlState(control) === 'collapsed') return control;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function expandGmailConversationForRead(refId, timeoutMs) {
+    try {
+      ensureRefScope();
+      const conversationRoot = detectGmailConversationRoot();
+      if (!conversationRoot || getOrMintRef(conversationRoot) !== refId) {
+        return { attempted: false, expanded: false };
+      }
+      if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+        return { attempted: false, expanded: true };
+      }
+      const control = findGmailConversationExpandAll(conversationRoot);
+      if (!control) return { attempted: false, expanded: false };
+
+      control.click();
+      const timeout = Math.min(4000, Math.max(250, Number(timeoutMs) || 2500));
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeout) {
+        if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+          return { attempted: true, expanded: true };
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return {
+        attempted: true,
+        expanded: detectGmailConversationExpansionState(conversationRoot) === 'expanded',
+      };
+    } catch (e) {
+      return { attempted: false, expanded: false };
+    }
   }
 
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
@@ -1033,7 +1157,14 @@
         maxChars: effMaxChars,
         ...(refId ? { ref_id: refId } : {}),
       };
+      const gmailSnapshotEligible = !!refId
+        && !!conversationRootRefId
+        && refId === conversationRootRefId
+        && effFilter === 'all'
+        && Number(opts.maxDepth) >= 15;
       const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const requestedPage = Math.max(1, Math.floor(Number(page) || 1));
+      const requestedTreeRevision = String(expectedTreeRevision || '').trim();
       const lines = [];
 
       if (refId) {
@@ -1053,6 +1184,27 @@
             pageContent: '',
             viewport,
           };
+        }
+        if (gmailSnapshotEligible && requestedPage > 1 && requestedTreeRevision) {
+          const snapshot = findTreeSnapshot(baseTreeScope, requestedTreeRevision);
+          if (snapshot) {
+            const continuationBase = {
+              ...baseTreeScope,
+              tree_revision: snapshot.treeRevision,
+            };
+            return {
+              ...sliceTreePage(
+                snapshot.output,
+                snapshot.lines,
+                effMaxChars,
+                requestedPage,
+                continuationBase,
+              ),
+              viewport,
+              treeRevision: snapshot.treeRevision,
+              ...conversationMetadata,
+            };
+          }
         }
         walk(el, 0, opts, lines);
       } else if (document.body) {
@@ -1155,13 +1307,31 @@
         ...baseTreeScope,
         ...(revisionBound ? { tree_revision: treeRevision } : {}),
       };
-      if (revisionBound && expectedTreeRevision && expectedTreeRevision !== treeRevision) {
+      if (gmailSnapshotEligible && (
+        requestedPage === 1
+        || !requestedTreeRevision
+        || requestedTreeRevision === treeRevision
+      )) {
+        rememberTreeSnapshot(baseTreeScope, treeRevision, output, lines);
+      }
+      if (revisionBound && requestedPage > 1
+          && requestedTreeRevision && requestedTreeRevision !== treeRevision) {
+        const restartArgs = {
+          ...baseTreeScope,
+          page: 1,
+        };
         return {
-          error: 'The anchored accessibility tree changed during pagination. Restart from page 1 with the current conversation root.',
+          error: 'The anchored accessibility snapshot changed or expired. Restart from page 1 with the exact returned continuationArgs.',
           pageContent: '',
           viewport,
           treeRevision,
           treeRevisionMismatch: true,
+          truncated: true,
+          hasMore: true,
+          page: requestedPage,
+          nextPage: 1,
+          continuationArgs: restartArgs,
+          restartArgs,
           ...conversationMetadata,
         };
       }
@@ -1308,6 +1478,7 @@
 
   window.__generateAccessibilityTree = generateAccessibilityTree;
   window.__generateAccessibilitySubtree = generateAccessibilitySubtree;
+  window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;
   window.__wb_ax_lookup = lookup;
   window.__wb_ax_ref = getOrMintRef;
   window.__wb_ax_name = getAccessibleName;

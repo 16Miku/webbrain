@@ -4578,8 +4578,12 @@ async function recommendedActionSourceStillCurrent(action, tabId) {
 
 async function runRecommendedAction(action) {
   const prompt = typeof action === 'string' ? action : action?.prompt;
+  const displayText = typeof action === 'string'
+    ? prompt
+    : String(action?.label || prompt || '').trim();
   const tabId = currentTabId;
   if (!prompt || tabId == null || isProcessing) return;
+  if (!displayText) return;
   if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
     hideRecommendedActions();
     return;
@@ -4592,13 +4596,18 @@ async function runRecommendedAction(action) {
       return;
     }
   }
-  inputEl.value = prompt;
+  inputEl.value = displayText;
   autoResizeInput();
-  sendMessage(recommendedActionSendParams(action));
+  sendMessage(recommendedActionSendParams(action, { tabId, displayText }));
 }
 
-function recommendedActionSendParams(action) {
+function recommendedActionSendParams(action, { tabId = null, displayText = '' } = {}) {
   const params = action?.runOptions ? { recommendedAction: action.runOptions } : {};
+  if (typeof action?.prompt === 'string' && action.prompt.trim()) {
+    params.__agentPrompt = action.prompt.trim();
+    params.__agentDisplayText = String(displayText || '').trim();
+    params.__agentTabId = tabId;
+  }
   if (['ask', 'act', 'dev'].includes(action?.mode)) {
     params.__mode = action.mode;
   }
@@ -5670,6 +5679,7 @@ function rebindCostAllowanceButtons() {
 function retryPayloadFromButton(btn) {
   const text = String(btn?.dataset?.retryText || '').trim();
   if (!text) return null;
+  const displayText = String(btn?.dataset?.retryDisplayText || text).trim() || text;
   const mode = ['ask', 'act', 'dev'].includes(btn.dataset.retryMode)
     ? btn.dataset.retryMode
     : agentMode;
@@ -5682,6 +5692,7 @@ function retryPayloadFromButton(btn) {
     : '';
   return {
     text,
+    displayText,
     mode,
     apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
     foreground: btn.dataset.retryForeground === 'true',
@@ -5712,10 +5723,15 @@ function bindErrorRetryButton(btn) {
     if (payload.apiMutationsAllowed) {
       grantApiMutationsForTab(currentTabId);
     }
-    inputEl.value = payload.text;
+    inputEl.value = payload.displayText;
     autoResizeInput();
     hideSlashCommandAutocomplete();
     const accepted = await sendMessage({
+      ...(payload.displayText !== payload.text ? {
+        __agentPrompt: payload.text,
+        __agentDisplayText: payload.displayText,
+        __agentTabId: currentTabId,
+      } : {}),
       __retry: {
         mode: payload.mode,
         apiMutationsAllowed: payload.apiMutationsAllowed,
@@ -5758,14 +5774,17 @@ function activeRetryPayloadForRequest(tabId, requestId = '') {
 
 function retryPayloadForRunAssistant(assistantEl) {
   const userEl = userMessageForRunAssistant(assistantEl);
-  const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
-  if (!String(text || '').trim()) return null;
+  const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
+  if (!displayText) return null;
+  const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
+  const text = internalPrompt || displayText;
   const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
   return {
     text,
+    displayText,
     mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
       ? assistantEl.dataset.runMode
       : agentMode,
@@ -7458,9 +7477,20 @@ async function sendMessage(extraChatParams = {}) {
     ? extraChatParams.__onContextMenuClaimRejected
     : null;
   const chatExtraParams = { ...(extraChatParams || {}) };
+  const agentPrompt = typeof chatExtraParams.__agentPrompt === 'string'
+    ? chatExtraParams.__agentPrompt.trim()
+    : '';
+  const agentDisplayText = typeof chatExtraParams.__agentDisplayText === 'string'
+    ? chatExtraParams.__agentDisplayText.trim()
+    : '';
+  const rawAgentTabId = Number(chatExtraParams.__agentTabId);
+  const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
+  delete chatExtraParams.__agentPrompt;
+  delete chatExtraParams.__agentDisplayText;
+  delete chatExtraParams.__agentTabId;
   const isWorkflowRun = !!chatExtraParams.workflowId;
   const contextMenuClaim = chatExtraParams.contextMenuClaim;
   let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
@@ -7493,6 +7523,14 @@ async function sendMessage(extraChatParams = {}) {
   delete chatExtraParams.selectionAction;
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await waitForVisibleSidePanelStateRefresh();
+  if (agentPrompt && (
+    !agentDisplayText
+    || agentTabId == null
+    || !sameTabId(currentTabId, agentTabId)
+    || !sameTabId(renderedTabId, agentTabId)
+    || inputEl.value.trim() !== agentDisplayText
+  )) return false;
+  if (agentPrompt && isProcessing) return false;
   if (contextMenuClaimOwned
       && (document.visibilityState === 'hidden'
         || !sameTabId(currentTabId, claimedContextMenuTabId)
@@ -7502,6 +7540,7 @@ async function sendMessage(extraChatParams = {}) {
   }
   stopListening();
   let text = inputEl.value.trim();
+  const submittedText = text;
   if (!text) {
     if (contextMenuClaimOwned) {
       await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
@@ -7509,7 +7548,7 @@ async function sendMessage(extraChatParams = {}) {
     }
     return;
   }
-  const submittedText = text;
+  if (agentPrompt) text = agentPrompt;
   const tabId = currentTabId;
   if (isConversationClearInProgress(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
@@ -7603,7 +7642,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     return false;
   }
   if (!text) {
@@ -7633,7 +7672,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
@@ -7679,7 +7718,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
@@ -7717,6 +7756,7 @@ async function sendMessage(extraChatParams = {}) {
   }
   const retryPayload = {
     text,
+    displayText: agentPrompt ? submittedText : text,
     mode: modeForSend,
     apiMutationsAllowed: apiMutationsAllowedForSend,
     foreground: foregroundForSend,
@@ -7735,7 +7775,7 @@ async function sendMessage(extraChatParams = {}) {
       renderAttachmentPreviews();
     }
     resetChatNavigation();
-    userEl = addMessage('user', text, {
+    userEl = addMessage('user', agentPrompt ? submittedText : text, {
       attachments: attachmentsForSend,
       attachmentState: attachmentsForSend.length ? 'sending' : '',
     });
@@ -7748,6 +7788,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
+    if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
     userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
@@ -7830,8 +7871,8 @@ async function sendMessage(extraChatParams = {}) {
       // Restore the prompt only if the user hasn't started typing a new one
       // while the rejected turn was in flight.
       if (currentTabId === tabId && !inputEl.value.trim()) {
-        inputEl.value = text;
-        saveInputDraftForTab(tabId, text);
+        inputEl.value = agentPrompt ? submittedText : text;
+        saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
         autoResizeInput();
         updateSlashCommandAutocomplete();
       }
@@ -9888,6 +9929,7 @@ function configureRetryButton(btn, retryPayload) {
   }
   btn.dataset.retryId = retryId;
   btn.dataset.retryText = String(retryPayload.text || '');
+  btn.dataset.retryDisplayText = String(retryPayload.displayText || retryPayload.text || '');
   btn.dataset.retryMode = retryPayload.mode || 'ask';
   btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
   btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
