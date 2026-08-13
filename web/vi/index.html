@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain có gửi toàn bộ DOM đến mô hình AI không?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Không. Theo mặc định, WebBrain không gửi HTML thô hoặc bản sao DOM thô. Hệ thống bắt đầu với URL và tiêu đề trang, hướng dẫn phù hợp cho trang web và ảnh chụp vùng hiển thị tùy chọn khi tính năng thị giác được bật. Khi tác vụ cần nội dung trang, WebBrain đọc nội dung đó theo yêu cầu dưới dạng cây trợ năng ngữ nghĩa đã rút gọn hoặc văn bản được trích xuất. Các lần đọc được lọc theo khả năng hiển thị khi phù hợp, giới hạn số ký tự và phân trang. Quyền truy cập mã nguồn trang thô chỉ có trong chế độ Dev."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain kiểm soát hóa đơn LLM trên đám mây như thế nào?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>WebBrain có hỗ trợ chế độ chạy khô không?</summary>
       <p>kể từ <strong>7.0.0</strong>, chưa. Chế độ chạy thử đã được lên kế hoạch và đã có sẵn trên lộ trình.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain có gửi toàn bộ DOM đến mô hình AI không?</summary>
+      <p>Không. Theo mặc định, WebBrain không gửi HTML thô hoặc bản sao DOM thô. Hệ thống bắt đầu với URL và tiêu đề trang, hướng dẫn phù hợp cho trang web và ảnh chụp vùng hiển thị tùy chọn khi tính năng thị giác được bật.</p><p>Khi tác vụ cần nội dung trang, WebBrain đọc nội dung đó theo yêu cầu dưới dạng cây trợ năng ngữ nghĩa đã rút gọn hoặc văn bản được trích xuất. Các lần đọc được lọc theo khả năng hiển thị khi phù hợp, giới hạn số ký tự và phân trang. Quyền truy cập mã nguồn trang thô chỉ có trong chế độ Dev.</p>
     </details>
 
     <details class="faq-item">

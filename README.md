@@ -133,6 +133,13 @@ pre-filled — see the [full catalog](docs/providers-and-models.md#extended-prov
 - **Deterministic by default** — temperature `0.15` for browser-control
   decisions, `0.3` for Ask, `0` for vision screenshot descriptions
 
+### Does WebBrain send the whole DOM to the model?
+
+No. WebBrain sends lightweight initial context, then reads reduced semantic
+page content on demand with filtering, character limits, and pagination. See
+[page context reduction](docs/architecture.md#page-context-reduction) for the
+full flow.
+
 ## Agent tools
 
 WebBrain separates **tier** from **mode**. Tier (`compact`, `mid`, `full`) is a

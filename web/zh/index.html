@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain 会把整个 DOM 发送给 AI 模型吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。 当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain 如何控制云端 LLM 的账单?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>WebBrain 支持 dry-run（演练）模式吗？</summary>
       <p>截至 <strong>7.0.0</strong> 版本, 还不支持。dry-run 模式已在路线图中, 后续会提供。</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain 会把整个 DOM 发送给 AI 模型吗？</summary>
+      <p>不会。默认情况下，WebBrain 不会发送原始 HTML 或完整的 DOM 转储。它首先使用页面 URL 和标题、匹配的网站指引，并在启用视觉功能时选择性地提供当前视口截图。</p><p>当任务需要页面内容时，WebBrain 会按需读取精简的语义化无障碍树或提取后的文本。读取结果会在适当情况下按可见性过滤，并设置字符上限和分页。只有 Dev 模式可以访问原始页面源代码。</p>
     </details>
 
     <details class="faq-item">

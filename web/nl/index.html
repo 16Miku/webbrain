@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "Stuurt WebBrain de volledige DOM naar het AI-model?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nee. WebBrain verstuurt standaard geen onbewerkte HTML of ruwe DOM-dump. Het begint met de URL en titel van de pagina, bijpassende site-instructies en, wanneer beeldherkenning is ingeschakeld, optioneel een schermafbeelding van het zichtbare deel. Wanneer een taak pagina-inhoud nodig heeft, leest WebBrain die op aanvraag als een verkleinde semantische toegankelijkheidsboom of als geëxtraheerde tekst. Lezingen worden waar passend op zichtbaarheid gefilterd, hebben tekenlimieten en worden gepagineerd. Toegang tot de ruwe paginabron is alleen beschikbaar in de Dev-modus."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>Ondersteunt WebBrain een dry-run modus?</summary>
       <p>Vanaf versie <strong>7.0.0</strong>, nog niet. Dry-run modus staat gepland en staat al op de roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Stuurt WebBrain de volledige DOM naar het AI-model?</summary>
+      <p>Nee. WebBrain verstuurt standaard geen onbewerkte HTML of ruwe DOM-dump. Het begint met de URL en titel van de pagina, bijpassende site-instructies en, wanneer beeldherkenning is ingeschakeld, optioneel een schermafbeelding van het zichtbare deel.</p><p>Wanneer een taak pagina-inhoud nodig heeft, leest WebBrain die op aanvraag als een verkleinde semantische toegankelijkheidsboom of als geëxtraheerde tekst. Lezingen worden waar passend op zichtbaarheid gefilterd, hebben tekenlimieten en worden gepagineerd. Toegang tot de ruwe paginabron is alleen beschikbaar in de Dev-modus.</p>
     </details>
 
     <details class="faq-item">

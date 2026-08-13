@@ -141,6 +141,7 @@ const FAQ_KEYS = [
   'faq.screenshot_redaction',
   'faq.cookies_paywalls',
   'faq.multilingual',
+  'faq.page_context',
   'faq.token_conscious',
   'faq.contribute',
 ];

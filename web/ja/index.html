@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain は DOM 全体を AI モデルに送信しますか？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "いいえ。WebBrain はデフォルトで、生の HTML や DOM の生データを送信しません。最初にページの URL とタイトル、該当するサイト向けガイダンスを使用し、ビジョンが有効な場合は表示領域のスクリーンショットを任意で追加します。 タスクにページ内容が必要な場合、WebBrain は簡略化された意味的なアクセシビリティツリーまたは抽出テキストとして必要に応じて読み取ります。読み取り結果は必要に応じて表示状態で絞り込まれ、文字数制限とページ分割が適用されます。生のページソースへのアクセスは Dev モードでのみ利用できます。"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain はどうやってクラウド LLM の請求を抑えていますか?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>WebBrain は dry-run モードに対応していますか?</summary>
       <p><strong>7.0.0</strong> 時点では未対応です。dry-run モードは計画済みで、すでにロードマップに載っています。</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>WebBrain は DOM 全体を AI モデルに送信しますか？</summary>
+      <p>いいえ。WebBrain はデフォルトで、生の HTML や DOM の生データを送信しません。最初にページの URL とタイトル、該当するサイト向けガイダンスを使用し、ビジョンが有効な場合は表示領域のスクリーンショットを任意で追加します。</p><p>タスクにページ内容が必要な場合、WebBrain は簡略化された意味的なアクセシビリティツリーまたは抽出テキストとして必要に応じて読み取ります。読み取り結果は必要に応じて表示状態で絞り込まれ、文字数制限とページ分割が適用されます。生のページソースへのアクセスは Dev モードでのみ利用できます。</p>
     </details>
 
     <details class="faq-item">

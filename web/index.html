@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "Does WebBrain send the whole DOM to the AI model?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. WebBrain does not send raw HTML or a raw DOM dump by default. It starts with the page URL and title, matching site guidance, and an optional viewport screenshot when vision is enabled. When a task needs page content, WebBrain reads it on demand as a reduced semantic accessibility tree or extracted text. Reads are visibility-filtered where appropriate, character-capped, and paginated. Raw page-source access is available only in Dev mode."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "How does WebBrain keep cloud LLM bills under control?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>Does WebBrain support a dry-run mode?</summary>
       <p>As of <strong>7.0.0</strong>, not yet. Dry-run mode is planned and already on the roadmap.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>Does WebBrain send the whole DOM to the AI model?</summary>
+      <p>No. WebBrain does not send raw HTML or a raw DOM dump by default. It starts with the page URL and title, matching site guidance, and an optional viewport screenshot when vision is enabled.</p><p>When a task needs page content, WebBrain reads it on demand as a reduced semantic accessibility tree or extracted text. Reads are visibility-filtered where appropriate, character-capped, and paginated. Raw page-source access is available only in Dev mode.</p>
     </details>
 
     <details class="faq-item">

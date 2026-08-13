@@ -270,6 +270,14 @@
     },
     {
       "@type": "Question",
+      "name": "¿WebBrain envía todo el DOM al modelo de IA?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. De forma predeterminada, WebBrain no envía HTML sin procesar ni un volcado completo del DOM. Empieza con la URL y el título de la página, las indicaciones correspondientes al sitio y, si la visión está activada, una captura opcional del área visible. Cuando una tarea necesita contenido de la página, WebBrain lo lee bajo demanda como un árbol de accesibilidad semántico reducido o como texto extraído. Las lecturas se filtran por visibilidad cuando corresponde, tienen límites de caracteres y se paginan. El acceso al código fuente sin procesar de la página solo está disponible en el modo Dev."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "¿Cómo mantiene WebBrain controladas las facturas de los LLM en la nube?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -3905,6 +3913,11 @@
     <details class="faq-item">
       <summary>¿WebBrain tiene modo de simulación (dry-run)?</summary>
       <p>A partir de la versión <strong>7.0.0</strong>, todavía no. El modo dry-run está planificado y ya está en la hoja de ruta.</p>
+    </details>
+
+    <details class="faq-item">
+      <summary>¿WebBrain envía todo el DOM al modelo de IA?</summary>
+      <p>No. De forma predeterminada, WebBrain no envía HTML sin procesar ni un volcado completo del DOM. Empieza con la URL y el título de la página, las indicaciones correspondientes al sitio y, si la visión está activada, una captura opcional del área visible.</p><p>Cuando una tarea necesita contenido de la página, WebBrain lo lee bajo demanda como un árbol de accesibilidad semántico reducido o como texto extraído. Las lecturas se filtran por visibilidad cuando corresponde, tienen límites de caracteres y se paginan. El acceso al código fuente sin procesar de la página solo está disponible en el modo Dev.</p>
     </details>
 
     <details class="faq-item">
