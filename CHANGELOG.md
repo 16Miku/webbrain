@@ -4,6 +4,14 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [30.0.3] - 2026-08-13
+
+### Changed
+- feat: add local OpenAI-compatible proxy provider
+- fix: recognize localized Gmail expansion controls
+- Preserve hidden prompts for restored retries
+- Fix thread actions and anchored pagination
+
 ## [30.0.2] - 2026-08-13
 
 ### Changed
