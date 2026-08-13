@@ -284,9 +284,10 @@ export function validateCloudOutput(value, schema) {
       if (Number.isInteger(spec.maxLength) && length > spec.maxLength) push(path, `expected at most ${spec.maxLength} characters`);
       if (typeof spec.pattern === 'string' && !new RegExp(spec.pattern).test(item)) push(path, `expected to match ${JSON.stringify(spec.pattern)}`);
     }
-    // JSON numerals cannot overflow to a non-finite value, so a non-finite
-    // instance is never a valid bound. Reject it explicitly so a constraint-only
-    // schema (no `type`) cannot let Infinity slip past minimum/maximum.
+    // JSON has no Infinity literal, but a parser can still overflow a numeral
+    // like 1e400 into a non-finite value. Such a value is never a valid JSON
+    // instance, so reject it explicitly — a constraint-only schema (no `type`)
+    // would otherwise let Infinity slip past minimum/maximum.
     if (typeof item === 'number' && (typeof spec.minimum === 'number' || typeof spec.maximum === 'number')) {
       if (!Number.isFinite(item)) {
         push(path, 'expected a finite number');
