@@ -275,7 +275,8 @@ export async function openKiwixZim(source, metadata = {}) {
   const urlPointerPosition = safeUint64(header, 32);
   const clusterPointerPosition = safeUint64(header, 48);
   const mimeListPosition = safeUint64(header, 56);
-  if (!articleCount || !clusterCount || urlPointerPosition + articleCount * 8 > blob.size || clusterPointerPosition + clusterCount * 8 > blob.size) {
+  const checksumPosition = safeUint64(header, 72);
+  if (!articleCount || !clusterCount || checksumPosition + 16 > blob.size || urlPointerPosition + articleCount * 8 > blob.size || clusterPointerPosition + clusterCount * 8 > blob.size) {
     throw new Error('ZIM archive index is corrupt or incomplete.');
   }
 
@@ -353,7 +354,7 @@ export async function openKiwixZim(source, metadata = {}) {
     const start = await pointerAt(clusterPointerPosition + clusterIndex * 8);
     const end = clusterIndex + 1 < clusterCount
       ? await pointerAt(clusterPointerPosition + (clusterIndex + 1) * 8)
-      : await pointerAt(urlPointerPosition);
+      : checksumPosition;
     if (end <= start) throw new Error('ZIM cluster boundaries are corrupt.');
     const compressed = await blobBytes(blob, start, end);
     const compression = compressed[0] & 0x0f;
@@ -1165,7 +1166,7 @@ export function createApocalypseController(api, options = {}) {
     if (config.enabled !== true || (config.updatePolicy !== 'automatic' && options.force !== true)) {
       return await snapshot();
     }
-    const checkedAt = Date.now();
+    const checkedAt = now();
     const records = await store.listArchives();
     const candidates = records.filter(record => record.status === 'ready' && record.name && record.flavour);
     const catalogs = new Map();
@@ -1173,7 +1174,16 @@ export function createApocalypseController(api, options = {}) {
       const language = String(record.language || 'eng');
       if (!catalogs.has(language)) catalogs.set(language, await catalog(language));
       const updateAvailable = selectKiwixUpdate(record, catalogs.get(language));
-      await store.putArchive({ ...record, updateAvailable, lastUpdateCheckAt: checkedAt, updatedAt: checkedAt });
+      await putArchiveIfCurrent(store, {
+        ...record,
+        updateAvailable,
+        lastUpdateCheckAt: checkedAt,
+        updatedAt: checkedAt,
+      }, {
+        status: 'ready',
+        generation: record.generation,
+        updatedAt: record.updatedAt,
+      });
     }
     await store.setConfig({ lastUpdateCheckAt: checkedAt });
     return await snapshot();

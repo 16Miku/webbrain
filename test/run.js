@@ -21033,7 +21033,6 @@ function minimalWikipediaZimFixture(options = {}) {
   const mime = encoder.encode('text/html\0text/plain\0\0');
   const offsetsBytes = (blobs.length + 1) * 4;
   const encodedBlobs = blobs.map(entry => encoder.encode(entry.contents));
-  const clusterStart = 128;
   const cluster = new Uint8Array(1 + offsetsBytes + encodedBlobs.reduce((sum, value) => sum + value.length, 0));
   cluster[0] = 1;
   const clusterView = new DataView(cluster.buffer);
@@ -21044,7 +21043,6 @@ function minimalWikipediaZimFixture(options = {}) {
     blobOffset += value.length;
   });
   clusterView.setUint32(1 + blobs.length * 4, blobOffset, true);
-  const directoryStart = clusterStart + cluster.length;
   const directories = entries.map((entry) => {
     const url = encoder.encode(entry.url);
     const title = encoder.encode(entry.title);
@@ -21059,15 +21057,20 @@ function minimalWikipediaZimFixture(options = {}) {
     directory.set(title, (redirect ? 13 : 17) + url.length);
     return directory;
   });
+  // Use the common ZIM layout where directory entries precede cluster data.
+  // The final cluster therefore ends at checksumPos, not at the first URL
+  // pointer's directory-entry offset.
+  const urlPointerPosition = 128;
+  const clusterPointerPosition = urlPointerPosition + entries.length * 8;
+  const directoryStart = clusterPointerPosition + 8;
   const directoryPositions = [];
   let directoryOffset = directoryStart;
   for (const directory of directories) {
     directoryPositions.push(directoryOffset);
     directoryOffset += directory.length;
   }
-  const urlPointerPosition = directoryOffset;
-  const clusterPointerPosition = urlPointerPosition + entries.length * 8;
-  const checksumPosition = clusterPointerPosition + 8;
+  const clusterStart = directoryOffset;
+  const checksumPosition = clusterStart + cluster.length;
   const bytes = new Uint8Array(checksumPosition + 16);
   const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x044d495a, true);
@@ -21374,6 +21377,68 @@ test('Apocalypse Mode automatic policy checks daily but still requires confirmat
     assert.equal(snapshot.archives.length, 1, `${label}: update check downloaded or installed before confirmation`);
     await controller.setUpdatePolicy('manual');
     assert.equal(cleared, 1, `${label}: manual policy did not clear automatic checks`);
+  }
+});
+
+test('Apocalypse Mode update checks cannot recreate a concurrently deleted archive', async () => {
+  const catalogXml = `<?xml version="1.0"?><feed><entry><id>urn:uuid:new</id><title>Wikipedia update</title>
+    <language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour><dc:issued>2026-08-01</dc:issued>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="https://example.test/new.zim.meta4" length="100" /></entry></feed>`;
+  for (const [label, runtime] of [['chrome', ApocalypseModeCh], ['firefox', ApocalypseModeFx]]) {
+    const config = { enabled: true, updatePolicy: 'automatic' };
+    const record = {
+      id: 'deleted-during-check',
+      status: 'ready',
+      generation: 7,
+      updatedAt: 100,
+      name: 'wikipedia_en_all',
+      flavour: 'nopic',
+      language: 'eng',
+      archiveDate: '2026-07-01',
+      target: { kind: 'opfs', key: 'old.zim' },
+    };
+    const records = new Map([[record.id, record]]);
+    let compareAttempts = 0;
+    const store = {
+      async getConfig() { return { ...config }; },
+      async setConfig(next) { Object.assign(config, next); return { ...config }; },
+      async listArchives() { return [...records.values()].map(item => ({ ...item })); },
+      async getArchive(id) { const item = records.get(id); return item ? { ...item } : null; },
+      async putArchive(next) { records.set(next.id, { ...next }); return next; },
+      async putArchiveIfCurrent(next, expected) {
+        compareAttempts += 1;
+        const current = records.get(next.id);
+        const matches = Boolean(current)
+          && current.status === expected.status
+          && (Number(current.generation) || 0) === (Number(expected.generation) || 0)
+          && Number(current.updatedAt) === Number(expected.updatedAt);
+        if (matches) records.set(next.id, { ...next });
+        return matches;
+      },
+    };
+    let markCatalogStarted;
+    let releaseCatalog;
+    const catalogStarted = new Promise(resolve => { markCatalogStarted = resolve; });
+    const controller = runtime.createApocalypseController({ alarms: {} }, {
+      store,
+      storage: { async estimate() { return {}; } },
+      fetchImpl: async () => {
+        const response = new Promise(resolve => { releaseCatalog = resolve; });
+        markCatalogStarted();
+        return await response;
+      },
+      now: () => 200,
+    });
+
+    const checking = controller.checkForUpdates();
+    await catalogStarted;
+    records.delete(record.id);
+    releaseCatalog({ ok: true, async text() { return catalogXml; } });
+    const snapshot = await checking;
+
+    assert.equal(compareAttempts, 1, `${label}: update metadata did not use compare-and-swap storage`);
+    assert.equal(records.has(record.id), false, `${label}: update check recreated a deleted archive record`);
+    assert.equal(snapshot.archives.length, 0, `${label}: deleted archive reappeared in the update snapshot`);
   }
 });
 
