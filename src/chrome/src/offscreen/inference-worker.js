@@ -26,7 +26,7 @@ function createWebGpuTextSessionOptions() {
   return {
     extra: {
       // ORT's default bucket cache can retain rounded-up transient buffers. That
-      // is especially costly for Ling's dynamic prefill/decode shapes on Metal.
+      // is especially costly for dynamic prefill/decode shapes on Metal.
       'ep.webgpuexecutionprovider.storageBufferCacheMode': 'simple',
     },
   };
@@ -215,7 +215,7 @@ async function enrichWebGpuExecutionError(error) {
   const suffix = [
     details.length ? `GPU detail: ${details.join(' ')}` : '',
     adapter ? `Adapter: ${adapter}.` : '',
-    'Close other GPU-heavy tabs/apps and retry with a short prompt. If it persists, this GPU/driver cannot execute Ling with the current WebGPU runtime.',
+    'Close other GPU-heavy tabs/apps and retry with a short prompt. If it persists, this GPU/driver cannot execute this model with the current WebGPU runtime.',
   ].filter(Boolean).join(' ');
   return new Error(`${error?.message || String(error)} ${suffix}`);
 }
@@ -739,7 +739,7 @@ async function runText(payload) {
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error('Ling 3.0 Tiny is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.');
+    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   const requestedTokens = Number(payload?.options?.maxTokens);

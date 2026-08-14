@@ -52,7 +52,13 @@ import {
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
-import { WEBGPU_VISION_ENABLED_KEY } from '../providers/webgpu.js';
+import {
+  WEBGPU_DTYPE,
+  WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  WEBGPU_VISION_ENABLED_KEY,
+  normalizeWebgpuModelId,
+} from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
@@ -323,6 +329,8 @@ let webgpuVisionEnabled = false;
 let webgpuDownloadState = {
   status: 'checking',
   ready: false,
+  modelId: WEBGPU_MODEL_ID,
+  dtype: WEBGPU_DTYPE,
   file: '',
   loaded: 0,
   total: 0,
@@ -342,12 +350,41 @@ function normalizeWebgpuDownloadState(state = {}) {
   return {
     status,
     ready: state.ready === true || status === 'ready',
+    modelId: String(state.modelId || ''),
+    dtype: String(state.dtype || WEBGPU_DTYPE),
     file: String(state.file || ''),
     loaded,
     total,
     progress,
     error: String(state.error || ''),
   };
+}
+
+function selectedWebgpuModelId() {
+  const input = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
+  return normalizeWebgpuModelId(input?.value || providersData.webgpu?.model || WEBGPU_MODEL_ID);
+}
+
+function webgpuModelPresentation(modelId) {
+  const normalized = normalizeWebgpuModelId(modelId);
+  const preset = WEBGPU_MODEL_PRESETS.find(option => option.id === normalized);
+  return {
+    id: normalized,
+    label: preset?.label || normalized,
+    size: preset?.size || 'Size varies',
+    url: `https://huggingface.co/${normalized.split('/').map(encodeURIComponent).join('/')}/`,
+  };
+}
+
+function updateWebgpuModelPresentation(modelId) {
+  const presentation = webgpuModelPresentation(modelId);
+  const link = document.querySelector('[data-webgpu-model-link]');
+  const size = document.querySelector('[data-webgpu-model-size]');
+  if (link) {
+    link.href = presentation.url;
+    link.textContent = presentation.label;
+  }
+  if (size) size.textContent = `${presentation.size} · ${WEBGPU_DTYPE}`;
 }
 
 function formatWebgpuBytes(bytes) {
@@ -419,6 +456,11 @@ function updateWebgpuDownloadPanel() {
   for (const button of [start, pause, resume, stop]) {
     if (button) button.disabled = ['checking', 'stopping'].includes(state.status);
   }
+  const transferActive = ['downloading', 'paused', 'stopping'].includes(state.status);
+  const modelSelect = document.querySelector('.model-select[data-model-for="webgpu"]');
+  const modelInput = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
+  if (modelSelect) modelSelect.disabled = transferActive;
+  if (modelInput) modelInput.disabled = transferActive;
   const activate = document.querySelector('.btn-activate[data-provider="webgpu"]');
   if (activate) {
     activate.disabled = !state.ready;
@@ -427,7 +469,11 @@ function updateWebgpuDownloadPanel() {
 }
 
 function setWebgpuDownloadState(state) {
-  webgpuDownloadState = normalizeWebgpuDownloadState(state);
+  const normalized = normalizeWebgpuDownloadState(state);
+  let selectedModel = '';
+  try { selectedModel = selectedWebgpuModelId(); } catch {}
+  if (normalized.modelId && selectedModel && normalized.modelId !== selectedModel) return;
+  webgpuDownloadState = normalized;
   updateWebgpuDownloadPanel();
 }
 
@@ -452,6 +498,19 @@ async function runWebgpuDownloadAction(action) {
   };
   const backgroundAction = actionMap[action];
   if (!backgroundAction) return;
+  try {
+    await saveProvider('webgpu', {
+      showFlash: false,
+      markConfigured: false,
+    });
+  } catch (error) {
+    setWebgpuDownloadState({
+      status: 'error',
+      modelId: '',
+      error: error.message,
+    });
+    return;
+  }
   if (action === 'start' || action === 'resume') {
     setWebgpuDownloadState({ ...webgpuDownloadState, status: 'downloading', error: '' });
   } else if (action === 'pause') {
@@ -2670,6 +2729,17 @@ function renderProviders() {
     },
     webgpu: {
       fields: [
+        {
+          key: 'model',
+          labelKey: 'st.provider.field.model',
+          type: 'text',
+          placeholder: 'owner/repository',
+          suggestions: WEBGPU_MODEL_PRESETS.map(option => option.id),
+          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.map(option => [
+            option.id,
+            `${option.label} — ${option.id}`,
+          ])),
+        },
         CONTEXT_WINDOW_FIELD,
         PROMPT_TIER_FIELD,
       ],
@@ -2990,7 +3060,7 @@ function renderProviders() {
         const effectiveVal = rawVal || field.suggestions[0];
         const selectVal = isCustom ? '__custom__' : effectiveVal;
         const optionsHTML = field.suggestions
-          .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(s)}</option>`)
+          .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(field.suggestionLabels?.[s] || s)}</option>`)
           .join('') +
           `<option value="__custom__"${isCustom ? ' selected' : ''}>${escapeHtml(t('st.provider.field.model_custom'))}</option>`;
         fieldsHTML += `
@@ -3067,7 +3137,8 @@ function renderProviders() {
          </div>`;
     }
     if (id === 'webgpu') {
-      const modelLink = '<a href="https://huggingface.co/webbrain-one/Ling-3.0-tiny-ONNX/" target="_blank" rel="noopener noreferrer">Ling 3.0 Tiny ONNX</a>';
+      const selectedModel = webgpuModelPresentation(config.model);
+      const modelLink = `<a href="${escapeHtml(selectedModel.url)}" target="_blank" rel="noopener noreferrer" data-webgpu-model-link>${escapeHtml(selectedModel.label)}</a>`;
       providerNote = `<div style="margin-top:10px;padding:10px 12px;border-radius:6px;
                   background:rgba(74,144,217,0.08);border:1px solid rgba(74,144,217,0.22);
                   font-size:12px;color:var(--text2);line-height:1.5;">
@@ -3076,7 +3147,7 @@ function renderProviders() {
          <section class="webgpu-transfer" data-webgpu-download-panel data-state="${escapeHtml(webgpuDownloadState.status)}" data-indeterminate="${webgpuDownloadState.total <= 0}" aria-labelledby="webgpu-transfer-title">
            <div class="webgpu-transfer-heading">
              <span class="webgpu-transfer-title" id="webgpu-transfer-title">${escapeHtml(t('st.providers.webgpu_download.title'))}</span>
-             <span class="webgpu-transfer-size">4.85 GB · q4f16</span>
+             <span class="webgpu-transfer-size" data-webgpu-model-size>${escapeHtml(selectedModel.size)} · ${escapeHtml(WEBGPU_DTYPE)}</span>
            </div>
            <div class="webgpu-transfer-status-row" role="status" aria-live="polite">
              <span class="webgpu-transfer-dot" aria-hidden="true"></span>
@@ -3172,13 +3243,36 @@ function renderProviders() {
         input.style.display = '';
         input.value = '';
         input.focus();
+        if (providerId === 'webgpu') {
+          setWebgpuDownloadState({ status: 'not-downloaded', modelId: '', ready: false });
+        }
       } else {
         input.style.display = 'none';
         input.value = sel.value;
+        if (providerId === 'webgpu') {
+          providersData.webgpu.model = sel.value;
+          updateWebgpuModelPresentation(sel.value);
+          setWebgpuDownloadState({ status: 'checking', modelId: sel.value, ready: false });
+          void saveProvider('webgpu', { showFlash: false, markConfigured: false })
+            .catch(error => setProviderTestResult('webgpu', 'fail', t('st.providers.failed', { error: error.message })));
+        }
       }
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
     });
+  });
+  document.querySelector('input[data-provider="webgpu"][data-key="model"]')?.addEventListener('change', async (event) => {
+    try {
+      const model = normalizeWebgpuModelId(event.currentTarget.value);
+      event.currentTarget.value = model;
+      providersData.webgpu.model = model;
+      updateWebgpuModelPresentation(model);
+      setWebgpuDownloadState({ status: 'checking', modelId: model, ready: false });
+      await saveProvider('webgpu', { showFlash: false, markConfigured: false });
+    } catch (error) {
+      setWebgpuDownloadState({ status: 'error', modelId: '', ready: false, error: error.message });
+      setProviderTestResult('webgpu', 'fail', t('st.providers.failed', { error: error.message }));
+    }
   });
   document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
     select.addEventListener('change', () => refreshVisionStatus(select.dataset.provider));
@@ -3536,6 +3630,13 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
     });
+    if (id === 'webgpu') {
+      const modelSelect = document.querySelector('.model-select[data-model-for="webgpu"]');
+      if (modelSelect?.value === '__custom__' && !String(config.model || '').trim()) {
+        throw new Error('Enter a Hugging Face repository as owner/repository.');
+      }
+      config.model = normalizeWebgpuModelId(config.model);
+    }
     apiKeyWarning = providerApiKeyWarning(id, config);
     await sendToBackground('update_provider', { providerId: id, config, markConfigured });
   } catch (e) {
@@ -3553,6 +3654,13 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
       providersData[id].visionDetection = null;
     }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
+  }
+  if (id === 'webgpu') {
+    const modelInput = document.querySelector('input[data-provider="webgpu"][data-key="model"]');
+    if (modelInput) modelInput.value = config.model;
+    updateWebgpuModelPresentation(config.model);
+    setWebgpuDownloadState({ status: 'checking', modelId: config.model, ready: false });
+    await refreshWebgpuDownloadStatus();
   }
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);

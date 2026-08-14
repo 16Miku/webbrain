@@ -4,13 +4,15 @@ This directory packages the JavaScript and WASM runtime used by two local
 WebGPU paths in Chrome:
 
 - **Settings -> Providers -> WebGPU (In-browser)** runs
-  `webbrain-one/Ling-3.0-tiny-ONNX` as a general text/tool provider.
+  selectable Transformers.js-compatible Hugging Face ONNX repositories as the
+  general text/tool provider.
 - **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
   `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
 
-Model weights are not bundled. Transformers.js downloads the recommended
-WebGPU variants on first use and stores them in the browser cache. Ling uses
-the repository's standard `q4f16` graph (about 4.85 GB); LFM2.5-VL uses:
+Model weights are not bundled. Transformers.js downloads the selected WebGPU
+variant on first use and stores it in the browser cache. Text models use the
+repository's standard `q4f16` graph (about 4.85 GB for Ling or 570 MB for the
+Qwen3 0.6B preset); LFM2.5-VL uses:
 
 - `embed_tokens`: FP16
 - `vision_encoder`: FP16
@@ -99,7 +101,7 @@ ProviderManager._createProvider('webgpu') / getVisionProvider()
   -> MV3 offscreen document
   -> dedicated module Worker
   -> text-generation pipeline / AutoProcessor + AutoModelForImageTextToText
-  -> Ling-3.0-tiny-ONNX / LFM2.5-VL-450M-ONNX over WebGPU
+-> selected text ONNX repo / LFM2.5-VL-450M-ONNX over WebGPU
 ```
 
 Keep inference in the Worker. The MV3 service worker has no WebGPU, while the

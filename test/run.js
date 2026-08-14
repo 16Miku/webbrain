@@ -781,9 +781,12 @@ const {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  WEBGPU_QWEN_MODEL_ID,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  normalizeWebgpuModelId,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
@@ -40835,7 +40838,16 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
     assert.ok(generalProvider instanceof WebGPUProvider);
-    assert.equal(new WebGPUProvider({ model: 'unexpected/override' }).model, WEBGPU_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_QWEN_MODEL_ID }).model, WEBGPU_QWEN_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
+    assert.equal(
+      new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
+      WEBGPU_QWEN_MODEL_ID,
+    );
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [WEBGPU_MODEL_ID, WEBGPU_QWEN_MODEL_ID]);
+    assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
+    assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
+    assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
     assert.equal(generalProvider.supportsVision, false);
     const probe = await generalProvider.testConnection();
@@ -40925,7 +40937,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   }
 });
 
-test('WebGPU worker follows the Ling text-generation and LiquidAI vision contracts', () => {
+test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
@@ -40957,6 +40969,7 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
   assert.match(worker, /GPU detail:/);
+  assert.doesNotMatch(worker, /cannot execute Ling/);
   assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
@@ -40984,7 +40997,11 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   );
   assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
   assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
-  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey|model)'/);
+  assert.match(webgpuSettingsBlock, /key: 'model'/);
+  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
+  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
+  assert.match(settingsScript, /normalizeWebgpuModelId/);
+  assert.match(settingsScript, /data-webgpu-model-link/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
 
