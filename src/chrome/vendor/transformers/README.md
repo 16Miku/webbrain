@@ -101,7 +101,7 @@ must be allowed to download that output normally.
 
 LFM2.5-VL expects the image placeholder before the user's text in its chat
 template. The Worker normalizes incoming OpenAI-style multimodal messages to
-that order. The packaged 96x48 connection-test probe is enlarged with
-nearest-neighbor sampling before preprocessing because the model otherwise
-preserves too little native detail for a reliable OCR check; normal screenshots
-are never enlarged by this probe-only path.
+that order. For the connection test, it replaces the packaged generic OCR image
+with three large, unlabeled color panels. This proves the local model received
+pixels without relying on fine OCR, which is brittle for a 450M model. Normal
+screenshots are never replaced by this probe-only path.

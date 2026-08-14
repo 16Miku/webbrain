@@ -1194,11 +1194,15 @@ export class ProviderManager {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+    const isLocalWebgpu = provider.name === 'webgpu-vision';
+    const probePrompt = isLocalWebgpu
+      ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names.'
+      : 'Read the three-character black code centered in the attached image. Reply with only that code.';
     const messages = [{
       role: 'user',
       content: [
         { type: 'image_url', image_url: { url: imageDataUrl } },
-        { type: 'text', text: 'Read the three-character black code centered in the attached image. Reply with only that code.' },
+        { type: 'text', text: probePrompt },
       ],
     }];
     let attempts = 1;
@@ -1237,7 +1241,17 @@ export class ProviderManager {
     if (!probeText) {
       return { ok: false, error: 'Vision model returned no visible description after the image probe.' };
     }
-    if (!/\bWB7\b/i.test(probeText)) {
+    const normalizedProbeText = probeText
+      .toLowerCase()
+      .replace(/\b(?:navy|azure)\b/g, 'blue')
+      .replace(/\bgold(?:en)?\b/g, 'yellow');
+    const yellowAt = normalizedProbeText.indexOf('yellow');
+    const blueAt = normalizedProbeText.indexOf('blue');
+    const redAt = normalizedProbeText.indexOf('red');
+    const passed = isLocalWebgpu
+      ? yellowAt >= 0 && blueAt > yellowAt && redAt > blueAt
+      : /\bWB7\b/i.test(probeText);
+    if (!passed) {
       const observed = probeText.replace(/\s+/g, ' ').slice(0, 120);
       return {
         ok: false,

@@ -40776,7 +40776,7 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   assert.match(worker, /load_image\(imageUrl\)/);
   assert.match(worker, /decoder_model_merged:\s*'q4'/);
   assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
-  assert.match(worker, /upscaleProbeImageNearest\(image, runtime\.library\.RawImage\)/);
+  assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
   assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
@@ -77477,6 +77477,21 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       assert.match(visionCalls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
       assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
       assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
+
+      if (label === 'chrome') {
+        visionManager.getVisionProvider = async () => ({
+          name: 'webgpu-vision',
+          model: WEBGPU_VISION_MODEL_ID,
+          baseUrl: 'local://webgpu',
+          chat: async (messages, options) => {
+            assert.match(messages[0].content[1].text, /three solid vertical color panels/i);
+            assert.equal(options.webbrainVisionProbe, true);
+            return { content: 'yellow, blue, red' };
+          },
+        });
+        const localVisionResult = await visionManager.testVisionProvider();
+        assert.equal(localVisionResult.ok, true, 'chrome: local color-panel vision probe should pass');
+      }
 
       visionManager.getVisionProvider = async () => ({
         model: 'text-only-model',
