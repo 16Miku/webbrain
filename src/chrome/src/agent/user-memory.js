@@ -228,6 +228,16 @@ export function clearUserMemoryStore(opts = {}) {
   return { version: STORE_VERSION, updatedAt: ts, records: [] };
 }
 
+function normalizeUserMemoryExtractionConfidence(value) {
+  if (value === undefined) return USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD;
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number(value)
+      : NaN;
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : 0;
+}
+
 export function parseUserMemoryExtractionResult(content) {
   let parsed = null;
   const text = String(content || '').trim();
@@ -245,7 +255,7 @@ export function parseUserMemoryExtractionResult(content) {
     id: item?.id ? String(item.id) : '',
     text: normalizeUserMemoryText(item?.text),
     kind: normalizeUserMemoryKind(item?.kind),
-    confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0,
+    confidence: normalizeUserMemoryExtractionConfidence(item?.confidence),
   })).filter((item) => item.op !== 'none');
 }
 
