@@ -8534,7 +8534,8 @@ test('ordinary response-language policies use the short rendering and never ride
     full._setResponseLanguagePolicy(tabId, ordinary, 'tr');
     const ordinaryPrompt = full.conversations.get(tabId)?.[0]?.content || '';
     assert.match(ordinaryPrompt, /\[Response language\] Respond in Turkish \(tr\)\./, `${label}: ordinary policy did not use the short rendering`);
-    assert.match(ordinaryPrompt, /never translate code, identifiers, URLs/i, `${label}: short rendering dropped the stable-token exception`);
+    assert.match(ordinaryPrompt, /leave code, identifiers, URLs, product names, and personal names unchanged/i, `${label}: short rendering dropped the stable-token rule`);
+    assert.match(ordinaryPrompt, /unless the user explicitly asks to translate or transliterate them/i, `${label}: short rendering turned the stable-token rule into an unconditional ban`);
     assert.doesNotMatch(ordinaryPrompt, /RESPONSE LANGUAGE POLICY/, `${label}: ordinary policy still paid for the long block`);
 
     // The done schema no longer repeats what the system prompt already carries.

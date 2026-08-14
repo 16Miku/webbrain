@@ -430,7 +430,7 @@ function responseLanguageLabel(locale) {
 
 /**
  * Short single-line rendering of an ordinary policy. Used on normal turns so
- * the common case ("answer in the user's language") costs ~30 tokens instead of
+ * the common case ("answer in the user's language") costs ~45 tokens instead of
  * the ~150-token full block, which matters most on the compact prompt tier
  * where the base prompt is only ~1.5k tokens. Returns '' when the policy needs
  * the precise long wording — an approved-plan override always does.
@@ -454,7 +454,10 @@ function formatBriefResponseLanguagePolicy(policy, opts) {
   const sourceRule = policy.preserve_source_text
     ? ' Keep quoted or extracted text in its source language'
     : ' Translate source text only when the request requires it';
-  return `[Response language] ${framingRule}${deliverableRule}${sourceRule}; never translate code, identifiers, URLs, product names, or personal names.`;
+  // The exception matters as much as the rule: without it a compact-tier model
+  // reads an unconditional "never" and leaves an explicitly requested product
+  // name or transliteration untouched.
+  return `[Response language] ${framingRule}${deliverableRule}${sourceRule}; leave code, identifiers, URLs, product names, and personal names unchanged unless the user explicitly asks to translate or transliterate them.`;
 }
 
 /**
