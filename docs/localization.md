@@ -93,7 +93,9 @@ When **Continue** resumes an interrupted run, WebBrain carries the normalized po
 
 If planning is unavailable, WebBrain infers framing from the language of the latest genuine user request. It uses the interface locale only as a soft fallback when that request language is unclear, and continues to honor explicit language or translation instructions.
 
-An incomplete or malformed planner language policy is treated the same way as an unavailable policy. In particular, a missing source-preservation decision never defaults to translating quoted or extracted text.
+An incomplete or malformed planner language policy is treated the same way as an unavailable policy. In particular, a missing source-preservation decision never defaults to translating quoted or extracted text. A planner answer that names deliverable languages but supplies only invalid locale codes also fails closed, while an explicitly empty deliverable list is kept as the coherent answer it is: no fixed target, so the deliverable follows the framing language or an explicit instruction in the request.
+
+The policy is written into the system prompt once per run, in one of two renderings. An ordinary policy, meaning the deliverable language matches the framing language and source text stays as it is, gets a single line of about 40 tokens. Translation targets, multilingual deliverables, approved-plan overrides, and continuations resumed by the synthetic Continue control keep the full block, because those are the cases where the precise wording earns its cost. On the compact prompt tier the short rendering is used wherever it can carry the policy without losing the deliverable language, since the compact base prompt is only around 1,500 tokens. Forced terminal delivery always gets the full block and repeats it in the `done` schema; ordinary turns do not, so the instruction appears once per request rather than twice.
 
 ### DOM Translation
 

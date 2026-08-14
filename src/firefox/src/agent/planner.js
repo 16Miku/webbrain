@@ -390,7 +390,6 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
   ) {
     return fallbackResponseLanguagePolicy(fallbackLocale);
   }
-  const framingLocale = requestedFramingLocale || normalizePlannerLocale(fallbackLocale);
   const framingLocaleIsFallback = value._framing_locale_is_fallback === true;
   const deliverableLocales = [];
   const seen = new Set();
@@ -402,11 +401,16 @@ export function normalizeResponseLanguagePolicy(value, fallbackLocale = 'en') {
     deliverableLocales.push(locale);
   }
   const preserveSourceText = value.preserve_source_text === true;
-  if (deliverableLocales.length === 0 && !preserveSourceText) {
+  // Fail closed when the planner named deliverable languages but none survived
+  // validation — "translate freely into nothing" is not a usable policy. An
+  // explicitly empty list is a coherent answer (no fixed target; the deliverable
+  // follows the framing language or an explicit instruction in the request), so
+  // it is kept rather than replaced with the source-preserving fallback.
+  if (value.deliverable_locales.length > 0 && deliverableLocales.length === 0) {
     return fallbackResponseLanguagePolicy(fallbackLocale);
   }
   return {
-    framing_locale: framingLocale,
+    framing_locale: requestedFramingLocale,
     deliverable_locales: deliverableLocales,
     preserve_source_text: preserveSourceText,
     ...(framingLocaleIsFallback ? { _framing_locale_is_fallback: true } : {}),
@@ -424,11 +428,69 @@ function responseLanguageLabel(locale) {
     : normalized;
 }
 
-export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 'en') {
+/**
+ * Short single-line rendering of an ordinary policy. Used on normal turns so
+ * the common case ("answer in the user's language") costs ~45 tokens instead of
+ * the ~150-token full block, which matters most on the compact prompt tier
+ * where the base prompt is only ~1.5k tokens. Returns '' when the policy needs
+ * the precise long wording — an approved-plan override always does.
+ */
+function formatBriefResponseLanguagePolicy(policy, opts) {
+  if (opts.approvedPlanLanguageOverride) return '';
+  const framing = responseLanguageLabel(policy.framing_locale);
+  const deliverables = policy.deliverable_locales.map(responseLanguageLabel);
+  const framingRule = opts.trustedContinuationFallback
+    ? `The synthetic Continue control is not a user request — match the language of the most recent genuine user request; if unclear, use ${framing}.`
+    : policy._framing_locale_is_fallback === true
+      ? `Match the language of the latest genuine user request; if unclear, use ${framing}.`
+      : `Respond in ${framing}.`;
+  const nonFramingDeliverables = deliverables.length === 1
+    && policy.deliverable_locales[0] === policy.framing_locale
+    ? []
+    : deliverables;
+  const deliverableRule = nonFramingDeliverables.length
+    ? ` Write the authored deliverable itself in ${nonFramingDeliverables.join(nonFramingDeliverables.length === 2 ? ' and ' : ', ')}, which overrides the framing language.`
+    : '';
+  const sourceRule = policy.preserve_source_text
+    ? ' Keep quoted or extracted text in its source language'
+    : ' Translate source text only when the request requires it';
+  // The exception matters as much as the rule: without it a compact-tier model
+  // reads an unconditional "never" and leaves an explicitly requested product
+  // name or transliteration untouched.
+  return `[Response language] ${framingRule}${deliverableRule}${sourceRule}; leave code, identifiers, URLs, product names, and personal names unchanged unless the user explicitly asks to translate or transliterate them.`;
+}
+
+/**
+ * @param {object} options
+ * @param {'full'|'auto'|'brief'} [options.form] 'full' (default) always emits the
+ *   complete block — used on forced terminal delivery, where the model gets one
+ *   shot and no planner context. 'auto' shortens ordinary policies and keeps the
+ *   full wording for translation, multilingual, and override cases. 'brief'
+ *   shortens everything it safely can.
+ */
+export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 'en', options = {}) {
   const approvedPlanLanguageOverride = value?.approved_plan_language_override === true;
   const policy = normalizeResponseLanguagePolicy(value, fallbackLocale);
   const trustedContinuationFallback = value?._trusted_continuation_fallback === true
     && policy._framing_locale_is_fallback === true;
+  const form = options.form || 'full';
+  if (form !== 'full') {
+    // A continuation started by the synthetic Continue control keeps the long
+    // wording: that turn is exactly where a stray language can be picked up,
+    // and it only happens after the step limit, so the tokens are rare.
+    const ordinary = policy.preserve_source_text
+      && !trustedContinuationFallback
+      && policy.deliverable_locales.length <= 1
+      && (policy.deliverable_locales.length === 0
+        || policy.deliverable_locales[0] === policy.framing_locale);
+    if (form === 'brief' || ordinary) {
+      const brief = formatBriefResponseLanguagePolicy(policy, {
+        approvedPlanLanguageOverride,
+        trustedContinuationFallback,
+      });
+      if (brief) return brief;
+    }
+  }
   const framing = responseLanguageLabel(policy.framing_locale);
   const deliverables = policy.deliverable_locales.map(responseLanguageLabel);
   const deliverableRule = approvedPlanLanguageOverride

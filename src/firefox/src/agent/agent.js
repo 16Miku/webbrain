@@ -11173,25 +11173,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || normalizeResponseLanguagePolicy(null, fallbackLocale);
   }
 
-  _withResponseLanguageToolGuidance(tabId, tools, fallbackLocale = 'en') {
-    if (!Array.isArray(tools) || tools.length === 0) return tools;
-    const guidance = formatResponseLanguagePolicyInstruction(
-      this._responseLanguagePolicy(tabId, fallbackLocale),
-      fallbackLocale,
-    ).replace(/\s+/g, ' ').trim();
-    return tools.map((tool) => {
-      const name = tool?.function?.name;
-      if (name !== 'done' && name !== 'done_json') return tool;
-      return {
-        ...tool,
-        function: {
-          ...tool.function,
-          description: `${tool.function.description} ${guidance}`,
-        },
-      };
-    });
-  }
-
   _devModeBlockedMessage(provider = null) {
     const providerName = provider?.name || provider?.config?.model || 'the active provider';
     return `Dev mode requires a Mid or Full prompt tier. ${providerName} is currently configured as Compact, so Dev mode is blocked for this provider. Switch to a Mid/Full-tier provider or change this provider's prompt tier, then try Dev again.`;
@@ -11232,9 +11213,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this.captchaSolverEnabled) {
       prompt += `\n\n[CAPTCHA SOLVER — the user has configured CapSolver. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
     }
+    // Ordinary turns get the one-line rendering; the full block is reserved for
+    // policies that need the precise wording (translation targets, multilingual
+    // deliverables, approved-plan overrides) and for the forced terminal
+    // delivery prompts. Compact tier shortens everything it safely can — its
+    // base prompt is ~1.5k tokens, so the long block was ~10% of the budget.
     const responseLanguagePolicy = tabId == null ? null : this.responseLanguagePolicies.get(tabId);
     if (responseLanguagePolicy) {
-      prompt += `\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy)}`;
+      prompt += `\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy, 'en', {
+        form: tier === 'compact' ? 'brief' : 'auto',
+      })}`;
     }
     // Keep this last so the opt-in strict setting overrides loaded skills,
     // including read-only workflows that discover a secret before set_field
@@ -19074,7 +19062,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
-    tools = this._withResponseLanguageToolGuidance(tabId, tools, runOptions?.locale || 'en');
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
     // second source and defeat the selection-only boundary.
@@ -19242,7 +19229,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
-      tools = this._withResponseLanguageToolGuidance(tabId, tools, runOptions?.locale || 'en');
       if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
       toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
@@ -19893,7 +19879,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       outputSchema: cloudRunContext?.outputSchema ?? null,
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
     });
-    tools = this._withResponseLanguageToolGuidance(tabId, tools, runOptions?.locale || 'en');
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
     if (selectionOnly) tools = [];
@@ -19939,7 +19924,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         outputSchema: cloudRunContext?.outputSchema ?? null,
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       });
-      tools = this._withResponseLanguageToolGuidance(tabId, tools, runOptions?.locale || 'en');
       if (selectionOnly) tools = [];
       allowedToolNames = new Set(tools.map(t => t.function.name));
       toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
