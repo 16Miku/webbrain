@@ -495,6 +495,7 @@ export class Agent extends LoopDetector {
     this._pendingPlans = new Map();
     this._planExecutionGuards = new Map(); // tabId → current run's plan-only terminal recovery state
     this._continuationExecutionEvidence = new Map(); // tabId → app-owned evidence carried only by continueProcessing()
+    this._continuationResponseLanguagePolicies = new Map(); // tabId -> trusted policy carried only by continueProcessing()
     // Strict secret-handling mode — see chrome/agent.js for rationale.
     // Default off; user opts in via Settings → "Strict secret handling".
     this.strictSecretMode = false;
@@ -11581,6 +11582,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressSessions.delete(tabId);
     this.selectionGroundingScopes.delete(tabId);
     this.responseLanguagePolicies.delete(tabId);
+    this._continuationResponseLanguagePolicies.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
@@ -13410,6 +13412,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } else {
       this._continuationExecutionEvidence.delete(tabId);
     }
+  }
+
+  _storeContinuationResponseLanguagePolicy(tabId) {
+    const policy = this.responseLanguagePolicies.get(tabId);
+    if (!policy) {
+      this._continuationResponseLanguagePolicies.delete(tabId);
+      return;
+    }
+    this._continuationResponseLanguagePolicies.set(tabId, {
+      policy: {
+        ...policy,
+        deliverable_locales: [...(policy.deliverable_locales || [])],
+      },
+      conversationId: this.conversationIds.get(tabId) || null,
+    });
+  }
+
+  _takeContinuationResponseLanguagePolicy(tabId) {
+    const carried = this._continuationResponseLanguagePolicies.get(tabId);
+    this._continuationResponseLanguagePolicies.delete(tabId);
+    if (!carried || carried.conversationId !== (this.conversationIds.get(tabId) || null)) return null;
+    return {
+      ...carried.policy,
+      deliverable_locales: [...(carried.policy?.deliverable_locales || [])],
+    };
   }
 
   _looksLikeMetaOnlyDoneSummary(content) {
@@ -18559,6 +18586,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runningTabs.delete(tabId);
       throw error;
     }
+    const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
+      ? this._takeContinuationResponseLanguagePolicy(tabId)
+      : null;
+    if (runOptions?.trustedContinuation !== true) this._continuationResponseLanguagePolicies.delete(tabId);
+    runOptions = { ...runOptions, trustedContinuationResponseLanguagePolicy };
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
@@ -18580,6 +18612,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
+      this._storeContinuationResponseLanguagePolicy(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
@@ -18924,8 +18957,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return (finalResponse = gateOutcome.message || 'More information is required.');
     }
-    this._setResponseLanguagePolicy(tabId, gateOutcome.responseLanguagePolicy, runOptions?.locale || 'en', {
-      approvedPlanLanguageOverride: gateOutcome.responseLanguageApprovedPlanOverride === true,
+    const responseLanguagePolicy = runOptions?.trustedContinuationResponseLanguagePolicy
+      || gateOutcome.responseLanguagePolicy;
+    this._setResponseLanguagePolicy(tabId, responseLanguagePolicy, runOptions?.locale || 'en', {
+      approvedPlanLanguageOverride: responseLanguagePolicy?.approved_plan_language_override === true
+        || gateOutcome.responseLanguageApprovedPlanOverride === true,
     });
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(
@@ -19561,6 +19597,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runningTabs.delete(tabId);
       throw error;
     }
+    const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
+      ? this._takeContinuationResponseLanguagePolicy(tabId)
+      : null;
+    if (runOptions?.trustedContinuation !== true) this._continuationResponseLanguagePolicies.delete(tabId);
+    runOptions = { ...runOptions, trustedContinuationResponseLanguagePolicy };
     this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
     this._clearRunLoopState(tabId);
     if (runOptions?.trustedContinuation !== true && runOptions?.preserveRichTextToolbarAudit !== true) {
@@ -19582,6 +19623,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
+      this._storeContinuationResponseLanguagePolicy(tabId);
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
@@ -19717,8 +19759,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : (gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled');
       return finish(gateOutcome.message || 'More information is required.', status);
     }
-    this._setResponseLanguagePolicy(tabId, gateOutcome.responseLanguagePolicy, runOptions?.locale || 'en', {
-      approvedPlanLanguageOverride: gateOutcome.responseLanguageApprovedPlanOverride === true,
+    const responseLanguagePolicy = runOptions?.trustedContinuationResponseLanguagePolicy
+      || gateOutcome.responseLanguagePolicy;
+    this._setResponseLanguagePolicy(tabId, responseLanguagePolicy, runOptions?.locale || 'en', {
+      approvedPlanLanguageOverride: responseLanguagePolicy?.approved_plan_language_override === true
+        || gateOutcome.responseLanguageApprovedPlanOverride === true,
     });
     if (gateOutcome.responseOnly === true) {
       const responseOnly = await this._completeResponseOnlyTurn(

@@ -56045,6 +56045,7 @@ test('planner-bypassed managed cloud runs never enable the execution guard', () 
 
 test('trusted continuation carries consequential evidence without repeating the mutation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const responses = [
       {
         content: null,
@@ -56077,7 +56078,11 @@ test('trusted continuation carries consequential evidence without repeating the 
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         const next = responses.shift();
         assert.ok(next, `${AgentClass.name}: continuation requested an unexpected model turn`);
         return next;
@@ -56087,10 +56092,22 @@ test('trusted continuation carries consequential evidence without repeating the 
     const tabId = 8644 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `continuation_conv_${index}`);
+    let gateCalls = 0;
+    const spanishPolicy = {
+      framing_locale: 'es',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? spanishPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -56102,11 +56119,16 @@ test('trusted continuation carries consequential evidence without repeating the 
     };
 
     agent.maxSteps = 1;
-    await agent.processMessage(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessage(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: first run did not preserve mutation evidence`,
+    );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      spanishPolicy,
+      `${AgentClass.name}: first run did not preserve its response language policy`,
     );
 
     agent.maxSteps = 3;
@@ -56119,6 +56141,22 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: continuation repeated a consequential action`,
     );
     assert.equal(responses.length, 0, `${AgentClass.name}: continuation entered recovery`);
+    assert.equal(requests.length, 2, `${AgentClass.name}: continuation made an unexpected number of model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /Use Spanish \(es\) for explanatory framing/,
+      `${AgentClass.name}: continuation system prompt lost the prior framing language`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /Write authored deliverables in Spanish \(es\)/,
+      `${AgentClass.name}: continuation tools lost the prior deliverable language`,
+    );
+    assert.doesNotMatch(
+      requests[1].systemPrompt,
+      /Use English \(en\) for explanatory framing/,
+      `${AgentClass.name}: synthetic continuation prompt replaced the prior language policy`,
+    );
   }
 });
 
@@ -56211,6 +56249,7 @@ test('trusted continuation carries verified submit state without permitting ordi
 
 test('streamed runs preserve consequential evidence for a trusted continuation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
     const provider = {
       supportsTools: true,
       supportsVision: false,
@@ -56218,7 +56257,11 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      async *chatStream() {
+      async *chatStream(messages, options) {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
         yield {
           type: 'tool_call',
           content: [{
@@ -56229,31 +56272,49 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
         };
         yield { type: 'done' };
       },
-      chat: async () => ({
-        content: null,
-        toolCalls: [
-          {
-            id: `stream_continuation_verify_${index}`,
-            function: { name: 'read_page', arguments: '{}' },
-          },
-          {
-            id: `stream_continuation_done_${index}`,
-            function: {
-              name: 'done',
-              arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+      chat: async (messages, options) => {
+        requests.push({
+          systemPrompt: String(messages?.[0]?.content || ''),
+          doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
+        });
+        return {
+          content: null,
+          toolCalls: [
+            {
+              id: `stream_continuation_verify_${index}`,
+              function: { name: 'read_page', arguments: '{}' },
             },
-          },
-        ],
-      }),
+            {
+              id: `stream_continuation_done_${index}`,
+              function: {
+                name: 'done',
+                arguments: JSON.stringify({ summary: 'Streamed mutation verified.', outcome: 'success' }),
+              },
+            },
+          ],
+        };
+      },
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8647 + index;
     configurePlanOnlyGuardAgent(agent, tabId);
     agent.conversationIds.set(tabId, `stream_continuation_conv_${index}`);
+    let gateCalls = 0;
+    const spanishPolicy = {
+      framing_locale: 'es',
+      deliverable_locales: ['es'],
+      preserve_source_text: false,
+    };
+    const englishPolicy = {
+      framing_locale: 'en',
+      deliverable_locales: ['en'],
+      preserve_source_text: false,
+    };
     agent._maybeRunPlannerGate = async () => ({
       proceed: true,
       requestKind: 'execute',
       requiresStateChange: true,
+      responseLanguagePolicy: gateCalls++ === 0 ? spanishPolicy : englishPolicy,
     });
     const toolCalls = [];
     agent.executeTool = async (_toolTabId, name, args) => {
@@ -56265,11 +56326,16 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
     };
 
     agent.maxSteps = 1;
-    await agent.processMessageStream(tabId, 'Submit the form and verify it.', () => {}, 'act');
+    await agent.processMessageStream(tabId, 'Envía el formulario y verifica el resultado.', () => {}, 'act');
     assert.equal(
       agent._continuationExecutionEvidence.get(tabId)?.successfulConsequentialToolCalls,
       1,
       `${AgentClass.name}: streamed run did not preserve mutation evidence`,
+    );
+    assert.deepEqual(
+      agent._continuationResponseLanguagePolicies.get(tabId)?.policy,
+      spanishPolicy,
+      `${AgentClass.name}: streamed run did not preserve its response language policy`,
     );
 
     agent.maxSteps = 3;
@@ -56280,6 +56346,17 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       toolCalls,
       ['click_ax', 'read_page', 'done'],
       `${AgentClass.name}: continuation repeated the streamed mutation`,
+    );
+    assert.equal(requests.length, 2, `${AgentClass.name}: streamed continuation made unexpected model requests`);
+    assert.match(
+      requests[1].systemPrompt,
+      /Use Spanish \(es\) for explanatory framing/,
+      `${AgentClass.name}: streamed continuation system prompt lost the prior framing language`,
+    );
+    assert.match(
+      requests[1].doneDescription,
+      /Write authored deliverables in Spanish \(es\)/,
+      `${AgentClass.name}: streamed continuation tools lost the prior deliverable language`,
     );
   }
 });
