@@ -13,7 +13,8 @@ Model weights are not bundled. Transformers.js downloads the selected WebGPU
 variant on first use and stores it in the browser cache. Ling and Qwen use the
 repository's standard `q4f16` graph (about 4.85 GB and 570 MB respectively).
 Gemma 4 E2B QAT Mobile uses its text-only `q2f16` embeddings and decoder (about
-2.32 GB), without loading its image or audio encoders. LFM2.5-VL uses:
+2.32 GB), without loading its image or audio encoders. Ternary Bonsai 1.7B uses
+its `q2f16` graph (about 480 MB). LFM2.5-VL uses:
 
 - `embed_tokens`: FP16
 - `vision_encoder`: FP16

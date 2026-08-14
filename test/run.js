@@ -779,6 +779,8 @@ const { ProviderManager: ProviderManagerFx } = await import(
 const {
   WebGPUProvider,
   WebGPUVisionProvider,
+  WEBGPU_BONSAI_DTYPE,
+  WEBGPU_BONSAI_MODEL_ID,
   WEBGPU_DTYPE,
   WEBGPU_GEMMA_DTYPE,
   WEBGPU_GEMMA_MODEL_ID,
@@ -40844,12 +40846,20 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const gemmaProvider = new WebGPUProvider({ model: WEBGPU_GEMMA_MODEL_ID, dtype: WEBGPU_DTYPE });
     assert.equal(gemmaProvider.model, WEBGPU_GEMMA_MODEL_ID);
     assert.deepEqual(gemmaProvider.dtype, WEBGPU_GEMMA_DTYPE, 'the Gemma preset must override the generic q4f16 graph');
+    const bonsaiProvider = new WebGPUProvider({ model: WEBGPU_BONSAI_MODEL_ID, dtype: WEBGPU_DTYPE });
+    assert.equal(bonsaiProvider.model, WEBGPU_BONSAI_MODEL_ID);
+    assert.equal(bonsaiProvider.dtype, WEBGPU_BONSAI_DTYPE, 'the Ternary Bonsai preset must select its WebGPU q2f16 graph');
     assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
     assert.equal(
       new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
       WEBGPU_QWEN_MODEL_ID,
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [WEBGPU_MODEL_ID, WEBGPU_QWEN_MODEL_ID, WEBGPU_GEMMA_MODEL_ID]);
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [
+      WEBGPU_MODEL_ID,
+      WEBGPU_QWEN_MODEL_ID,
+      WEBGPU_GEMMA_MODEL_ID,
+      WEBGPU_BONSAI_MODEL_ID,
+    ]);
     assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);

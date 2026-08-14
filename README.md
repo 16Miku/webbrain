@@ -107,7 +107,7 @@ Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
 Settings ships **106 built-in provider cards on Chromium** (105 on Firefox),
 including an endpoint-free local WebGPU option with Ling 3.0 Tiny, Qwen3 0.6B,
-Gemma 4 E2B QAT Mobile, and custom Hugging Face ONNX repositories —
+Gemma 4 E2B QAT Mobile, Ternary Bonsai 1.7B, and custom Hugging Face ONNX repositories —
 see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
 ## Features
