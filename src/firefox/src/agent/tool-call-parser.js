@@ -222,6 +222,13 @@ function parseLfmValue(source) {
   return { ok: false };
 }
 
+const LFM_DIRECTIONAL_SCROLL_ALIASES = Object.freeze({
+  scrollup: 'up',
+  scrolldown: 'down',
+  scrolltop: 'top',
+  scrollbottom: 'bottom',
+});
+
 /**
  * Parse LFM2/LFM2.5's documented native format:
  * <|tool_call_start|>[tool_name(key='value', flag=False)]<|tool_call_end|>
@@ -245,7 +252,10 @@ function parseLfmToolCalls(text, allowedNames) {
   const calls = [];
   for (const part of callParts) {
     const match = /^([A-Za-z_]\w*)\s*\(([\s\S]*)\)$/.exec(part.trim());
-    if (!match || !allowedNames.has(match[1])) return [];
+    if (!match) return [];
+    const aliasDirection = LFM_DIRECTIONAL_SCROLL_ALIASES[match[1]] || '';
+    const toolName = aliasDirection ? 'scroll' : match[1];
+    if (!allowedNames.has(toolName)) return [];
     const args = Object.create(null);
     if (match[2].trim()) {
       const argParts = splitLfmTopLevel(match[2], ',');
@@ -260,7 +270,11 @@ function parseLfmToolCalls(text, allowedNames) {
         args[key] = parsed.value;
       }
     }
-    calls.push({ name: match[1], arguments: args });
+    if (aliasDirection) {
+      if (Object.hasOwn(args, 'direction') && args.direction !== aliasDirection) return [];
+      args.direction = aliasDirection;
+    }
+    calls.push({ name: toolName, arguments: args });
   }
   return calls;
 }

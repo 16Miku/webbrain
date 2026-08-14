@@ -1443,7 +1443,7 @@ TOOLS - use only these:
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
 - read_page: Prose fallback for articles and long-form text.
 - get_window_info: Read window/viewport size.
-- scroll: Scroll up/down.
+- scroll({direction:"up"|"down"|"top"|"bottom"}): Scroll the page or active pane. Use scroll({direction:"down"}) to scroll down; do not invent scrolldown/scrollup tools.
 - extract_data: Get tables, headings, images, or links.
 - click_ax({ref_id}): Click by ref_id from the tree. Preferred.
 - set_checked({ref_id, checked}): Idempotently set and verify a native checkbox. Never toggle checkboxes repeatedly with click_ax.
