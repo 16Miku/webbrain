@@ -6,6 +6,7 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 export const WEBGPU_VISION_MODEL_ID = 'LiquidAI/LFM2.5-VL-450M-ONNX';
 export const WEBGPU_MODEL_ID = 'webbrain-one/Ling-3.0-tiny-ONNX';
 export const WEBGPU_DTYPE = 'q4f16';
+export const WEBGPU_MODEL_NOT_READY_ERROR = 'Ling 3.0 Tiny is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.';
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
@@ -100,6 +101,8 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     if (this._messagesContainImage(messages)) {
       throw new Error('WebGPU Ling is text-only. Configure a separate model under Settings -> Multimodal for screenshots.');
     }
+    const download = await this.downloadStatus();
+    if (!download.ready) throw new Error(WEBGPU_MODEL_NOT_READY_ERROR);
     const response = await this._dispatch({
       type: 'webgpu-chat',
       model: this.model,
@@ -126,6 +129,51 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
   /** Probe the packaged runtime and adapter without downloading 4.85 GB of weights. */
   async testConnection() {
     return this._testWebGPU();
+  }
+
+  async downloadStatus() {
+    const response = await this._dispatch({
+      type: 'webgpu-download-status',
+      model: this.model,
+      dtype: this.dtype,
+    });
+    if (!response || response.error) {
+      throw new Error(response?.error || 'Unable to read the Ling download status.');
+    }
+    return response;
+  }
+
+  async startDownload() {
+    const response = await this._dispatch({
+      type: 'webgpu-download-start',
+      model: this.model,
+      device: this.device,
+      dtype: this.dtype,
+    });
+    if (!response || response.error) {
+      throw new Error(response?.error || 'Unable to download Ling 3.0 Tiny.');
+    }
+    return response;
+  }
+
+  async pauseDownload() {
+    const response = await this._dispatch({ type: 'webgpu-download-pause' });
+    if (!response || response.error) {
+      throw new Error(response?.error || 'Unable to pause the Ling download.');
+    }
+    return response;
+  }
+
+  async stopDownload() {
+    const response = await this._dispatch({
+      type: 'webgpu-download-stop',
+      model: this.model,
+      dtype: this.dtype,
+    });
+    if (!response || response.error) {
+      throw new Error(response?.error || 'Unable to stop the Ling download.');
+    }
+    return response;
   }
 
   /** Release Ling's GPU/model allocations while preserving its browser cache. */

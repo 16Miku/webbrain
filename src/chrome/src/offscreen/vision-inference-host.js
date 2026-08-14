@@ -6,6 +6,14 @@ let nextVisionRequestId = 1;
 const pendingVisionRequests = new Map();
 
 function settleVisionRequest(data) {
+  if (data?.type === 'text-download-state') {
+    try {
+      chrome.runtime.sendMessage({ type: 'webgpu-text-download-state', state: data.state }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch {}
+    return;
+  }
   if (data?.type === 'progress') {
     console.debug('[webgpu] model download', data);
     return;
@@ -48,6 +56,10 @@ async function ensureVisionWorker() {
 
 const WEBGPU_MESSAGE_TYPES = new Set([
   'webgpu-chat',
+  'webgpu-download-start',
+  'webgpu-download-pause',
+  'webgpu-download-stop',
+  'webgpu-download-status',
   'webgpu-dispose',
   'webgpu-probe',
   'webgpu-vision-chat',
@@ -63,6 +75,42 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       await ensureVisionWorker();
       if (message.type === 'webgpu-probe' || message.type === 'webgpu-vision-probe') {
         sendResponse(await sendVisionWorkerMessage('probe'));
+        return;
+      }
+      if (message.type === 'webgpu-download-status') {
+        sendResponse(await sendVisionWorkerMessage('text-download-status', {
+          modelId: message.model,
+          dtype: message.dtype,
+        }));
+        return;
+      }
+      if (message.type === 'webgpu-download-start') {
+        void sendVisionWorkerMessage('download-text', {
+          modelId: message.model,
+          device: message.device,
+          dtype: message.dtype,
+        }).catch(() => {});
+        sendResponse({
+          ok: true,
+          status: 'downloading',
+          ready: false,
+          modelId: message.model,
+          dtype: message.dtype,
+          loaded: 0,
+          total: 0,
+          progress: 0,
+        });
+        return;
+      }
+      if (message.type === 'webgpu-download-pause') {
+        sendResponse(await sendVisionWorkerMessage('pause-text-download'));
+        return;
+      }
+      if (message.type === 'webgpu-download-stop') {
+        sendResponse(await sendVisionWorkerMessage('stop-text-download', {
+          modelId: message.model,
+          dtype: message.dtype,
+        }));
         return;
       }
       if (message.type === 'webgpu-vision-clear-cache') {
