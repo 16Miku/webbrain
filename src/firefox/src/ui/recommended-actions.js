@@ -5,7 +5,7 @@ import { t } from './i18n.js';
 const SOCIAL_HOST_RE = /(^|\.)(instagram\.com|tiktok\.com|x\.com|twitter\.com|facebook\.com|fb\.com|threads\.net|youtube\.com|youtu\.be|reddit\.com|pinterest\.com|snapchat\.com)$/i;
 const PUBLIC_MEDIA_HOST_RE = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com|reddit\.com|redd\.it|facebook\.com|fb\.com|fb\.watch|pinterest\.com|pin\.it|linkedin\.com|threads\.net)$/i;
 const DATING_HOST_RE = /(^|\.)(tinder\.com|bumble\.com|hinge\.co|okcupid\.com|match\.com|pof\.com|badoo\.com|happn\.com|coffeemeetsbagel\.com)$/i;
-const SHOPPING_HOST_RE = /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.[a-z.]+|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.[a-z.]+|shopeekh\.com|lazada\.[a-z.]+)$/i;
+const SHOPPING_HOST_RE = /(^|\.)(amazon\.(?:(?:com|co)\.)?[a-z]{2,}|ebay\.(?:(?:com|co)\.)?[a-z]{2,}|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.(?:(?:com|co)\.)?[a-z]{2,}|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.(?:(?:com|co)\.)?[a-z]{2,}|shopeekh\.com|lazada\.(?:(?:com|co)\.)?[a-z]{2,})$/i;
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun)\b/i;
 const COUPON_PRODUCT_PATH_RE = /\/(?:dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun|ip|detail)(?:\/|$)/i;
 const COUPON_BESTBUY_PRODUCT_PATH_RE = /\/site\/[^/]+\/\d+\.p(?:\/|$)/i;
@@ -18,7 +18,8 @@ const RELEASES_PATH_RE = /^\/[^/]+\/[^/]+\/releases(?:\/|$)/i;
 const SEARCH_INPUT_RE = /^(search|q|query|keyword|keywords|s)$/i;
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com)$/i;
 const DM_HOST_RE = /(^|\.)(instagram\.com|x\.com|twitter\.com|facebook\.com|messenger\.com|threads\.net|reddit\.com|linkedin\.com|discord\.com|slack\.com|web\.whatsapp\.com|messages\.google\.com|web\.telegram\.org)$/i;
-const DM_PATH_RE = /(?:^|[/?#])(direct|messages?|messaging|inbox|chat|chats|dm|conversation|conversations|t|channels)(?:\b|[/?#])/i;
+const DM_PATH_RE = /(?:^|[/?#])(direct|messages?|messaging|inbox|chat|chats|dm|conversation|conversations|channels)(?:\b|[/?#])/i;
+const MESSENGER_THREAD_PATH_RE = /^\/t(?:\/|$)/i;
 const COMPOSE_FIELD_RE = /\b(compose|reply|message|comment|post|tweet|share|caption|body|editor|write|what'?s happening|start a post|add a comment|write a reply|email)\b/i;
 const X_PROFILE_RESERVED_PATH_RE = /^\/(home|explore|notifications|messages?|i|search|settings|compose|login|signup|jobs|communities|lists|hashtag|intent|share|privacy|tos)(?:\/|$)/i;
 const WP_ADMIN_RE = /\/wp-admin(?:\/|$)/i;
@@ -281,7 +282,8 @@ function isCommunicationThread(pageInfo = {}, host = '', path = '/') {
     return hasEmailThreadSignal(pageInfo);
   }
   if (DM_HOST_RE.test(host)) {
-    return DM_PATH_RE.test(route) || /\b(reply|respond|conversation|thread|direct message|dm|chat)\b/i.test(signal);
+    const isMessengerThread = (host === 'messenger.com' || host.endsWith('.messenger.com')) && MESSENGER_THREAD_PATH_RE.test(path);
+    return isMessengerThread || DM_PATH_RE.test(route) || /\b(reply|respond|conversation|thread|direct message|dm|chat)\b/i.test(signal);
   }
   return false;
 }
