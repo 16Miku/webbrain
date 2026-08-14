@@ -5,8 +5,24 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 
 export const WEBGPU_VISION_MODEL_ID = 'LiquidAI/LFM2.5-VL-450M-ONNX';
 export const WEBGPU_MODEL_ID = 'webbrain-one/Ling-3.0-tiny-ONNX';
+export const WEBGPU_QWEN_MODEL_ID = 'onnx-community/Qwen3-0.6B-ONNX';
+export const WEBGPU_GEMMA_MODEL_ID = 'onnx-community/gemma-4-E2B-it-qat-mobile-ONNX';
+export const WEBGPU_BONSAI_MODEL_ID = 'onnx-community/Ternary-Bonsai-1.7B-ONNX';
 export const WEBGPU_DTYPE = 'q4f16';
-export const WEBGPU_MODEL_NOT_READY_ERROR = 'Ling 3.0 Tiny is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.';
+export const WEBGPU_BONSAI_DTYPE = 'q2f16';
+export const WEBGPU_GEMMA_DTYPE = Object.freeze({
+  decoder_model_merged: 'q2f16',
+  embed_tokens: 'q2f16',
+  audio_encoder: 'q2f16',
+  vision_encoder: 'fp16',
+});
+export const WEBGPU_MODEL_PRESETS = Object.freeze([
+  Object.freeze({ id: WEBGPU_MODEL_ID, label: 'Ling 3.0 Tiny', size: '4.85 GB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
+  Object.freeze({ id: WEBGPU_QWEN_MODEL_ID, label: 'Qwen3 0.6B', size: '570 MB', dtype: WEBGPU_DTYPE, dtypeLabel: WEBGPU_DTYPE }),
+  Object.freeze({ id: WEBGPU_GEMMA_MODEL_ID, label: 'Gemma 4 E2B QAT Mobile', size: '2.32 GB', dtype: WEBGPU_GEMMA_DTYPE, dtypeLabel: 'q2f16 text' }),
+  Object.freeze({ id: WEBGPU_BONSAI_MODEL_ID, label: 'Ternary Bonsai 1.7B', size: '480 MB', dtype: WEBGPU_BONSAI_DTYPE, dtypeLabel: WEBGPU_BONSAI_DTYPE }),
+]);
+export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
@@ -16,6 +32,42 @@ export const WEBGPU_VISION_DTYPE = Object.freeze({
   vision_encoder: 'fp16',
   decoder_model_merged: 'q4',
 });
+
+export function normalizeWebgpuModelId(value) {
+  let model = String(value || '').trim();
+  if (!model) return WEBGPU_MODEL_ID;
+  if (/^https?:\/\//i.test(model)) {
+    let url;
+    try {
+      url = new URL(model);
+    } catch {
+      throw new Error('Enter a Hugging Face repository as owner/repository or a huggingface.co URL.');
+    }
+    if (!['huggingface.co', 'www.huggingface.co'].includes(url.hostname.toLowerCase())) {
+      throw new Error('Custom WebGPU models must use a huggingface.co repository.');
+    }
+    const parts = url.pathname.split('/').filter(Boolean).map(part => decodeURIComponent(part));
+    if (parts.length !== 2) {
+      throw new Error('Use the repository URL, not a file, branch, or collection URL.');
+    }
+    model = parts.join('/');
+  }
+  model = model.replace(/^\/+|\/+$/g, '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(model)) {
+    throw new Error('Enter a Hugging Face repository as owner/repository.');
+  }
+  return model;
+}
+
+export function webgpuModelDisplayName(modelId) {
+  const normalized = normalizeWebgpuModelId(modelId);
+  return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.label || normalized;
+}
+
+export function webgpuModelDtype(modelId, fallback = WEBGPU_DTYPE) {
+  const normalized = normalizeWebgpuModelId(modelId);
+  return WEBGPU_MODEL_PRESETS.find(preset => preset.id === normalized)?.dtype || fallback;
+}
 
 class WebGPUOffscreenProvider extends BaseLLMProvider {
   async _dispatch(message) {
@@ -64,12 +116,13 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
 }
 
 /**
- * General, endpoint-free local provider backed by Ling 3.0 Tiny ONNX.
+ * General, endpoint-free local provider backed by a Transformers.js ONNX model.
  * Model data is downloaded by Transformers.js and cached by the browser.
  */
 export class WebGPUProvider extends WebGPUOffscreenProvider {
   constructor(config = {}) {
-    const model = WEBGPU_MODEL_ID;
+    const model = normalizeWebgpuModelId(config.model);
+    const dtype = webgpuModelDtype(model, config.dtype || WEBGPU_DTYPE);
     super({
       ...config,
       type: 'webgpu',
@@ -79,14 +132,14 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       baseUrl: '',
       model,
       device: 'webgpu',
-      dtype: WEBGPU_DTYPE,
+      dtype,
       supportsVision: false,
       supportsAskStreaming: false,
     });
     this.model = model;
     this.baseUrl = '';
     this.device = 'webgpu';
-    this.dtype = WEBGPU_DTYPE;
+    this.dtype = dtype;
   }
 
   get name() {
@@ -99,10 +152,12 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
 
   async chat(messages, options = {}) {
     if (this._messagesContainImage(messages)) {
-      throw new Error('WebGPU Ling is text-only. Configure a separate model under Settings -> Multimodal for screenshots.');
+      throw new Error('The WebGPU chat model is text-only. Configure a separate model under Settings -> Multimodal for screenshots.');
     }
     const download = await this.downloadStatus();
-    if (!download.ready) throw new Error(WEBGPU_MODEL_NOT_READY_ERROR);
+    if (!download.ready) {
+      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU to download it before chatting.`);
+    }
     const response = await this._dispatch({
       type: 'webgpu-chat',
       model: this.model,
@@ -134,7 +189,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     };
   }
 
-  /** Probe the packaged runtime and adapter without downloading 4.85 GB of weights. */
+  /** Probe the packaged runtime and adapter without downloading model weights. */
   async testConnection() {
     return this._testWebGPU();
   }
@@ -146,7 +201,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       dtype: this.dtype,
     });
     if (!response || response.error) {
-      throw new Error(response?.error || 'Unable to read the Ling download status.');
+      throw new Error(response?.error || 'Unable to read the WebGPU model download status.');
     }
     return response;
   }
@@ -159,7 +214,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       dtype: this.dtype,
     });
     if (!response || response.error) {
-      throw new Error(response?.error || 'Unable to download Ling 3.0 Tiny.');
+      throw new Error(response?.error || `Unable to download ${webgpuModelDisplayName(this.model)}.`);
     }
     return response;
   }
@@ -167,7 +222,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
   async pauseDownload() {
     const response = await this._dispatch({ type: 'webgpu-download-pause' });
     if (!response || response.error) {
-      throw new Error(response?.error || 'Unable to pause the Ling download.');
+      throw new Error(response?.error || 'Unable to pause the WebGPU model download.');
     }
     return response;
   }
@@ -179,12 +234,12 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       dtype: this.dtype,
     });
     if (!response || response.error) {
-      throw new Error(response?.error || 'Unable to stop the Ling download.');
+      throw new Error(response?.error || 'Unable to stop the WebGPU model download.');
     }
     return response;
   }
 
-  /** Release Ling's GPU/model allocations while preserving its browser cache. */
+  /** Release text-model GPU allocations while preserving the browser cache. */
   async dispose() {
     try {
       const response = await this._dispatch({ type: 'webgpu-dispose' });

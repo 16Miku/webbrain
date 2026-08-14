@@ -779,11 +779,18 @@ const { ProviderManager: ProviderManagerFx } = await import(
 const {
   WebGPUProvider,
   WebGPUVisionProvider,
+  WEBGPU_BONSAI_DTYPE,
+  WEBGPU_BONSAI_MODEL_ID,
   WEBGPU_DTYPE,
+  WEBGPU_GEMMA_DTYPE,
+  WEBGPU_GEMMA_MODEL_ID,
   WEBGPU_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  WEBGPU_QWEN_MODEL_ID,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
+  normalizeWebgpuModelId,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
 );
@@ -40835,7 +40842,27 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
     assert.ok(generalProvider instanceof WebGPUProvider);
-    assert.equal(new WebGPUProvider({ model: 'unexpected/override' }).model, WEBGPU_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_QWEN_MODEL_ID }).model, WEBGPU_QWEN_MODEL_ID);
+    const gemmaProvider = new WebGPUProvider({ model: WEBGPU_GEMMA_MODEL_ID, dtype: WEBGPU_DTYPE });
+    assert.equal(gemmaProvider.model, WEBGPU_GEMMA_MODEL_ID);
+    assert.deepEqual(gemmaProvider.dtype, WEBGPU_GEMMA_DTYPE, 'the Gemma preset must override the generic q4f16 graph');
+    const bonsaiProvider = new WebGPUProvider({ model: WEBGPU_BONSAI_MODEL_ID, dtype: WEBGPU_DTYPE });
+    assert.equal(bonsaiProvider.model, WEBGPU_BONSAI_MODEL_ID);
+    assert.equal(bonsaiProvider.dtype, WEBGPU_BONSAI_DTYPE, 'the Ternary Bonsai preset must select its WebGPU q2f16 graph');
+    assert.equal(new WebGPUProvider({ model: 'custom-owner/custom-model' }).model, 'custom-owner/custom-model');
+    assert.equal(
+      new WebGPUProvider({ model: 'https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/' }).model,
+      WEBGPU_QWEN_MODEL_ID,
+    );
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => option.id), [
+      WEBGPU_MODEL_ID,
+      WEBGPU_QWEN_MODEL_ID,
+      WEBGPU_GEMMA_MODEL_ID,
+      WEBGPU_BONSAI_MODEL_ID,
+    ]);
+    assert.equal(normalizeWebgpuModelId(' onnx-community/Qwen3-0.6B-ONNX '), WEBGPU_QWEN_MODEL_ID);
+    assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
+    assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
     assert.equal(generalProvider.supportsVision, false);
     const probe = await generalProvider.testConnection();
@@ -40925,7 +40952,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
   }
 });
 
-test('WebGPU worker follows the Ling text-generation and LiquidAI vision contracts', () => {
+test('WebGPU worker follows local text-generation and LiquidAI vision contracts', () => {
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
@@ -40952,11 +40979,14 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
+  assert.match(worker, /function textDtypeKey\(dtype\)/);
+  assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
   assert.match(worker, /GPU detail:/);
+  assert.doesNotMatch(worker, /cannot execute Ling/);
   assert.match(worker, /tokenizer_encode_kwargs: \{ enable_thinking: false \}/);
   assert.match(worker, /tools: tools\.length \? tools : undefined/);
   assert.match(host, /'webgpu-chat'/);
@@ -40984,7 +41014,11 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   );
   assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
   assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
-  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey|model)'/);
+  assert.match(webgpuSettingsBlock, /key: 'model'/);
+  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
+  assert.doesNotMatch(webgpuSettingsBlock, /key: '(?:baseUrl|apiKey)'/);
+  assert.match(settingsScript, /normalizeWebgpuModelId/);
+  assert.match(settingsScript, /data-webgpu-model-link/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
 
@@ -40996,6 +41030,10 @@ test('WebGPU worker follows the Ling text-generation and LiquidAI vision contrac
   assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
 
   const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
+  const transformersBundle = fs.readFileSync(path.join(vendorDir, 'transformers.web.js'), 'utf8');
+  assert.match(transformersBundle, /Gemma4ForCausalLM/);
+  assert.match(transformersBundle, /Gemma4ForConditionalGeneration/);
+  assert.match(transformersBundle, /q2f16/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'ort.webgpu.mjs'), 'utf8'), /ONNX Runtime Web v1\.27\.0/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'README.md'), 'utf8'), /Qwen3\/QMoE correctness fixes/);
   assert.match(fs.readFileSync(path.join(vendorDir, 'LICENSE.transformers.txt'), 'utf8'), /Apache License[\s\S]*Version 2\.0/);
@@ -41186,6 +41224,61 @@ test('WebGPU worker replays Ling tool history without coupling text and vision l
     const resumed = await dispatch('download-text', textPayload);
     assert.equal(resumed.status, 'ready');
     assert.equal(resumed.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = true;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const activePayload = { ...textPayload, modelId: 'text-model-active' };
+    const otherPayload = { ...textPayload, modelId: 'text-model-other' };
+    const activeDownloadId = requestId++;
+    const activeDownloadPromise = workerListener({
+      data: { id: activeDownloadId, type: 'download-text', payload: activePayload },
+    });
+    for (let attempt = 0; attempt < 20 && !globalThis.__releaseWebgpuTextDownload; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.equal(typeof globalThis.__releaseWebgpuTextDownload, 'function', 'second download should reach the controllable pipeline');
+
+    const otherStatus = await dispatch('text-download-status', otherPayload);
+    assert.equal(otherStatus.modelId, otherPayload.modelId);
+    assert.equal(otherStatus.status, 'not-downloaded');
+    const stopOtherId = requestId++;
+    const stopOtherPromise = workerListener({
+      data: { id: stopOtherId, type: 'stop-text-download', payload: otherPayload },
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.__releaseWebgpuTextDownload();
+    await Promise.all([activeDownloadPromise, stopOtherPromise]);
+
+    const activeDownload = posted.find(message => message.id === activeDownloadId);
+    assert.equal(activeDownload.ok, true);
+    assert.equal(activeDownload.modelId, activePayload.modelId, 'another model status/stop request must not relabel the active transfer');
+    assert.equal(activeDownload.status, 'ready', 'stopping another model must not abort the active transfer');
+    const stoppedOther = posted.find(message => message.id === stopOtherId);
+    assert.equal(stoppedOther.modelId, otherPayload.modelId);
+    assert.equal(stoppedOther.status, 'not-downloaded');
+    const activeStatus = await dispatch('text-download-status', activePayload);
+    assert.equal(activeStatus.status, 'ready');
+    assert.equal(activeStatus.ready, true);
+
+    globalThis.__holdWebgpuTextDownload = false;
+    globalThis.__releaseWebgpuTextDownload = null;
+    const objectDtypePayload = {
+      ...textPayload,
+      modelId: 'text-model-object-dtype',
+      dtype: { decoder_model_merged: 'q2f16', embed_tokens: 'q2f16' },
+    };
+    const objectDtypeDownload = await dispatch('download-text', objectDtypePayload);
+    assert.equal(objectDtypeDownload.status, 'ready');
+    const objectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q2f16', decoder_model_merged: 'q2f16' },
+    });
+    assert.equal(objectDtypeStatus.status, 'ready', 'dtype-map key order must not change model readiness');
+    const wrongObjectDtypeStatus = await dispatch('text-download-status', {
+      ...objectDtypePayload,
+      dtype: { embed_tokens: 'q4f16', decoder_model_merged: 'q4f16' },
+    });
+    assert.equal(wrongObjectDtypeStatus.status, 'not-downloaded', 'different dtype maps must have separate ready markers');
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
