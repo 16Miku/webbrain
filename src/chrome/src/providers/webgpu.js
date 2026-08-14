@@ -135,6 +135,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       model,
       device: 'webgpu',
       dtype,
+      promptTier: config.promptTier || 'compact',
       supportsVision: false,
       supportsAskStreaming: false,
     });
