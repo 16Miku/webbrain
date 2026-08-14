@@ -76888,8 +76888,9 @@ test('session conversation snapshots drop tool results orphaned by assistant com
       });
       messages.push({ role: 'tool', tool_call_id: `tc${i}`, content: 'result '.repeat(2000) });
     }
-    const serialized = persistence.serializeConversationForSession(messages, { maxBytes: 120000 });
+    const serialized = persistence.serializeConversationForSession(messages, { maxBytes: 100_000 });
     assert.equal(serialized.compacted, true, `${build}: oversized conversation was not compacted`);
+    assert.ok(serialized.bytes <= 100_000, `${build}: serialized conversation exceeded its requested bound`);
     const toolCallIds = new Set(
       serialized.messages
         .filter(m => m.role === 'assistant')

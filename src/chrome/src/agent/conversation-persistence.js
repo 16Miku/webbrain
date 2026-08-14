@@ -85,7 +85,7 @@ function sanitizeMessage(message, state, caps) {
 function reduceToBudget(messages, maxBytes, state) {
   if (byteLength(messages) <= maxBytes) return messages;
   const out = messages.map(message => ({ ...message }));
-  const keepRecentFrom = Math.max(1, out.length - 14);
+  let keepRecentFrom = Math.max(1, out.length - 14);
   for (let index = 1; index < keepRecentFrom && byteLength(out) > maxBytes; index++) {
     const message = out[index];
     if (!message || message.role === 'system') continue;
@@ -116,6 +116,7 @@ function reduceToBudget(messages, maxBytes, state) {
         out.splice(index, 1);
       }
     }
+    keepRecentFrom = Math.max(1, out.length - 14);
   }
   for (let index = keepRecentFrom; index < out.length && byteLength(out) > maxBytes; index++) {
     const message = out[index];
