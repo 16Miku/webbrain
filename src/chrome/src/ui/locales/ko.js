@@ -290,11 +290,11 @@ export default {
 
   'st.vision.desc': '설정하면 페이지 읽기용 스크린샷은 이 모델로 전송되고, 활성 제공자는 계획 수립과 도구 호출을 담당합니다. 비워 두면 비전에도 활성 제공자가 사용됩니다. OpenAI 호환 엔드포인트만 지원합니다.',
   'st.vision.local.title': 'LFM2.5-VL local fallback',
-  'st.vision.local.desc': 'Runs LiquidAI/LFM2.5-VL-450M-ONNX on your GPU. Screenshots stay on this device; first use downloads about 770 MB from Hugging Face and caches it locally.',
+  'st.vision.local.desc': 'Runs LiquidAI/LFM2.5-VL-450M-ONNX on your GPU. Screenshots stay on this device; first use downloads about 770 MB from Hugging Face in the background and caches it locally. You can switch tabs or close Settings while it downloads; keep Chrome open.',
   'st.vision.local.enable': 'Use local fallback',
   'st.vision.local.disable': 'Disable local fallback',
   'st.vision.local.saved': 'Local vision fallback enabled.',
-  'st.vision.local.testing': 'Testing local vision… First use downloads about 770 MB.',
+  'st.vision.local.testing': 'Loading and testing local vision… First use downloads about 770 MB in the background. You may switch tabs or close Settings; keep Chrome open.',
   'st.vision.endpoint_alternative': 'Or use an OpenAI-compatible endpoint',
   'st.vision.save': '저장',
   'st.vision.test': '연결 테스트',

@@ -40769,11 +40769,14 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   const ensure = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/ensure.js'), 'utf8');
   const settingsScript = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const profileSync = fs.readFileSync(path.join(ROOT, 'src/chrome/src/profile-sync.js'), 'utf8');
+  const englishLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
   assert.match(worker, /AutoProcessor\.from_pretrained/);
   assert.match(worker, /apply_chat_template/);
   assert.match(worker, /load_image\(imageUrl\)/);
   assert.match(worker, /decoder_model_merged:\s*'q4'/);
+  assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
+  assert.match(worker, /upscaleProbeImageNearest\(image, runtime\.library\.RawImage\)/);
   assert.match(worker, /modelOperationQueue\.then\(operation, operation\)/);
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeRuntime\)/);
   assert.doesNotMatch(worker, /pipeline\(['"]text-generation/);
@@ -40783,6 +40786,7 @@ test('WebGPU vision worker follows the LiquidAI image-text-to-text contract', ()
   assert.match(settingsScript, /dispose_webgpu_vision/);
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
+  assert.match(englishLocale, /switch tabs or close Settings while it downloads; keep Chrome open/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -77470,8 +77474,9 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       const visionResult = await visionManager.testVisionProvider();
       assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
       assert.equal(visionCalls.length, 1);
-      assert.match(visionCalls[0].messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+      assert.match(visionCalls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
       assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
+      assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
 
       visionManager.getVisionProvider = async () => ({
         model: 'text-only-model',
