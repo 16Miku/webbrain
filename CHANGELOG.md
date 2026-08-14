@@ -4,6 +4,51 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [31.0.1] - 2026-08-14
+
+### Changed
+- blog: announce WebGPU vision and correct EXL3 date
+- i18n: localize local vision fallback
+- dist: rebuild submission zips for v31.0.0
+- fix: use visual local vision health probe
+- docs: add 31.0.0 changelog
+- version up
+- dist: rebuild extension packages
+- fix: make local vision probe reliable
+- dist: rebuild extension packages
+- fix: harden WebGPU vision lifecycle
+- improvements
+- Retry quantized WebGPU map failures with fp16 before aborting
+- Skip WASM fallback for quantized WebGPU models
+- Retry WebGPU unaligned-access failures with fp16 dtype
+- Reset WebGPU mode when WASM kernel init fails
+- Improve WebGPU fallback errors and switch default ONNX model to Gemma
+- Add robust fallback for WebGPU buffer map failures
+- Handle WebGPU OrtRun buffer download/CPU data failures with retry mode
+- Fix WebGPU CPU tensor access error in worker pipeline
+- 9.0.2
+- 9.0.0
+- WebGPU: keep outputs on GPU to avoid mapAsync OOM
+- title change
+- WebGPU: move inference to a dedicated Worker + upgrade to Qwen 3.5 0.8B
+- WebGPU: disable wasm-cache for chrome-extension scheme
+- WebGPU: address PR #66 codex review (tool-call streaming + cache key)
+- WebGPU: enable cross-origin isolation for SharedArrayBuffer
+- WebGPU: force .jsep wasm variant so WebGPU EP actually engages
+- WebGPU: surface fallback-adapter / no-GPU case in Test Connection
+- WebGPU: document fp16 fallback when q4f16 kernel overflows
+- WebGPU: switch default dtype from q4 to q4f16
+- WebGPU: vendor asyncify WASM variant for CPU fallback ops
+- WebGPU: vendor onnxruntime-common, patch second bare specifier
+- WebGPU: vendor UNMINIFIED builds (Web Store policy + readability)
+- WebGPU: fix bare-specifier import (vendor ort.webgpu.bundle, patch specifier)
+- version up
+- Vendor @huggingface/transformers 4.2.0 (WebGPU + ONNX runtime)
+- WebGPU: download progress indicator
+- Update offscreen.html
+- chore: bump version 7.3.1 → 7.4.0
+- WebGPU + ONNX provider (Qwen 3 0.6B, in-browser, no server needed)
+
 ## [31.0.0] - 2026-08-14
 
 ### Added
